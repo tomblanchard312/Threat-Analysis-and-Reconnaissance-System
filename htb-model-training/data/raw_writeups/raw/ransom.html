@@ -1,0 +1,716 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Ransom</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#htb-ransom">htb-ransom</a> <a class="post-tag" href="/tags#uhc">uhc</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#type-juggling">type-juggling</a> <a class="post-tag" href="/tags#ubuntu">ubuntu</a> <a class="post-tag" href="/tags#php">php</a> <a class="post-tag" href="/tags#laravel">laravel</a> <a class="post-tag" href="/tags#feroxbuster">feroxbuster</a> <a class="post-tag" href="/tags#burp">burp</a> <a class="post-tag" href="/tags#burp-repeater">burp-repeater</a> <a class="post-tag" href="/tags#zipcrypto">zipcrypto</a> <a class="post-tag" href="/tags#known-plaintext">known-plaintext</a> <a class="post-tag" href="/tags#crypto">crypto</a> <a class="post-tag" href="/tags#bkcrack">bkcrack</a> </span><br/><br/>
+<time class="dt-published" datetime="2022-03-15T09:00:00+00:00" itemprop="datePublished">Mar 15, 2022
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2022/03/15/htb-ransom.html" style="color: #e6e6e6; text-decoration: none;">HTB: Ransom</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/ransom-cover.webp" type="image/webp"/>
+<img alt="Ransom" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/ransom-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:120px;">
+</img></picture>
+<p>Ransom was a UHC qualifier box, targeting the easy to medium range. It has three basic steps. First, I’ll bypass a login screen by playing with the request and type juggling. Then I’ll access files in an encrypted zip archive using a known plaintext attack and bkcrypt. Finally, I’ll find credentials in HTML source that work to get root on the box. In Beyond Root, I’ll look at the structure of a Laravel application, examine how the api requests were handled and how I managed to get JSON data into a GET request, and finally look at the type juggling, why it worked, and how to fix it.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/457 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/ransom" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Ransom</a> <a href="https://hackthebox.com/machines/ransom" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-ransom.webp" type="image/webp"/> <img alt="Ransom" class="img-av" src="/icons/box-ransom.png"/></picture></a><br/><a href="https://hackthebox.com/machines/ransom" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right">15 Mar 2022</td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">15 Mar 2022</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Linux <picture><source srcset="/icons/Linux.webp" type="image/webp"/><img alt="Linux" class="img-os" src="/icons/Linux.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Medium">Medium [30]</span></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td>Creator</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/3769" rel="noopener" target="_blank"><img alt="ippsec" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/3769" style="display: unset"/><span class="user-text" style="display: none"> ippsec</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> finds two open TCP ports, SSH (22) and HTTP (80):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 <span class="nt">-oA</span> scans/nmap-alltcp 10.10.11.153
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2022-03-08 11:18 UTC
+Nmap scan report for 10.10.11.153
+Host is up (0.092s latency).
+Not shown: 65533 closed ports
+PORT   STATE SERVICE
+22/tcp open  ssh
+80/tcp open  http
+
+Nmap done: 1 IP address (1 host up) scanned in 8.04 seconds
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p</span> 22,80 <span class="nt">-sCV</span> <span class="nt">-oA</span> scans/nmap-tcpscripts 10.10.11.153
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2022-03-08 11:20 UTC
+Nmap scan report for 10.10.11.153
+Host is up (0.093s latency).
+
+PORT   STATE SERVICE VERSION
+22/tcp open  ssh     OpenSSH 8.2p1 Ubuntu 4ubuntu0.4 (Ubuntu Linux; protocol 2.0)
+80/tcp open  http    Apache httpd 2.4.41 ((Ubuntu))
+|_http-server-header: Apache/2.4.41 (Ubuntu)
+| http-title:  Admin - HTML5 Admin Template
+|_Requested resource was http://10.10.11.153/login
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 12.96 seconds
+</span></code></pre></div></div>
+<p>Based on the <a href="https://packages.ubuntu.com/search?keywords=openssh-server">OpenSSH</a> and <a href="https://packages.ubuntu.com/search?keywords=apache2">Apache</a> versions, the host is likely running Ubuntu 20.04 focal.</p>
+<h3 id="website---tcp-80">Website - TCP 80</h3>
+<h4 id="site">Site</h4>
+<p>Visiting the website in Firefox redirects to <code class="language-plaintext highlighter-rouge">/login</code>, which presents a form for the E Corp Incident Response Secure File Transfer:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220308065611668.webp" type="image/webp"/>
+<img alt="image-20220308065611668" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220308065611668.png"/>
+</picture>
+<p>Guessing at some passwords like “admin” and simple SQL injections like “’ or 1=1;– -“ just add a banner over the password field:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220308065735357.webp" type="image/webp"/>
+<img alt="image-20220308065735357" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220308065735357.png"/>
+</picture>
+<p>It is clear that the application is not fully reloading the page on submitting the password, but rather JavaScript is sending the request and updating the page based on the result.</p>
+<h4 id="tech-stack">Tech Stack</h4>
+<p>Looking at my first request to <code class="language-plaintext highlighter-rouge">/</code>, not only does the response return a 302 redirect to <code class="language-plaintext highlighter-rouge">/login</code>, but it also sets a <code class="language-plaintext highlighter-rouge">laravel_session</code> cookie:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">302</span> <span class="ne">Found</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Tue, 08 Mar 2022 11:35:16 GMT</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">Apache/2.4.41 (Ubuntu)</span>
+<span class="na">Cache-Control</span><span class="p">:</span> <span class="s">no-cache, private</span>
+<span class="na">Location</span><span class="p">:</span> <span class="s">http://10.10.11.153/login</span>
+<span class="na">Set-Cookie</span><span class="p">:</span> <span class="s">XSRF-TOKEN=eyJpdiI6Ik94TG4xcmRBaElUalFub1N3bDRJM1E9PSIsInZhbHVlIjoiOHBaT2FhcG9TVVJ6cmxzUlhqSXZlMDhOVHJySG85RC9KT0JTb2ZYajhhcTJjNUxINU1YdTdTeEdBUGtVRzR5TGtJT1ZMWW9vRTBTbzFHZVBzMEgyTTcvbFljMVdNNDVDYmJ5RStKWmJ6aTRQSHFnUWdqVTJPa2xUVUw2bVBiR1EiLCJtYWMiOiI2MmRiOWVjZTY3MTU2YzM0ZTAzZjdlMTJhMmZhZmM3MDg1Njc2N2YxZmYwZjg3ZmE4MzU2MmVjOTFiMTk1NmIwIiwidGFnIjoiIn0%3D; expires=Tue, 08-Mar-2022 13:35:16 GMT; Max-Age=7200; path=/; samesite=lax</span>
+<span class="na">Set-Cookie</span><span class="p">:</span> <span class="s">laravel_session=eyJpdiI6ImZjM2NGcW9pUkxNT0xJNXhEUk1GQ3c9PSIsInZhbHVlIjoiczNMOS9YT2pUOE1waFI2THgrRWdBQUpxR2NzUUw2ZC91Ri91enFzMCtYT3ZmRzQxbGZib3NmTW1oam5nbWJhVUswcFp6d2c3czN3ajJCTXROU3lPYXA0SHRVR1hPZFFZemltVmVHUEtoQTlST0ZCNkZvYmJKZElVNmlSYTd2R2kiLCJtYWMiOiI2MGJkNTJjOGU4MjUzYjhjYjBiZGM5M2Q3MjcxYWYwZjc2YjZkNDkyYTRiNjcxODEwN2U1YjMxNjI5MzJlY2ZmIiwidGFnIjoiIn0%3D; expires=Tue, 08-Mar-2022 13:35:16 GMT; Max-Age=7200; path=/; samesite=lax</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">346</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html; charset=UTF-8</span>
+
+<span class="cp">&lt;!DOCTYPE html&gt;</span>
+<span class="nt">&lt;html&gt;</span>
+    <span class="nt">&lt;head&gt;</span>
+        <span class="nt">&lt;meta</span> <span class="na">charset=</span><span class="s">"UTF-8"</span> <span class="nt">/&gt;</span>
+        <span class="nt">&lt;meta</span> <span class="na">http-equiv=</span><span class="s">"refresh"</span> <span class="na">content=</span><span class="s">"0;url='http://10.10.11.153/login'"</span> <span class="nt">/&gt;</span>
+
+        <span class="nt">&lt;title&gt;</span>Redirecting to http://10.10.11.153/login<span class="nt">&lt;/title&gt;</span>
+    <span class="nt">&lt;/head&gt;</span>
+    <span class="nt">&lt;body&gt;</span>
+        Redirecting to <span class="nt">&lt;a</span> <span class="na">href=</span><span class="s">"http://10.10.11.153/login"</span><span class="nt">&gt;</span>http://10.10.11.153/login<span class="nt">&lt;/a&gt;</span>.
+    <span class="nt">&lt;/body&gt;</span>
+<span class="nt">&lt;/html&gt;</span>
+</code></pre></div></div>
+<p><a href="https://laravel.com/">Laravel</a> is a PHP framework.</p>
+<p>The password submission happens without a full page reload. It sends a GET to <code class="language-plaintext highlighter-rouge">/api/login?password=[password]</code>:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">GET</span> <span class="nn">/api/login?password=password</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">10.10.11.153</span>
+<span class="na">User-Agent</span><span class="p">:</span> <span class="s">Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:97.0) Gecko/20100101 Firefox/97.0</span>
+<span class="na">Accept</span><span class="p">:</span> <span class="s">*/*</span>
+<span class="na">Accept-Language</span><span class="p">:</span> <span class="s">en-US,en;q=0.5</span>
+<span class="na">Accept-Encoding</span><span class="p">:</span> <span class="s">gzip, deflate</span>
+<span class="na">X-Requested-With</span><span class="p">:</span> <span class="s">XMLHttpRequest</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Referer</span><span class="p">:</span> <span class="s">http://10.10.11.153/login</span>
+<span class="na">Cookie</span><span class="p">:</span> <span class="s">XSRF-TOKEN=eyJpdiI6IlNCNUU5WGNOY2ZYZDQ1UkloTTNiS0E9PSIsInZhbHVlIjoicUdNU3o2Z0k1ajcyT3lSbUFWemt2c1ZkWm1DTG1sTVIxUHAxK3RmMVh0cjFlVkNBY0huZllKQThQSVp5K2xGOTJKSER6Snp5V2o1QmZZUGpKMGc3eVNmSVA5RllGWGRTblEvdHZQNHk0NXlHcFBHYW5JM0tzVmowSGNKb1VwSzMiLCJtYWMiOiIwMmJhOTBhNTk3OWM0ZjU3Yjg2OTg1YTZiYjMwY2IwZTYxMGVlZWE2NTQ1MzQwNmU1NmI1OGUyZDU2ODM0NDAyIiwidGFnIjoiIn0%3D; laravel_session=eyJpdiI6IlpGNDIvK0RmRHFiQWFMWFpXQVYrTUE9PSIsInZhbHVlIjoiRHBEdE16VkN4ZVExazhvd21nc2RBenJOSDcyOXhSVzhUdTI1dzlPdG1DUGxUL1U0TFJMWnY3aDRkVkxXN3lJaWJkRUpSMFZHNWk4YU1uaTh2L1RQRGlIMCt3VEdQbzR2NytvVWNqS1NXNGNCZlFTVE40dExSUlhraUY3WGtKMSsiLCJtYWMiOiIwODIxYzNjYTVmYTQ1NzEwMjM0NjY0OTFiM2QwZjI0OTJlNDdlNzQ3NTJiMWU1ZWMxYjkwY2RlZDUzMWYwZWFiIiwidGFnIjoiIn0%3D</span>
+</code></pre></div></div>
+<p>It’s a bit odd (and poor practice) to see a password going in a GET request. This risks the password itself being logged in the webserver logs and browser history. So while it is bad practice, it isn’t something that helps me to exploit the server.</p>
+<p>I’ll take a peak at the JS on the page that’s managing password submission:</p>
+<div class="language-js highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="o">&lt;</span><span class="nx">script</span><span class="o">&gt;</span>
+<span class="nf">$</span><span class="p">(</span><span class="nb">document</span><span class="p">).</span><span class="nf">ready</span><span class="p">(</span><span class="kd">function</span><span class="p">()</span> <span class="p">{</span>
+
+  <span class="nf">$</span><span class="p">(</span><span class="dl">'</span><span class="s1">#loginform</span><span class="dl">'</span><span class="p">).</span><span class="nf">submit</span><span class="p">(</span><span class="kd">function</span><span class="p">()</span> <span class="p">{</span>
+
+      <span class="nx">$</span><span class="p">.</span><span class="nf">ajax</span><span class="p">({</span>
+          <span class="na">type</span><span class="p">:</span> <span class="dl">"</span><span class="s2">GET</span><span class="dl">"</span><span class="p">,</span>
+          <span class="na">url</span><span class="p">:</span> <span class="dl">'</span><span class="s1">api/login</span><span class="dl">'</span><span class="p">,</span>
+          <span class="na">data</span><span class="p">:</span> <span class="p">{</span>
+              <span class="na">password</span><span class="p">:</span> <span class="nf">$</span><span class="p">(</span><span class="dl">"</span><span class="s2">#password</span><span class="dl">"</span><span class="p">).</span><span class="nf">val</span><span class="p">()</span>
+          <span class="p">},</span>
+          <span class="na">success</span><span class="p">:</span> <span class="kd">function</span><span class="p">(</span><span class="nx">data</span><span class="p">)</span>
+          <span class="p">{</span>
+              <span class="k">if </span><span class="p">(</span><span class="nx">data</span> <span class="o">===</span> <span class="dl">'</span><span class="s1">Login Successful</span><span class="dl">'</span><span class="p">)</span> <span class="p">{</span>
+                  <span class="nb">window</span><span class="p">.</span><span class="nx">location</span><span class="p">.</span><span class="nf">replace</span><span class="p">(</span><span class="dl">'</span><span class="s1">/</span><span class="dl">'</span><span class="p">);</span>
+              <span class="p">}</span>
+              <span class="k">else</span> <span class="p">{</span>
+                <span class="p">(</span><span class="nb">document</span><span class="p">.</span><span class="nf">getElementById</span><span class="p">(</span><span class="dl">'</span><span class="s1">alert</span><span class="dl">'</span><span class="p">)).</span><span class="nx">style</span><span class="p">.</span><span class="nx">visibility</span> <span class="o">=</span> <span class="dl">'</span><span class="s1">visible</span><span class="dl">'</span><span class="p">;</span>
+                <span class="nb">document</span><span class="p">.</span><span class="nf">getElementById</span><span class="p">(</span><span class="dl">'</span><span class="s1">alert</span><span class="dl">'</span><span class="p">).</span><span class="nx">innerHTML</span> <span class="o">=</span> <span class="dl">'</span><span class="s1">Invalid Login</span><span class="dl">'</span><span class="p">;</span>
+
+              <span class="p">}</span>
+          <span class="p">}</span>
+      <span class="p">});</span>     
+      <span class="k">return</span> <span class="kc">false</span><span class="p">;</span> 
+  <span class="p">});</span>
+<span class="p">});</span>
+<span class="o">&lt;</span><span class="sr">/script</span><span class="err">&gt;
+</span></code></pre></div></div>
+<p>When the <code class="language-plaintext highlighter-rouge">#loginform</code> is submitted, it generates a GET request to <code class="language-plaintext highlighter-rouge">api/login</code> with the password, and based on the reply, it either reloads the page at <code class="language-plaintext highlighter-rouge">/</code>, or makes the warning section visible and sets the message.</p>
+<h4 id="directory-brute-force">Directory Brute Force</h4>
+<p>I’ll run <code class="language-plaintext highlighter-rouge">feroxbuster</code> against the site, and include <code class="language-plaintext highlighter-rouge">-x php</code> since the site is PHP-based:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>feroxbuster <span class="nt">-u</span> http://10.10.11.153 <span class="nt">-x</span> php
+<span class="go">
+ ___  ___  __   __     __      __         __   ___
+|__  |__  |__) |__) | /  `    /  \ \_/ | |  \ |__
+|    |___ |  \ |  \ | \__,    \__/ / \ | |__/ |___
+by Ben "epi" Risher 🤓                 ver: 2.5.0
+───────────────────────────┬──────────────────────
+ 🎯  Target Url            │ http://10.10.11.153
+ 🚀  Threads               │ 50
+ 📖  Wordlist              │ /usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt
+ 👌  Status Codes          │ [200, 204, 301, 302, 307, 308, 401, 403, 405, 500]
+ 💥  Timeout (secs)        │ 7
+ 🦡  User-Agent            │ feroxbuster/2.5.0
+ 💲  Extensions            │ [php]
+ 🏁  HTTP methods          │ [GET]
+ 🔃  Recursion Depth       │ 4
+ 🎉  New Version Available │ https://github.com/epi052/feroxbuster/releases/latest
+───────────────────────────┴──────────────────────
+ 🏁  Press [ENTER] to use the Scan Management Menu™
+──────────────────────────────────────────────────
+...[snip]...
+🚨 Caught ctrl+c 🚨 saving scan state to ferox-http_10_10_11_153-1646742181.state ...
+[</span><span class="feroxbuster-yellow">###</span><span class="go">&gt;----------------] - 30m    79010/479984  2h      </span><span class="feroxbuster-green">found</span><span class="go">:11      </span><span class="feroxbuster-red">errors</span><span class="go">:3859   
+[</span><span class="feroxbuster-cyan">####</span><span class="go">&gt;---------------] - 30m    12154/59998   6/s     http://10.10.11.153 
+[</span><span class="feroxbuster-cyan">####</span><span class="go">&gt;---------------] - 30m    12036/59998   6/s     http://10.10.11.153/css 
+[</span><span class="feroxbuster-cyan">####</span><span class="go">&gt;---------------] - 30m    12042/59998   6/s     http://10.10.11.153/js 
+[</span><span class="feroxbuster-cyan">###</span><span class="go">&gt;----------------] - 30m    11860/59998   6/s     http://10.10.11.153/css/lib 
+[</span><span class="feroxbuster-cyan">###</span><span class="go">&gt;----------------] - 30m    11844/59998   6/s     http://10.10.11.153/js/lib 
+[</span><span class="feroxbuster-cyan">###</span><span class="go">&gt;----------------] - 30m    11584/59998   6/s     http://10.10.11.153/fonts 
+[</span><span class="feroxbuster-cyan">#</span><span class="go">&gt;------------------] - 8m      5282/59998   10/s    http://10.10.11.153/js/lib/gmap 
+[</span><span class="feroxbuster-cyan">#</span><span class="go">&gt;------------------] - 6m      3982/59998   9/s     http://10.10.11.153/js/init
+</span></code></pre></div></div>
+<p>After a while I’ll kill it because it goes quite slow, and isn’t finding anything intereting.</p>
+<h2 id="shell-as-htb">Shell as htb</h2>
+<h3 id="bypass-login">Bypass Login</h3>
+<p>I noted above that the login request is a GET request. I’ll send it to Repeater, right-click, and select “Change Request Method”, it will become a POST request. Sending that fails:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/image-20220311170734019.png"><img alt="image-20220311170734019" src="https://0xdfimages.gitlab.io/img/image-20220311170734019.png"/><em>Click for full size image</em></a></p>
+<p>405 Method Not Allowed suggests the application is not looking for POST requests on this endpoint.</p>
+<p>But there’s more I can try here. I’ll manually replace the word POST with GET, but leave the <code class="language-plaintext highlighter-rouge">password</code> in the POST body:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/image-20220311170836856.png"><img alt="image-20220311170836856" src="https://0xdfimages.gitlab.io/img/image-20220311170836856.png"/><em>Click for full size image</em></a></p>
+<p>It’s giving an error that “The password field is required”. So it’s not processing the password field in the body. That makes sense for a GET request.</p>
+<p>The response is JSON. I’ll try changing this request body to JSON. The logic here is that it’s nearly impossible to put JSON in a GET request, so if I change the <code class="language-plaintext highlighter-rouge">Content-Type</code> header to say <code class="language-plaintext highlighter-rouge">application/json</code>, then it may process the body even in a GET request. It worked!</p>
+<p><a href="https://0xdfimages.gitlab.io/img/image-20220311171038216.png"><img alt="image-20220311171038216" src="https://0xdfimages.gitlab.io/img/image-20220311171038216.png"/><em>Click for full size image</em></a></p>
+<p>It isn’t the right password, but the JSON data in the body is being processed.</p>
+<p>I’ll look at the Laravel setup of this application in <a href="#request-handling">Beyond Root</a>.</p>
+<p>Having JSON data presents other opportunities, like type juggling. I’ll replace the string that represents the submitted password with  <code class="language-plaintext highlighter-rouge">true</code>:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/image-20220311171210728.png"><img alt="image-20220311171210728" src="https://0xdfimages.gitlab.io/img/image-20220311171210728.png"/><em>Click for full size image</em></a></p>
+<p>“Login Successful”! I’ll dig more into the <a href="#type-juggling">type juggling in Beyond Root</a> as well.</p>
+<p>My session is now logged in on the server, so just going back to Firefox and visiting <code class="language-plaintext highlighter-rouge">http://10.10.11.153</code> now returns the page without redirecting:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220311172912724.webp" type="image/webp"/>
+<img alt="image-20220311172912724" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220311172912724.png"/>
+</picture>
+<p>The <code class="language-plaintext highlighter-rouge">user.txt</code> file is the first flag:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220311172936604.webp" type="image/webp"/>
+<img alt="image-20220311172936604" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220311172936604.png"/>
+</picture>
+<h3 id="homedirectoryzip">homedirectory.zip</h3>
+<p>Downloading the <code class="language-plaintext highlighter-rouge">homedirectory.zip</code> link saves a file named <code class="language-plaintext highlighter-rouge">uploaded-file-3422.zip</code>. It is a Zip archive, and it looks to have a home directory, including SSH keys:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>file uploaded-file-3422.zip 
+<span class="go">uploaded-file-3422.zip: Zip archive data, at least v2.0 to extract
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>unzip <span class="nt">-l</span> uploaded-file-3422.zip 
+<span class="go">Archive:  uploaded-file-3422.zip
+  Length      Date    Time    Name
+---------  ---------- -----   ----
+      220  2020-02-25 12:03   .bash_logout
+     3771  2020-02-25 12:03   .bashrc
+      807  2020-02-25 12:03   .profile
+        0  2021-07-02 18:58   .cache/
+        0  2021-07-02 18:58   .cache/motd.legal-displayed
+        0  2021-07-02 18:58   .sudo_as_admin_successful
+        0  2022-03-07 12:32   .ssh/
+     2610  2022-03-07 12:32   .ssh/id_rsa
+      564  2022-03-07 12:32   .ssh/authorized_keys
+      564  2022-03-07 12:32   .ssh/id_rsa.pub
+     2009  2022-03-07 12:32   .viminfo
+       32  2022-03-07 12:33   user.txt
+---------                     -------
+    10577                     12 files
+</span></code></pre></div></div>
+<p>It won’t unzip without a password:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>unzip uploaded-file-3422.zip
+<span class="go">Archive:  uploaded-file-3422.zip
+[uploaded-file-3422.zip] .bash_logout password:
+</span></code></pre></div></div>
+<p>7zip has a way to show more information about the files in the zip, using <code class="language-plaintext highlighter-rouge">l</code> for list, and <code class="language-plaintext highlighter-rouge">-slt</code> (which “Sets technical mode for l (list) command”, according to the <a href="https://linux.die.net/man/1/7z">man page</a>). This gives a ton of information about each file in the archive:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>7z l <span class="nt">-slt</span> uploaded-file-3422.zip 
+<span class="go">                                                    
+7-Zip [64] 16.02 : Copyright (c) 1999-2016 Igor Pavlov : 2016-05-21
+p7zip Version 16.02 (locale=en_US.UTF-8,Utf16=on,HugeFiles=on,64 bits,4 CPUs AMD Ryzen 9 5900X 12-Core Processor             (A20F10),ASM,AES-NI)
+                                                    
+Scanning the drive for archives:                    
+1 file, 7939 bytes (8 KiB)    
+                                                    
+Listing archive: uploaded-file-3422.zip
+                                                    
+--                            
+Path = uploaded-file-3422.zip
+Type = zip                    
+Physical Size = 7939      
+                                                    
+----------               
+Path = .bash_logout
+Folder = -                                          
+Size = 220      
+Packed Size = 170                                   
+Modified = 2020-02-25 12:03:22
+Created =                                           
+Accessed =                    
+Attributes = _ -rw-r--r--
+Encrypted = +
+Comment = 
+CRC = 6CE3189B
+Method = ZipCrypto Deflate
+Host OS = Unix
+Version = 20
+Volume Index = 0
+
+Path = .bashrc
+Folder = -
+...[snip]...
+</span></code></pre></div></div>
+<p>It is using ZipCrypto to encrypt the files.</p>
+<h3 id="decrypt-zip">Decrypt Zip</h3>
+<h4 id="background">Background</h4>
+<p>There’s a known plaintext attack against encrypted Zip archives. This attack isn’t new, but it recently made it’s way around InfoSec Twitter because of this post: <a href="https://medium.com/@whickey000/how-i-cracked-conti-ransomware-groups-leaked-source-code-zip-file-e15d54663a8">How I Cracked CONTI Ransomware Group’s Leaked Source Code ZIP File</a>.</p>
+<p>The legacy zip encryption is an algorithm referred to as “ZipCrypto”. Modern zip clients will use AES 256. The attack used here will only work against ZipCrypto.</p>
+<p>The attack involves finding a file with the same text as any file in the archive, and abusing that to recover the entire archive, and potentially even the password.</p>
+<h4 id="find-known-plaintext">Find Known Plaintext</h4>
+<p>Of the files in the archive, <code class="language-plaintext highlighter-rouge">.bash_logout</code> seems like a good candidate. <code class="language-plaintext highlighter-rouge">user.txt</code> could work, but with HTB flag rotation, it actually won’t. <code class="language-plaintext highlighter-rouge">.bash_logout</code> is a file that is not commonly changed. The one in the zip is 220 bytes. So is the one on my Ubuntu system:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-la</span> .bash_logout 
+<span class="go">-rw-r--r-- 1 oxdf oxdf 220 Jan 25 15:18 .bash_logout
+</span></code></pre></div></div>
+<p>Looking at the output again from <code class="language-plaintext highlighter-rouge">7z l -slt uploaded-file-3422.zip</code> for this file:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Path = .bash_logout
+Folder = -                                          
+Size = 220      
+Packed Size = 170                                   
+Modified = 2020-02-25 12:03:22
+Created =                                           
+Accessed =                    
+Attributes = _ -rw-r--r--
+Encrypted = +
+Comment = 
+CRC = 6CE3189B
+Method = ZipCrypto Deflate
+Host OS = Unix
+Version = 20
+Volume Index = 0
+</code></pre></div></div>
+<p>The Method is ZipCrypto, which is the less secure algorithm. The CRC32 from the Zip output above is 6CE3189B. That is a CRC of the decrypted file, used after decryption to verify the correct file resulted.</p>
+<p>I can calculate the CRC32 of the <code class="language-plaintext highlighter-rouge">.bash_logout</code> file on my system with Python and <code class="language-plaintext highlighter-rouge">binascii</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>python3
+<span class="go">Python 3.8.10 (default, Nov 26 2021, 20:14:08) 
+[GCC 9.3.0] on linux
+Type "help", "copyright", "credits" or "license" for more information.
+&gt;&gt;&gt; import binascii
+&gt;&gt;&gt; with open('/home/oxdf/.bash_logout', 'rb') as f:
+...     data = f.read()
+</span><span class="c">... 
+</span><span class="go">&gt;&gt;&gt; data
+b'# ~/.bash_logout: executed by bash(1) when login shell exits.\n\n# when leaving the console clear the screen to increase privacy\n\nif [ "$SHLVL" = 1 ]; then\n    [ -x /usr/bin/clear_console ] &amp;&amp; /usr/bin/clear_console -q\nfi\n'
+&gt;&gt;&gt; hex(binascii.crc32(data) &amp; 0xFFFFFFFF)
+'0x6ce3189b'
+</span></code></pre></div></div>
+<p>That’s a match!</p>
+<h4 id="bkcrack">bkcrack</h4>
+<p><a href="https://github.com/kimci86/bkcrack">bkcrack</a> is a tool for executing this attack. I’ll need to give it:</p>
+<ul>
+<li><code class="language-plaintext highlighter-rouge">-C</code>: the encrypted zip file</li>
+<li><code class="language-plaintext highlighter-rouge">-c</code>: the name of the encrypted but known file in the zip</li>
+<li><code class="language-plaintext highlighter-rouge">-P</code>: an unencrypted zip with the file in it</li>
+<li><code class="language-plaintext highlighter-rouge">-p</code>: the name of the file in the unencrypted zip</li>
+</ul>
+<p>I’ll create the plaintext zip:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">cp</span> ~/.bash_logout bash_logout
+<span class="gp">oxdf@hacky$</span><span class="w"> </span>zip plain.zip bash_logout 
+<span class="go">  adding: bash_logout (deflated 28%)
+</span></code></pre></div></div>
+<p>Now I’ll run <code class="language-plaintext highlighter-rouge">bkcrack</code>, and after about a minute, it returns the internal keys:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>/opt/bkcrack/bkcrack <span class="nt">-C</span> uploaded-file-3422.zip <span class="nt">-c</span> .bash_logout <span class="nt">-P</span> plain.zip <span class="nt">-p</span> bash_logout 
+<span class="go">bkcrack 1.3.5 - 2022-03-06
+[00:51:00] Z reduction using 150 bytes of known plaintext
+100.0 % (150 / 150)
+[00:51:01] Attack on 54969 Z values at index 7
+Keys: 6230b158 1cf90fe7 97778c9c
+78.8 % (43342 / 54969)
+[00:51:49] Keys
+6230b158 1cf90fe7 97778c9c
+</span></code></pre></div></div>
+<p>The easiest thing to do from here is to run <code class="language-plaintext highlighter-rouge">bkcrack</code> again, this time using:</p>
+<ul>
+<li><code class="language-plaintext highlighter-rouge">-C</code>: encrypted archive</li>
+<li><code class="language-plaintext highlighter-rouge">-k</code>: keys from above</li>
+<li><code class="language-plaintext highlighter-rouge">-U</code>: output archive name</li>
+<li><code class="language-plaintext highlighter-rouge">password</code>: output archive password</li>
+</ul>
+<p>This one runs instantly:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>/opt/bkcrack/bkcrack <span class="nt">-C</span> uploaded-file-3422.zip <span class="nt">-k</span> 6230b158 1cf90fe7 97778c9c <span class="nt">-U</span> uploaded-file-3422-pass.zip pass
+<span class="go">bkcrack 1.3.5 - 2022-03-06
+[00:54:01] Writing unlocked archive uploaded-file-3422-pass.zip with password "pass"
+100.0 % (10 / 10)
+Wrote unlocked archive.
+</span></code></pre></div></div>
+<p>Now I can decrypt the resulting archive with the password “pass”:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>unzip uploaded-file-3422-pass.zip <span class="nt">-d</span> unzipped/
+<span class="go">Archive:  uploaded-file-3422-pass.zip
+[uploaded-file-3422-pass.zip] .bash_logout password: 
+  inflating: unzipped/.bash_logout   
+  inflating: unzipped/.bashrc        
+  inflating: unzipped/.profile       
+   creating: unzipped/.cache/
+ extracting: unzipped/.cache/motd.legal-displayed  
+ extracting: unzipped/.sudo_as_admin_successful  
+   creating: unzipped/.ssh/
+  inflating: unzipped/.ssh/id_rsa    
+  inflating: unzipped/.ssh/authorized_keys  
+  inflating: unzipped/.ssh/id_rsa.pub  
+  inflating: unzipped/.viminfo       
+ extracting: unzipped/user.txt  
+</span></code></pre></div></div>
+<h3 id="ssh">SSH</h3>
+<p>The public key in the archive ends with “htb@ransom”:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">cat </span>unzipped/.ssh/id_rsa.pub 
+<span class="go">ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDrDTHWkTw0RUfAyzj9U3Dh+ZwhOUvB4EewA+z6uSunsTo3YA0GV/j6EaOwNq6jdpNrb9T6tI+RpcNfA+icFj+6oRj8hOa2q1QPfbaej2uY4MvkVC+vGac1BQFs6gt0BkWM9JY7nYJ2y0SIibiLDDB7TwOx6gem4Br/35PW2sel8cESyR7JfGjuauZM/DehjJJGfqmeuZ2Yd2Umr4rAt0R4OEAcWpOX94Tp+JByPAT5m0CU557KyarNlW60vy79njr8DR8BljDtJ4n9BcOPtEn+7oYvcLVksgM4LB9XzdDiXzdpBcyi3+xhFznFKDYUf6NfAud2sEWae7iIsCYtmjx6Jr9Zi2MoUYqWXSal8o6bQDIDbyD8hApY5apdqLtaYMXpv+rMGQP5ZqoGd3izBM9yZEH8d9UQSSyym/te07GrCax63tb6lYgUoUPxVFCEN4RmzW1VuQGvxtfhu/rK5ofQPac8uaZskY3NWLoSF56BQqEG9waI4pCF5/Cq413N6/M= htb@ransom
+</span></code></pre></div></div>
+<p>I’ll assume that’s the username. It works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>ssh <span class="nt">-i</span> unzipped/.ssh/id_rsa htb@10.10.11.153
+<span class="go">Welcome to Ubuntu 20.04.4 LTS (GNU/Linux 5.4.0-77-generic x86_64)
+
+ * Documentation:  https://help.ubuntu.com
+ * Management:     https://landscape.canonical.com
+ * Support:        https://ubuntu.com/advantage
+
+0 updates can be applied immediately.
+
+
+Last login: Tue Mar  8 19:01:53 2022 from 10.10.14.8
+</span><span class="gp">htb@ransom:~$</span><span class="w">
+</span></code></pre></div></div>
+<h2 id="shell-as-root">Shell as root</h2>
+<h3 id="enumeration">Enumeration</h3>
+<h4 id="identify-web-directory">Identify Web Directory</h4>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> identified Apache running on TCP 80. There’s a single site config file:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">htb@ransom:/$</span><span class="w"> </span><span class="nb">ls</span> /etc/apache2/sites-enabled/
+<span class="go">000-default.conf
+</span></code></pre></div></div>
+<p>It shows the web root running out of <code class="language-plaintext highlighter-rouge">/srv/prod</code>:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>&lt;VirtualHost <span class="k">*</span>:80&gt;
+        ServerAdmin webmaster@localhost
+        DocumentRoot /srv/prod/public
+
+        ErrorLog <span class="k">${</span><span class="nv">APACHE_LOG_DIR</span><span class="k">}</span>/error.log
+        CustomLog <span class="k">${</span><span class="nv">APACHE_LOG_DIR</span><span class="k">}</span>/access.log combined
+            &lt;Directory /srv/prod/public&gt;
+               Options +FollowSymlinks
+               AllowOverride All
+               Require all granted
+            &lt;/Directory&gt;
+
+&lt;/VirtualHost&gt;
+</code></pre></div></div>
+<h4 id="identify-framework">Identify Framework</h4>
+<p>I noted during enumeration that there was a <code class="language-plaintext highlighter-rouge">laravel_session</code> cookie set on visiting the page. There are further clues to show that is the framework in use on this site.</p>
+<p><a href="https://getcomposer.org/">Composer</a> is a package / dependency manager for PHP, so the <code class="language-plaintext highlighter-rouge">composer.json</code> file is a good place to look at how the application is set up. Right at the top of the file there are references to Laravel:</p>
+<div class="language-json highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="p">{</span><span class="w">
+    </span><span class="nl">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"laravel/laravel"</span><span class="p">,</span><span class="w">
+    </span><span class="nl">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"project"</span><span class="p">,</span><span class="w">
+    </span><span class="nl">"description"</span><span class="p">:</span><span class="w"> </span><span class="s2">"The Laravel Framework."</span><span class="p">,</span><span class="w">
+    </span><span class="nl">"keywords"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"framework"</span><span class="p">,</span><span class="w"> </span><span class="s2">"laravel"</span><span class="p">],</span><span class="w">
+    </span><span class="nl">"license"</span><span class="p">:</span><span class="w"> </span><span class="s2">"MIT"</span><span class="p">,</span><span class="w">
+    </span><span class="nl">"require"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w">
+        </span><span class="nl">"php"</span><span class="p">:</span><span class="w"> </span><span class="s2">"^7.3|^8.0"</span><span class="p">,</span><span class="w">
+        </span><span class="nl">"fruitcake/laravel-cors"</span><span class="p">:</span><span class="w"> </span><span class="s2">"^2.0"</span><span class="p">,</span><span class="w">
+        </span><span class="nl">"guzzlehttp/guzzle"</span><span class="p">:</span><span class="w"> </span><span class="s2">"^7.0.1"</span><span class="p">,</span><span class="w">
+        </span><span class="nl">"laravel/framework"</span><span class="p">:</span><span class="w"> </span><span class="s2">"^8.75"</span><span class="p">,</span><span class="w">
+        </span><span class="nl">"laravel/sanctum"</span><span class="p">:</span><span class="w"> </span><span class="s2">"^2.11"</span><span class="p">,</span><span class="w">
+        </span><span class="nl">"laravel/tinker"</span><span class="p">:</span><span class="w"> </span><span class="s2">"^2.5"</span><span class="w">       
+    </span><span class="p">},</span><span class="w">
+    </span><span class="nl">"require-dev"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w">
+        </span><span class="nl">"facade/ignition"</span><span class="p">:</span><span class="w"> </span><span class="s2">"^2.5"</span><span class="p">,</span><span class="w">
+        </span><span class="nl">"fakerphp/faker"</span><span class="p">:</span><span class="w"> </span><span class="s2">"^1.9.1"</span><span class="p">,</span><span class="w">
+        </span><span class="nl">"laravel/sail"</span><span class="p">:</span><span class="w"> </span><span class="s2">"^1.0.1"</span><span class="p">,</span><span class="w">
+        </span><span class="nl">"mockery/mockery"</span><span class="p">:</span><span class="w"> </span><span class="s2">"^1.4.4"</span><span class="p">,</span><span class="w">
+        </span><span class="nl">"nunomaduro/collision"</span><span class="p">:</span><span class="w"> </span><span class="s2">"^5.10"</span><span class="p">,</span><span class="w">
+        </span><span class="nl">"phpunit/phpunit"</span><span class="p">:</span><span class="w"> </span><span class="s2">"^9.5.10"</span><span class="w">
+    </span><span class="p">},</span><span class="w">
+    </span><span class="nl">"autoload"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w">
+</span><span class="err">...</span><span class="p">[</span><span class="err">snip</span><span class="p">]</span><span class="err">...</span><span class="w">
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">README.md</code> is also all about Laravel. <code class="language-plaintext highlighter-rouge">server.php</code> is a standard Laravel file as well:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?php</span>
+
+<span class="cd">/**
+ * Laravel - A PHP Framework For Web Artisans
+ *
+ * @package  Laravel
+ * @author   Taylor Otwell &lt;taylor@laravel.com&gt;
+ */</span>
+
+<span class="nv">$uri</span> <span class="o">=</span> <span class="nb">urldecode</span><span class="p">(</span>
+    <span class="nb">parse_url</span><span class="p">(</span><span class="nv">$_SERVER</span><span class="p">[</span><span class="s1">'REQUEST_URI'</span><span class="p">],</span> <span class="kc">PHP_URL_PATH</span><span class="p">)</span>
+<span class="p">);</span>
+
+<span class="c1">// This file allows us to emulate Apache's "mod_rewrite" functionality from the</span>
+<span class="c1">// built-in PHP web server. This provides a convenient way to test a Laravel</span>
+<span class="c1">// application without having installed a "real" web server software here.</span>
+<span class="k">if</span> <span class="p">(</span><span class="nv">$uri</span> <span class="o">!==</span> <span class="s1">'/'</span> <span class="o">&amp;&amp;</span> <span class="nb">file_exists</span><span class="p">(</span><span class="k">__DIR__</span><span class="mf">.</span><span class="s1">'/public'</span><span class="mf">.</span><span class="nv">$uri</span><span class="p">))</span> <span class="p">{</span>
+    <span class="k">return</span> <span class="kc">false</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="k">require_once</span> <span class="k">__DIR__</span><span class="mf">.</span><span class="s1">'/public/index.php'</span><span class="p">;</span>
+</code></pre></div></div>
+<h4 id="find-password">Find Password</h4>
+<p>I’ll do a deeper dive into the structure of a Laravel application in <a href="#structure-of-a-laravel-application">Beyond Root</a>. The quick way to find where the login auth happens is with <code class="language-plaintext highlighter-rouge">grep</code>, looking for the messages in the response:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">htb@ransom:/srv/prod$</span><span class="w"> </span><span class="nb">grep</span> <span class="nt">-r</span> <span class="s2">"Invalid Password"</span> <span class="nb">.</span>
+<span class="go">./app/Http/Controllers/AuthController.php:        return "Invalid Password";
+</span></code></pre></div></div>
+<p>That message comes from this function:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="cd">/**
+     * Handle account login
+     * 
+     */</span>
+    <span class="k">public</span> <span class="k">function</span> <span class="n">customLogin</span><span class="p">(</span><span class="kt">Request</span> <span class="nv">$request</span><span class="p">)</span>
+    <span class="p">{</span>
+        <span class="nv">$request</span><span class="o">-&gt;</span><span class="nf">validate</span><span class="p">([</span>
+            <span class="s1">'password'</span> <span class="o">=&gt;</span> <span class="s1">'required'</span><span class="p">,</span>
+        <span class="p">]);</span>
+
+        <span class="k">if</span> <span class="p">(</span><span class="nv">$request</span><span class="o">-&gt;</span><span class="nf">get</span><span class="p">(</span><span class="s1">'password'</span><span class="p">)</span> <span class="o">==</span> <span class="s2">"UHC-March-Global-PW!"</span><span class="p">)</span> <span class="p">{</span>
+            <span class="nf">session</span><span class="p">([</span><span class="s1">'loggedin'</span> <span class="o">=&gt;</span> <span class="kc">True</span><span class="p">]);</span>
+            <span class="k">return</span> <span class="s2">"Login Successful"</span><span class="p">;</span>
+        <span class="p">}</span>
+
+        <span class="k">return</span> <span class="s2">"Invalid Password"</span><span class="p">;</span>
+    <span class="p">}</span>
+</code></pre></div></div>
+<p>The password is hard-coded as “UHC-March-Global-PW!”.</p>
+<h3 id="su--ssh">su / ssh</h3>
+<p>That happens to be the root password as well, working for <code class="language-plaintext highlighter-rouge">su</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">htb@ransom:/$</span><span class="w"> </span>su -
+<span class="go">Password: 
+</span><span class="gp">root@ransom:~#</span><span class="w"> 
+</span></code></pre></div></div>
+<p>And for ssh:</p>
+<div class="language-console sshpass-disclaimer highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>sshpass <span class="nt">-p</span> <span class="s1">'UHC-March-Global-PW!'</span> ssh root@10.10.11.153
+<span class="go">...[snip]...
+</span><span class="gp">root@ransom:~#</span><span class="w">
+</span></code></pre></div></div>
+<p>And I can grab <code class="language-plaintext highlighter-rouge">root.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@ransom:~#</span><span class="w"> </span><span class="nb">cat </span>root.txt
+<span class="go">d1c64eca************************
+</span></code></pre></div></div>
+<h2 id="beyond-root">Beyond Root</h2>
+<h3 id="structure-of-a-laravel-application">Structure of a Laravel Application</h3>
+<p>Like many web frameworks, Laravel uses the concept of a route to tie a web url endpoint to a function that will handle that. In something like Python Flask, that involves putting a decorator on the function:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nd">@app.route</span><span class="p">(</span><span class="sh">'</span><span class="s">/</span><span class="sh">'</span><span class="p">)</span>
+<span class="k">def</span> <span class="nf">index</span><span class="p">():</span>
+    <span class="k">return</span> <span class="sh">'</span><span class="s">Web App with Python Flask!</span><span class="sh">'</span>
+</code></pre></div></div>
+<p>In Laravel, there’s a <code class="language-plaintext highlighter-rouge">routes</code> folder at the base of the application:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">htb@ransom:/srv/prod$</span><span class="w"> </span><span class="nb">ls </span>routes/
+<span class="go">api.php  channels.php  console.php  web.php
+</span></code></pre></div></div>
+<p>I can list all the routes using <code class="language-plaintext highlighter-rouge">artisan</code>, the <a href="https://laravel.com/docs/9.x/artisan">command line interface included with Laravel</a>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">htb@ransom:/srv/prod$</span><span class="w"> </span>php artisan route:list
+<span class="go">+--------+----------+---------------------+----------+------------------------------------------------------------+------------+
+| Domain | Method   | URI                 | Name     | Action                                                     | Middleware |
++--------+----------+---------------------+----------+------------------------------------------------------------+------------+
+|        | GET|HEAD | /                   |          | App\Http\Controllers\TasksController@index                 | web        |
+|        | GET|HEAD | api/login           | apilogin | App\Http\Controllers\AuthController@customLogin            | api        |
+|        | GET|HEAD | login               | login    | App\Http\Controllers\AuthController@show_login             | web        |
+|        | GET|HEAD | sanctum/csrf-cookie |          | Laravel\Sanctum\Http\Controllers\CsrfCookieController@show | web        |
++--------+----------+---------------------+----------+------------------------------------------------------------+------------+
+</span></code></pre></div></div>
+<p>The output shows the method and uri that pair with some “Action”, which is a path to a controller and the function in that controller that handles that method/uri.</p>
+<p>Looking at <code class="language-plaintext highlighter-rouge">routes/web.php</code>, it imports the controller classes using <code class="language-plaintext highlighter-rouge">use</code> (like <code class="language-plaintext highlighter-rouge">import</code> in Python), and then ties them together with a <code class="language-plaintext highlighter-rouge">Route</code> object:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?php</span>
+
+<span class="kn">use</span> <span class="nc">App\Http\Controllers\TasksController</span><span class="p">;</span>
+<span class="kn">use</span> <span class="nc">App\Http\Controllers\AuthController</span><span class="p">;</span>
+<span class="kn">use</span> <span class="nc">Illuminate\Support\Facades\Route</span><span class="p">;</span>
+
+<span class="cm">/*
+|--------------------------------------------------------------------------
+| Web Routes
+|--------------------------------------------------------------------------
+|
+| Here is where you can register web routes for your application. These
+| routes are loaded by the RouteServiceProvider within a group which
+| contains the "web" middleware group. Now create something great!
+|
+*/</span>
+
+<span class="nc">Route</span><span class="o">::</span><span class="nf">get</span><span class="p">(</span><span class="s1">'/'</span><span class="p">,</span> <span class="p">[</span><span class="nc">TasksController</span><span class="o">::</span><span class="n">class</span><span class="p">,</span> <span class="s1">'index'</span><span class="p">]);</span>
+<span class="nc">Route</span><span class="o">::</span><span class="nf">get</span><span class="p">(</span><span class="s1">'/login'</span><span class="p">,</span> <span class="p">[</span><span class="nc">AuthController</span><span class="o">::</span><span class="n">class</span><span class="p">,</span> <span class="s1">'show_login'</span><span class="p">])</span><span class="o">-&gt;</span><span class="nf">name</span><span class="p">(</span><span class="s1">'login'</span><span class="p">);</span>
+</code></pre></div></div>
+<p>So <code class="language-plaintext highlighter-rouge">/login</code> is now connected to The <code class="language-plaintext highlighter-rouge">AuthController</code> class’ <code class="language-plaintext highlighter-rouge">show_login</code> function. Sometimes you’ll see the function written as <code class="language-plaintext highlighter-rouge">[class]@[function]</code>. Optionally, the <code class="language-plaintext highlighter-rouge">Route</code> object can be assigned a name. In PHP, <code class="language-plaintext highlighter-rouge">-&gt;</code> is the object operator, used to access parameters and methods of the object. So everything up to that operator is creating a <code class="language-plaintext highlighter-rouge">Route</code> object, and then we’re calling the <code class="language-plaintext highlighter-rouge">name</code> method of the result, passing in the name we want. When no name is given, it gets a name like <code class="language-plaintext highlighter-rouge">generated::r52gIYGkbT8B5tOM</code>.</p>
+<h3 id="request-handling">Request Handling</h3>
+<p>I identified some odd behavior with the application above, where it only accepted GET requests, but if would read JSON data out of the POST body just like it was a GET parameter. I can look at that now and see how much of that I can explain.</p>
+<h4 id="405-for-post">405 for POST</h4>
+<p>First, it’s clear why the application returned a 405 Method Not Allowed when I tried to send a POST request to <code class="language-plaintext highlighter-rouge">/login</code>. The login GET request went to <code class="language-plaintext highlighter-rouge">/api/login</code>, which is defined in <code class="language-plaintext highlighter-rouge">routes/api.php</code>:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nc">Route</span><span class="o">::</span><span class="nf">get</span><span class="p">(</span><span class="s1">'/login'</span><span class="p">,</span> <span class="p">[</span><span class="nc">AuthController</span><span class="o">::</span><span class="n">class</span><span class="p">,</span> <span class="s1">'customLogin'</span><span class="p">])</span><span class="o">-&gt;</span><span class="nf">name</span><span class="p">(</span><span class="s1">'apilogin'</span><span class="p">);</span>
+</code></pre></div></div>
+<p>This maps the function to handle GET and HEAD requests. There were no routes defined for POST, so it returns 405, saying that uri is defined, but not for this method.</p>
+<p>As root, I can write to these files. I’ll change that route to <code class="language-plaintext highlighter-rouge">post</code>:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nc">Route</span><span class="o">::</span><span class="nf">post</span><span class="p">(</span><span class="s1">'/login'</span><span class="p">,</span> <span class="p">[</span><span class="nc">AuthController</span><span class="o">::</span><span class="n">class</span><span class="p">,</span> <span class="s1">'customLogin'</span><span class="p">])</span><span class="o">-&gt;</span><span class="nf">name</span><span class="p">(</span><span class="s1">'apilogin'</span><span class="p">);</span>
+</code></pre></div></div>
+<p>Now it works as a POST:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/image-20220312072624255.png"><img alt="image-20220312072624255" src="https://0xdfimages.gitlab.io/img/image-20220312072624255.png"/><em>Click for full size image</em></a></p>
+<p>And fails as a GET:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/image-20220312072640952.png"><img alt="image-20220312072640952" src="https://0xdfimages.gitlab.io/img/image-20220312072640952.png"/><em>Click for full size image</em></a></p>
+<p>If I update the route to the following, both work:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nc">Route</span><span class="o">::</span><span class="k">match</span><span class="p">([</span><span class="s1">'GET'</span><span class="p">,</span> <span class="s1">'POST'</span><span class="p">],</span> <span class="s1">'/login'</span><span class="p">,</span> <span class="p">[</span><span class="nc">AuthController</span><span class="o">::</span><span class="n">class</span><span class="p">,</span> <span class="s1">'customLogin'</span><span class="p">])</span><span class="o">-&gt;</span><span class="nf">name</span><span class="p">(</span><span class="s1">'apilogin'</span><span class="p">);</span>
+</code></pre></div></div>
+<h4 id="json-data-in-get---source-analysis">JSON Data in GET - Source Analysis</h4>
+<p>I looked at the <code class="language-plaintext highlighter-rouge">customLogin</code> function above to get the password. This time I’m interested in the data being passed into the function, the <code class="language-plaintext highlighter-rouge">Request</code> object <code class="language-plaintext highlighter-rouge">$request</code>:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="k">public</span> <span class="k">function</span> <span class="n">customLogin</span><span class="p">(</span><span class="kt">Request</span> <span class="nv">$request</span><span class="p">)</span>
+    <span class="p">{</span>
+        <span class="nv">$request</span><span class="o">-&gt;</span><span class="nf">validate</span><span class="p">([</span>
+            <span class="s1">'password'</span> <span class="o">=&gt;</span> <span class="s1">'required'</span><span class="p">,</span>
+        <span class="p">]);</span>
+
+        <span class="k">return</span> <span class="nv">$request</span><span class="p">;</span>
+
+        <span class="k">if</span> <span class="p">(</span><span class="nv">$request</span><span class="o">-&gt;</span><span class="nf">get</span><span class="p">(</span><span class="s1">'password'</span><span class="p">)</span> <span class="o">==</span> <span class="s2">"UHC-March-Global-PW!"</span><span class="p">)</span> <span class="p">{</span>
+            <span class="nf">session</span><span class="p">([</span><span class="s1">'loggedin'</span> <span class="o">=&gt;</span> <span class="kc">True</span><span class="p">]);</span>
+            <span class="k">return</span> <span class="s2">"Login Successful"</span><span class="p">;</span>
+        <span class="p">}</span>
+  
+        <span class="k">return</span> <span class="s2">"Invalid Password"</span><span class="p">;</span>
+    <span class="p">}</span>
+</code></pre></div></div>
+<p>The Laravel version is 8.83.1:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">htb@ransom:/srv/prod$</span><span class="w"> </span>php artisan <span class="nt">--version</span>
+<span class="go">Laravel Framework 8.83.1
+</span></code></pre></div></div>
+<p>The <a href="https://laravel.com/api/8.x/Illuminate/Http/Request.html#method_get">Laravel API docs</a> for 8.x have a reference for <code class="language-plaintext highlighter-rouge">get</code>:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220312103039611.webp" type="image/webp"/>
+<img alt="image-20220312103039611" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220312103039611.png"/>
+</picture>
+<p>The source for this function is <a href="https://github.com/laravel/framework/blob/8.x/src/Illuminate/Http/Request.php#L360-L371">on GitHub</a>, showing that it just calls the parent’s <code class="language-plaintext highlighter-rouge">get</code>:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="k">public</span> <span class="k">function</span> <span class="n">get</span><span class="p">(</span><span class="kt">string</span> <span class="nv">$key</span><span class="p">,</span> <span class="nv">$default</span> <span class="o">=</span> <span class="kc">null</span><span class="p">)</span>
+    <span class="p">{</span>
+        <span class="k">return</span> <span class="k">parent</span><span class="o">::</span><span class="nf">get</span><span class="p">(</span><span class="nv">$key</span><span class="p">,</span> <span class="nv">$default</span><span class="p">);</span>
+    <span class="p">}</span>
+</code></pre></div></div>
+<p>Up at <a href="https://github.com/laravel/framework/blob/8.x/src/Illuminate/Http/Request.php#L20">line 20</a> in that same file, the <code class="language-plaintext highlighter-rouge">Request</code> class is created, extending <code class="language-plaintext highlighter-rouge">SymfonyReqeust</code>:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kd">class</span> <span class="nc">Request</span> <span class="kd">extends</span> <span class="nc">SymfonyRequest</span> <span class="kd">implements</span> <span class="nc">Arrayable</span><span class="p">,</span> <span class="nc">ArrayAccess</span>
+</code></pre></div></div>
+<p>The <a href="https://symfony.com/doc/current/components/http_foundation.html">Symfony docs</a> don’t have that much to say about <code class="language-plaintext highlighter-rouge">get</code>, but there’s a link to the <a href="https://github.com/symfony/symfony/blob/6.0/src/Symfony/Component/HttpFoundation/ParameterBag.php#L77-L80">source</a>. This code is super simple as well:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="k">public</span> <span class="k">function</span> <span class="n">get</span><span class="p">(</span><span class="kt">string</span> <span class="nv">$key</span><span class="p">,</span> <span class="kt">mixed</span> <span class="nv">$default</span> <span class="o">=</span> <span class="kc">null</span><span class="p">):</span> <span class="kt">mixed</span>
+    <span class="p">{</span>
+        <span class="k">return</span> <span class="nf">\array_key_exists</span><span class="p">(</span><span class="nv">$key</span><span class="p">,</span> <span class="nv">$this</span><span class="o">-&gt;</span><span class="n">parameters</span><span class="p">)</span> <span class="o">?</span> <span class="nv">$this</span><span class="o">-&gt;</span><span class="n">parameters</span><span class="p">[</span><span class="nv">$key</span><span class="p">]</span> <span class="o">:</span> <span class="nv">$default</span><span class="p">;</span>
+    <span class="p">}</span>
+</code></pre></div></div>
+<p>This function is part of the <code class="language-plaintext highlighter-rouge">ParameterBag</code> class. I’m not going to go much further down this rabbit hole, other than to say, it’s clear the framework is handling the stuff submitted to the request in a very complicated way, and it’s not surprising that perhaps even stuff passed in the body could be parsed and accessible.</p>
+<h4 id="json-data-in-get---debugging">JSON Data in GET - Debugging</h4>
+<p>One way to debug in Laravel is to insert <code class="language-plaintext highlighter-rouge">dd($var)</code>, and then the contents of <code class="language-plaintext highlighter-rouge">$var</code> will be dumped in the return at that point in the code. I’ll try it, adding <code class="language-plaintext highlighter-rouge">dd($request);</code> to the top of the <code class="language-plaintext highlighter-rouge">customLogin</code> function. Now I’ll visit <code class="language-plaintext highlighter-rouge">http://10.10.11.153/api/login?password=0xdfpass</code>, and the page returns:</p>
+<div style="max-height: 500px; overflow: hidden; position: relative; margin-bottom: 20px;">
+<a href="https://0xdfimages.gitlab.io/img/image-20220312103952923.png">
+<img alt="image-20220312103952923" src="https://0xdfimages.gitlab.io/img/image-20220312103952923.png" style="clip-path: polygon(0 0, 100% 0, 100% 460px, 49% 490px, 51% 470px, 0 500px); -webkit-clip-path: polygon(0 0, 100% 0, 100% 460px, 49% 490px, 51% 470px, 0 500px)"/>
+</a>
+<div style="position: absolute; right: 20px; top: 475px"><a href="https://0xdfimages.gitlab.io/img/image-20220312103952923.png"><i>Click for full image</i></a></div>
+</div>
+<p>It’s interesting to note that there’s a <code class="language-plaintext highlighter-rouge">ParameterBag</code> in <code class="language-plaintext highlighter-rouge">attributes</code> and an <code class="language-plaintext highlighter-rouge">InputBag</code> in <code class="language-plaintext highlighter-rouge">request</code> and <code class="language-plaintext highlighter-rouge">query</code>, as well as a few other Symfony “bags”. I can’t completely explain how <code class="language-plaintext highlighter-rouge">get</code> is reaching into the <code class="language-plaintext highlighter-rouge">InputBag</code>, but it clearly is, as that’s the intended behavior.</p>
+<p>I’ll turn on Burp intercept, refresh, and modify the request, adding the <code class="language-plaintext highlighter-rouge">Content-type: application/json</code> header and a JSON body with some test parameters. Now the <code class="language-plaintext highlighter-rouge">json</code> part of the <code class="language-plaintext highlighter-rouge">Request</code> has those values in another <code class="language-plaintext highlighter-rouge">ParameterBag</code>:</p>
+<div style="max-height: 450px; overflow: hidden; position: relative; margin-bottom: 20px;">
+<a href="https://0xdfimages.gitlab.io/img/image-20220312104325584.png">
+<img alt="image-20220312104325584" src="https://0xdfimages.gitlab.io/img/image-20220312104325584.png" style="clip-path: polygon(0 0, 100% 0, 100% 410px, 49% 440px, 51% 420px, 0 450px); -webkit-clip-path: polygon(0 0, 100% 0, 100% 410px, 49% 440px, 51% 420px, 0 450px)"/>
+</a>
+<div style="position: absolute; right: 20px; top: 425px"><a href="https://0xdfimages.gitlab.io/img/image-20220312104325584.png"><i>Click for full image</i></a></div>
+</div>
+<p>This explains how the <code class="language-plaintext highlighter-rouge">get</code> function is seeing it, at least partially. I’m not sure where the code is looping over these various “bags”, but it must be somewhere.</p>
+<p>If I submit one with the password argument in both the GET parameter and in JSON, and it shows that both make it to the <code class="language-plaintext highlighter-rouge">Request</code> object:</p>
+<div style="max-height: 400px; overflow: hidden; position: relative; margin-bottom: 20px;">
+<a href="https://0xdfimages.gitlab.io/img/image-20220312104847817.png">
+<img alt="" src="https://0xdfimages.gitlab.io/img/image-20220312104847817.png" style="clip-path: polygon(0 0, 100% 0, 100% 360px, 49% 390px, 51% 370px, 0 400px); -webkit-clip-path: polygon(0 0, 100% 0, 100% 360px, 49% 390px, 51% 370px, 0 400px)"/>
+</a>
+<div style="position: absolute; right: 20px; top: 375px"><a href="https://0xdfimages.gitlab.io/img/image-20220312104847817.png"><i>Click for full image</i></a></div>
+</div>
+<p>I am curious which one takes priority, so I’ll remove the <code class="language-plaintext highlighter-rouge">dd</code> call and let it run like normal, and resubmit that request in Burp Repeater. It seems that the GET param takes precedence:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220312111257653.webp" type="image/webp"/>
+<img alt="image-20220312111257653" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220312111257653.png"/>
+</picture>
+<p>Switching them results in a failed login.</p>
+<h3 id="type-juggling">Type Juggling</h3>
+<h4 id="value-of-password">Value of password</h4>
+<p>Now understanding how the variable is getting to the function, I’ll look at the type juggling bypass.</p>
+<p>I’ll use <code class="language-plaintext highlighter-rouge">dd($request-&gt;get('password'))</code>, as that’s what’s going into the comparson. With a string, it returns just the string:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220312111947552.webp" type="image/webp"/>
+<img alt="image-20220312111947552" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220312111947552.png"/>
+</picture>
+<p>If I change it to <code class="language-plaintext highlighter-rouge">true</code> in the URL, it returns the string “true”:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220312112011438.webp" type="image/webp"/>
+<img alt="image-20220312112011438" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220312112011438.png"/>
+</picture>
+<p>If I use Burp to modify the request using JSON data, it returns the true object:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220312112040828.webp" type="image/webp"/>
+<img alt="image-20220312112040828" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220312112040828.png"/>
+</picture>
+<h4 id="php-equals">PHP Equals</h4>
+<p>To show how <code class="language-plaintext highlighter-rouge">==</code> works in PHP, I’ll open a PHP shell with <code class="language-plaintext highlighter-rouge">php -a</code>. I’ll create a test case:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">php &gt;</span><span class="w"> </span><span class="k">if</span> <span class="o">(</span><span class="s2">"password"</span> <span class="o">==</span> <span class="s2">"UHC-March-Global-PW!"</span><span class="o">)</span> <span class="o">{</span><span class="nb">echo</span> <span class="s2">"Authenticated"</span><span class="p">;</span><span class="o">}</span> <span class="k">else</span> <span class="o">{</span><span class="nb">echo</span> <span class="s2">"Rejected!"</span><span class="p">;</span><span class="o">}</span><span class="p">;</span>
+<span class="go">Rejected!
+</span></code></pre></div></div>
+<p>Now I’ll try replacing <code class="language-plaintext highlighter-rouge">"password"</code> with the string <code class="language-plaintext highlighter-rouge">"true"</code>. It still fails:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">php &gt;</span><span class="w"> </span><span class="k">if</span> <span class="o">(</span><span class="s2">"true"</span> <span class="o">==</span> <span class="s2">"UHC-March-Global-PW!"</span><span class="o">)</span> <span class="o">{</span><span class="nb">echo</span> <span class="s2">"Authenticated"</span><span class="p">;</span><span class="o">}</span> <span class="k">else</span> <span class="o">{</span><span class="nb">echo</span> <span class="s2">"Rejected!"</span><span class="p">;</span><span class="o">}</span><span class="p">;</span>
+<span class="go">Rejected!
+</span></code></pre></div></div>
+<p>But if I make that <code class="language-plaintext highlighter-rouge">true</code>, it works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">php &gt;</span><span class="w"> </span><span class="k">if</span> <span class="o">(</span><span class="nb">true</span> <span class="o">==</span> <span class="s2">"UHC-March-Global-PW!"</span><span class="o">)</span> <span class="o">{</span><span class="nb">echo</span> <span class="s2">"Authenticated"</span><span class="p">;</span><span class="o">}</span> <span class="k">else</span> <span class="o">{</span><span class="nb">echo</span> <span class="s2">"Rejected!"</span><span class="p">;</span><span class="o">}</span><span class="p">;</span>
+<span class="go">Authenticated
+</span></code></pre></div></div>
+<p>When PHP compares two objects of different types for comparison using the equal operator (<code class="language-plaintext highlighter-rouge">==</code>), it does a thing called “type juggling” to try to get them to the same type, and then compares them. There’s an awesome chart from <a href="https://owasp.org/www-pdf-archive/PHPMagicTricks-TypeJuggling.pdf">this 2015 OWASP presentation</a>:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220312143447181.webp" type="image/webp"/>
+<img alt="image-20220312143447181" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220312143447181.png"/>
+</picture>
+<p>The case here is <code class="language-plaintext highlighter-rouge">true</code> vs <code class="language-plaintext highlighter-rouge">"php"</code>, which resolves to <code class="language-plaintext highlighter-rouge">true</code>. According to this chart, I could have also passed in the number 0 (for some reason). It does work:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/image-20220312143623688.png"><img alt="image-20220312143623688" src="https://0xdfimages.gitlab.io/img/image-20220312143623688.png"/><em>Click for full size image</em></a></p>
+<p>It’s interesting that all other numbers fail here.</p>
+<h4 id="fix-vulnerability">Fix Vulnerability</h4>
+<p>To fix this vulnerability, PHP’s <a href="https://www.php.net/manual/en/language.operators.comparison.php">list of comparison operators</a> gives  <code class="language-plaintext highlighter-rouge">===</code>, the identical operator. This checks that the two things are equal <em>and</em> that they are the same type.</p>
+<p>I’ll update that in the code on Ransom, and now the auth bypass doesn’t work anymore:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/image-20220312144012777.png"><img alt="image-20220312144012777" src="https://0xdfimages.gitlab.io/img/image-20220312144012777.png"/><em>Click for full size image</em></a></p>
+<p>The correct password still does:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/image-20220312144045656.png"><img alt="image-20220312144045656" src="https://0xdfimages.gitlab.io/img/image-20220312144045656.png"/><em>Click for full size image</em></a></p>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2022/03/15/htb-ransom.html"></a>
+</article>

