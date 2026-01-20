@@ -91,17 +91,14 @@ echo      Ollama is running
 
 :ollama_done
 
-:: Setup model
-echo [3/3] Checking model...
+:: Setup model - always rebuild to pick up Modelfile changes
+echo [3/3] Building model...
 cd /d "%AGENT_DIR%"
 
-:: Check if htb-pentest model exists
-"%OLLAMA_EXE%" list 2>nul | findstr /i "htb-pentest" >nul 2>&1
-if %ERRORLEVEL%==0 goto :model_ready
+:: Check which Modelfile to use
+if not exist "%AGENT_DIR%\Modelfile.lite" goto :no_modelfile
 
-echo      Model not found, building...
-if not exist "%AGENT_DIR%\Modelfile.lite" goto :model_ready
-
+:: Ensure base model is available
 echo      Checking mistral:7b...
 "%OLLAMA_EXE%" list | findstr /i "mistral:7b" >nul 2>&1
 if not errorlevel 1 goto :build_model
@@ -110,12 +107,13 @@ echo      Pulling mistral:7b...
 "%OLLAMA_EXE%" pull mistral:7b
 
 :build_model
-echo      Building htb-pentest...
+echo      Rebuilding htb-pentest from Modelfile...
 "%OLLAMA_EXE%" create htb-pentest -f Modelfile.lite
+echo      Model rebuilt successfully
 goto :start_gui
 
-:model_ready
-echo      Model htb-pentest is ready
+:no_modelfile
+echo      [WARN] No Modelfile.lite found, skipping model build
 
 :start_gui
 echo.
