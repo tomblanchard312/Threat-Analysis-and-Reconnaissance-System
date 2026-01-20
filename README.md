@@ -1,16 +1,69 @@
-# Pentesting Agent
+# HTB Pentest Agent
 
 AI-powered penetration testing assistant with tool execution capabilities. Trained on Hack The Box writeups for educational security testing.
 
+## Quick Start
+
+**Pull the model from Ollama:**
+```bash
+ollama pull sirrand/htb-pentest
+```
+
+**Or deploy to USB:**
+```powershell
+.\deploy\usb-deploy\deploy-to-usb.ps1 -TargetDrive E: -RemoteModel "sirrand/htb-pentest"
+```
+
+## Features
+
+- **HTB-Trained Model**: Fine-tuned on Hack The Box writeups for realistic pentesting assistance
+- **Tool Execution**: Direct command execution via Kali Docker container (600+ tools)
+- **Knowledge Base (RAG)**: Import PDFs and documents to enhance model responses
+- **Self-Learning**: Feedback system to correct and improve model behavior over time
+- **Portable Deployment**: USB drive or Jetson Nano deployment options
+- **MCP Integration**: Model Context Protocol support for extended capabilities
+
+---
+
 ## Deployment Options
 
-### Option 1: Portable USB Drive (Windows)
+### Option 1: Remote Model (Easiest)
 
-Run the agent from any Windows machine without installation. Perfect for field work and air-gapped environments.
+Pull directly from Ollama registry - no GGUF file needed:
 
-### Option 2: Jetson Orin Nano (Edge AI)
+```bash
+ollama pull sirrand/htb-pentest
+```
 
-Deploy as a dedicated edge device with 8GB unified memory. Ideal for a persistent pentest workstation or lab environment.
+### Option 2: USB Drive Deployment
+
+Deploy to a USB drive for portable use on any Windows machine:
+
+```powershell
+# Lite mode - pulls model at runtime (~4GB download on first run)
+.\deploy\usb-deploy\deploy-to-usb.ps1 -TargetDrive E: -LiteMode
+
+# Remote model - uses published model from Ollama registry
+.\deploy\usb-deploy\deploy-to-usb.ps1 -TargetDrive E: -RemoteModel "sirrand/htb-pentest"
+
+# Full mode - includes GGUF file (4GB+ USB space required)
+.\deploy\usb-deploy\deploy-to-usb.ps1 -TargetDrive E: -IncludeModel
+```
+
+### Option 3: Jetson Orin Nano
+
+Deploy as a dedicated edge AI device with 8GB unified memory.
+
+### Deployment Script Options
+
+| Parameter | Description |
+|-----------|-------------|
+| `-TargetDrive` | Target drive letter (e.g., "E:") |
+| `-LiteMode` | Deploy without GGUF, pulls mistral:7b at runtime |
+| `-RemoteModel` | Specify remote model to pull (e.g., "sirrand/htb-pentest") |
+| `-IncludeModel` | Copy local GGUF file to USB (4GB+) |
+| `-DownloadOllama` | Download fresh Ollama installation |
+| `-IncludeTraining` | Include training code |
 
 ---
 
@@ -19,37 +72,130 @@ Deploy as a dedicated edge device with 8GB unified memory. Ideal for a persisten
 ```text
 Pentesting Agent/
 ├── README.md                    # This file
-├── htb-model-training/          # Model training scripts and data
-│   ├── data/                    # Training data (writeups)
-│   ├── scripts/                 # Utility scripts
-│   ├── configs/                 # Training configurations
-│   ├── train_model.py           # Main training script
-│   ├── merge_lora.py            # LoRA merging script
-│   └── requirements.txt         # Python dependencies
+├── start-gui.bat                # GUI launcher (Windows)
+├── start-agent.bat              # CLI launcher (Windows)
+├── deploy/
+│   └── usb-deploy/
+│       └── deploy-to-usb.ps1    # USB deployment script
 │
-└── agent/                       # Deployable agent package
-    ├── pentest-agent.py         # CLI interface
-    ├── pentest-gui.py           # GUI interface (CustomTkinter)
-    ├── Modelfile                # Ollama model configuration
-    ├── start-agent.bat          # CLI launcher (Windows)
-    ├── start-agent.sh           # CLI launcher (Linux/Jetson)
-    ├── start-gui.bat            # GUI launcher (Windows)
-    ├── start-gui.sh             # GUI launcher (Linux/Jetson)
-    ├── tools/                   # Portable pentest tools
-    │   ├── download-tools.bat   # Tool downloader (batch)
-    │   ├── download-tools.ps1   # Tool downloader (PowerShell)
-    │   └── install-npcap.bat    # Npcap installer helper
-    ├── docker/                  # Docker Kali Linux setup
-    │   ├── Dockerfile           # Kali container definition
-    │   ├── docker-compose.yml   # Container orchestration
-    │   ├── start-kali.bat       # Start container (Windows)
-    │   ├── start-kali.sh        # Start container (Linux)
-    │   └── shared/              # Host-container shared files
-    └── anythingllm-skills/      # AnythingLLM integration
-        └── pentest-tools/
-            ├── plugin.json
-            └── handler.js
+├── agent/                       # Deployable agent package
+│   ├── pentest-agent.py         # CLI interface
+│   ├── pentest-gui.py           # GUI interface (CustomTkinter)
+│   ├── knowledge_base.py        # RAG system for document retrieval
+│   ├── Modelfile                # Full model config (requires GGUF)
+│   ├── Modelfile.lite           # Lite model config (pulls mistral:7b)
+│   ├── corrections.json         # Self-learning corrections database
+│   ├── settings.json            # User settings
+│   ├── kali_tools.json          # Kali tool definitions
+│   ├── docker/                  # Docker Kali Linux setup
+│   │   ├── Dockerfile
+│   │   ├── docker-compose.yml
+│   │   └── shared/              # Host-container shared files
+│   └── tools/                   # Portable pentest tools
+│
+└── htb-model-training/          # Model training scripts and data
+    ├── data/                    # Training data (writeups)
+    ├── scripts/                 # Utility scripts
+    └── train_model.py           # Main training script
 ```
+
+---
+
+## Knowledge Base (RAG)
+
+Import books, PDFs, and documents to enhance model responses without retraining.
+
+### How It Works
+
+1. Documents are chunked and indexed using TF-IDF
+2. When you ask a question, relevant chunks are retrieved
+3. Retrieved context is injected into the model prompt
+4. Model responds with knowledge from your documents
+
+### Usage
+
+1. Click the **book icon** in the GUI sidebar
+2. Click **"Add Document"** and select a PDF or text file
+3. Wait for indexing to complete
+4. Ask questions - relevant content is automatically retrieved
+
+### Supported Formats
+
+- PDF files (`.pdf`)
+- Text files (`.txt`, `.md`, `.rst`)
+
+### Dependencies
+
+```bash
+pip install scikit-learn PyPDF2 pdfplumber
+```
+
+---
+
+## Self-Learning Feedback System
+
+Correct model mistakes and improve responses over time.
+
+### How It Works
+
+1. **Thumbs Down**: Click 👎 on any assistant response to provide a correction
+2. **Correction Dialog**: Select detected issues or write custom corrections
+3. **Context Injection**: Relevant corrections are automatically injected into future similar queries
+4. **Apply to Model**: Permanently update the Modelfile with learned corrections
+
+### Auto-Detected Issues
+
+The correction dialog automatically detects common problems:
+
+| Issue | Description |
+|-------|-------------|
+| Wrong Target | Model scanned wrong IP address |
+| Localhost Default | Used 127.0.0.1 instead of specified target |
+| No Execution | Explained instead of running command |
+| Ignored Parameters | Didn't use user-specified options |
+| Wrong Tool | Used inappropriate tool for the task |
+
+### Settings
+
+Access in **Settings > Learning**:
+- **Auto-inject corrections**: Enable/disable context injection
+- **Max corrections**: Number of corrections to inject (1-10)
+- **View Corrections**: Manage saved corrections
+- **Apply to Model**: Permanently update Modelfile
+
+---
+
+## Model Options
+
+### Remote Model (Recommended)
+
+```bash
+ollama pull sirrand/htb-pentest
+```
+
+Published to Ollama registry at: https://ollama.com/sirrand/htb-pentest
+
+### Lite Mode
+
+Uses `mistral:7b` as base model (pulled automatically):
+- No custom GGUF required
+- ~4GB download on first run
+- Good for testing and light use
+
+### Full Mode
+
+Uses custom HTB-trained GGUF model:
+- Best performance for pentesting tasks
+- Requires 4GB+ GGUF file
+- Build with: `ollama create htb-pentest -f Modelfile`
+
+### Model Fallback Logic
+
+The launcher automatically selects the best available option:
+
+1. Check `model_config.json` for remote model → pull and use
+2. Check for local `.gguf` file → build from `Modelfile`
+3. Fall back to lite mode → pull `mistral:7b`, use `Modelfile.lite`
 
 ---
 
@@ -59,45 +205,34 @@ Pentesting Agent/
 
 - Windows 10/11 host machine
 - Python 3.8+ installed on host
-- USB drive (16GB+ recommended)
+- USB drive (8GB+ for lite mode, 16GB+ for full mode)
 
 ### USB Setup
 
-1. **Prepare the USB Drive**
+1. **Run the deployment script**
 
-   ```text
-   USB:\
-   ├── Ollama\              # Portable Ollama installation
-   │   └── ollama.exe
-   ├── Models\              # GGUF model files
-   │   └── htb-pentest-v3-q4_k_m.gguf
-   └── Pentesting Agent\    # This folder
-       └── agent\
+   ```powershell
+   cd deploy\usb-deploy
+   .\deploy-to-usb.ps1 -TargetDrive E: -RemoteModel "sirrand/htb-pentest" -DownloadOllama
    ```
 
-2. **Download Portable Tools**
+2. **Insert USB on target machine and run**
 
    ```cmd
-   cd agent\tools
-   download-tools.bat
+   E:\start-gui.bat
    ```
 
-3. **Run the Agent**
-
-   ```cmd
-   # CLI interface
-   start-agent.bat
-
-   # GUI interface
-   start-gui.bat
-   ```
+   First run will:
+   - Install Python dependencies
+   - Pull the model (if remote/lite mode)
+   - Launch the GUI
 
 ### USB Features
 
 - **Portable Execution**: No installation required on host
+- **Auto Model Setup**: Pulls model automatically if not present
 - **Bundled Tools**: nmap, whois, wget, curl, dig, netcat, tcping
-- **WSL Support**: Uses Windows Subsystem for Linux when available
-- **Offline Capable**: Works without internet once tools are downloaded
+- **Offline Capable**: Works offline after initial model download
 
 ---
 
@@ -107,96 +242,49 @@ Pentesting Agent/
 
 - Jetson Orin Nano Developer Kit (8GB)
 - JetPack 6.x with CUDA support
-- NVMe SSD recommended (for swap and model storage)
+- NVMe SSD recommended
 
 ### Jetson Setup
 
-1. **Install Ollama on Jetson**
+1. **Install Ollama**
 
    ```bash
    curl -fsSL https://ollama.com/install.sh | sh
    ```
 
-2. **Configure Swap (for 7B models)**
+2. **Pull the model**
 
    ```bash
-   # Create 32GB swap on NVMe
+   ollama pull sirrand/htb-pentest
+   ```
+
+3. **Configure Swap (for 7B models)**
+
+   ```bash
    sudo fallocate -l 32G /mnt/nvme/swapfile
    sudo chmod 600 /mnt/nvme/swapfile
    sudo mkswap /mnt/nvme/swapfile
    sudo swapon /mnt/nvme/swapfile
    ```
 
-3. **Deploy the Model**
+4. **Install Dependencies**
 
    ```bash
-   # Copy GGUF file to Jetson
-   scp htb-pentest-v3-q4_k_m.gguf jetson@<ip>:~/models/
-
-   # Create model in Ollama
-   cd agent
-   ollama create htb-pentest -f Modelfile
+   pip3 install requests customtkinter scikit-learn PyPDF2 pdfplumber
    ```
 
-4. **Install Python Dependencies**
-
-   ```bash
-   pip3 install requests customtkinter
-   ```
-
-5. **Make Launchers Executable**
+5. **Run the Agent**
 
    ```bash
    chmod +x start-agent.sh start-gui.sh
-   ```
-
-6. **Run the Agent**
-
-   ```bash
-   # CLI interface
-   ./start-agent.sh
-
-   # GUI interface (requires display)
    ./start-gui.sh
    ```
-
-### Jetson-Specific Notes
-
-- **Memory**: 8GB unified RAM shared between CPU/GPU
-- **Quantization**: Use Q4_K_M or smaller for reliable operation
-- **Swap**: Essential for 7B parameter models
-- **Performance**: ~2-5 tokens/second depending on context length
-- **Cooling**: Active cooling recommended for sustained use
-
-### Jetson Network Configuration
-
-For headless operation, expose Ollama API:
-
-```bash
-# Edit Ollama service
-sudo systemctl edit ollama
-
-# Add environment variable
-[Service]
-Environment="OLLAMA_HOST=0.0.0.0"
-
-# Restart
-sudo systemctl restart ollama
-```
-
-Access from other devices: `http://<jetson-ip>:11434`
 
 ---
 
 ## Docker Kali Linux (Optional)
 
-Extend the agent with a full Kali Linux toolkit running in Docker. This enables advanced tools like Metasploit, Gobuster, SQLMap, and more.
-
-### Docker Prerequisites
-
-- Docker Desktop (Windows) or Docker Engine (Linux/Jetson)
-- 4GB+ RAM available for container
-- 10GB+ disk space for Kali image
+Extend the agent with a full Kali Linux toolkit (600+ tools).
 
 ### Docker Setup
 
@@ -208,72 +296,56 @@ Extend the agent with a full Kali Linux toolkit running in Docker. This enables 
    # Windows
    start-kali.bat
 
-   # Linux/Jetson
-   chmod +x start-kali.sh
+   # Linux
    ./start-kali.sh
    ```
 
-   First run will build the image (may take 10-15 minutes).
-
-2. **Verify Container is Running**
-
-   ```bash
-   docker ps
-   # Should show: htb-kali
-   ```
-
-3. **Run the Agent**
+2. **Run the Agent**
 
    The agent automatically detects the Docker container and enables extended commands.
 
-   ```bash
-   ./start-agent.sh
-   # or
-   start-agent.bat
-   ```
+### Available Tools (Docker Mode)
 
-### Docker Passthrough Mode
+| Category | Tools |
+|----------|-------|
+| Web Testing | gobuster, dirb, ffuf, nikto, whatweb, wfuzz |
+| Exploitation | msfconsole, msfvenom, searchsploit |
+| Password | john, hashcat, hydra, crackmapexec |
+| SMB/Windows | smbclient, enum4linux, rpcclient, smbmap |
+| SQL Injection | sqlmap |
+| Impacket | impacket-psexec, impacket-secretsdump, etc. |
+| Priv Esc | linpeas, linux-exploit-suggester |
 
-When the Kali container is running, **ANY command** available in Kali Linux can be executed (600+ tools). The agent automatically routes unknown commands to the Docker container.
+---
 
-**Example tools now available:**
+## Supported Commands
 
-| Category       | Example Commands                                       |
-| -------------- | ------------------------------------------------------ |
-| Web Testing    | `gobuster`, `dirb`, `ffuf`, `nikto`, `whatweb`, `wfuzz`|
-| Exploitation   | `msfconsole`, `msfvenom`, `searchsploit`               |
-| Password       | `john`, `hashcat`, `hydra`, `crackmapexec`             |
-| SMB/Windows    | `smbclient`, `enum4linux`, `rpcclient`, `smbmap`       |
-| SQL Injection  | `sqlmap`                                               |
-| Impacket       | `impacket-psexec`, `impacket-secretsdump`, etc.        |
-| Priv Esc       | `linpeas`, `linux-exploit-suggester`                   |
-| Wireless       | `aircrack-ng`, `wifite`, `reaver`                      |
-| Forensics      | `volatility`, `binwalk`, `foremost`                    |
+### Basic Commands (Always Available)
 
-**Blocked commands** (for safety): `rm`, `rmdir`, `format`, `dd`, `shutdown`, `passwd`, `chmod`, `iptables`, etc.
+| Command | Description |
+|---------|-------------|
+| `ping` | Network connectivity test |
+| `nmap` | Port scanning and service detection |
+| `curl` / `wget` | HTTP requests and downloads |
+| `dig` / `nslookup` | DNS lookups |
+| `whois` | Domain registration info |
+| `traceroute` | Network path tracing |
+| `netstat` | Network connections |
+| `nc` / `ncat` | Netcat for connections |
 
-### Docker Management
+### Extended Commands (Docker Kali)
 
-```bash
-# Access Kali shell directly
-docker exec -it htb-kali bash
+When Docker is running, the agent has access to the **full Kali Linux toolkit**.
 
-# Stop the container
-docker stop htb-kali
+---
 
-# View container logs
-docker logs htb-kali
+## Security Features
 
-# Remove container (keeps data volumes)
-docker rm htb-kali
-
-# Full cleanup (removes data)
-docker compose -f agent/docker/docker-compose.yml down -v
-```
-
-### Shared Files
-
-Place files in `agent/docker/shared/` to access them inside the container at `/shared/`.
+- **Command Whitelisting**: Only approved commands can execute
+- **Pattern Blocking**: Dangerous characters blocked
+- **Timeout Limits**: Maximum execution time (300s)
+- **Docker Isolation**: Extended tools run in isolated container
+- **Network Capabilities**: Limited Linux capabilities (NET_RAW, NET_ADMIN)
 
 ---
 
@@ -289,68 +361,21 @@ Place files in `agent/docker/shared/` to access them inside the container at `/s
 
 ```bash
 cd htb-model-training
-
-# Install dependencies
 pip install -r requirements.txt
-
-# Train with QLoRA
 python train_model.py
-
-# Merge LoRA weights
 python merge_lora.py
-
-# Convert to GGUF
 python scripts/convert_to_gguf.py
 ```
 
-### Training Data
+### Publishing to Ollama
 
-- Hack The Box machine writeups
-- Conceptual security knowledge
-- Tool-calling examples for command execution
+```bash
+# Tag with your username
+ollama cp htb-pentest yourname/htb-pentest
 
----
-
-## Supported Commands
-
-### Basic Commands (Always Available)
-
-| Command            | Description                         |
-| ------------------ | ----------------------------------- |
-| `ping`             | Network connectivity test           |
-| `nmap`             | Port scanning and service detection |
-| `curl` / `wget`    | HTTP requests and downloads         |
-| `dig` / `nslookup` | DNS lookups                         |
-| `whois`            | Domain registration info            |
-| `traceroute`       | Network path tracing                |
-| `netstat`          | Network connections                 |
-| `nc` / `ncat`      | Netcat for connections              |
-| `tcping`           | TCP port ping                       |
-
-### Extended Commands (Require Docker Kali)
-
-When Docker is running, the agent has access to the **full Kali Linux toolkit** (600+ tools). Any command installed in the container can be executed.
-
-| Category             | Example Commands                                   |
-| -------------------- | -------------------------------------------------- |
-| Web Testing          | `gobuster`, `nikto`, `sqlmap`, `ffuf`, `wfuzz`     |
-| Exploitation         | `msfconsole`, `msfvenom`, `searchsploit`           |
-| Password Attacks     | `john`, `hashcat`, `hydra`, `crackmapexec`         |
-| SMB/AD Enumeration   | `enum4linux`, `smbclient`, `rpcclient`, `impacket` |
-| Privilege Escalation | `linpeas`, `linux-exploit-suggester`               |
-| Wireless             | `aircrack-ng`, `wifite`, `reaver`                  |
-| Forensics            | `volatility`, `binwalk`, `foremost`, `strings`     |
-
----
-
-## Security Features
-
-- **Command Whitelisting**: Only approved commands can execute
-- **Pattern Blocking**: Dangerous characters (`;`, `&&`, `|`, etc.) are blocked
-- **Timeout Limits**: Commands have maximum execution time (300s)
-- **No Shell Injection**: Arguments are sanitized before execution
-- **Docker Isolation**: Extended tools run in isolated container
-- **Network Capabilities**: Container has limited Linux capabilities (NET_RAW, NET_ADMIN)
+# Push to registry
+ollama push yourname/htb-pentest
+```
 
 ---
 
