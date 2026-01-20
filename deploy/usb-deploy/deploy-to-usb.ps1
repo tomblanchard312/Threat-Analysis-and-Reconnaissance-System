@@ -58,7 +58,8 @@ $agentFiles = @(
     "pentest-gui.py",
     "Modelfile",
     "settings.json",
-    "kali_tools.json"
+    "kali_tools.json",
+    "corrections.json"
 )
 
 foreach ($file in $agentFiles) {

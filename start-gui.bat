@@ -75,15 +75,14 @@ if %ERRORLEVEL% neq 0 (
     echo      Ollama is running
 )
 
-:: Check if model is registered
-echo [3/3] Checking model registration...
-"%OLLAMA_EXE%" list 2>nul | findstr /C:"htb-pentest" >nul
-if %ERRORLEVEL% neq 0 (
-    echo      Registering htb-pentest model...
-    cd /d "%AGENT_DIR%"
-    "%OLLAMA_EXE%" create htb-pentest -f Modelfile
+:: Always rebuild model to pick up Modelfile changes
+echo [3/3] Building model from Modelfile...
+cd /d "%AGENT_DIR%"
+"%OLLAMA_EXE%" create htb-pentest -f Modelfile
+if %ERRORLEVEL% equ 0 (
+    echo      Model htb-pentest is ready
 ) else (
-    echo      Model htb-pentest is registered
+    echo      [WARNING] Model build failed - using existing model if available
 )
 
 echo.
