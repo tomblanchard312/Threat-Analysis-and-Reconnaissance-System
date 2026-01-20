@@ -62,13 +62,32 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python pentest packages
+# Install OSINT tools via apt
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    theharvester \
+    amass \
+    sublist3r \
+    recon-ng \
+    fierce \
+    dnsrecon \
+    dnsenum \
+    exiftool \
+    metagoofil \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python pentest packages and OSINT tools
 RUN pip3 install --no-cache-dir --break-system-packages \
     pwntools \
     requests \
     beautifulsoup4 \
     impacket \
-    ldap3
+    ldap3 \
+    sherlock-project \
+    holehe \
+    h8mail \
+    socialscan \
+    photon-recon
 
 # Create working directory for pentest operations
 WORKDIR /pentest
