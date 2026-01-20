@@ -10,8 +10,12 @@ param(
     [string]$SourceDir = $PSScriptRoot + "\..",  # Parent of deploy folder
 
     [switch]$IncludeModel,  # Include the GGUF model file (4GB+)
+    [switch]$LiteMode,      # Deploy lite version (pulls mistral:7b at runtime)
     [switch]$IncludeTraining,  # Include training code
-    [switch]$DownloadOllama  # Download fresh Ollama
+    [switch]$DownloadOllama,  # Download fresh Ollama
+
+    [Parameter(Mandatory=$false)]
+    [string]$RemoteModel    # Optional: Remote model to pull (e.g., "username/htb-pentest")
 )
 
 $ErrorActionPreference = "Stop"
@@ -56,7 +60,9 @@ Write-Host "[2/6] Copying agent files..." -ForegroundColor Green
 $agentFiles = @(
     "pentest-agent.py",
     "pentest-gui.py",
+    "knowledge_base.py",
     "Modelfile",
+    "Modelfile.lite",
     "settings.json",
     "kali_tools.json",
     "corrections.json"
@@ -71,6 +77,25 @@ foreach ($file in $agentFiles) {
     } else {
         Write-Host "  [WARN] Not found: $file" -ForegroundColor Yellow
     }
+}
+
+# Create model configuration file for remote model support
+if ($RemoteModel) {
+    Write-Host "  Configuring remote model: $RemoteModel"
+    $modelConfig = @{
+        "remote_model" = $RemoteModel
+        "use_lite" = $false
+    }
+    $modelConfig | ConvertTo-Json | Out-File "$TargetDrive\agent\model_config.json" -Encoding UTF8
+    Write-Host "  Created: model_config.json"
+} elseif ($LiteMode) {
+    Write-Host "  Configuring lite mode deployment"
+    $modelConfig = @{
+        "remote_model" = $null
+        "use_lite" = $true
+    }
+    $modelConfig | ConvertTo-Json | Out-File "$TargetDrive\agent\model_config.json" -Encoding UTF8
+    Write-Host "  Created: model_config.json (lite mode)"
 }
 
 # Copy Docker files
@@ -148,6 +173,16 @@ if ($IncludeTraining) {
     }
 }
 
+# Determine deployment mode for info file
+$deploymentMode = "Full (local GGUF)"
+if ($RemoteModel) {
+    $deploymentMode = "Remote Model ($RemoteModel)"
+} elseif ($LiteMode) {
+    $deploymentMode = "Lite (pulls mistral:7b at runtime)"
+} elseif (-not $IncludeModel) {
+    $deploymentMode = "Lite/Auto (will pull base model if no GGUF found)"
+}
+
 # Create deployment info
 Write-Host "[6/6] Creating deployment info..." -ForegroundColor Green
 $deployInfo = @"
@@ -155,6 +190,7 @@ HTB Pentest Agent - USB Deployment
 ===================================
 Deployed: $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")
 Source: $SourceDir
+Mode: $deploymentMode
 
 Contents:
 - agent/          : Agent code and configuration
@@ -165,7 +201,12 @@ Contents:
 First-time setup:
 1. Ensure Python 3.8+ is installed
 2. Run start-gui.bat or start-agent.bat
-3. The launcher will install dependencies and register the model
+3. The launcher will install dependencies and set up the model
+
+Model Setup:
+- If a .gguf file exists in agent/, it will build from Modelfile (full version)
+- If no .gguf exists, it will pull mistral:7b and build from Modelfile.lite
+- If model_config.json specifies a remote model, it will pull that instead
 
 For Kali Docker support:
 1. Install Docker Desktop
