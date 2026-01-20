@@ -95,25 +95,37 @@ echo      Ollama is running
 echo [3/3] Building model...
 cd /d "%AGENT_DIR%"
 
-:: Check which Modelfile to use
+:: Check if local GGUF model exists (full version)
+if exist "%AGENT_DIR%\htb-pentest-v3-q4_k_m.gguf" goto :build_full_model
+if exist "%AGENT_DIR%\*.gguf" goto :build_full_model
+
+:: No GGUF found - use lite mode with mistral:7b
 if not exist "%AGENT_DIR%\Modelfile.lite" goto :no_modelfile
 
-:: Ensure base model is available
+echo      No local GGUF found, using lite mode...
 echo      Checking mistral:7b...
 "%OLLAMA_EXE%" list | findstr /i "mistral:7b" >nul 2>&1
-if not errorlevel 1 goto :build_model
+if not errorlevel 1 goto :build_lite_model
 
 echo      Pulling mistral:7b...
 "%OLLAMA_EXE%" pull mistral:7b
 
-:build_model
-echo      Rebuilding htb-pentest from Modelfile...
+:build_lite_model
+echo      Rebuilding htb-pentest from Modelfile.lite...
 "%OLLAMA_EXE%" create htb-pentest -f Modelfile.lite
-echo      Model rebuilt successfully
+echo      Model rebuilt successfully (lite mode)
+goto :start_gui
+
+:build_full_model
+echo      Found local GGUF model, using full Modelfile...
+if not exist "%AGENT_DIR%\Modelfile" goto :no_modelfile
+echo      Rebuilding htb-pentest from local GGUF...
+"%OLLAMA_EXE%" create htb-pentest -f Modelfile
+echo      Model rebuilt successfully (full version)
 goto :start_gui
 
 :no_modelfile
-echo      [WARN] No Modelfile.lite found, skipping model build
+echo      [WARN] No Modelfile found, skipping model build
 
 :start_gui
 echo.
