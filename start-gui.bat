@@ -92,12 +92,12 @@ echo      Ollama is running
 :ollama_done
 
 :: Setup model
-echo [3/3] Setting up model...
+echo [3/3] Checking model...
 cd /d "%AGENT_DIR%"
 
 :: Check if htb-pentest model exists
-"%OLLAMA_EXE%" list | findstr /i "htb-pentest" >nul 2>&1
-if not errorlevel 1 goto :model_ready
+"%OLLAMA_EXE%" list 2>nul | findstr /i "htb-pentest" >nul 2>&1
+if %ERRORLEVEL%==0 goto :model_ready
 
 echo      Model not found, building...
 if not exist "%AGENT_DIR%\Modelfile.lite" goto :model_ready
