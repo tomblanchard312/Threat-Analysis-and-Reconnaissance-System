@@ -99,10 +99,52 @@ cd /d "%AGENT_DIR%"
 if exist "%AGENT_DIR%\htb-pentest-v3-q4_k_m.gguf" goto :build_full_model
 if exist "%AGENT_DIR%\*.gguf" goto :build_full_model
 
-:: No GGUF found - use lite mode with mistral:7b
-if not exist "%AGENT_DIR%\Modelfile.lite" goto :no_modelfile
+:: Check if htb-pentest model already exists in Ollama
+"%OLLAMA_EXE%" list 2>nul | findstr /i "htb-pentest" >nul 2>&1
+if %ERRORLEVEL%==0 goto :model_exists
 
-echo      No local GGUF found, using lite mode...
+:: No local GGUF found - ask user what to do
+echo.
+echo      No local GGUF model found.
+echo.
+echo      Choose model source:
+echo        [1] Pull from Ollama Registry (sirrand/htb-pentest - recommended)
+echo        [2] Use Lite Mode (pulls mistral:7b base model)
+echo        [3] Enter custom Ollama model name
+echo.
+choice /c 123 /n /m "      Select option (1-3): "
+if errorlevel 3 goto :custom_model
+if errorlevel 2 goto :lite_mode
+if errorlevel 1 goto :pull_registry
+
+:pull_registry
+echo.
+echo      Pulling sirrand/htb-pentest from Ollama Registry...
+"%OLLAMA_EXE%" pull sirrand/htb-pentest
+if errorlevel 1 goto :pull_failed
+echo      Creating local htb-pentest alias...
+"%OLLAMA_EXE%" cp sirrand/htb-pentest htb-pentest
+echo      Model ready (from registry)
+goto :start_gui
+
+:custom_model
+echo.
+set /p "CUSTOM_MODEL=      Enter Ollama model name (e.g., username/model): "
+if "%CUSTOM_MODEL%"=="" goto :lite_mode
+echo      Pulling %CUSTOM_MODEL%...
+"%OLLAMA_EXE%" pull %CUSTOM_MODEL%
+if errorlevel 1 goto :pull_failed
+echo      Creating local htb-pentest alias...
+"%OLLAMA_EXE%" cp %CUSTOM_MODEL% htb-pentest
+echo      Model ready (from %CUSTOM_MODEL%)
+goto :start_gui
+
+:pull_failed
+echo      [WARN] Failed to pull model, falling back to lite mode...
+
+:lite_mode
+if not exist "%AGENT_DIR%\Modelfile.lite" goto :no_modelfile
+echo      Using lite mode...
 echo      Checking mistral:7b...
 "%OLLAMA_EXE%" list | findstr /i "mistral:7b" >nul 2>&1
 if not errorlevel 1 goto :build_lite_model
@@ -114,6 +156,16 @@ echo      Pulling mistral:7b...
 echo      Rebuilding htb-pentest from Modelfile.lite...
 "%OLLAMA_EXE%" create htb-pentest -f Modelfile.lite
 echo      Model rebuilt successfully (lite mode)
+goto :start_gui
+
+:model_exists
+echo      Model htb-pentest found, rebuilding with current Modelfile...
+if exist "%AGENT_DIR%\Modelfile.lite" goto :rebuild_lite
+goto :start_gui
+
+:rebuild_lite
+"%OLLAMA_EXE%" create htb-pentest -f Modelfile.lite
+echo      Model rebuilt successfully
 goto :start_gui
 
 :build_full_model
