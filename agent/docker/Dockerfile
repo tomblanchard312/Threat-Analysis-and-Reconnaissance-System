@@ -9,6 +9,9 @@ LABEL description="Kali Linux with common pentesting tools for AI-driven securit
 # Avoid prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
 
+# Use direct Kali mirror (more reliable than CDN)
+RUN echo "deb http://kali.download/kali kali-rolling main contrib non-free non-free-firmware" > /etc/apt/sources.list
+
 # Update and install core pentest tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
     # Network reconnaissance
@@ -59,6 +62,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     jq \
     tree \
     tmux \
+    git \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -86,8 +90,13 @@ RUN pip3 install --no-cache-dir --break-system-packages \
     sherlock-project \
     holehe \
     h8mail \
-    socialscan \
-    photon-recon
+    socialscan
+
+# Install Photon manually (no pip package available)
+RUN git clone https://github.com/s0md3v/Photon.git /opt/photon && \
+    cd /opt/photon && \
+    pip3 install --no-cache-dir --break-system-packages -r requirements.txt && \
+    ln -s /opt/photon/photon.py /usr/local/bin/photon
 
 # Create working directory for pentest operations
 WORKDIR /pentest
