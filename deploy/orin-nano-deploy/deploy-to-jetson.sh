@@ -129,6 +129,9 @@ mkdir -p "$INSTALL_DIR/agent"
 mkdir -p "$INSTALL_DIR/agent/docker"
 mkdir -p "$INSTALL_DIR/agent/tools"
 mkdir -p "$INSTALL_DIR/agent/transcripts"
+mkdir -p "$INSTALL_DIR/agent/knowledge_base"
+mkdir -p "$INSTALL_DIR/agent/cases"
+mkdir -p "$INSTALL_DIR/mcp-servers"
 
 echo ""
 echo "[5/7] Copying agent files..."
@@ -149,13 +152,30 @@ fi
 # Copy agent files
 cp "$SOURCE_DIR/agent/pentest-agent.py" "$INSTALL_DIR/agent/"
 cp "$SOURCE_DIR/agent/pentest-gui.py" "$INSTALL_DIR/agent/"
+cp "$SOURCE_DIR/agent/kali_tool_catalog.py" "$INSTALL_DIR/agent/" 2>/dev/null || true
+cp "$SOURCE_DIR/agent/knowledge_base.py" "$INSTALL_DIR/agent/" 2>/dev/null || true
+cp "$SOURCE_DIR/agent/portable_docker.py" "$INSTALL_DIR/agent/" 2>/dev/null || true
+cp "$SOURCE_DIR/agent/case_analysis.ipynb" "$INSTALL_DIR/agent/" 2>/dev/null || true
 cp "$SOURCE_DIR/agent/Modelfile" "$INSTALL_DIR/agent/"
+cp "$SOURCE_DIR/agent/Modelfile.lite" "$INSTALL_DIR/agent/" 2>/dev/null || true
 cp "$SOURCE_DIR/agent/settings.json" "$INSTALL_DIR/agent/"
 cp "$SOURCE_DIR/agent/kali_tools.json" "$INSTALL_DIR/agent/" 2>/dev/null || true
+cp "$SOURCE_DIR/agent/corrections.json" "$INSTALL_DIR/agent/" 2>/dev/null || true
 
 # Copy Docker files
 if [ -d "$SOURCE_DIR/agent/docker" ]; then
     cp -r "$SOURCE_DIR/agent/docker/"* "$INSTALL_DIR/agent/docker/"
+fi
+
+# Copy MCP servers
+if [ -d "$SOURCE_DIR/mcp-servers" ]; then
+    cp -r "$SOURCE_DIR/mcp-servers/"* "$INSTALL_DIR/mcp-servers/" 2>/dev/null || true
+    echo "  MCP servers copied"
+fi
+
+# Copy knowledge base data
+if [ -d "$SOURCE_DIR/agent/knowledge_base" ]; then
+    cp -r "$SOURCE_DIR/agent/knowledge_base/"* "$INSTALL_DIR/agent/knowledge_base/" 2>/dev/null || true
 fi
 
 echo "  Agent files copied"
@@ -177,7 +197,7 @@ ollama create "$MODEL_NAME" -f Modelfile || {
 # Install Python dependencies
 echo ""
 echo "[7/7] Installing Python dependencies..."
-pip3 install --break-system-packages requests customtkinter pillow
+pip3 install --break-system-packages requests customtkinter pillow scikit-learn PyPDF2 pdfplumber notebook matplotlib
 
 # Docker installation (optional)
 if [ "$WITH_DOCKER" = true ]; then
@@ -239,6 +259,7 @@ echo ""
 echo "Usage:"
 echo "  CLI agent:  $INSTALL_DIR/start-agent.sh"
 echo "  GUI agent:  $INSTALL_DIR/start-gui.sh"
+echo "  Case analysis: jupyter notebook $INSTALL_DIR/agent/case_analysis.ipynb"
 echo ""
 echo "Ollama API accessible at: http://$(hostname -I | awk '{print $1}'):11434"
 echo ""

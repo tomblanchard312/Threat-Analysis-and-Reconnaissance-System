@@ -17,8 +17,8 @@ from peft import PeftModel
 
 # Paths
 SCRIPT_DIR = Path(__file__).parent
-LORA_PATH = Path("C:/htb-model-training/htb-mistral-7b-qlora-v3-tools/final")
-OUTPUT_PATH = Path("C:/htb-model-training/htb-mistral-7b-merged-v3")
+LORA_PATH = Path("C:/htb-model-training/htb-pentest-v5-qlora/final")
+OUTPUT_PATH = Path("C:/htb-model-training/htb-pentest-v5-merged")
 BASE_MODEL = "mistralai/Mistral-7B-Instruct-v0.3"
 
 

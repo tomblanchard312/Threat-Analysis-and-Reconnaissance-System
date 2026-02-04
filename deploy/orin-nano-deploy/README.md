@@ -2,6 +2,18 @@
 
 Deploy the HTB Pentest Agent to a Jetson Orin Nano for a dedicated AI-powered penetration testing workstation.
 
+## Features
+
+- **Edge AI** - Fully self-contained on Jetson hardware
+- **GPU Acceleration** - CUDA-accelerated inference
+- **Full Agent** - CLI and GUI interfaces with all features
+- **Multi-Model Support** - HTB-Pentest (primary) + planning models
+- **Case Management** - Investigation tracking with entity relationships
+- **Knowledge Base (RAG)** - Document import for enhanced responses
+- **Self-Learning** - Correction system to improve model behavior
+- **Docker/Kali** - Optional 600+ tool toolkit with auto-install
+- **Remote Access** - Ollama API exposed for network access
+
 ## Hardware Requirements
 
 - **Jetson Orin Nano** (8GB recommended)
@@ -16,6 +28,7 @@ Deploy the HTB Pentest Agent to a Jetson Orin Nano for a dedicated AI-powered pe
 1. Copy the entire `orin-nano-deploy` folder to a USB drive
 2. Insert USB into Jetson
 3. Run:
+
    ```bash
    sudo bash /media/usb/orin-nano-deploy/deploy-to-jetson.sh
    ```
@@ -23,6 +36,7 @@ Deploy the HTB Pentest Agent to a Jetson Orin Nano for a dedicated AI-powered pe
 ### Option 2: Deploy over Network (SSH)
 
 From your local machine:
+
 ```bash
 # Copy deployment files
 scp -r ./orin-nano-deploy user@jetson-ip:/tmp/
@@ -35,6 +49,7 @@ sudo bash /tmp/orin-nano-deploy/deploy-to-jetson.sh
 ### Option 3: Remote Deploy Script
 
 Use the remote deployment helper:
+
 ```bash
 ./remote-deploy.sh user@jetson-ip [--with-model]
 ```
@@ -67,9 +82,20 @@ sudo ./deploy-to-jetson.sh --with-docker --with-training
 /opt/htb-pentest/start-gui.sh
 ```
 
+### Pull Additional Models
+
+```bash
+# Primary model
+ollama pull sirrand/htb-pentest
+
+# Planning model (for complex reasoning)
+ollama pull glm4:9b
+```
+
 ### Access Remotely
 
 The Ollama API is exposed on port 11434:
+
 ```bash
 curl http://jetson-ip:11434/api/tags
 ```
@@ -81,32 +107,25 @@ sudo systemctl enable ollama
 sudo systemctl enable htb-pentest-api  # Optional API service
 ```
 
-## Transferring the Model
+## File Locations
 
-The model file (~4GB) is too large for most transfers. Options:
-
-### Option A: Build on Jetson
-```bash
-# Copy Modelfile and GGUF separately
-scp model.gguf user@jetson:/opt/htb-pentest/agent/
-ssh user@jetson "cd /opt/htb-pentest/agent && ollama create htb-pentest -f Modelfile"
-```
-
-### Option B: Use rsync (resume-capable)
-```bash
-rsync -avP --progress htb-pentest-v3-q4_k_m.gguf user@jetson:/opt/htb-pentest/agent/
-```
-
-### Option C: Download from HuggingFace (if published)
-```bash
-wget https://huggingface.co/your-model/htb-pentest.gguf -O /opt/htb-pentest/agent/htb-pentest.gguf
-```
+| Component | Path |
+|-----------|------|
+| Agent code | `/opt/htb-pentest/agent/` |
+| Tool catalog | `/opt/htb-pentest/agent/kali_tool_catalog.py` |
+| Case files | `/opt/htb-pentest/agent/cases/` |
+| Knowledge base | `/opt/htb-pentest/agent/knowledge_base/` |
+| MCP servers | `/opt/htb-pentest/mcp-servers/` |
+| Ollama models | `/opt/htb-pentest/ollama/models/` |
+| Transcripts | `/opt/htb-pentest/agent/transcripts/` |
+| Ollama service | `/etc/systemd/system/ollama.service` |
 
 ## Performance Tuning
 
 ### Memory Settings
 
 For 7B models on 8GB Jetson:
+
 ```bash
 # Ensure swap is enabled
 sudo swapon --show
@@ -118,6 +137,7 @@ echo 60 | sudo tee /proc/sys/vm/swappiness
 ### Power Mode
 
 Set to maximum performance:
+
 ```bash
 sudo nvpmodel -m 0
 sudo jetson_clocks
@@ -162,39 +182,6 @@ journalctl -u ollama -n 50
 # Restart
 sudo systemctl restart ollama
 ```
-
-## Network Configuration
-
-### Firewall (if enabled)
-
-```bash
-sudo ufw allow 11434/tcp  # Ollama API
-sudo ufw allow 22/tcp     # SSH
-```
-
-### Static IP (Optional)
-
-Edit `/etc/netplan/01-network.yaml`:
-```yaml
-network:
-  ethernets:
-    eth0:
-      addresses: [192.168.1.100/24]
-      gateway4: 192.168.1.1
-      nameservers:
-        addresses: [8.8.8.8, 8.8.4.4]
-```
-
-Apply: `sudo netplan apply`
-
-## File Locations
-
-| Component | Path |
-|-----------|------|
-| Agent code | `/opt/htb-pentest/agent/` |
-| Ollama models | `/opt/htb-pentest/ollama/models/` |
-| Transcripts | `/opt/htb-pentest/agent/transcripts/` |
-| Ollama service | `/etc/systemd/system/ollama.service` |
 
 ## Uninstall
 

@@ -49,8 +49,8 @@ WARMUP_RATIO = 0.1
 
 # Paths
 SCRIPT_DIR = Path(__file__).parent
-DATASET_PATH = SCRIPT_DIR / "data" / "training" / "htb_combined_v3.json"
-OUTPUT_DIR = Path("C:/htb-model-training/htb-mistral-7b-qlora-v3-tools")
+DATASET_PATH = Path("C:/htb-model-training/htb_pentest_v5.jsonl")
+OUTPUT_DIR = Path("C:/htb-model-training/htb-pentest-v5-qlora")
 
 # ============================================================================
 # HELPER FUNCTIONS
@@ -66,21 +66,42 @@ def print_gpu_stats():
 
 
 def format_chat(example):
-    """Format example into chat template."""
-    messages = example.get('messages', [])
+    """Format example into chat template.
 
-    # Build conversation
+    Handles both formats:
+    - messages: [{"role": "user", "content": ...}, {"role": "assistant", "content": ...}]
+    - instruction/input/output: {"instruction": ..., "input": ..., "output": ...}
+    """
     text_parts = []
 
     # Add system message
     text_parts.append("<|im_start|>system")
     text_parts.append("You are a helpful penetration testing assistant trained on Hack The Box writeups. You can execute commands using the pentest-tools skill when asked to scan, ping, or perform network operations. For action requests, respond with a tool call in this format: <tool_call>{\"name\": \"pentest-tools\", \"arguments\": {\"command\": \"cmd\", \"args\": \"args\"}}</tool_call>. For questions and explanations, provide detailed educational responses. Always emphasize authorized use only.<|im_end|>")
 
-    for msg in messages:
-        role = msg.get('role', 'user')
-        content = msg.get('content', '')
-        text_parts.append(f"<|im_start|>{role}")
-        text_parts.append(f"{content}<|im_end|>")
+    # Check which format we have
+    if 'messages' in example and example['messages']:
+        # Messages format
+        for msg in example['messages']:
+            role = msg.get('role', 'user')
+            content = msg.get('content', '')
+            text_parts.append(f"<|im_start|>{role}")
+            text_parts.append(f"{content}<|im_end|>")
+    else:
+        # Instruction/output format (from process_training_data.py)
+        instruction = example.get('instruction', '')
+        input_text = example.get('input', '')
+        output = example.get('output', '')
+
+        # Combine instruction and input if present
+        if input_text:
+            user_msg = f"{instruction}\n\n{input_text}"
+        else:
+            user_msg = instruction
+
+        text_parts.append("<|im_start|>user")
+        text_parts.append(f"{user_msg}<|im_end|>")
+        text_parts.append("<|im_start|>assistant")
+        text_parts.append(f"{output}<|im_end|>")
 
     return {"text": "\n".join(text_parts)}
 
@@ -113,10 +134,19 @@ def main():
         print(f"[ERROR] Dataset not found: {DATASET_PATH}")
         sys.exit(1)
 
-    with open(DATASET_PATH, 'r', encoding='utf-8') as f:
-        raw_data = json.load(f)
+    # Load JSONL format (one JSON object per line)
+    raw_data = []
+    with open(str(DATASET_PATH), 'r', encoding='utf-8', errors='ignore') as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                try:
+                    raw_data.append(json.loads(line))
+                except json.JSONDecodeError as e:
+                    print(f"  [WARN] Skipping malformed line: {e}")
+                    continue
 
-    print(f"  Loaded {len(raw_data)} examples")
+    print(f"  Loaded {len(raw_data)} examples from JSONL")
 
     # Convert to dataset and format
     dataset = Dataset.from_list(raw_data)
@@ -256,8 +286,17 @@ def main():
         args=training_args,
     )
 
+    # Check for existing checkpoints to resume from
+    checkpoint_dirs = list(OUTPUT_DIR.glob("checkpoint-*"))
+    resume_checkpoint = None
+    if checkpoint_dirs:
+        # Find the latest checkpoint by number
+        latest = max(checkpoint_dirs, key=lambda x: int(x.name.split("-")[1]))
+        resume_checkpoint = str(latest)
+        print(f"[*] Found checkpoint: {latest.name} - resuming training...")
+
     # Train!
-    trainer.train()
+    trainer.train(resume_from_checkpoint=resume_checkpoint)
 
     # ========================================================================
     # SAVE
