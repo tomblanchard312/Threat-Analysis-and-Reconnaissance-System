@@ -20,12 +20,12 @@ from urllib.parse import urljoin, urlparse
 import requests
 from bs4 import BeautifulSoup
 
-# Constants
-BASE_URL = "https://book.hacktricks.xyz"
-GITBOOK_API = "https://book.hacktricks.xyz"
+# Constants - Site moved from .xyz to .wiki in 2024
+# New URL structure: /en/{category}/{page}/index.html
+BASE_URL = "https://book.hacktricks.wiki"
 REQUEST_DELAY = 0.5  # Be respectful
 
-# Categories to scrape
+# Categories to scrape - paths need /en/ prefix
 CATEGORIES = {
     "linux-hardening": "Linux privilege escalation and hardening",
     "windows-hardening": "Windows privilege escalation and hardening",
@@ -33,12 +33,34 @@ CATEGORIES = {
     "pentesting-web": "Web application attacks",
     "cloud-security": "Cloud security (AWS, Azure, GCP)",
     "mobile-pentesting": "Mobile application security",
-    "forensics": "Digital forensics techniques",
+    "forensics-basic-forensic-methodology": "Digital forensics techniques",
     "crypto-and-stego": "Cryptography and steganography",
     "reversing": "Reverse engineering",
-    "exploiting": "Binary exploitation",
+    "binary-exploitation": "Binary exploitation",
     "generic-methodologies-and-resources": "General methodology",
 }
+
+# Known high-value pages to scrape directly
+HIGH_VALUE_PAGES = [
+    "/en/linux-hardening/privilege-escalation/index.html",
+    "/en/linux-hardening/useful-linux-commands/index.html",
+    "/en/windows-hardening/active-directory-methodology/index.html",
+    "/en/windows-hardening/basic-powershell-for-pentesters/index.html",
+    "/en/windows-hardening/windows-local-privilege-escalation/index.html",
+    "/en/network-services-pentesting/pentesting-smb/index.html",
+    "/en/network-services-pentesting/pentesting-ssh/index.html",
+    "/en/network-services-pentesting/pentesting-web/index.html",
+    "/en/network-services-pentesting/pentesting-ldap/index.html",
+    "/en/pentesting-web/sql-injection/index.html",
+    "/en/pentesting-web/xss-cross-site-scripting/index.html",
+    "/en/pentesting-web/xxe-xee-xml-external-entity/index.html",
+    "/en/pentesting-web/file-inclusion/index.html",
+    "/en/pentesting-web/command-injection/index.html",
+    "/en/pentesting-web/ssti-server-side-template-injection/index.html",
+    "/en/pentesting-web/ssrf-server-side-request-forgery/index.html",
+    "/en/generic-methodologies-and-resources/pentesting-methodology/index.html",
+    "/en/generic-methodologies-and-resources/shells/index.html",
+]
 
 
 @dataclass
@@ -72,18 +94,26 @@ class HackTricksScraper:
         (self.output_dir / "processed").mkdir(exist_ok=True)
 
     def get_category_pages(self, category: str) -> List[str]:
-        """Get all page URLs from a category."""
+        """Get all page URLs from a category using new wiki structure."""
         urls = []
-        category_url = f"{BASE_URL}/{category}"
+        # Try the new URL structure: /en/{category}/index.html
+        category_url = f"{BASE_URL}/en/{category}/index.html"
 
         print(f"[*] Fetching category: {category}")
+        print(f"[*] URL: {category_url}")
 
         try:
-            response = self.session.get(category_url, timeout=30)
+            response = self.session.get(category_url, timeout=30, allow_redirects=True)
             response.raise_for_status()
         except requests.RequestException as e:
             print(f"[!] Failed to fetch {category_url}: {e}")
-            return urls
+            # Try without index.html
+            try:
+                alt_url = f"{BASE_URL}/en/{category}/"
+                response = self.session.get(alt_url, timeout=30, allow_redirects=True)
+                response.raise_for_status()
+            except requests.RequestException:
+                return urls
 
         soup = BeautifulSoup(response.text, 'html.parser')
 
@@ -96,6 +126,8 @@ class HackTricksScraper:
                 continue
             if href.startswith('#'):
                 continue
+            if 'twitter' in href or 'linkedin' in href:
+                continue
 
             # Build full URL
             if href.startswith('/'):
@@ -105,11 +137,20 @@ class HackTricksScraper:
             else:
                 full_url = href
 
-            # Check if it's in our category
+            # Check if it's a valid content page in our category
             if category in full_url and full_url not in urls:
-                urls.append(full_url)
+                # Ensure it ends with .html for the new structure
+                if '.html' in full_url or full_url.endswith('/'):
+                    urls.append(full_url)
 
         print(f"[+] Found {len(urls)} pages in {category}")
+        return urls
+
+    def get_high_value_pages(self) -> List[str]:
+        """Get pre-defined high-value technique pages."""
+        urls = []
+        for path in HIGH_VALUE_PAGES:
+            urls.append(BASE_URL + path)
         return urls
 
     def scrape_page(self, url: str, category: str) -> Optional[TechniquePage]:
@@ -311,13 +352,33 @@ class HackTricksScraper:
         return count
 
     def scrape_all(self, categories: List[str] = None, limit_per_category: int = None):
-        """Scrape all categories."""
+        """Scrape all categories plus high-value pages."""
         if categories is None:
             categories = list(CATEGORIES.keys())
 
         total = 0
         stats = {}
 
+        # First, scrape the high-value pages directly
+        print("\n[*] Scraping high-value technique pages...")
+        high_value_urls = self.get_high_value_pages()
+        hv_count = 0
+        for url in high_value_urls:
+            # Determine category from URL
+            for cat in categories:
+                if cat in url:
+                    page = self.scrape_page(url, cat)
+                    if page and page.content:
+                        self.save_page(page)
+                        hv_count += 1
+                    break
+            time.sleep(self.delay)
+
+        stats['high_value_pages'] = hv_count
+        total += hv_count
+        print(f"[+] Scraped {hv_count} high-value pages")
+
+        # Then scrape categories
         for category in categories:
             print(f"\n[*] Processing category: {category}")
             print(f"    Description: {CATEGORIES.get(category, 'Unknown')}")

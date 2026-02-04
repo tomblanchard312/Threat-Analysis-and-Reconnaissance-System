@@ -50,6 +50,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     impacket-scripts \
     # LDAP tools
     ldap-utils \
+    # NFS tools
+    nfs-common \
     # SQL tools
     sqlmap \
     # Scripting
@@ -92,11 +94,41 @@ RUN pip3 install --no-cache-dir --break-system-packages \
     h8mail \
     socialscan
 
+# Update nmap to latest available version (fixes some NSE script issues)
+# Using apt upgrade instead of source build for reliability
+RUN apt-get update && apt-get install -y --no-install-recommends nmap && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Active Directory & Windows enumeration tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    responder \
+    bloodhound \
+    evil-winrm \
+    nbtscan \
+    onesixtyone \
+    snmpwalk \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Additional web application testing tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    wapiti \
+    commix \
+    xsser \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install Photon manually (no pip package available)
 RUN git clone https://github.com/s0md3v/Photon.git /opt/photon && \
     cd /opt/photon && \
     pip3 install --no-cache-dir --break-system-packages -r requirements.txt && \
     ln -s /opt/photon/photon.py /usr/local/bin/photon
+
+# Install additional Python security tools
+RUN pip3 install --no-cache-dir --break-system-packages \
+    crackmapexec \
+    bloodhound-python \
+    certipy-ad
 
 # Create working directory for pentest operations
 WORKDIR /pentest

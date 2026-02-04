@@ -10,12 +10,22 @@ echo.
 :: Get the drive letter where this script is located
 set "DRIVE_LETTER=%~d0"
 set "AGENT_DIR=%DRIVE_LETTER%\agent"
+set "MODELS_DIR=%DRIVE_LETTER%\models"
 set "OLLAMA_HOME=%DRIVE_LETTER%\Ollama"
 set "OLLAMA_MODELS=%DRIVE_LETTER%\Ollama\models"
 set "OLLAMA_EXE=%OLLAMA_HOME%\ollama.exe"
+set "NODEJS_DIR=%DRIVE_LETTER%\nodejs"
 
 echo Drive: %DRIVE_LETTER%
 echo OLLAMA_HOME: %OLLAMA_HOME%
+
+:: Add portable Node.js to PATH if it exists (for MCP servers)
+if exist "%NODEJS_DIR%\node.exe" (
+    echo Node.js: %NODEJS_DIR%
+    set "PATH=%NODEJS_DIR%;%PATH%"
+) else (
+    echo Node.js: Not installed
+)
 echo.
 
 :: Check if portable Ollama exists
@@ -41,7 +51,7 @@ if errorlevel 1 (
 )
 
 :: Check and install required packages
-echo [1/3] Checking dependencies...
+echo [1/4] Checking dependencies...
 
 echo      Checking requests...
 python -c "import requests" >nul 2>&1
@@ -71,11 +81,16 @@ echo      Dependencies OK
 echo.
 
 :: Start Ollama if not running
-echo [2/3] Checking Ollama...
+echo [2/4] Checking Ollama...
 tasklist /FI "IMAGENAME eq ollama.exe" 2>NUL | find /I "ollama.exe" >NUL
 if not errorlevel 1 goto :ollama_running
 
 echo      Starting portable Ollama...
+:: Fix GPU discovery timeout when running from USB/portable drive
+:: Tell Ollama exactly which CUDA library to use (skips slow auto-discovery)
+set "OLLAMA_LLM_LIBRARY=cuda_v13"
+set "CUDA_VISIBLE_DEVICES=0"
+set "OLLAMA_KEEP_ALIVE=10m"
 start "" "%OLLAMA_EXE%" serve
 echo      Waiting for Ollama to start...
 
@@ -90,14 +105,24 @@ goto :ollama_done
 echo      Ollama is running
 
 :ollama_done
+echo.
 
-:: Setup model - always rebuild to pick up Modelfile changes
-echo [3/3] Building model...
+:: Start Docker Desktop and Kali container
+echo [3/4] Starting Kali Docker...
+call :start_docker
+echo.
+
+:: Setup model
+echo [4/4] Building model...
 cd /d "%AGENT_DIR%"
 
-:: Check if local GGUF model exists (full version)
-if exist "%AGENT_DIR%\htb-pentest-v3-q4_k_m.gguf" goto :build_full_model
-if exist "%AGENT_DIR%\*.gguf" goto :build_full_model
+:: Check if local GGUF model exists in models folder
+if exist "%MODELS_DIR%\htb-pentest.gguf" goto :build_full_model
+if exist "%MODELS_DIR%\*.gguf" goto :build_full_model
+
+:: Legacy: Check for model in agent folder
+if exist "%AGENT_DIR%\htb-pentest*.gguf" goto :build_legacy_model
+if exist "%AGENT_DIR%\*.gguf" goto :build_legacy_model
 
 :: Check if htb-pentest model already exists in Ollama
 "%OLLAMA_EXE%" list 2>nul | findstr /i "htb-pentest" >nul 2>&1
@@ -159,18 +184,19 @@ echo      Model rebuilt successfully (lite mode)
 goto :start_gui
 
 :model_exists
-echo      Model htb-pentest found, rebuilding with current Modelfile...
-if exist "%AGENT_DIR%\Modelfile.lite" goto :rebuild_lite
-goto :start_gui
-
-:rebuild_lite
-"%OLLAMA_EXE%" create htb-pentest -f Modelfile.lite
-echo      Model rebuilt successfully
+echo      Model htb-pentest found in Ollama
 goto :start_gui
 
 :build_full_model
-echo      Found local GGUF model, using full Modelfile...
+echo      Found local GGUF model in models folder
 if not exist "%AGENT_DIR%\Modelfile" goto :no_modelfile
+echo      Rebuilding htb-pentest from local GGUF...
+"%OLLAMA_EXE%" create htb-pentest -f Modelfile
+echo      Model rebuilt successfully (full version)
+goto :start_gui
+
+:build_legacy_model
+echo      Found local GGUF model in agent folder (legacy location)
 echo      Rebuilding htb-pentest from local GGUF...
 "%OLLAMA_EXE%" create htb-pentest -f Modelfile
 echo      Model rebuilt successfully (full version)
@@ -195,3 +221,78 @@ if errorlevel 1 (
     echo [ERROR] GUI exited with error
     pause
 )
+goto :eof
+
+:: ============================================================
+:: SUBROUTINE: Start Docker Desktop and Kali container
+:: ============================================================
+:start_docker
+docker info >nul 2>&1
+if not errorlevel 1 goto :docker_is_running
+
+:: Docker not running - try to start it
+echo      Docker Desktop not running - attempting to start...
+if not exist "C:\Program Files\Docker\Docker\Docker Desktop.exe" (
+    echo      Docker Desktop not installed - Kali tools unavailable
+    goto :eof
+)
+
+start "" "C:\Program Files\Docker\Docker\Docker Desktop.exe"
+echo      Waiting for Docker Desktop (up to 45s)...
+
+:: Wait for Docker to start (simple sequential checks)
+timeout /t 10 /nobreak >nul
+docker info >nul 2>&1
+if not errorlevel 1 goto :docker_is_running
+
+echo      Still waiting...
+timeout /t 10 /nobreak >nul
+docker info >nul 2>&1
+if not errorlevel 1 goto :docker_is_running
+
+echo      Still waiting...
+timeout /t 10 /nobreak >nul
+docker info >nul 2>&1
+if not errorlevel 1 goto :docker_is_running
+
+echo      Still waiting...
+timeout /t 15 /nobreak >nul
+docker info >nul 2>&1
+if not errorlevel 1 goto :docker_is_running
+
+echo      [WARN] Docker Desktop took too long to start
+echo      Kali tools will be unavailable this session
+goto :eof
+
+:docker_is_running
+echo      Docker Desktop is ready
+
+:: Start the Kali container
+docker ps -a 2>nul | findstr /i "htb-kali" >nul 2>&1
+if errorlevel 1 goto :build_container
+
+:: Container exists - start if not running
+docker ps 2>nul | findstr /i "htb-kali" >nul 2>&1
+if not errorlevel 1 (
+    echo      Kali container already running
+    goto :eof
+)
+
+echo      Starting Kali container...
+docker start htb-kali >nul 2>&1
+timeout /t 2 /nobreak >nul
+echo      Kali Docker ready!
+goto :eof
+
+:build_container
+echo      Building Kali container (first run)...
+if not exist "%AGENT_DIR%\docker\docker-compose.yml" (
+    echo      [WARN] docker-compose.yml not found
+    goto :eof
+)
+cd /d "%AGENT_DIR%\docker"
+docker-compose up -d --build
+cd /d "%AGENT_DIR%"
+timeout /t 2 /nobreak >nul
+echo      Kali Docker ready!
+goto :eof

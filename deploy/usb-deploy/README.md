@@ -5,8 +5,13 @@ Create a portable USB drive with the full HTB Pentest Agent for use on any Windo
 ## Features
 
 - **Portable Ollama** - No installation required
-- **Full Agent** - CLI and GUI interfaces
-- **Kali Docker Support** - Optional 600+ tool toolkit
+- **Full Agent** - CLI and GUI interfaces with CustomTkinter
+- **Multi-Model Architecture** - HTB-Pentest (primary) + GLM-4.7-Flash (planning)
+- **Kali Docker Support** - Optional 600+ tool toolkit with auto-install
+- **Case Management** - Track investigations with entity relationships and export reports
+- **Knowledge Base (RAG)** - Import PDFs and documents to enhance responses
+- **Self-Learning** - Correction system to improve model behavior
+- **MCP Servers** - Model Context Protocol for extended capabilities
 - **Auto-launch** - USB autorun support (where enabled)
 - **Transcripts** - Session history saved to USB
 
@@ -15,14 +20,17 @@ Create a portable USB drive with the full HTB Pentest Agent for use on any Windo
 ### Windows (PowerShell)
 
 ```powershell
-# Basic deployment
+# Basic deployment (pulls model from registry on first run)
 .\deploy-to-usb.bat E:
 
-# With model file included
-.\deploy-to-usb.bat E: -IncludeModel
+# With model file included (offline capable)
+.\deploy-to-usb.bat E: -ModelPath "C:\models\htb-pentest.gguf"
 
-# Full deployment with training code
-.\deploy-to-usb.bat E: -IncludeModel -IncludeTraining
+# Full deployment with Node.js for MCP servers
+.\deploy-to-usb.bat E: -DownloadOllama -DownloadNodeJS
+
+# Clean redeploy
+.\deploy-to-usb.bat E: -CleanDeploy
 ```
 
 ### Manual Deployment
@@ -31,22 +39,26 @@ If the script doesn't work, manually copy:
 
 ```
 USB_DRIVE:\
-├── Ollama\              # Copy from L:\Ollama
+├── Ollama\              # Copy from local Ollama installation
 │   ├── ollama.exe
-│   ├── app.ico
 │   └── lib\
-├── agent\               # Copy from L:\agent
-│   ├── pentest-agent.py
+├── agent\               # Copy from agent\
 │   ├── pentest-gui.py
+│   ├── pentest-agent.py
+│   ├── kali_tool_catalog.py
+│   ├── knowledge_base.py
+│   ├── portable_docker.py
 │   ├── Modelfile
+│   ├── Modelfile.lite
 │   ├── settings.json
-│   ├── kali_tools.json
-│   ├── htb-pentest-v3-q4_k_m.gguf  # Model file
+│   ├── corrections.json
+│   ├── cases\
+│   ├── knowledge_base\
 │   ├── docker\
-│   └── transcripts\
-├── start-gui.bat        # Copy from L:\
+│   └── tools\
+├── mcp-servers\         # Copy from mcp-servers\
+├── start-gui.bat        # Copy from root
 ├── start-agent.bat
-├── autorun.inf
 └── README.md
 ```
 
@@ -67,8 +79,9 @@ USB_DRIVE:\
 2. **Run** `start-gui.bat` (or `start-agent.bat` for CLI)
 3. **Wait** for first-time setup:
    - Python dependencies installed
-   - Ollama started
-   - Model registered
+   - Ollama started with GPU acceleration
+   - Model pulled from registry (if not bundled)
+   - Docker started (if available)
 4. **Start using** the agent
 
 ### Requirements on Target Machine
@@ -76,22 +89,29 @@ USB_DRIVE:\
 - Windows 10/11
 - Python 3.8+ installed and in PATH
 - (Optional) Docker Desktop for Kali toolkit
+- (Optional) Node.js for MCP servers (or bundle with -DownloadNodeJS)
 
 ## Deployment Options
 
-### `-IncludeModel`
+### `-ModelPath [path]`
 
-Copies the 4GB+ GGUF model file to the USB. Required for first use on machines without internet.
-
-**Without model:** First launch will fail if the target machine can't download/create the model.
-
-### `-IncludeTraining`
-
-Includes the training code for fine-tuning models. Only needed if you want to train custom models on the target machine.
+Copies a specific GGUF model file to the USB for offline use.
 
 ### `-DownloadOllama`
 
-Downloads a fresh copy of Ollama instead of copying from source. Useful for creating deployment packages without a local Ollama installation.
+Downloads a fresh copy of Ollama instead of copying from local installation.
+
+### `-DownloadNodeJS`
+
+Downloads portable Node.js (~30MB) for MCP server support without requiring Node.js on the target machine.
+
+### `-SkipModel`
+
+Skip model deployment (use if model already on USB or will be pulled at runtime).
+
+### `-CleanDeploy`
+
+Remove existing files before deploying. Useful for clean updates.
 
 ## File Structure After Deployment
 
@@ -99,28 +119,34 @@ Downloads a fresh copy of Ollama instead of copying from source. Useful for crea
 USB_DRIVE:\
 ├── Ollama\                    # Portable Ollama
 │   ├── ollama.exe             # Main executable
-│   ├── app.ico                # Icon
 │   ├── lib\                   # Runtime libraries
 │   └── models\                # Model storage (created on first run)
 ├── agent\
+│   ├── pentest-gui.py         # GUI agent (CustomTkinter)
 │   ├── pentest-agent.py       # CLI agent
-│   ├── pentest-gui.py         # GUI agent
+│   ├── kali_tool_catalog.py   # 600+ tool definitions and auto-install registry
+│   ├── knowledge_base.py      # RAG system for document retrieval
+│   ├── portable_docker.py     # Portable Docker daemon management
 │   ├── Modelfile              # Model configuration
-│   ├── settings.json          # User settings
-│   ├── kali_tools.json        # Tool catalog
-│   ├── htb-pentest-*.gguf     # Model file (if included)
+│   ├── Modelfile.lite         # Lite mode configuration
+│   ├── settings.json          # User settings and API keys
+│   ├── corrections.json       # Self-learning corrections database
+│   ├── cases\                 # Case files (investigation tracking)
+│   ├── knowledge_base\        # RAG index and document chunks
 │   ├── docker\                # Kali Docker setup
 │   │   ├── Dockerfile
 │   │   ├── docker-compose.yml
-│   │   └── start-kali.bat
-│   ├── tools\                 # Portable tools
-│   └── transcripts\           # Session history
-├── training\                  # Training code (if included)
+│   │   └── shared\
+│   └── tools\                 # Portable pentest tools
+├── mcp-servers\               # MCP server implementations
+│   └── ollama-claude\         # Local AI MCP server
+├── models\                    # GGUF model file (if included)
+├── nodejs\                    # Portable Node.js (if included)
 ├── start-gui.bat              # Launch GUI
 ├── start-agent.bat            # Launch CLI
-├── autorun.inf                # USB autorun config
+├── setup-models.bat           # Pull additional models (run once)
 ├── README.md                  # Documentation
-└── DEPLOYMENT_INFO.txt        # Deployment timestamp
+└── DEPLOYMENT_INFO.txt        # Deployment details
 ```
 
 ## Updating an Existing USB
@@ -128,16 +154,11 @@ USB_DRIVE:\
 To update agent code without redeploying everything:
 
 ```powershell
-# Update just the agent files
-Copy-Item L:\agent\*.py E:\agent\ -Force
-Copy-Item L:\agent\Modelfile E:\agent\ -Force
-Copy-Item L:\agent\settings.json E:\agent\ -Force
-```
-
-To update the model:
-```powershell
-Copy-Item L:\agent\htb-pentest-*.gguf E:\agent\ -Force
-# Then re-register on next use (automatic)
+# Update agent files
+Copy-Item agent\pentest-gui.py E:\agent\ -Force
+Copy-Item agent\kali_tool_catalog.py E:\agent\ -Force
+Copy-Item agent\knowledge_base.py E:\agent\ -Force
+Copy-Item start-gui.bat E:\ -Force
 ```
 
 ## Troubleshooting
@@ -154,9 +175,9 @@ Install Python 3.8+ from [python.org](https://python.org) and ensure it's added 
 
 ### "Model not found"
 
-- Ensure the `.gguf` file is in the `agent\` folder
-- Delete `Ollama\models\` folder to force re-registration
-- Re-run the launcher
+- The launcher auto-pulls `sirrand/htb-pentest` from Ollama registry
+- For offline use, deploy with `-ModelPath` to include the GGUF file
+- Run `setup-models.bat` to pull additional models (GLM-4.7-Flash, etc.)
 
 ### Slow Performance
 
@@ -166,25 +187,12 @@ Install Python 3.8+ from [python.org](https://python.org) and ensure it's added 
 
 ### Kali Docker Not Working
 
-Docker Desktop must be installed on the target machine. The USB only contains configuration files, not the Docker engine.
+Docker Desktop must be installed on the target machine. The USB only contains Docker configuration files, not the Docker engine itself.
 
 ## Security Notes
 
 - **Transcripts** are saved locally on the USB
-- **No data** is sent to external servers
-- **Model runs locally** via Ollama
+- **No data** is sent to external servers (all models run locally via Ollama)
+- **API keys** in settings.json - review before sharing the USB
+- **Case files** may contain sensitive findings - handle accordingly
 - **Clear transcripts** regularly if using on shared machines
-
-## Creating a Minimal Deployment
-
-For situations with limited space:
-
-```powershell
-# Minimal deployment (no model, no training)
-.\deploy-to-usb.bat E:
-
-# Then download model on target machine
-# (requires internet on first use)
-```
-
-The agent will attempt to create/download the model on first run if not present.

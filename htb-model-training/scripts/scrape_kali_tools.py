@@ -21,7 +21,7 @@ from bs4 import BeautifulSoup
 
 # Constants
 BASE_URL = "https://www.kali.org"
-TOOLS_INDEX = f"{BASE_URL}/tools/"
+TOOLS_INDEX = f"{BASE_URL}/tools/all-tools/"  # Use all-tools page for complete list
 REQUEST_DELAY = 0.5
 
 # Tool categories on Kali
@@ -39,6 +39,47 @@ TOOL_CATEGORIES = [
     "forensics-tools",
     "reporting-tools",
     "social-engineering",
+]
+
+# Popular Kali tools - the index page is JS-rendered so we use a curated list
+POPULAR_TOOLS = [
+    # Information Gathering
+    "nmap", "masscan", "dnsenum", "dnsrecon", "fierce", "amass", "subfinder",
+    "theharvester", "recon-ng", "maltego", "spiderfoot", "dmitri", "whois",
+    "nslookup", "host", "dig", "enum4linux", "nbtscan", "smbmap", "smbclient",
+    "rpcclient", "ldapsearch", "onesixtyone", "snmp-check", "snmpwalk",
+    # Vulnerability Analysis
+    "nessus", "openvas", "nikto", "wpscan", "nuclei", "whatweb", "wafw00f",
+    "wapiti", "skipfish", "uniscan", "arachni",
+    # Web Applications
+    "burpsuite", "zaproxy", "sqlmap", "commix", "nosqlmap", "xsser",
+    "dirb", "dirbuster", "gobuster", "feroxbuster", "ffuf", "wfuzz",
+    "arjun", "paramspider", "httpx-toolkit", "curl", "wget", "hakrawler",
+    # Password Attacks
+    "john", "hashcat", "hydra", "medusa", "ncrack", "cewl", "crunch",
+    "wordlists", "seclists", "hash-identifier", "hashid", "ophcrack",
+    # Wireless
+    "aircrack-ng", "airmon-ng", "airodump-ng", "aireplay-ng", "wifite",
+    "reaver", "bully", "pixiewps", "cowpatty", "fern-wifi-cracker",
+    # Exploitation
+    "metasploit-framework", "msfvenom", "searchsploit", "exploitdb",
+    "armitage", "beef-xss", "social-engineering-toolkit", "shellter",
+    # Post-Exploitation
+    "mimikatz", "powersploit", "empire", "covenant", "bloodhound",
+    "crackmapexec", "impacket", "evil-winrm", "chisel", "ligolo-ng",
+    "pwncat", "villain", "sliver",
+    # Sniffing/Spoofing
+    "wireshark", "tshark", "tcpdump", "ettercap", "bettercap", "responder",
+    "arpspoof", "mitmproxy", "sslstrip", "dsniff",
+    # Reverse Engineering
+    "ghidra", "radare2", "gdb", "binwalk", "upx", "objdump", "strings",
+    "ltrace", "strace", "ida-free",
+    # Forensics
+    "autopsy", "foremost", "bulk-extractor", "volatility", "binwalk",
+    "exiftool", "steghide", "stegsolve", "pdf-parser", "pdfid",
+    # Misc useful tools
+    "netcat", "socat", "proxychains", "tor", "openssh", "openvpn",
+    "rlwrap", "pwntools", "python-pip", "golang", "rustc",
 ]
 
 
@@ -73,37 +114,18 @@ class KaliToolsScraper:
         (self.output_dir / "processed").mkdir(exist_ok=True)
 
     def get_all_tool_urls(self) -> List[dict]:
-        """Get all tool URLs from the main tools page."""
-        print(f"[*] Fetching tools index from {TOOLS_INDEX}")
+        """Get tool URLs from curated list (index page is JS-rendered)."""
+        print(f"[*] Using curated list of {len(POPULAR_TOOLS)} popular Kali tools")
         tools = []
 
-        try:
-            response = self.session.get(TOOLS_INDEX, timeout=30)
-            response.raise_for_status()
-        except requests.RequestException as e:
-            print(f"[!] Failed to fetch index: {e}")
-            return tools
+        for tool_name in POPULAR_TOOLS:
+            tools.append({
+                'name': tool_name,
+                'url': f"{BASE_URL}/tools/{tool_name}/",
+                'link_text': tool_name
+            })
 
-        soup = BeautifulSoup(response.text, 'html.parser')
-
-        # Find all tool links
-        for link in soup.find_all('a', href=True):
-            href = link.get('href', '')
-            if '/tools/' in href and href != '/tools/':
-                # Extract tool name from URL
-                parts = href.strip('/').split('/')
-                if len(parts) >= 2 and parts[0] == 'tools':
-                    tool_name = parts[1]
-                    full_url = urljoin(BASE_URL, href)
-
-                    if not any(t['url'] == full_url for t in tools):
-                        tools.append({
-                            'name': tool_name,
-                            'url': full_url,
-                            'link_text': link.get_text(strip=True)
-                        })
-
-        print(f"[+] Found {len(tools)} tools")
+        print(f"[+] Found {len(tools)} tools to scrape")
         return tools
 
     def get_tools_by_category(self, category: str) -> List[dict]:

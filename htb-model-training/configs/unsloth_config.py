@@ -46,8 +46,8 @@ WARMUP_RATIO = 0.1
 WEIGHT_DECAY = 0.01
 
 # Paths
-DATASET_PATH = "../data/training/htb_chatml.json"
-OUTPUT_DIR = "../output/htb-mistral-7b-unsloth"
+DATASET_PATH = "../data/training/htb_pentest_v4.jsonl"
+OUTPUT_DIR = "../output/htb-pentest-v4-unsloth"
 
 # ============================================================================
 # CHAT TEMPLATE
@@ -62,23 +62,43 @@ You are a helpful penetration testing assistant trained on Hack The Box writeups
 
 
 def format_prompts(examples):
-    """Format examples using ChatML template."""
-    texts = []
-    for messages in examples['messages']:
-        # Extract user and assistant messages
-        user_msg = ""
-        assistant_msg = ""
-        for msg in messages:
-            if msg['role'] == 'user':
-                user_msg = msg['content']
-            elif msg['role'] == 'assistant':
-                assistant_msg = msg['content']
+    """Format examples using ChatML template.
 
-        text = CHATML_TEMPLATE.format(
-            instruction=user_msg,
-            output=assistant_msg
-        )
-        texts.append(text)
+    Handles both formats:
+    - messages: [{"role": "user", "content": ...}, {"role": "assistant", "content": ...}]
+    - instruction/input/output: {"instruction": ..., "input": ..., "output": ...}
+    """
+    texts = []
+
+    # Check which format we have
+    if 'messages' in examples and examples['messages'][0] is not None:
+        # Messages format
+        for messages in examples['messages']:
+            user_msg = ""
+            assistant_msg = ""
+            for msg in messages:
+                if msg['role'] == 'user':
+                    user_msg = msg['content']
+                elif msg['role'] == 'assistant':
+                    assistant_msg = msg['content']
+            text = CHATML_TEMPLATE.format(instruction=user_msg, output=assistant_msg)
+            texts.append(text)
+    else:
+        # Instruction/output format (from process_training_data.py)
+        for i in range(len(examples['instruction'])):
+            instruction = examples['instruction'][i]
+            input_text = examples.get('input', [''] * len(examples['instruction']))[i] or ''
+            output = examples['output'][i]
+
+            # Combine instruction and input if present
+            if input_text:
+                full_instruction = f"{instruction}\n\n{input_text}"
+            else:
+                full_instruction = instruction
+
+            text = CHATML_TEMPLATE.format(instruction=full_instruction, output=output)
+            texts.append(text)
+
     return {"text": texts}
 
 
@@ -122,14 +142,20 @@ def main():
     # ========================================================================
     print("\n[3/5] Loading dataset...")
 
-    # Load from JSON
+    # Load from JSONL (one JSON object per line)
+    data = []
     with open(DATASET_PATH, 'r', encoding='utf-8') as f:
-        data = json.load(f)
+        for line in f:
+            line = line.strip()
+            if line:
+                data.append(json.loads(line))
+
+    print(f"    Loaded {len(data)} examples from JSONL")
 
     dataset = Dataset.from_list(data)
     dataset = dataset.map(format_prompts, batched=True)
 
-    print(f"    Dataset size: {len(dataset)} examples")
+    print(f"    Dataset size: {len(dataset)} formatted examples")
     print(f"    Sample: {dataset[0]['text'][:200]}...")
 
     # ========================================================================

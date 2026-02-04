@@ -147,6 +147,68 @@ class TrainingDataProcessor:
             except Exception as e:
                 print(f"[!] Failed to load {json_file}: {e}")
 
+    def load_pregenerated_training(self, source_name: str, training_file: str) -> List[Dict]:
+        """Load pre-generated training data from JSONL file."""
+        training_path = self.data_dir / source_name / training_file
+        if not training_path.exists():
+            print(f"[!] {source_name} training data not found at {training_path}")
+            return []
+
+        print(f"[*] Loading {source_name} training from {training_path}")
+        examples = []
+
+        with open(training_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        data = json.loads(line)
+                        examples.append(data)
+                    except json.JSONDecodeError as e:
+                        print(f"[!] JSON decode error in {source_name}: {e}")
+
+        print(f"[+] Loaded {len(examples)} {source_name} examples")
+        return examples
+
+    def load_gtfobins_training(self) -> List[Dict]:
+        """Load GTFOBins pre-generated training data."""
+        return self.load_pregenerated_training('gtfobins', 'gtfobins_training.jsonl')
+
+    def load_lolbas_training(self) -> List[Dict]:
+        """Load LOLBAS pre-generated training data."""
+        return self.load_pregenerated_training('lolbas', 'lolbas_training.jsonl')
+
+    def load_payloads_training(self) -> List[Dict]:
+        """Load PayloadsAllTheThings pre-generated training data."""
+        return self.load_pregenerated_training('payloads', 'payloads_training.jsonl')
+
+    def load_osint_training(self) -> List[Dict]:
+        """Load OSINT pre-generated training data."""
+        return self.load_pregenerated_training('osint', 'osint_training.jsonl')
+
+    def load_cleaned_v4_training(self) -> List[Dict]:
+        """Load cleaned v4 training data."""
+        training_path = self.data_dir / "training" / "htb_pentest_v4_clean.jsonl"
+        if not training_path.exists():
+            print(f"[!] Cleaned v4 training data not found at {training_path}")
+            return []
+
+        print(f"[*] Loading cleaned v4 training from {training_path}")
+        examples = []
+
+        with open(training_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        data = json.loads(line)
+                        examples.append(data)
+                    except json.JSONDecodeError as e:
+                        print(f"[!] JSON decode error: {e}")
+
+        print(f"[+] Loaded {len(examples)} cleaned v4 examples")
+        return examples
+
     def generate_writeup_examples(self, writeup: Dict) -> List[TrainingExample]:
         """Generate training examples from a writeup."""
         examples = []
@@ -352,12 +414,76 @@ class TrainingDataProcessor:
         """Process all data sources."""
         print("\n[*] Processing all data sources...")
 
-        # Process 0xdf writeups
+        # First, load cleaned v4 base training data
+        print("\n--- Loading Cleaned V4 Base Training ---")
+        cleaned_examples = self.load_cleaned_v4_training()
+        for ex in cleaned_examples:
+            self.examples.append(TrainingExample(
+                instruction=ex.get('instruction', ''),
+                input=ex.get('input', ''),
+                output=ex.get('output', ''),
+                category=ex.get('category', 'general'),
+                source=ex.get('source', 'cleaned_v4'),
+                tools=ex.get('tools', [])
+            ))
+        print(f"[+] Loaded {len(cleaned_examples)} cleaned v4 examples")
+
+        # Load new pre-generated training data sources
+        print("\n--- Loading GTFOBins Training ---")
+        gtfo_examples = self.load_gtfobins_training()
+        for ex in gtfo_examples:
+            self.examples.append(TrainingExample(
+                instruction=ex.get('instruction', ''),
+                input=ex.get('input', ''),
+                output=ex.get('output', ''),
+                category=ex.get('category', 'privesc'),
+                source='gtfobins',
+                tools=[ex.get('binary', '')] if ex.get('binary') else []
+            ))
+
+        print("\n--- Loading LOLBAS Training ---")
+        lolbas_examples = self.load_lolbas_training()
+        for ex in lolbas_examples:
+            self.examples.append(TrainingExample(
+                instruction=ex.get('instruction', ''),
+                input=ex.get('input', ''),
+                output=ex.get('output', ''),
+                category=ex.get('category', 'windows'),
+                source='lolbas',
+                tools=[ex.get('binary', '')] if ex.get('binary') else []
+            ))
+
+        print("\n--- Loading PayloadsAllTheThings Training ---")
+        payloads_examples = self.load_payloads_training()
+        for ex in payloads_examples:
+            self.examples.append(TrainingExample(
+                instruction=ex.get('instruction', ''),
+                input=ex.get('input', ''),
+                output=ex.get('output', ''),
+                category=ex.get('category', 'payloads'),
+                source='payloadsallthethings',
+                tools=[]
+            ))
+
+        print("\n--- Loading OSINT Training ---")
+        osint_examples = self.load_osint_training()
+        for ex in osint_examples:
+            self.examples.append(TrainingExample(
+                instruction=ex.get('instruction', ''),
+                input=ex.get('input', ''),
+                output=ex.get('output', ''),
+                category=ex.get('category', 'osint'),
+                source='osint',
+                tools=[ex.get('tool', '')] if ex.get('tool') else []
+            ))
+
+        # Process 0xdf writeups (if not already in cleaned data)
         print("\n--- Processing 0xdf writeups ---")
+        initial_count = len(self.examples)
         for writeup in self.load_0xdf_writeups():
             examples = self.generate_writeup_examples(writeup)
             self.examples.extend(examples)
-        print(f"[+] Generated {len(self.examples)} examples so far")
+        print(f"[+] Added {len(self.examples) - initial_count} writeup examples")
 
         # Process HackTricks
         print("\n--- Processing HackTricks ---")
