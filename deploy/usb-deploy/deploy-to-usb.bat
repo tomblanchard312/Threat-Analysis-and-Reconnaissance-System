@@ -2,7 +2,7 @@
 setlocal
 
 echo ============================================
-echo   HTB Pentest Agent - USB Deployment
+echo   TARS - USB Deployment
 echo ============================================
 echo.
 
@@ -11,15 +11,21 @@ if "%~1"=="" (
     echo.
     echo Examples:
     echo   deploy-to-usb.bat E:
-    echo   deploy-to-usb.bat F: -ModelPath "C:\models\htb-pentest.gguf"
+    echo   deploy-to-usb.bat E: -DownloadNodeJS
+    echo   deploy-to-usb.bat E: -LocalModel "C:\models\htb-pentest.gguf"
+    echo   deploy-to-usb.bat E: -LocalOllama "C:\Program Files\Ollama"
     echo   deploy-to-usb.bat G: -CleanDeploy
     echo.
+    echo Ollama and model are downloaded automatically by default.
+    echo Use -LocalOllama / -LocalModel to copy from local paths instead.
+    echo.
     echo Options:
-    echo   -ModelPath [path]  : Path to GGUF model file
-    echo   -DownloadOllama    : Download fresh Ollama
-    echo   -DownloadNodeJS    : Download portable Node.js for MCP servers
-    echo   -SkipModel         : Skip model deployment
-    echo   -CleanDeploy       : Remove existing files first
+    echo   -LocalOllama [path]  : Copy Ollama from local path instead of downloading
+    echo   -LocalModel [path]   : Copy GGUF model from local path (for air-gapped use)
+    echo   -DownloadNodeJS      : Download portable Node.js for MCP servers
+    echo   -SkipOllama          : Skip Ollama setup (already on USB)
+    echo   -SkipModel           : Skip model setup (already on USB)
+    echo   -CleanDeploy         : Remove existing files first
     echo.
     pause
     exit /b 1

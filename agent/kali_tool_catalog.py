@@ -192,6 +192,43 @@ KALI_TOOL_CATALOG = {
     },
 
     # ═══════════════════════════════════════════════════════════
+    # CATEGORY: Vulnerability Scanning
+    # ═══════════════════════════════════════════════════════════
+    "vulnerability_scanning": {
+        "keywords": ["vulnerability", "vuln", "scan", "assess", "audit", "openvas", "gvm", "greenbone", "cve"],
+        "tools": {
+            "openvas": {
+                "description": "OpenVAS/Greenbone vulnerability scanner - comprehensive network vulnerability assessment",
+                "use_cases": ["vulnerability assessment", "network audit", "compliance scanning", "cve detection", "security audit"],
+                "command_templates": {
+                    "setup": "gvm-setup",
+                    "start": "gvm-start",
+                    "check": "gvm-check-setup",
+                    "feed_update": "greenbone-feed-sync"
+                },
+                "notes": "OpenVAS runs as a service on https://localhost:9392. Use gvm-setup for initial configuration (takes 10-15 min). Default creds are shown after setup.",
+                "timeout": 3600,
+                "category": "vulnerability_scanning"
+            },
+            "nuclei": {
+                "description": "Fast vulnerability scanner based on templates",
+                "use_cases": ["template scanning", "cve detection", "tech detection", "misconfiguration"],
+                "command_templates": {
+                    "default": "nuclei -u {url} -t {templates}",
+                    "cves": "nuclei -u {url} -t cves/",
+                    "full": "nuclei -u {url} -t nuclei-templates/ -severity critical,high",
+                    "list": "nuclei -l {targets_file} -t {templates}"
+                },
+                "default_options": {
+                    "templates": "nuclei-templates/"
+                },
+                "timeout": 600,
+                "category": "vulnerability_scanning"
+            }
+        }
+    },
+
+    # ═══════════════════════════════════════════════════════════
     # CATEGORY: Password Attacks
     # ═══════════════════════════════════════════════════════════
     "password_attacks": {
@@ -649,6 +686,14 @@ TOOL_INSTALL_REGISTRY = {
     "dnsrecon": {"method": "apt", "package": "dnsrecon"},
     "dnsenum": {"method": "apt", "package": "dnsenum"},
 
+    # Vulnerability Scanning
+    "openvas": {"method": "apt", "package": "openvas"},
+    "gvm": {"method": "apt", "package": "gvm"},
+    "gvm-setup": {"method": "apt", "package": "gvm"},
+    "gvm-start": {"method": "apt", "package": "gvm"},
+    "greenbone-security-assistant": {"method": "apt", "package": "gvm"},
+    "nuclei": {"method": "apt", "package": "nuclei"},
+
     # Exploitation
     "searchsploit": {"method": "apt", "package": "exploitdb"},
     "msfconsole": {"method": "apt", "package": "metasploit-framework"},
@@ -673,4 +718,28 @@ TOOL_INSTALL_REGISTRY = {
     "crunch": {"method": "apt", "package": "crunch"},
     "wordlists": {"method": "apt", "package": "wordlists"},
     "seclists": {"method": "apt", "package": "seclists"},
+
+    # ═══════════════════════════════════════════════════════════
+    # UNAVAILABLE TOOLS (commercial, deprecated, or hallucinated)
+    # These will show a helpful message instead of failing install
+    # ═══════════════════════════════════════════════════════════
+    "nessus": {"method": "unavailable", "reason": "Nessus is commercial software from Tenable. Download from tenable.com (requires license). Use 'openvas' for a free alternative."},
+    "nexpose": {"method": "unavailable", "reason": "Nexpose is commercial software from Rapid7. Use 'openvas' for a free alternative."},
+    "burpsuite-pro": {"method": "unavailable", "reason": "Burp Suite Pro is commercial. 'burpsuite' (community edition) is available via apt."},
+    "acunetix": {"method": "unavailable", "reason": "Acunetix is commercial web vulnerability scanner. Use 'nikto' or 'wapiti' as free alternatives."},
+    "qualys": {"method": "unavailable", "reason": "Qualys is a commercial cloud-based scanner. Use 'openvas' for a free alternative."},
+    "cobalt-strike": {"method": "unavailable", "reason": "Cobalt Strike is commercial C2 framework. Use 'metasploit' for a free alternative."},
+    "core-impact": {"method": "unavailable", "reason": "Core Impact is commercial penetration testing software."},
+
+    # Deprecated / removed from Kali
+    "w3af": {"method": "unavailable", "reason": "w3af has been deprecated and removed from Kali repos. Use 'wapiti' or 'nikto' instead."},
+    "w3af-gui": {"method": "unavailable", "reason": "w3af has been deprecated and removed from Kali repos. Use 'wapiti' or 'nikto' instead."},
+    "w3af-gtk": {"method": "unavailable", "reason": "w3af has been deprecated and removed from Kali repos. Use 'wapiti' or 'nikto' instead."},
+    "armitage": {"method": "unavailable", "reason": "Armitage is deprecated. Use 'msfconsole' directly instead."},
+
+    # Common hallucinations / non-existent tools
+    "osdetect": {"method": "unavailable", "reason": "osdetect is not a real tool. Use 'nmap -O <target>' for OS detection."},
+    "vulnscan": {"method": "unavailable", "reason": "vulnscan is not a real tool. Use 'nmap --script vuln' or 'nikto' for vulnerability scanning."},
+    "portscan": {"method": "unavailable", "reason": "portscan is not a real tool. Use 'nmap' or 'masscan' for port scanning."},
+    "webscan": {"method": "unavailable", "reason": "webscan is not a real tool. Use 'nikto', 'whatweb', or 'wapiti' for web scanning."},
 }

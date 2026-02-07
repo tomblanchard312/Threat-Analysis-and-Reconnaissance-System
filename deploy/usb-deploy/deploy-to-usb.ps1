@@ -1,4 +1,4 @@
-# HTB Pentest Agent - USB Deployment Script
+# TARS - USB Deployment Script
 # Deploys the self-contained pentest AI to a USB drive
 # Run as Administrator: powershell -ExecutionPolicy Bypass -File deploy-to-usb.ps1
 
@@ -7,11 +7,12 @@ param(
     [string]$TargetDrive,  # e.g., "E:"
 
     [Parameter(Mandatory=$false)]
-    [string]$ModelPath,    # Path to GGUF model file (e.g., "C:\htb-model-training\htb-pentest-v4-gguf\model-q4_k_m.gguf")
+    [string]$LocalOllama,      # Path to local Ollama install to copy instead of downloading
+    [string]$LocalModel,       # Path to local GGUF model file to copy to USB
 
-    [switch]$DownloadOllama,   # Download fresh Ollama instead of copying existing
     [switch]$DownloadNodeJS,   # Download portable Node.js for MCP servers
-    [switch]$SkipModel,        # Skip model deployment (use if model already on USB)
+    [switch]$SkipOllama,       # Skip Ollama setup (if already on USB)
+    [switch]$SkipModel,        # Skip model deployment (if already on USB)
     [switch]$CleanDeploy       # Remove existing files before deploying
 )
 
@@ -22,7 +23,7 @@ $ScriptDir = Split-Path -Parent $PSScriptRoot
 $RepoRoot = Split-Path -Parent $ScriptDir
 
 Write-Host "============================================" -ForegroundColor Cyan
-Write-Host "  HTB Pentest Agent - USB Deployment" -ForegroundColor Cyan
+Write-Host "  TARS - USB Deployment" -ForegroundColor Cyan
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -88,6 +89,8 @@ Write-Host "[2/6] Copying agent files..." -ForegroundColor Green
 $agentFiles = @(
     "pentest-agent.py",
     "pentest-gui.py",
+    "live_voice.py",
+    "tars_voice.py",
     "kali_tool_catalog.py",
     "knowledge_base.py",
     "portable_docker.py",
@@ -175,50 +178,57 @@ foreach ($item in $rootFiles) {
 # Handle Ollama
 Write-Host "[5/6] Setting up Ollama and model..." -ForegroundColor Green
 
-# Check for existing Ollama installation to copy
-$ollamaSources = @(
-    "$RepoRoot\Ollama",
-    "C:\Users\$env:USERNAME\AppData\Local\Programs\Ollama",
-    "$env:LOCALAPPDATA\Programs\Ollama"
-)
-
 $ollamaFound = $false
-if ($DownloadOllama) {
+if ($SkipOllama) {
+    if (Test-Path "$TargetDrive\Ollama\ollama.exe") {
+        Write-Host "  Ollama already on USB (skipped)"
+        $ollamaFound = $true
+    } else {
+        Write-Host "  [WARN] -SkipOllama specified but no Ollama found on USB" -ForegroundColor Yellow
+    }
+} elseif ($LocalOllama) {
+    # Copy from user-specified local path
+    if (Test-Path "$LocalOllama\ollama.exe") {
+        Write-Host "  Copying Ollama from: $LocalOllama"
+        Copy-Item "$LocalOllama\ollama.exe" "$TargetDrive\Ollama\" -Force
+        if (Test-Path "$LocalOllama\app.ico") {
+            Copy-Item "$LocalOllama\app.ico" "$TargetDrive\Ollama\" -Force
+        }
+        if (Test-Path "$LocalOllama\lib") {
+            Copy-Item "$LocalOllama\lib" "$TargetDrive\Ollama\" -Recurse -Force
+        }
+        Write-Host "  Ollama copied from local path"
+        $ollamaFound = $true
+    } else {
+        Write-Host "  [ERROR] Ollama not found at: $LocalOllama" -ForegroundColor Red
+        Write-Host "  [INFO] Remove -LocalOllama to download automatically" -ForegroundColor Cyan
+    }
+} else {
+    # Default: download from ollama.com
     Write-Host "  Downloading Ollama..."
     $ollamaUrl = "https://ollama.com/download/ollama-windows-amd64.zip"
     $ollamaZip = "$env:TEMP\ollama.zip"
-    Invoke-WebRequest -Uri $ollamaUrl -OutFile $ollamaZip
-    Expand-Archive -Path $ollamaZip -DestinationPath "$TargetDrive\Ollama" -Force
-    Remove-Item $ollamaZip
-    Write-Host "  Ollama downloaded and extracted"
-    $ollamaFound = $true
-} else {
-    foreach ($ollamaPath in $ollamaSources) {
-        if (Test-Path "$ollamaPath\ollama.exe") {
-            Write-Host "  Found Ollama at: $ollamaPath"
-            Copy-Item "$ollamaPath\ollama.exe" "$TargetDrive\Ollama\" -Force
-            if (Test-Path "$ollamaPath\app.ico") {
-                Copy-Item "$ollamaPath\app.ico" "$TargetDrive\Ollama\" -Force
-            }
-            if (Test-Path "$ollamaPath\lib") {
-                Copy-Item "$ollamaPath\lib" "$TargetDrive\Ollama\" -Recurse -Force
-            }
-            Write-Host "  Ollama copied"
-            $ollamaFound = $true
-            break
-        }
+    try {
+        Invoke-WebRequest -Uri $ollamaUrl -OutFile $ollamaZip
+        Expand-Archive -Path $ollamaZip -DestinationPath "$TargetDrive\Ollama" -Force
+        Remove-Item $ollamaZip
+        Write-Host "  Ollama downloaded and extracted"
+        $ollamaFound = $true
+    } catch {
+        Write-Host "  [WARN] Failed to download Ollama: $_" -ForegroundColor Yellow
+        Write-Host "  [INFO] Use -LocalOllama to copy from a local install instead" -ForegroundColor Cyan
     }
 }
 
 if (-not $ollamaFound) {
-    Write-Host "  [WARN] Ollama not found. Run with -DownloadOllama or install manually." -ForegroundColor Yellow
+    Write-Host "  [WARN] Ollama not available. Use -LocalOllama <path> or check internet connection." -ForegroundColor Yellow
 }
 
 # Create model setup script for additional models (GLM-4.7-Flash, GLM-4.6V)
 $modelSetupScript = @'
 @echo off
 echo ============================================
-echo   HTB Pentest Agent - Model Setup
+echo   TARS - Model Setup
 echo ============================================
 echo.
 echo This script will pull the required AI models.
@@ -262,39 +272,27 @@ $modelSetupScript | Out-File "$TargetDrive\setup-models.bat" -Encoding ASCII
 Write-Host "  Created: setup-models.bat (run after first launch to pull additional models)"
 
 # Copy model file
-if (-not $SkipModel) {
-    if ($ModelPath -and (Test-Path $ModelPath)) {
+if ($SkipModel) {
+    if (Test-Path "$TargetDrive\models\htb-pentest.gguf") {
+        Write-Host "  Model already on USB (skipped)"
+    } else {
+        Write-Host "  [INFO] -SkipModel specified. Launcher will pull from Ollama registry on first run." -ForegroundColor Cyan
+    }
+} elseif ($LocalModel) {
+    # Copy from user-specified local path
+    if (Test-Path $LocalModel) {
         Write-Host "  Copying model file (this may take a while)..."
-        $modelName = Split-Path $ModelPath -Leaf
-        # Standardize name to htb-pentest.gguf
+        $modelName = Split-Path $LocalModel -Leaf
         $targetModelName = "htb-pentest.gguf"
-        Copy-Item $ModelPath "$TargetDrive\models\$targetModelName" -Force
+        Copy-Item $LocalModel "$TargetDrive\models\$targetModelName" -Force
         Write-Host "  Model copied: $modelName -> models\$targetModelName"
     } else {
-        # Look for existing model files
-        $modelPaths = @(
-            "C:\htb-model-training\htb-pentest-v4-gguf\model-q4_k_m.gguf",
-            "$RepoRoot\models\*.gguf",
-            "$RepoRoot\agent\*.gguf"
-        )
-        $foundModel = $null
-        foreach ($pattern in $modelPaths) {
-            $found = Get-ChildItem $pattern -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($found) {
-                $foundModel = $found.FullName
-                break
-            }
-        }
-
-        if ($foundModel) {
-            Write-Host "  Found model: $foundModel"
-            Write-Host "  Copying model file (this may take a while)..."
-            Copy-Item $foundModel "$TargetDrive\models\htb-pentest.gguf" -Force
-            Write-Host "  Model copied to: models\htb-pentest.gguf"
-        } else {
-            Write-Host "  [INFO] No model file found. Specify with -ModelPath or the agent will pull from registry." -ForegroundColor Cyan
-        }
+        Write-Host "  [ERROR] Model file not found at: $LocalModel" -ForegroundColor Red
     }
+} else {
+    # Default: no local model bundled - launcher pulls from registry at first run
+    Write-Host "  [INFO] No model bundled. Launcher will pull sirrand/htb-pentest from Ollama registry on first run." -ForegroundColor Cyan
+    Write-Host "  [INFO] Use -LocalModel <path.gguf> to bundle a model for air-gapped use." -ForegroundColor Cyan
 }
 
 # Create Modelfile for the models folder structure
@@ -412,7 +410,7 @@ $mcpStatus = if ($hasNodeJs) { "Enabled (portable Node.js included)" } else { "D
 
 # Create deployment info
 $deployInfo = @"
-HTB Pentest Agent - USB Deployment
+TARS - USB Deployment
 ===================================
 Deployed: $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")
 Mode: $deploymentMode
