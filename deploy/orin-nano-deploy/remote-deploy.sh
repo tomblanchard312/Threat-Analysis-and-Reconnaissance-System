@@ -68,6 +68,7 @@ echo "[1/4] Creating deployment package..."
 
 # Copy essential files
 cp "$SOURCE_DIR/agent/pentest-agent.py" "$PACKAGE_DIR/agent/"
+cp "$SOURCE_DIR/agent/tool_process.py" "$PACKAGE_DIR/agent/"
 cp "$SOURCE_DIR/agent/pentest-gui.py" "$PACKAGE_DIR/agent/"
 cp "$SOURCE_DIR/agent/Modelfile" "$PACKAGE_DIR/agent/"
 cp "$SOURCE_DIR/agent/settings.json" "$PACKAGE_DIR/agent/"

@@ -151,6 +151,7 @@ fi
 
 # Copy agent files
 cp "$SOURCE_DIR/agent/pentest-agent.py" "$INSTALL_DIR/agent/"
+cp "$SOURCE_DIR/agent/tool_process.py" "$INSTALL_DIR/agent/"
 cp "$SOURCE_DIR/agent/pentest-gui.py" "$INSTALL_DIR/agent/"
 cp "$SOURCE_DIR/agent/kali_tool_catalog.py" "$INSTALL_DIR/agent/" 2>/dev/null || true
 cp "$SOURCE_DIR/agent/knowledge_base.py" "$INSTALL_DIR/agent/" 2>/dev/null || true

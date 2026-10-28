@@ -14,6 +14,8 @@ RUN echo "deb http://kali.download/kali kali-rolling main contrib non-free non-f
 
 # Update and install core pentest tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    util-linux \
+    coreutils \
     # Network reconnaissance
     nmap \
     masscan \

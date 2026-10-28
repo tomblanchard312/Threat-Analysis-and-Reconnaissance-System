@@ -87,6 +87,7 @@ foreach ($dir in $directories) {
 Write-Host "[2/6] Copying agent files..." -ForegroundColor Green
 $agentFiles = @(
     "pentest-agent.py",
+    "tool_process.py",
     "pentest-gui.py",
     "kali_tool_catalog.py",
     "knowledge_base.py",
