@@ -173,11 +173,11 @@ Important guidelines:
 
 # Template for chat format
 TEMPLATE """<|im_start|>system
-{{ .System }}<|im_end|>
+{{{{ .System }}}}<|im_end|>
 <|im_start|>user
-{{ .Prompt }}<|im_end|>
+{{{{ .Prompt }}}}<|im_end|>
 <|im_start|>assistant
-{{ .Response }}<|im_end|>"""
+{{{{ .Response }}}}<|im_end|>"""
 
 # License notice
 LICENSE """
